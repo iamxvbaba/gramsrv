@@ -24,9 +24,11 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return nil, err
 	}
 	reactions = r.normalizeDefaultReactionDocuments(ctx, reactions)
-	// 官方语义（reactions_user_max_default/premium）：向量尾部是最新选择，
-	// 超出每用户上限丢弃旧的而非报错；premium viewer 用 premium 档（appConfig
-	// reactions_user_max_premium=3），否则客户端允许的多 reaction 会被静默裁剪。
+	// Official semantics (reactions_user_max_default/premium): the tail of the
+	// vector is the newest choice, and exceeding the per-user limit drops the old
+	// ones rather than erroring; a premium viewer uses the premium tier (appConfig
+	// reactions_user_max_premium=3), otherwise the multi-reaction the client allows
+	// would be silently trimmed.
 	perUserMax := domain.MessageReactionsUserMax(r.viewerPremium(ctx, userID))
 	reactions = domain.TrimMessageReactionsToUserMax(reactions, perUserMax)
 	if peer.Type == domain.PeerTypeUser && peer.ID == userID &&
@@ -49,8 +51,10 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			return nil, channelReactionErr(err)
 		}
 		updates := r.channelMessageReactionsUpdates(ctx, userID, res)
-		// 官方保证消息作者收到 updateMessageReactions：作者进 explicit 收件人，
-		// 不依赖在线 viewer 采样（fan-out 封顶后作者可能被挤出采样集）。
+		// The official server guarantees the message author receives
+		// updateMessageReactions: the author goes into the explicit recipients and
+		// does not rely on online viewer sampling (after the fan-out cap the author
+		// could be pushed out of the sample set).
 		ids := []int{res.Message.ID}
 		r.pushChannelViewerUpdates(ctx, userID, res.Channel.ID, []int64{userID, res.Message.SenderUserID}, func(viewerUserID int64) *tg.Updates {
 			return r.channelReactionsViewerUpdates(ctx, userID, viewerUserID, res, ids)
@@ -226,13 +230,16 @@ func (r *Router) channelMessageReactionsUpdates(ctx context.Context, viewerUserI
 	return r.channelMessagesReactionsUpdates(ctx, viewerUserID, res, ids)
 }
 
-// channelReactionsViewerUpdates 为 fan-out 构造某 viewer 的 updateMessageReactions。
-// res 内的聚合是请求者视角（chosen/My/unread 都是 per-viewer 字段）：
-//   - 请求者本人：直接用；
-//   - 消息作者：按作者视角重载（unread 角标与作者自己的 chosen 必须正确）；
-//   - 其他 viewer：官方 min 语义——只下发计数与 recent 列表，客户端保留本地 chosen
-//     （TDesktop 非 min 更新会用 chosen_order 直接覆盖本地 my 状态，串视角即"别人的
-//     reaction 显示成我选的"）。
+// channelReactionsViewerUpdates builds a viewer's updateMessageReactions for
+// fan-out. The aggregate inside res is the requester's view (chosen/My/unread are
+// all per-viewer fields):
+//   - the requester itself: use it directly;
+//   - the message author: reload from the author's view (the unread badge and the
+//     author's own chosen must be correct);
+//   - other viewers: official min semantics -- send only the counts and the
+//     recent list, and let the client keep its local chosen (a non-min TDesktop
+//     update overwrites the local my state with chosen_order directly; view
+//     leakage means "someone else's reaction shows as mine").
 func (r *Router) channelReactionsViewerUpdates(ctx context.Context, requestUserID, viewerUserID int64, res domain.ChannelMessageReactionsResult, ids []int) *tg.Updates {
 	if viewerUserID == requestUserID {
 		return r.channelMessagesReactionsUpdates(ctx, viewerUserID, res, ids)
@@ -259,7 +266,7 @@ func (r *Router) channelReactionsViewerUpdates(ctx context.Context, requestUserI
 	return updates
 }
 
-// reactionsResultSenderID 取结果中消息作者（单消息场景；多消息 moderation 不做作者特判）。
+// reactionsResultSenderID gets the message author from the result (single-message case; multi-message moderation has no author special-case).
 func reactionsResultSenderID(res domain.ChannelMessageReactionsResult) int64 {
 	if res.Message.ID != 0 {
 		return res.Message.SenderUserID
@@ -270,8 +277,9 @@ func reactionsResultSenderID(res domain.ChannelMessageReactionsResult) int64 {
 	return 0
 }
 
-// minifyChannelReactionsResult 深拷并清掉所有 per-viewer 字段（chosen/My/unread），
-// 供 min 推送使用；不改原 res（请求者响应仍用全量视角）。
+// minifyChannelReactionsResult deep-copies and clears all per-viewer fields
+// (chosen/My/unread) for min pushes; it does not modify the original res (the
+// requester's response still uses the full view).
 func minifyChannelReactionsResult(res domain.ChannelMessageReactionsResult) domain.ChannelMessageReactionsResult {
 	scrub := func(in *domain.ChannelMessageReactions) *domain.ChannelMessageReactions {
 		if in == nil {

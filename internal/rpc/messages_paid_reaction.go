@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// channelPaidReactionService 是 r.deps.Channels 的可选扩展（app/channels.Service 实现），
-// 用类型断言接入，避免在 ChannelsService 接口上为付费 reaction 单加方法。
+// channelPaidReactionService is an optional extension of r.deps.Channels
+// (implemented by app/channels.Service), wired in via type assertion to avoid
+// adding a paid-reaction-only method to the ChannelsService interface.
 type channelPaidReactionService interface {
 	SendPaidReaction(ctx context.Context, userID int64, req domain.SendChannelPaidReactionRequest) (domain.ChannelMessagePaidReactionResult, error)
 }
@@ -18,9 +19,11 @@ type channelPaidReactionReplayService interface {
 	ReplayPaidReaction(ctx context.Context, userID int64, req domain.SendChannelPaidReactionRequest) (domain.ChannelMessagePaidReactionResult, bool, error)
 }
 
-// channelPaidReactionUpdates 为某 viewer 构造一条 updateMessageReactions：把消息已有的普通
-// reaction 与付费 ReactionPaid（总星数 + top reactors）合并。非请求者走 min 语义（置 Min，
-// 客户端忽略 chosen 保留本地态），避免把请求者视角串给他人。
+// channelPaidReactionUpdates builds an updateMessageReactions for a viewer: it
+// merges the message's existing ordinary reactions with the paid ReactionPaid
+// (total stars + top reactors). Non-requesters use min semantics (Min set, the
+// client ignores chosen and keeps its local state) to avoid leaking the
+// requester's view to others.
 func (r *Router) channelPaidReactionUpdates(ctx context.Context, requestUserID, viewerUserID int64, res domain.ChannelMessagePaidReactionResult, ids []int) *tg.Updates {
 	isRequester := viewerUserID == requestUserID
 	base := domain.ChannelMessageReactions{}
@@ -76,7 +79,8 @@ func (r *Router) channelPaidReactionUpdates(ctx context.Context, requestUserID, 
 	}
 }
 
-// clonePaidForViewer 返回付费聚合的副本；非请求者抹除 My/MyStars（min 语义防串视角）。
+// clonePaidForViewer returns a copy of the paid aggregate; non-requesters have
+// My/MyStars scrubbed (min semantics, preventing view leakage).
 func clonePaidForViewer(paid domain.ChannelMessagePaidReactions, isRequester bool) domain.ChannelMessagePaidReactions {
 	out := paid
 	out.TopReactors = make([]domain.PaidReactor, len(paid.TopReactors))
@@ -91,15 +95,18 @@ func clonePaidForViewer(paid domain.ChannelMessagePaidReactions, isRequester boo
 	return out
 }
 
-// injectPaidReaction 把付费 reaction 注入 MessageReactions：ReactionPaid 计数置首位、填充
-// top reactors 排行。My/chosen 完全由 paid 的视角数据驱动（调用方对他人视角已抹除 My/MyStars）。
+// injectPaidReaction injects the paid reaction into MessageReactions: the
+// ReactionPaid count goes first and the top reactors ranking is filled in.
+// My/chosen are driven entirely by the paid view data (the caller has already
+// scrubbed My/MyStars for other viewers' views).
 func injectPaidReaction(mr *tg.MessageReactions, paid domain.ChannelMessagePaidReactions) {
 	if paid.TotalStars <= 0 {
 		return
 	}
 	paidCount := tg.ReactionCount{Reaction: &tg.ReactionPaid{}, Count: int(paid.TotalStars)}
 	if paid.MyStars > 0 {
-		// chosen_order 仅标记「本人已投」，具体序值不关键，置正。
+		// chosen_order only marks "this viewer has reacted"; the exact ordinal
+		// does not matter, so set it positive.
 		paidCount.SetChosenOrder(int(paid.MyStars))
 	}
 	mr.Results = append([]tg.ReactionCount{paidCount}, mr.Results...)
@@ -115,7 +122,9 @@ func injectPaidReaction(mr *tg.MessageReactions, paid domain.ChannelMessagePaidR
 		if rr.Anonymous {
 			item.Anonymous = true
 		}
-		// PeerID：非匿名给出；匿名仅本人给出（TL 语义：匿名本人 anonymous+peer 都置）。
+		// PeerID: given for non-anonymous reactors; for anonymous ones only to the
+		// reactor itself (TL semantics: for the anonymous self both anonymous and
+		// peer are set).
 		if (!rr.Anonymous || rr.My) && rr.DisplayPeer().ID != 0 {
 			if peer := tgPeer(rr.DisplayPeer()); peer != nil {
 				item.SetPeerID(peer)

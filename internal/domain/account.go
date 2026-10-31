@@ -82,7 +82,7 @@ type AuthCodeDelivery struct {
 	Length       int
 }
 
-// PasswordKDFAlgo 是业务层的 SRP KDF 算法描述，不依赖 tg.*。
+// PasswordKDFAlgo is the business-layer description of the SRP KDF algorithm, independent of tg.*.
 type PasswordKDFAlgo struct {
 	Salt1 []byte
 	Salt2 []byte
@@ -90,13 +90,13 @@ type PasswordKDFAlgo struct {
 	P     []byte
 }
 
-// SecurePasswordKDFAlgo 是 Telegram Passport secure secret 的 KDF 算法描述。
+// SecurePasswordKDFAlgo is the KDF algorithm description for a Telegram Passport secure secret.
 type SecurePasswordKDFAlgo struct {
 	Kind string
 	Salt []byte
 }
 
-// PasswordCheck 是 inputCheckPasswordEmpty/inputCheckPasswordSRP 的业务层表达。
+// PasswordCheck is the business-layer representation of inputCheckPasswordEmpty/inputCheckPasswordSRP.
 type PasswordCheck struct {
 	Empty bool
 	SRPID int64
@@ -104,7 +104,7 @@ type PasswordCheck struct {
 	M1    []byte
 }
 
-// PasswordInputSettings 是 account.passwordInputSettings 的业务层表达。
+// PasswordInputSettings is the business-layer representation of account.passwordInputSettings.
 type PasswordInputSettings struct {
 	NewAlgo         *PasswordKDFAlgo
 	NewPasswordHash []byte
@@ -114,7 +114,7 @@ type PasswordInputSettings struct {
 	HasEmail        bool
 }
 
-// PrivatePasswordSettings 是 account.passwordSettings 的业务层表达。
+// PrivatePasswordSettings is the business-layer representation of account.passwordSettings.
 type PrivatePasswordSettings struct {
 	Email string
 }
@@ -133,7 +133,7 @@ type PasswordResetResult struct {
 	RetryDate int
 }
 
-// PasswordSettings 是账号 2FA/SRP 配置。默认 HasPassword=false。
+// PasswordSettings is the account's 2FA/SRP configuration. HasPassword defaults to false.
 type PasswordSettings struct {
 	HasRecovery             bool
 	HasSecureValues         bool
@@ -144,8 +144,8 @@ type PasswordSettings struct {
 	Hint                    string
 	EmailUnconfirmedPattern string
 	RecoveryEmail           string
-	// LoginEmail 是已确认的登录邮箱地址（服务端私有，永不直接下发；下发的是掩码后的
-	// LoginEmailPattern）。它独立于 2FA 恢复邮箱 RecoveryEmail：账号可只设登录邮箱而无 2FA。
+	// LoginEmail is the confirmed login email address (server-private, never sent directly; the masked
+	// LoginEmailPattern is sent instead). It is independent of the 2FA recovery email RecoveryEmail: an account may set only a login email without 2FA.
 	LoginEmail        string
 	LoginEmailPattern string
 	NewAlgo           PasswordKDFAlgo
@@ -244,7 +244,7 @@ func DefaultAccountReactionSettings() AccountReactionSettings {
 	}
 }
 
-// DefaultAccountTTLDays 是账号自毁默认期限（无显式设置时）。与历史固定回显一致。
+// DefaultAccountTTLDays is the default account self-destruct TTL (when there is no explicit setting). It matches the historical fixed echo.
 const (
 	DefaultAccountTTLDays = 365
 	// MaxAccountTTLDays prevents an untrusted int32 TL value from producing an
@@ -266,7 +266,7 @@ func (g DisallowedGifts) Zero() bool {
 		!g.PremiumGifts && !g.StargiftsFromChannel
 }
 
-// GlobalPrivacy 是 globalPrivacySettings 的业务层表达（账号级隐私开关）。
+// GlobalPrivacy is the business-layer representation of globalPrivacySettings (account-level privacy switches).
 type GlobalPrivacy struct {
 	ArchiveAndMuteNewNoncontactPeers bool
 	KeepArchivedUnmuted              bool
@@ -275,32 +275,32 @@ type GlobalPrivacy struct {
 	NewNoncontactPeersRequirePremium bool
 	DisplayGiftsButton               bool
 	DisallowedGifts                  DisallowedGifts
-	// NoncontactPeersPaidStars：非联系人给本人发消息所需 Stars 数。Stars 账本尚未实现，
-	// 此处仅做忠实持久化（往返不丢值），不参与计费逻辑。
+	// NoncontactPeersPaidStars: the number of Stars required for a non-contact to message this user. The Stars ledger is not yet implemented,
+	// so this is only faithfully persisted (no value lost on round-trip) and takes no part in billing logic.
 	NoncontactPeersPaidStars int64
 }
 
-// AccountSettings 聚合账号级单例设置（每用户一行）：全局隐私、账号自毁期限、
-// 敏感内容开关、联系人注册通知静音。对应 account.get/set GlobalPrivacySettings、
-// get/set AccountTTL、get/set ContentSettings、get/set ContactSignUpNotification。
+// AccountSettings aggregates account-level singleton settings (one row per user): global privacy, account self-destruct TTL,
+// sensitive-content switch, contact-signup notification mute. Corresponds to account.get/set GlobalPrivacySettings,
+// get/set AccountTTL, get/set ContentSettings, get/set ContactSignUpNotification.
 type AccountSettings struct {
 	GlobalPrivacy           GlobalPrivacy
 	AccountTTLDays          int
 	SensitiveContentEnabled bool
-	// ContactSignUpSilent 对应 account.setContactSignUpNotification 的 silent 形参：
-	// true=联系人注册时不通知本人。getContactSignUpNotification 直接返回该值。
+	// ContactSignUpSilent corresponds to the silent parameter of account.setContactSignUpNotification:
+	// true = do not notify this user when a contact signs up. getContactSignUpNotification returns this value directly.
 	ContactSignUpSilent bool
 }
 
-// DefaultAccountSettings 是未持久化时的账号设置默认值（与历史回显 stub 行为一致：
-// 全局隐私全关、TTL 365 天、敏感内容关、联系人注册通知开启）。
+// DefaultAccountSettings is the account settings default when nothing is persisted (matching the historical echo stub behavior:
+// all global privacy off, TTL 365 days, sensitive content off, contact-signup notifications on).
 func DefaultAccountSettings() AccountSettings {
 	return AccountSettings{
 		AccountTTLDays: DefaultAccountTTLDays,
 	}
 }
 
-// NormalizedTTLDays 返回钳制后的账号自毁期限（0/越界回落默认）。
+// NormalizedTTLDays returns the clamped account self-destruct TTL (0/out-of-range falls back to the default).
 func (s AccountSettings) NormalizedTTLDays() int {
 	if s.AccountTTLDays <= 0 || s.AccountTTLDays > MaxAccountTTLDays {
 		return DefaultAccountTTLDays
@@ -308,9 +308,9 @@ func (s AccountSettings) NormalizedTTLDays() int {
 	return s.AccountTTLDays
 }
 
-// MaskEmail 把邮箱地址按 Telegram pattern 习惯掩码（首尾各保留一位本地名，如
-// a***z@x.com），用于 account.password.login_email_pattern / auth.sentCodeTypeEmailCode
-// 等只能暴露掩码的下发点。空串返回空串。
+// MaskEmail masks an email address following the Telegram pattern convention (keeping one local-name
+// character at each end, e.g. a***z@x.com), for send points that may only expose a mask such as
+// account.password.login_email_pattern / auth.sentCodeTypeEmailCode. An empty string returns an empty string.
 func MaskEmail(email string) string {
 	if email == "" {
 		return ""

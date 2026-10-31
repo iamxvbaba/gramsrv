@@ -258,8 +258,9 @@ func explainText(t *testing.T, ctx context.Context, tx pgx.Tx, query string, arg
 	return b.String()
 }
 
-// requirePlanUsesIndex 断言计划在指定表上走索引扫描、未退化为 Seq Scan。
-// 去分区后这些表都是普通表（不再有 *_pNN 子分区），故只校验「命中目标表 + 用了索引 + 无 Seq Scan」。
+// requirePlanUsesIndex asserts the plan uses an index scan on the specified table and has not
+// degraded to a Seq Scan. After de-partitioning these tables are all ordinary tables (no more
+// *_pNN subpartitions), so it only checks "hits the target table + uses an index + no Seq Scan".
 func requirePlanUsesIndex(t *testing.T, plan, table string) {
 	t.Helper()
 	requirePlanContains(t, plan, table)
@@ -297,8 +298,9 @@ func requireUniquePartitionCountAtMost(t *testing.T, plan, pattern string, max i
 	for _, match := range matches {
 		seen[match] = struct{}{}
 	}
-	// 去分区后这些表已是普通表：0 处 *_pNN 命中是预期（合格）。保留本断言作为回归护栏——
-	// 若某天意外重新引入分区且单查询触及 >max 个分区，这里会炸出来。
+	// After de-partitioning these tables are ordinary tables: 0 *_pNN hits is expected (passing).
+	// This assertion is kept as a regression guardrail — if partitioning is accidentally
+	// reintroduced and a single query touches >max partitions, it will surface here.
 	if len(seen) > max {
 		t.Fatalf("plan touches %d unique partitions, want <= %d:\n%s", len(seen), max, plan)
 	}

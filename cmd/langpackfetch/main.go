@@ -1,12 +1,13 @@
-// Command langpackfetch 从官方 Telegram 拉取 langpack(免登公开方法 langpack.getLangPack),
-// 转成 telesrv seed 的 .strings 格式(复数用 Key#one/#other 后缀)。api 凭据用 TDesktop
-// 开源公开的 id/hash。
+// Command langpackfetch pulls langpacks from official Telegram (the login-free
+// public method langpack.getLangPack) and converts them into the telesrv seed
+// .strings format (plurals use the Key#one/#other suffix). The api credentials
+// use the public open-source id/hash from TDesktop.
 //
-// 用法:
+// Usage:
 //
-//	langpackfetch languages [pack]                 列出某 pack(默认 android)的可用语言
-//	langpackfetch all <out_dir> [pack...]           拉取所有官方语言及 manifest
-//	langpackfetch <out_dir> <langCode> [pack...]   拉取语言包(默认 packs = android ios macos)
+//	langpackfetch languages [pack]                 list the available languages of a pack (default android)
+//	langpackfetch all <out_dir> [pack...]          pull all official languages and a manifest
+//	langpackfetch <out_dir> <langCode> [pack...]   pull a language pack (default packs = android ios macos)
 package main
 
 import (
@@ -238,7 +239,7 @@ func writePack(root, pack string, diff *tg.LangPackDifference) (writtenPack, err
 			emit("#other", v.OtherValue)
 			count++
 		case *tg.LangPackStringDeleted:
-			// 跳过删除项
+			// Skip deleted entries
 		}
 	}
 	langCode := diff.LangCode

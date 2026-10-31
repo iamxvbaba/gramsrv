@@ -1,12 +1,16 @@
-// Package identity 存储 operator 可在管理面板 Server Settings → Server identity
-// 中编辑的服务器身份：名称、简介、图标，以及登录通知（登录码投递与每次登录成功后的
-// 欢迎消息）的可覆盖模板。它刻意不属于 internal/config 的 Config：config 只在进程
-// 启动时从 .env 加载一次，而 identity 由管理面板随时修改、主服务器立即生效、无需重启
-// —— 因此它以纯文本文件落在磁盘上（目录由 Config.IdentityDir 指定），每次读取都现取
-// 现用，不缓存进内存。
+// Package identity stores the server identity an operator can edit in the admin
+// panel's Server Settings -> Server identity: name, description, icon, and the
+// overridable templates for login notifications (login-code delivery and the
+// welcome message sent after every successful login). It deliberately is not part
+// of internal/config's Config: config is loaded from .env exactly once at process
+// startup, whereas identity is edited by the admin panel at any time and takes
+// effect on the main server immediately, with no restart -- so it lives on disk as
+// plain text files (the directory is given by Config.IdentityDir) and is read
+// fresh on every access rather than cached in memory.
 //
-// 两个进程协作：cmd/telesrv-admin（管理二进制）写，cmd/telesrv（主服务器二进制）读。
-// 读写均为原子操作（临时文件 + rename），可安全并发。
+// Two processes cooperate: cmd/telesrv-admin (the admin binary) writes, cmd/telesrv
+// (the main server binary) reads. Both reads and writes are atomic (temp file +
+// rename) and safe for concurrent use.
 package identity
 
 import (
@@ -23,31 +27,40 @@ const (
 	iconBaseName = "icon"
 )
 
-// Info 是展示给客户端、可编辑的服务器身份。Name 经
-// domain.SetOfficialSystemUserDisplayName 影响 777000 展示名（启动时应用一次，
-// 之后由 internal/app/systemidentity.Watcher 轮询本文件在运行期持续跟随），模板
-// 覆盖则在每次发送登录通知时实时读取。
+// Info is the editable server identity shown to clients. Name affects the 777000
+// display name via domain.SetOfficialSystemUserDisplayName (applied once at startup,
+// after which internal/app/systemidentity.Watcher keeps following it during runtime
+// by polling this file), while template overrides are read live each time a login
+// notification is sent.
 type Info struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// IconExt 是图标文件的扩展名（如 ".png"），未上传图标时为空。与 Name/Description
-	// 并列存放，使 Store 无需扫描目录即可定位图标文件。
+	// IconExt is the icon file's extension (e.g. ".png"), empty when no icon has been
+	// uploaded. It is stored alongside Name/Description so the Store can locate the
+	// icon file without scanning the directory.
 	IconExt string `json:"icon_ext,omitempty"`
-	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是管理面板对手机号/邮箱
-	// 登录成功后的欢迎消息（由官方系统账号 777000 发送）的原始覆盖——对应
-	// domain.ResolveWelcomeMessageTemplate。空表示「未配置」：解析器落到
-	// TELESRV_WELCOME_MESSAGE_* 环境变量，再落到编译期内置文案。刻意存原始值（而非
-	// 预解析结果），使从未碰过面板的部署始终跟着兜底链最新值走（含未来内置文案的调整）。
+	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate are the admin panel's raw
+	// overrides for the welcome message after a phone/email login succeeds (sent by the
+	// official system account 777000) -- corresponding to
+	// domain.ResolveWelcomeMessageTemplate. Empty means "not configured": the resolver
+	// falls through to the TELESRV_WELCOME_MESSAGE_* environment variables and then to
+	// the compile-time built-in text. Raw values are stored on purpose (rather than
+	// pre-resolved results), so a deployment that never touched the panel always
+	// follows the latest value of the fallback chain (including future tweaks to the
+	// built-in text).
 	WelcomeMessagePhoneTemplate string `json:"welcome_message_phone_template,omitempty"`
 	WelcomeMessageEmailTemplate string `json:"welcome_message_email_template,omitempty"`
-	// LoginCodeMessageTemplate 是管理面板对 777000 登录码投递消息的原始覆盖（见
-	// domain.ResolveLoginCodeMessageTemplate）。与欢迎消息不同，它只有一份——消息不随
-	// 投递渠道变化。空表示「未配置」，语义同上。
+	// LoginCodeMessageTemplate is the admin panel's raw override for the 777000 login-code
+	// delivery message (see domain.ResolveLoginCodeMessageTemplate). Unlike the welcome
+	// messages it is singular -- the message does not vary by delivery channel. Empty
+	// means "not configured", with the same semantics as above.
 	LoginCodeMessageTemplate string `json:"login_code_message_template,omitempty"`
 }
 
-// Store 在指定目录（通常为 Config.IdentityDir）下读写 Info 与图标文件。所有方法均可
-// 多协程、跨进程并发调用（管理二进制写、主服务器二进制读）。
+// Store reads and writes Info and the icon file under the given directory (usually
+// Config.IdentityDir). All methods may be called concurrently from multiple
+// goroutines and across processes (the admin binary writes, the main server binary
+// reads).
 type Store struct {
 	dir string
 }
@@ -64,7 +77,8 @@ func (s *Store) iconPath(ext string) string {
 	return filepath.Join(s.dir, iconBaseName+ext)
 }
 
-// Get 读取当前身份。文件不存在不算错误——只是尚未配置过，返回 Info{}（全空）。
+// Get reads the current identity. A missing file is not an error -- it just means
+// it was never configured -- and returns Info{} (all empty).
 func (s *Store) Get() (Info, error) {
 	data, err := os.ReadFile(s.metaPath())
 	if os.IsNotExist(err) {
@@ -80,7 +94,8 @@ func (s *Store) Get() (Info, error) {
 	return info, nil
 }
 
-// SetText 更新名称与简介，保留已配置的图标与模板覆盖。
+// SetText updates the name and description, preserving any configured icon and
+// template overrides.
 func (s *Store) SetText(name, description string) error {
 	info, err := s.Get()
 	if err != nil {
@@ -91,9 +106,11 @@ func (s *Store) SetText(name, description string) error {
 	return s.save(info)
 }
 
-// SetWelcomeMessageTemplates 更新登录成功后欢迎消息的模板覆盖，保留其余身份字段。
-// 任一参数为空串即清除该渠道的覆盖（回退到环境变量 / 内置文案——沿用 Info 各处
-// 「空 = 未设置」的约定），且互不影响。
+// SetWelcomeMessageTemplates updates the template overrides for the post-login welcome
+// messages, preserving the other identity fields. An empty string for either argument
+// clears that channel's override (falling back to the environment variable / built-in
+// text, following the "empty = unset" convention used throughout Info), and the two
+// are independent.
 func (s *Store) SetWelcomeMessageTemplates(phone, email string) error {
 	info, err := s.Get()
 	if err != nil {
@@ -104,12 +121,15 @@ func (s *Store) SetWelcomeMessageTemplates(phone, email string) error {
 	return s.save(info)
 }
 
-// SetLoginCodeMessageTemplate 更新登录码投递消息的管理面板覆盖，保留其余身份字段。
-// 空串即清除覆盖（回退链路见 Info 字段注释）。登录码模板不分渠道，只有一份。
+// SetLoginCodeMessageTemplate updates the admin panel override for the login-code
+// delivery message, preserving the other identity fields. An empty string clears the
+// override (see the Info field comment for the fallback chain). The login-code template
+// is channel-independent and singular.
 //
-// 调用方必须先用 domain.ValidateLoginCodeMessageTemplate 校验模板——
-// 本方法不自行拒绝缺失 {{code}} 占位符的模板，因为 internal/identity 不依赖
-// internal/domain（见包注释）。
+// The caller must validate the template with domain.ValidateLoginCodeMessageTemplate
+// first -- this method does not reject templates missing the {{code}} placeholder by
+// itself, because internal/identity does not depend on internal/domain (see the package
+// comment).
 func (s *Store) SetLoginCodeMessageTemplate(template string) error {
 	info, err := s.Get()
 	if err != nil {
@@ -119,8 +139,9 @@ func (s *Store) SetLoginCodeMessageTemplate(template string) error {
 	return s.save(info)
 }
 
-// SetIcon 替换图标文件（移除旧扩展名下的既有图标）并把扩展名写回 identity.json。
-// ext 必须带前导点（如 ".png"）。
+// SetIcon replaces the icon file (removing any existing icon under the old extension)
+// and writes the extension back to identity.json. ext must include the leading dot
+// (e.g. ".png").
 func (s *Store) SetIcon(data []byte, ext string) error {
 	info, err := s.Get()
 	if err != nil {
@@ -139,7 +160,7 @@ func (s *Store) SetIcon(data []byte, ext string) error {
 	return s.save(info)
 }
 
-// RemoveIcon 删除已配置的图标（若有）。
+// RemoveIcon deletes the configured icon, if any.
 func (s *Store) RemoveIcon() error {
 	info, err := s.Get()
 	if err != nil {
@@ -153,7 +174,8 @@ func (s *Store) RemoveIcon() error {
 	return s.save(info)
 }
 
-// Icon 返回图标的原始字节与扩展名；未配置图标时返回 ("", nil, false)。
+// Icon returns the icon's raw bytes and extension; returns ("", nil, false) when no
+// icon is configured.
 func (s *Store) Icon() (data []byte, ext string, ok bool) {
 	info, err := s.Get()
 	if err != nil || info.IconExt == "" {
@@ -166,10 +188,12 @@ func (s *Store) Icon() (data []byte, ext string, ok bool) {
 	return raw, info.IconExt, true
 }
 
-// IconFingerprint 返回一个仅随「图标内容」变化的短字符串，供主服务器轮询判断
-// operator 是否新增/替换/移除了 Server identity 图标。同名扩展覆盖上传时靠图标的
-// mtime+size 区分；未配置图标返回 ""；读不到图标文件时退化为扩展名。名称的变化由
-// 调用方直接比较 Info.Name，不需要掺进这里。
+// IconFingerprint returns a short string that changes only with the "icon content", so
+// the main server can poll to tell whether the operator added/replaced/removed the
+// Server identity icon. Overwriting an upload under the same extension is distinguished
+// by the icon's mtime+size; an unconfigured icon returns ""; when the icon file cannot
+// be read it degrades to the extension. Name changes are compared directly by the
+// caller against Info.Name and need not be mixed in here.
 func (s *Store) IconFingerprint() (string, error) {
 	info, err := s.Get()
 	if err != nil {
@@ -206,10 +230,12 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return renameWithRetry(tmp, path)
 }
 
-// renameWithRetry 尝试原子替换目标文件。Windows 上无法在目标文件正被其他进程/协程
-// 打开读取时完成替换（MoveFileEx 报 sharing violation / access denied）；主服务器
-// 会持续轮询读取 identity.json，管理面板的每一次保存都可能撞上这个窗口。读取方
-// 只在 ReadFile 期间短暂持有句柄，因此短暂重试即可完成替换，不需要跨平台加锁。
+// renameWithRetry attempts to atomically replace the target file. On Windows the
+// replacement cannot complete while the target file is open for reading by another
+// process/goroutine (MoveFileEx reports a sharing violation / access denied); the main
+// server continuously polls and reads identity.json, so every save from the admin panel
+// can hit this window. The reader holds the handle only briefly during ReadFile, so a
+// short retry completes the replacement -- no cross-platform locking is needed.
 func renameWithRetry(oldpath, newpath string) error {
 	var err error
 	for attempt := 0; attempt < 20; attempt++ {

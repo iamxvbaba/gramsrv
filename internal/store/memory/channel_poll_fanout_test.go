@@ -8,11 +8,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelPollFanoutViewsByteEquivalentToGetMessages 锁定 Phase 4 poll 模板化的安全网：批量
-// ChannelPollFanoutViews 对每个 viewer 产出的 enrich poll，必须与逐 viewer GetChannelMessages（旧
-// fan-out 路径）字节等价；且可见性判定一致（不可见 viewer 在批量里为 nil、在旧路径里取不到消息）。
-// 覆盖：作者(创建者)、已投票非作者、未投票非作者、hide_results 期非创建者、late-joiner(AvailableMinID)、
-// 被封成员、ViewMessages 受限成员、非成员。
+// TestChannelPollFanoutViewsByteEquivalentToGetMessages is the safety net locking the
+// Phase 4 poll templating: the enriched poll batch ChannelPollFanoutViews produces for each
+// viewer must be byte-equivalent to per-viewer GetChannelMessages (the old fan-out path),
+// and visibility decisions must match (an invisible viewer gets nil in the batch and
+// cannot fetch the message on the old path). Covers: author (creator), voted non-author,
+// unvoted non-author, non-creator during hide_results, late-joiner (AvailableMinID),
+// banned member, ViewMessages-restricted member, non-member.
 func TestChannelPollFanoutViewsByteEquivalentToGetMessages(t *testing.T) {
 	ctx := context.Background()
 	const (
@@ -23,9 +25,9 @@ func TestChannelPollFanoutViewsByteEquivalentToGetMessages(t *testing.T) {
 		votedA     = int64(7002)
 		votedB     = int64(7003)
 		unvoted    = int64(7004)
-		late       = int64(7005) // AvailableMinID >= msgID（pre-history 隐藏）
+		late       = int64(7005) // AvailableMinID >= msgID (pre-history hidden)
 		banned     = int64(7006)
-		restricted = int64(7007) // active 但 BannedRights.ViewMessages
+		restricted = int64(7007) // active but BannedRights.ViewMessages
 		nonMember  = int64(7008)
 	)
 	opt1, opt2, opt3 := []byte{1}, []byte{2}, []byte{3}
@@ -92,7 +94,7 @@ func TestChannelPollFanoutViewsByteEquivalentToGetMessages(t *testing.T) {
 				if !evaluated {
 					t.Fatalf("viewer %d not evaluated in batch (all passed viewers must be evaluated)", viewer)
 				}
-				// 旧路径参考：GetChannelMessages 按 viewer 取消息（含可见性 + per-viewer poll enrich）。
+				// Old-path reference: GetChannelMessages fetches the message per viewer (including visibility + per-viewer poll enrichment).
 				ref, err := channels.GetChannelMessages(ctx, viewer, channelID, []int{msgID})
 				var refPoll *domain.MessagePoll
 				if err == nil {
@@ -110,14 +112,14 @@ func TestChannelPollFanoutViewsByteEquivalentToGetMessages(t *testing.T) {
 				}
 			}
 
-			// 显式断言可见性分类，防 GetMessages 与批量同时漏判。
+			// Explicitly assert the visibility classification, guarding against both GetMessages and the batch missing it at once.
 			if views.Polls[creator] == nil || views.Polls[votedA] == nil || views.Polls[votedB] == nil || views.Polls[unvoted] == nil {
 				t.Fatalf("active members should be visible: creator/votedA/votedB/unvoted")
 			}
 			if views.Polls[late] != nil || views.Polls[banned] != nil || views.Polls[restricted] != nil || views.Polls[nonMember] != nil {
 				t.Fatalf("late/banned/restricted/nonMember must be invisible (nil)")
 			}
-			// hide_results 期：非创建者已投票者计数应被隐藏（Voters=0），创建者可见真实计数。
+			// During hide_results: a non-creator voter should have the count hidden (Voters=0), while the creator sees the real count.
 			if hideResults {
 				for _, v := range views.Polls[votedA].Results.Voters {
 					if v.Voters != 0 {

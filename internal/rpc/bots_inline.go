@@ -1211,7 +1211,7 @@ func tgInlineQueryPeerType(ctx context.Context, r *Router, userID, botID int64, 
 		return &tg.InlineQueryPeerTypePM{}
 	case domain.PeerTypeChannel:
 		if r.deps.Channels != nil {
-			// 只读 Megagroup 标志：走轻量 ResolveChannel，省 dialog/读态/boost 查询。
+			// Read-only Megagroup flag: use the lightweight ResolveChannel to save the dialog/read-state/boost queries.
 			if view, err := r.deps.Channels.ResolveChannel(ctx, userID, peer.ID); err == nil && !view.Channel.Megagroup {
 				return &tg.InlineQueryPeerTypeBroadcast{}
 			}

@@ -11,25 +11,31 @@ import (
 	"telesrv/internal/domain"
 )
 
-// messages.getStickers(emoticon)：按 emoji 返回匹配的贴纸。emoji→贴纸映射来自各
-// 贴纸集的 Packs（Emoticon→DocumentIDs）。为避免每次请求都 ListStickerSets + 遍历
-// packs，用一个进程级 TTL 缓存索引；命中 hash 时返回 *NotModified 不解析任何文档。
+// messages.getStickers(emoticon): returns matching stickers by emoji. The emoji->sticker
+// mapping comes from each sticker set's Packs (Emoticon->DocumentIDs). To avoid a
+// ListStickerSets + pack walk on every request, a process-level TTL cache index is
+// used; on a hash match it returns *NotModified without resolving any documents.
 
 const (
-	// emojiStickerIndexTTL：贴纸集 seed 后基本静态，TTL 内复用索引免重复 PG 查询。
-	// 安装/归档贴纸集后索引最多滞后该时长（贴纸搜索可接受）。
+	// emojiStickerIndexTTL: sticker sets are essentially static after seeding, so the
+	// index is reused within the TTL to avoid repeated PG queries. After installing or
+	// archiving a sticker set the index lags by at most this duration (acceptable for
+	// sticker search).
 	emojiStickerIndexTTL = 5 * time.Minute
-	// maxStickersPerEmoji 限制单个 emoji 返回的贴纸数。
+	// maxStickersPerEmoji bounds the number of stickers returned for a single emoji.
 	maxStickersPerEmoji = 100
-	// maxGreetingStickers 限制官方客户端 greeting 类别的启动预取集合。普通 👋
-	// 搜索仍保留完整结果；特殊 👋⭐ 类别只取不同贴纸集的代表项，避免客户端每次
-	// 启动在几十个普通 wave pack 之间随机命中并逐步下载整个目录。
+	// maxGreetingStickers bounds the startup prefetch set for the official client's
+	// greeting category. An ordinary 👋 search still returns the full result; the
+	// special 👋⭐ category takes only one representative per distinct sticker set, so
+	// the client does not, on every startup, randomly hit among dozens of ordinary wave
+	// packs and gradually download the entire catalog.
 	maxGreetingStickers = 12
-	// greetingStickerCategoryKey 是去掉 variation selector 后的官方 greeting 标记。
+	// greetingStickerCategoryKey is the official greeting marker with variation
+	// selectors removed.
 	greetingStickerCategoryKey = "👋⭐"
 )
 
-// emojiStickerIndex 是 emoji→贴纸文档 id 的 TTL 缓存索引。
+// emojiStickerIndex is a TTL-cached index from emoji to sticker document ids.
 type emojiStickerIndex struct {
 	mu      sync.RWMutex
 	now     func() time.Time
@@ -43,10 +49,13 @@ func newEmojiStickerIndex(now func() time.Time) *emojiStickerIndex {
 	return &emojiStickerIndex{now: now, ttl: emojiStickerIndexTTL, byEmoji: map[string][]int64{}}
 }
 
-// lookup 返回某 emoji 的贴纸文档 id；索引未建或过期时用 build 重建。
-// perf：重建在锁外执行（build 读目录缓存，I/O 不在临界区），避免 TTL 过期点把所有
-// 并发请求堵在互斥锁上。并发 stale 请求可能各自 build 一次（目录缓存自身 singleflight
-// 去重 PG，pack 遍历重复但廉价）。build 返回 nil（如目录读失败）时保留旧索引。
+// lookup returns the sticker document ids for an emoji; when the index is unbuilt or
+// expired it is rebuilt with build. perf: the rebuild runs outside the lock (build
+// reads the catalog cache, so I/O is not in the critical section), avoiding every
+// concurrent request piling up on the mutex at the TTL expiry point. Concurrent stale
+// requests may each build once (the catalog cache itself singleflights PG, so the pack
+// walk is duplicated but cheap). When build returns nil (e.g. a catalog read failure)
+// the old index is kept.
 func (idx *emojiStickerIndex) lookup(emoticon string, build func() map[string][]int64) []int64 {
 	idx.mu.RLock()
 	fresh := idx.ready && idx.now().Sub(idx.builtAt) < idx.ttl
@@ -57,11 +66,12 @@ func (idx *emojiStickerIndex) lookup(emoticon string, build func() map[string][]
 	}
 	idx.mu.RUnlock()
 
-	next := build() // 锁外重建
+	next := build() // rebuild outside the lock
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	// 复查：可能已有并发者在锁外重建并先一步换入。
+	// Re-check: a concurrent caller may have rebuilt outside the lock and swapped it in
+	// first.
 	stillStale := !idx.ready || idx.now().Sub(idx.builtAt) >= idx.ttl
 	if stillStale && next != nil {
 		idx.byEmoji = next
@@ -71,23 +81,25 @@ func (idx *emojiStickerIndex) lookup(emoticon string, build func() map[string][]
 	return append([]int64(nil), idx.byEmoji[emoticon]...)
 }
 
-// normalizeStickerEmoticon 去掉变体选择符（U+FE0F/U+FE0E）并裁剪空白，使客户端发的
-// "👍️"（带 VS16）能匹配 pack 里的 "👍"。
+// normalizeStickerEmoticon strips variation selectors (U+FE0F/U+FE0E) and trims
+// whitespace, so a client-sent "👍️" (with VS16) matches the "👍" in a pack.
 func normalizeStickerEmoticon(e string) string {
 	e = strings.ReplaceAll(e, "️", "")
 	e = strings.ReplaceAll(e, "︎", "")
 	return strings.TrimSpace(e)
 }
 
-// normalizeStickerSearchEmoticon 解析官方客户端通过 messages.getStickers
-// 传递的特殊贴纸类别标记。TDesktop、DrKLO Android 与 Telegram-iOS 都使用
-// wave+star 获取 greeting、double-star 获取 premium preview、folder+star 获取
-// premium/cloud catalog；它们不是普通复合 emoji。greeting 在索引中维护独立的
-// 有界代表集合，另外两个类别仍映射到 seed pack 的基础键。
+// normalizeStickerSearchEmoticon parses the special sticker-category markers that
+// official clients pass through messages.getStickers. TDesktop, DrKLO Android and
+// Telegram-iOS all use wave+star for greeting, double-star for the premium preview,
+// and folder+star for the premium/cloud catalog; these are not ordinary composite
+// emoji. greeting maintains a separate bounded representative set in the index, while
+// the other two categories still map to the base keys of the seed packs.
 //
-// 只匹配这三个完整标记，不能把任意复合 emoji 拆分成单个 emoji，否则会改变普通
-// sticker search 的精确匹配语义。先去掉 variation selector，可同时接纳三端的
-// Unicode 表示差异。
+// Only these three complete markers are matched; an arbitrary composite emoji must not
+// be split into single emoji, or the exact-match semantics of ordinary sticker search
+// would change. Stripping variation selectors first also accommodates the Unicode
+// representation differences across the three clients.
 func normalizeStickerSearchEmoticon(e string) string {
 	e = normalizeStickerEmoticon(e)
 	switch e {
@@ -119,10 +131,12 @@ func (r *Router) onMessagesGetStickers(ctx context.Context, req *tg.MessagesGetS
 	}
 	catalogHash := int64(tdesktopCountHash(docIDs))
 	if req.Hash != 0 && req.Hash == catalogHash {
-		// perf 短路：与客户端缓存一致，不解析任何文档。
-		// 硬契约：仅在 hash!=0 时可返回 NotModified——DrKLO premium 预览贴纸预取发
-		// hash=0 且无条件强转 TL_messages_stickers，对 notModified 会 ClassCastException
-		// 闪退；hash=0 一律走下方完整响应。勿"优化"成对 hash=0 也返回 NotModified。
+		// perf short-circuit: consistent with the client cache, resolve no documents.
+		// Hard contract: NotModified may only be returned when hash!=0 - DrKLO's premium
+		// preview sticker prefetch sends hash=0 and unconditionally casts to
+		// TL_messages_stickers, so a notModified would ClassCastException and crash;
+		// hash=0 always takes the full response below. Do not "optimize" this into
+		// returning NotModified for hash=0.
 		return &tg.MessagesStickersNotModified{}, nil
 	}
 	if len(docIDs) == 0 {
@@ -134,7 +148,7 @@ func (r *Router) onMessagesGetStickers(ctx context.Context, req *tg.MessagesGetS
 	}
 	byID := documentsByID(docs)
 	ordered := make([]domain.Document, 0, len(docIDs))
-	for _, id := range docIDs { // 保持索引顺序
+	for _, id := range docIDs { // preserve index order
 		if d, ok := byID[id]; ok {
 			ordered = append(ordered, d)
 		}
@@ -142,13 +156,15 @@ func (r *Router) onMessagesGetStickers(ctx context.Context, req *tg.MessagesGetS
 	return &tg.MessagesStickers{Hash: catalogHash, Stickers: tgDocuments(ordered)}, nil
 }
 
-// buildEmojiStickerIndex 从所有（未归档）常规贴纸集的 Packs 构建 emoji→去重有序 docIDs。
-// 返回 nil 表示构建失败（保留旧索引）。
+// buildEmojiStickerIndex builds emoji->deduplicated ordered docIDs from the Packs of
+// all (non-archived) regular sticker sets. Returning nil means the build failed (keep
+// the old index).
 func (r *Router) buildEmojiStickerIndex(ctx context.Context) map[string][]int64 {
-	// perf：从目录缓存读集（与 getAllStickers/featured 共用，TTL 内不打 PG）。
+	// perf: read the sets from the catalog cache (shared with getAllStickers/featured,
+	// no PG hit within the TTL).
 	sets := r.stickerCatalogSets(ctx, domain.StickerSetKindStickers)
 	if sets == nil {
-		return nil // 目录读失败：保留旧索引（nil=不替换）
+		return nil // catalog read failed: keep the old index (nil = do not replace)
 	}
 	byEmoji := make(map[string][]int64)
 	seen := make(map[string]map[int64]struct{})
@@ -177,9 +193,11 @@ func (r *Router) buildEmojiStickerIndex(ctx context.Context) map[string][]int64 
 				dedup[id] = struct{}{}
 				byEmoji[key] = append(byEmoji[key], id)
 			}
-			// greeting 是客户端启动预取目录，不等同于普通 👋 搜索。每个贴纸集
-			// 只放一个代表项，随后在响应边界再限制总数；这样既保留多样性，也
-			// 不会把所有普通 wave sticker 暴露为启动资源候选。
+			// greeting is the client's startup prefetch catalog and is not the same as
+			// an ordinary 👋 search. Each sticker set contributes only one representative,
+			// with the total further bounded at the response boundary; this keeps
+			// diversity without exposing every ordinary wave sticker as a startup
+			// resource candidate.
 			if key == "👋" && !greetingAdded {
 				greetingSeen := seen[greetingStickerCategoryKey]
 				if greetingSeen == nil {

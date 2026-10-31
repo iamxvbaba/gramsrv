@@ -8,10 +8,11 @@ import (
 	"time"
 )
 
-// 本文件覆盖 failover 链的行为。响应体用 2026-09 的实测样本,所以这些断言同时也在
-// 钉住各家的真实字段形状——它们的文档和实际返回并不总是一致。
+// This file covers the behavior of the failover chain. The response bodies use
+// measured 2026-09 samples, so these assertions also pin down each provider's
+// real field shapes -- their docs and actual responses do not always agree.
 
-// chainResolver 用一组 httptest 端点构造解析器,跳过 New 的配置校验。
+// chainResolver builds a resolver from a set of httptest endpoints, skipping New's config validation.
 func chainResolver(t *testing.T, servers []*lookupServer, mutate func(*Config)) *cachedResolver {
 	t.Helper()
 	endpoints := make([]string, 0, len(servers))
@@ -31,45 +32,45 @@ func chainResolver(t *testing.T, servers []*lookupServer, mutate func(*Config)) 
 }
 
 const (
-	// geoJSBody 是 get.geojs.io 的实测响应:只有 ASN 级覆盖,没有 city/region。
+	// geoJSBody is the measured get.geojs.io response: only ASN-level coverage, no city/region.
 	geoJSBody = `{"accuracy":1000,"area_code":"0","asn":15169,"continent_code":"NA",` +
 		`"country":"United States","country_code":"US","country_code3":"USA","ip":"8.8.8.8",` +
 		`"latitude":"37.751","longitude":"-97.822","organization":"AS15169 Google LLC",` +
 		`"organization_name":"Google LLC","timezone":"America/Chicago"}`
-	// geoJSBodyNoCountry 是 geojs 对 1.1.1.1 的实测响应:连 country 字段都没有。
+	// geoJSBodyNoCountry is geojs's measured response for 1.1.1.1: not even a country field.
 	geoJSBodyNoCountry = `{"area_code":"0","asn":13335,"ip":"1.1.1.1","latitude":"nil",` +
 		`"longitude":"nil","organization":"AS13335 Cloudflare, Inc.",` +
 		`"organization_name":"Cloudflare, Inc."}`
-	// rfgiBody 是 reallyfreegeoip.org 的实测响应。
+	// rfgiBody is the measured reallyfreegeoip.org response.
 	rfgiBody = `{"ip":"8.8.8.8","country_code":"US","country_name":"United States","region_code":"",` +
 		`"region_name":"","city":"","zip_code":"","time_zone":"America/Chicago","latitude":37.751,` +
 		`"longitude":-97.822,"metro_code":0}`
-	// rfgiBodyUnknown 是它对查不到的地址的实测响应:200 + 全空字符串。
+	// rfgiBodyUnknown is its measured response for an address it cannot find: 200 + all-empty strings.
 	rfgiBodyUnknown = `{"ip":"203.0.113.7","country_code":"","country_name":"","region_code":"",` +
 		`"region_name":"","city":"","zip_code":"","time_zone":"","latitude":0,"longitude":0,"metro_code":0}`
-	// hackMyIPBody 是 hackmyip.com /api/lookup 的实测响应。注意 location.country 是
-	// 两位国家码,国名在 country_name。
+	// hackMyIPBody is the measured hackmyip.com /api/lookup response. Note that
+	// location.country is a two-letter country code; the country name is in country_name.
 	hackMyIPBody = `{"success":true,"data":{"ip":"1.1.1.1","location":{"city":"South Brisbane",` +
 		`"region":"Queensland","country":"AU","country_name":"Australia","latitude":-27.4766,` +
 		`"longitude":153.0166,"timezone":"Australia/Brisbane","postal_code":"4101"}}}`
-	// hackMyIPDownBody 是它服务故障时的实测响应:HTTP 400 + success=false。
+	// hackMyIPDownBody is its measured response when the service is failing: HTTP 400 + success=false.
 	hackMyIPDownBody = `{"success":false,"error":"IP lookup service temporarily unavailable. Please try again."}`
-	// ipapiISBody 是 api.ipapi.is 的实测响应。
+	// ipapiISBody is the measured api.ipapi.is response.
 	ipapiISBody = `{"ip":"1.1.1.1","is_bogon":false,"company":"APNIC Research and Development",` +
 		`"asn":"AS13335 Cloudflare, Inc.","city":"Brisbane","region":"Queensland",` +
 		`"country":"Australia","lat":-27.46754,"lon":153.02809,"timezone":"Australia/Brisbane"}`
-	// ipapiISBogonBody 是它对保留网段的实测响应:全字段 null。
+	// ipapiISBogonBody is its measured response for a reserved range: every field null.
 	ipapiISBogonBody = `{"ip":"203.0.113.7","is_bogon":true,"company":null,"asn":null,"city":null,` +
 		`"region":null,"country":null,"lat":null,"lon":null,"timezone":null}`
 )
 
-// okServer 让所有地址都返回给定响应。
+// okServer makes every address return the given response.
 func okServer(t *testing.T, body string) *lookupServer {
 	t.Helper()
 	return newLookupServer(t, func(string) (int, string) { return http.StatusOK, body })
 }
 
-// notFoundServer 让所有地址都回 404。
+// notFoundServer makes every address return 404.
 func notFoundServer(t *testing.T) *lookupServer {
 	t.Helper()
 	return newLookupServer(t, func(string) (int, string) {
@@ -86,7 +87,7 @@ func TestGeoJSParserReadsCountryAndTimezone(t *testing.T) {
 		t.Fatalf("location = %+v, want United States/America/Chicago", got)
 	}
 
-	// geojs 对部分地址只有 ASN 数据,没有任何国家字段。
+	// For some addresses geojs has only ASN data and no country field at all.
 	if _, outcome := parseGeoJS([]byte(geoJSBodyNoCountry)); outcome != parseNotFound {
 		t.Fatalf("outcome = %v, want parseNotFound when the ASN-only response has no country", outcome)
 	}
@@ -97,7 +98,7 @@ func TestHackMyIPParserPrefersCountryNameOverCode(t *testing.T) {
 	if outcome != parseOK {
 		t.Fatalf("outcome = %v, want parseOK", outcome)
 	}
-	// location.country 是 "AU";用错字段的话界面上会出现两位国家码。
+	// location.country is "AU"; using the wrong field would show a two-letter country code in the UI.
 	if got.Country != "Australia" {
 		t.Fatalf("country = %q, want Australia (country_name, not the AU code)", got.Country)
 	}
@@ -105,7 +106,8 @@ func TestHackMyIPParserPrefersCountryNameOverCode(t *testing.T) {
 		t.Fatalf("region = %q, want South Brisbane", got.Region)
 	}
 
-	// 服务自报故障必须算不可达,否则会当成"没这条 IP"去白问后面所有后端。
+	// A self-reported service failure must count as unreachable, otherwise it is
+	// taken as "no such IP" and pointlessly queries every later backend.
 	if _, outcome := parseHackMyIP([]byte(hackMyIPDownBody)); outcome != parseFailed {
 		t.Fatalf("outcome = %v, want parseFailed for success=false", outcome)
 	}
@@ -120,17 +122,19 @@ func TestIPAPISParserHandlesBogonAndNullFields(t *testing.T) {
 		t.Fatalf("location = %+v, want Australia/Brisbane", got)
 	}
 
-	// is_bogon 加上全 null:不能把 "null" 当地名显示出去。
+	// is_bogon plus all-null: "null" must not be shown as a place name.
 	if _, outcome := parseIPAPIS([]byte(ipapiISBogonBody)); outcome != parseNotFound {
 		t.Fatalf("outcome = %v, want parseNotFound for is_bogon", outcome)
 	}
 }
 
-// 按主机名选解析器,而不是让运维显式写 kind:同一串 TELESRV_GEOIP_ENDPOINTS 对四个
-// 免费服务都该成立。识别不出的主机(自建 MaxMind 代理等)走通用解析。
+// Pick the parser by hostname rather than making operators write an explicit
+// kind: the same TELESRV_GEOIP_ENDPOINTS should work for all four free services.
+// Unrecognized hosts (self-hosted MaxMind proxies, etc.) use generic parsing.
 func TestParserForHostSelectsProviderByHostname(t *testing.T) {
-	// 每家都用一个只有自己认得的响应体:通用解析会在这里返回 parseNotFound,所以
-	// probeOK=true 就等价于"确实选中了专属解析器"。
+	// Each provider gets a response body only it recognizes: generic parsing
+	// returns parseNotFound here, so probeOK=true is equivalent to "the
+	// dedicated parser really was selected".
 	cases := []struct {
 		host     string
 		body     string
@@ -145,14 +149,14 @@ func TestParserForHostSelectsProviderByHostname(t *testing.T) {
 		{host: "api.hackmyip.com", body: hackMyIPBody, probeOK: true, wantName: "Australia"},
 		{host: "api.ipapi.is", body: ipapiISBody, probeOK: true, wantName: "Australia"},
 		{host: "ipapi.is", body: ipapiISBody, probeOK: true, wantName: "Australia"},
-		// 大小写与端口都该被容忍。
+		// Both case and port should be tolerated.
 		{host: "API.IpApi.Is", body: ipapiISBody, probeOK: true, wantName: "Australia"},
 		{host: "geo.example.test:8443", body: `{"country_name":"Iceland","city":"Reykjavik"}`, probeOK: true, wantName: "Iceland"},
-		// 通用解析认得嵌套结构和常见别名。
+		// Generic parsing recognizes nested structures and common aliases.
 		{host: "proxy.internal.lan:8080", body: `{"data":{"location":{"country_name":"Peru","city":"Lima"}}}`, probeOK: true, wantName: "Peru"},
-		// 通用解析读不出 ipapi.is 的 null 字段,专属解析能读。
+		// Generic parsing cannot read ipapi.is's null fields; the dedicated parser can.
 		{host: "proxy.internal.lan", body: ipapiISBody, probeOK: true, wantName: "Australia"},
-		// 没有国家名的响应在所有解析器下都必须是"没查到"。
+		// A response without a country name must be "not found" under every parser.
 		{host: "api.ipapi.is", body: ipapiISBogonBody},
 		{host: "get.geojs.io", body: geoJSBodyNoCountry},
 		{host: "proxy.internal.lan", body: `{"city":"Nowhere"}`},
@@ -202,7 +206,7 @@ func TestGenericParserHandlesNestedAndAliasFields(t *testing.T) {
 			wantRegion: "Brisbane",
 		},
 		{
-			// GeoIP2 风格代理的字段命名。
+			// Field naming of a GeoIP2-style proxy.
 			name:       "geoip2 style",
 			body:       `{"country":{"names":{"en":"Germany"}},"city":{"names":{"en":"Berlin"}}}`,
 			wantCtry:   "",
@@ -238,10 +242,11 @@ func TestGenericParserHandlesNestedAndAliasFields(t *testing.T) {
 	}
 }
 
-// 主力查不到就落到下一个:这正是多后端存在的理由。geojs 对 1.1.1.1 没有国家字段
-// (实测),ipapi.is 有。
+// When the primary cannot find the address, fall to the next one: that is the
+// very reason multiple backends exist. geojs has no country field for 1.1.1.1
+// (measured); ipapi.is does.
 func TestResolveFallsOverToNextBackendOnMissingData(t *testing.T) {
-	primary := okServer(t, geoJSBodyNoCountry) // ASN-only,没有 country
+	primary := okServer(t, geoJSBodyNoCountry) // ASN-only, no country
 	fallback := okServer(t, ipapiISBody)
 	resolver := chainResolver(t, []*lookupServer{primary, fallback}, nil)
 
@@ -255,7 +260,7 @@ func TestResolveFallsOverToNextBackendOnMissingData(t *testing.T) {
 	}
 }
 
-// 后端坏掉(HTTP 400 / success=false)也必须让位,而不是让整条链返回空。
+// A failing backend (HTTP 400 / success=false) must also yield, rather than making the whole chain return empty.
 func TestResolveFallsOverWhenBackendIsDown(t *testing.T) {
 	primary := newLookupServer(t, func(string) (int, string) {
 		return http.StatusBadRequest, hackMyIPDownBody
@@ -270,7 +275,7 @@ func TestResolveFallsOverWhenBackendIsDown(t *testing.T) {
 	}
 }
 
-// 限流也是让位理由之一,而且主力被熔断后不能在下一批里继续消耗配额。
+// Rate limiting is also a reason to yield, and once the primary is tripped it must not keep consuming quota in the next batch.
 func TestResolveFallsOverOnRateLimitAndOpensBreaker(t *testing.T) {
 	primary := newLookupServer(t, func(string) (int, string) {
 		return http.StatusTooManyRequests, `{"error":"rate limited"}`
@@ -289,7 +294,8 @@ func TestResolveFallsOverOnRateLimitAndOpensBreaker(t *testing.T) {
 		t.Fatalf("primary breaker = %+v, want an open rate_limit window", state)
 	}
 
-	// 熔断期内新的一批:主力一个请求都不发,直接由兜底后端回答。
+	// A new batch during the breaker window: the primary sends no requests at
+	// all, and the fallback backend answers directly.
 	before := primary.calls()
 	got := mustResolve(t, resolver, "8.8.8.9")
 	if got["8.8.8.9"].Country != "Australia" {
@@ -300,8 +306,10 @@ func TestResolveFallsOverOnRateLimitAndOpensBreaker(t *testing.T) {
 	}
 }
 
-// 硬失败要立刻停发本批剩余请求:后端正在坏掉时,把它剩下的地址一个一个撞满超时预算
-// 只会拖慢整批,那正是 failover 要消灭的卡顿。
+// A hard failure must immediately stop sending the rest of the batch: when a
+// backend is failing, grinding its remaining addresses through the full timeout
+// budget one by one only slows the batch -- exactly the stall failover exists to
+// eliminate.
 func TestResolveStopsSendingToFailingBackendMidBatch(t *testing.T) {
 	var served int
 	var mu sync.Mutex
@@ -313,7 +321,7 @@ func TestResolveStopsSendingToFailingBackendMidBatch(t *testing.T) {
 	})
 	fallback := okServer(t, ipapiISBody)
 	resolver := chainResolver(t, []*lookupServer{primary, fallback}, func(c *Config) {
-		c.Concurrency = 1 // 串行,让"停发"这件事可确定地观测
+		c.Concurrency = 1 // serial, so the "stop sending" behavior is deterministically observable
 	})
 
 	ips := []string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "208.67.222.222"}
@@ -330,7 +338,7 @@ func TestResolveStopsSendingToFailingBackendMidBatch(t *testing.T) {
 	}
 }
 
-// 熔断打开的主力和健康的兜底必须各自独立:一个后端限流不该连累另一个。
+// A tripped primary and a healthy fallback must stay independent: one backend's rate limiting must not implicate another.
 func TestBreakersAreIsolatedPerBackend(t *testing.T) {
 	limited := newLookupServer(t, func(string) (int, string) {
 		return http.StatusTooManyRequests, `{"error":"rate limited"}`
@@ -349,7 +357,8 @@ func TestBreakersAreIsolatedPerBackend(t *testing.T) {
 	}
 }
 
-// failover 的结果照样进正缓存:主力恢复后不该把同一批地址重新问一遍链。
+// A failover result still goes into the positive cache: once the primary
+// recovers, the same batch of addresses must not be re-queried through the chain.
 func TestFailingOverResultIsCachedAcrossBackends(t *testing.T) {
 	primary := notFoundServer(t)
 	fallback := okServer(t, rfgiBody)
@@ -365,7 +374,7 @@ func TestFailingOverResultIsCachedAcrossBackends(t *testing.T) {
 	}
 }
 
-// 负缓存只在整条链都没结果之后才写:某个后端的覆盖缺失不能把地址长期冻住。
+// A negative cache entry is written only after the whole chain misses: one backend's coverage gap must not freeze an address for long.
 func TestNegativeCacheOnlyAfterWholeChainExhausted(t *testing.T) {
 	first := notFoundServer(t)
 	second := notFoundServer(t)
@@ -378,7 +387,7 @@ func TestNegativeCacheOnlyAfterWholeChainExhausted(t *testing.T) {
 		t.Fatalf("calls = %d/%d, want the whole chain tried once", first.calls(), second.calls())
 	}
 
-	// 负缓存期内不再问链;过期后才重试。
+	// Within the negative-cache window the chain is not queried; only after it expires is it retried.
 	mustResolve(t, resolver, "8.8.8.7")
 	if first.calls() != 1 || second.calls() != 1 {
 		t.Fatalf("negative cache missed: calls = %d/%d", first.calls(), second.calls())
@@ -391,7 +400,7 @@ func TestNegativeCacheOnlyAfterWholeChainExhausted(t *testing.T) {
 	}
 }
 
-// 同一个后端配两次不会提高成功率,只会让一次会话列表多打一遍请求。
+// Configuring the same backend twice does not improve the success rate; it only doubles the requests for one session list.
 func TestDuplicateEndpointsAreCollapsed(t *testing.T) {
 	srv := okServer(t, rfgiBody)
 	endpoint := srv.URL + "/json/{ip}"
@@ -410,7 +419,7 @@ func TestDuplicateEndpointsAreCollapsed(t *testing.T) {
 	}
 }
 
-// 缓存命中时整条链都不该被问到——免费后端的配额经不起无谓的出网。
+// On a cache hit the whole chain must not be queried -- free backends' quotas cannot afford pointless network traffic.
 func TestCachedResolutionSkipsWholeChain(t *testing.T) {
 	srv := okServer(t, rfgiBody)
 	resolver := chainResolver(t, []*lookupServer{srv}, nil)
@@ -423,9 +432,12 @@ func TestCachedResolutionSkipsWholeChain(t *testing.T) {
 	}
 }
 
-// 整条链都不可用时不能拖住超过调用方预算:每个后端各占一次超时,链再长也不能线性放大。
+// When the whole chain is unavailable it must not hold up the caller beyond
+// their budget: each backend costs one timeout, so a longer chain must not scale
+// linearly.
 func TestResolveRespectsCallerContextAcrossChain(t *testing.T) {
-	// 用不响应的服务器:每个后端都要耗满 timeout,链越长越容易把调用方预算撑爆。
+	// Use unresponsive servers: every backend burns its full timeout, and the
+	// longer the chain the easier it is to blow the caller's budget.
 	unresponsive := func() *lookupServer {
 		release := make(chan struct{})
 		s := newLookupServer(t, func(string) (int, string) {

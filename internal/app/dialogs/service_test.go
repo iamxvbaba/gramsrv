@@ -928,8 +928,8 @@ func TestChannelDialogSettingsPersistThroughUnifiedDialogService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDialogs: %v", err)
 	}
-	// 归档对话不再出现在主列表（缺省 folder 视为 folder 0），主列表以
-	// ArchiveSummary 聚合呈现归档状态。
+	// An archived dialog no longer appears in the main list (the default folder is treated as
+	// folder 0); the main list presents the archive state via the ArchiveSummary aggregate.
 	for _, dialog := range list.Dialogs {
 		if dialog.Peer.Type == domain.PeerTypeChannel && dialog.Peer.ID == first.Channel.ID {
 			t.Fatalf("archived dialog leaked into main list: %+v", dialog)
@@ -961,8 +961,8 @@ func TestChannelDialogSettingsPersistThroughUnifiedDialogService(t *testing.T) {
 	if got.FolderID != domain.DialogArchiveFolderID {
 		t.Fatalf("archived dialog = %+v, want archive folder", got)
 	}
-	// 归档清除 pinned（对齐 TDesktop History::setFolderPointer 的本地 unpin），
-	// unread_mark 保留。
+	// Archiving clears pinned (aligned with TDesktop History::setFolderPointer's local unpin)
+	// while unread_mark is preserved.
 	if got.Pinned || got.PinnedOrder != 0 || !got.UnreadMark {
 		t.Fatalf("archived dialog = %+v, want unpinned with unread mark", got)
 	}
@@ -1379,8 +1379,8 @@ func TestGetDialogsPinnedOnlyAttachesArchiveSummary(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert archived dialog: %v", err)
 	}
-	// getPinnedDialogs(folder_id=0) 路径：DrKLO 的 archive 行发现完全依赖
-	// 该响应里的 dialogFolder 条目。
+	// getPinnedDialogs(folder_id=0) path: DrKLO's discovery of the archive row depends entirely
+	// on the dialogFolder entry in this response.
 	pinned, err := dialogs.GetDialogs(ctx, 1001, domain.DialogFilter{
 		PinnedOnly:  true,
 		HasFolderID: true,
@@ -1393,7 +1393,7 @@ func TestGetDialogsPinnedOnlyAttachesArchiveSummary(t *testing.T) {
 	if pinned.ArchiveSummary == nil || !pinned.ArchiveSummary.Pinned || pinned.ArchiveSummary.TopPeer != archivedPeer {
 		t.Fatalf("pinned archive summary = %+v, want pinned archive entry", pinned.ArchiveSummary)
 	}
-	// archive 行被 unpin 后不属于 pinned 集合。
+	// Once the archive row is unpinned it no longer belongs to the pinned set.
 	if _, err := dialogStore.SetArchivePinned(ctx, 1001, false); err != nil {
 		t.Fatalf("set archive pinned: %v", err)
 	}
@@ -1409,7 +1409,7 @@ func TestGetDialogsPinnedOnlyAttachesArchiveSummary(t *testing.T) {
 	if unpinned.ArchiveSummary != nil {
 		t.Fatalf("pinned archive summary after unpin = %+v, want nil", unpinned.ArchiveSummary)
 	}
-	// 主列表第一页仍输出条目（pinned flag 用真值），与官方一致。
+	// The main list's first page still outputs the entry (with the pinned flag at its true value), consistent with the official behavior.
 	main, err := dialogs.GetDialogs(ctx, 1001, domain.DialogFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("GetDialogs main: %v", err)
@@ -1417,7 +1417,7 @@ func TestGetDialogsPinnedOnlyAttachesArchiveSummary(t *testing.T) {
 	if main.ArchiveSummary == nil || main.ArchiveSummary.Pinned {
 		t.Fatalf("main archive summary = %+v, want entry with pinned=false", main.ArchiveSummary)
 	}
-	// exclude_pinned 请求按官方语义不带条目。
+	// exclude_pinned requests carry no entry per official semantics.
 	excluded, err := dialogs.GetDialogs(ctx, 1001, domain.DialogFilter{ExcludePinned: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("GetDialogs exclude pinned: %v", err)

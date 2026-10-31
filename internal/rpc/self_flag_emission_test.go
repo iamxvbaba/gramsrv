@@ -8,12 +8,15 @@ import (
 	"telesrv/internal/domain"
 )
 
-// DrKLO 的 UserObject.isUserSelf 只看 user.self flag；服务端任何把"请求者自己的 user"
-// 用 self=false 形态下发的路径，都会让 Android putUsers 覆盖账号缓存，Saved Messages
-// 退化为普通自聊。本测试锁定几个曾漏 self 分支的 channel/global 历史转换出口：viewer
-// 自己出现在 users 集合时必须带 self 标志。
+// DrKLO's UserObject.isUserSelf only looks at the user.self flag; any server path
+// that emits "the requester's own user" with self=false makes Android putUsers
+// overwrite the account cache and degrade Saved Messages into an ordinary self-chat.
+// This test pins several channel/global history conversion exits that once missed
+// the self branch: when the viewer appears in the users set it must carry the self
+// flag.
 
-// selfFlag 在 users 里定位 viewer，返回其 self 标志（找不到时 fail）。
+// selfFlag locates the viewer in users and returns its self flag (fails when not
+// found).
 func selfFlag(t *testing.T, users []tg.UserClass, viewerID int64) bool {
 	t.Helper()
 	for _, uc := range users {
@@ -52,7 +55,7 @@ func TestChannelSearchPostsMessagesMarksViewerSelf(t *testing.T) {
 	const viewer = int64(1001)
 	history := domain.ChannelHistory{
 		Channel:  domain.Channel{ID: 40, AccessHash: 7, Megagroup: true},
-		Count:    5, // 触发 MessagesMessagesSlice 分支
+		Count:    5, // triggers the MessagesMessagesSlice branch
 		Channels: []domain.Channel{{ID: 40, AccessHash: 7, Megagroup: true}},
 		Users:    []domain.User{{ID: viewer, AccessHash: 5, FirstName: "Me"}},
 	}

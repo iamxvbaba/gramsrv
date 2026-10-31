@@ -10,13 +10,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestResolveInputMediaExternal 验证 inputMediaPhoto/DocumentExternal 路由到 Files
-// 外链抓取，并把结果投影为 photo/document 媒体；空 URL（fakeFiles 拒）→ MEDIA_INVALID。
+// TestResolveInputMediaExternal verifies inputMediaPhoto/DocumentExternal routes to
+// the Files external-link fetch and projects the result into photo/document media;
+// an empty URL (rejected by fakeFiles) → MEDIA_INVALID.
 func TestResolveInputMediaExternal(t *testing.T) {
 	r := &Router{deps: Deps{Files: &fakeFiles{}}}
 	ctx := context.Background()
 
-	// 外链图片。
+	// External-link photo.
 	media, err := r.resolveInputMedia(ctx, 1001, &tg.InputMediaPhotoExternal{URL: "https://example.com/cat.png", Spoiler: true})
 	if err != nil {
 		t.Fatalf("photo external: %v", err)
@@ -25,7 +26,7 @@ func TestResolveInputMediaExternal(t *testing.T) {
 		t.Fatalf("photo external media = %+v, want spoiler photo", media)
 	}
 
-	// 外链文档。
+	// External-link document.
 	media, err = r.resolveInputMedia(ctx, 1001, &tg.InputMediaDocumentExternal{URL: "https://example.com/doc.pdf"})
 	if err != nil {
 		t.Fatalf("document external: %v", err)
@@ -34,7 +35,7 @@ func TestResolveInputMediaExternal(t *testing.T) {
 		t.Fatalf("document external media = %+v, want document", media)
 	}
 
-	// 空 URL（抓取失败）→ MEDIA_INVALID。
+	// Empty URL (fetch fails) → MEDIA_INVALID.
 	if _, err := r.resolveInputMedia(ctx, 1001, &tg.InputMediaPhotoExternal{URL: ""}); !tgerr.Is(err, "MEDIA_INVALID") {
 		t.Fatalf("empty url photo err = %v, want MEDIA_INVALID", err)
 	}

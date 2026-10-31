@@ -7,9 +7,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// Регрессия (postgres 口径):关闭"限制新成员查看历史"必须归还成员读边界。
-// available_min_id 只增不减(upsert/batch/clear history 全是 GREATEST),不显式归零则
-// "隐藏历史期间入群"的成员永久看到空频道,重新加入也救不回。
+// Regression (postgres wording): disabling "restrict new members from viewing history" must release
+// the member read boundary. available_min_id only increases (upsert/batch/clear history are all
+// GREATEST), so without an explicit reset, members who joined while history was hidden see an empty
+// channel forever, and rejoining cannot recover it.
 func TestPreHistoryHiddenBoundaryReleasedOnDisable(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -98,7 +99,7 @@ func TestPreHistoryHiddenBoundaryReleasedOnDisable(t *testing.T) {
 		t.Fatalf("late member sees %d messages after release, want all %d", len(lateHistory.Messages), len(ownerAll.Messages))
 	}
 
-	// 重新加入同样要归还边界。
+	// Rejoining must likewise release the boundary.
 	if _, err := channels.LeaveChannel(ctx, channelID, late.ID, 1700000500); err != nil {
 		t.Fatalf("leave: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestPreHistoryHiddenBoundaryReleasedOnDisable(t *testing.T) {
 		t.Fatalf("rejoined member sees %d messages, want all %d", len(rejoinedHistory.Messages), len(ownerAll.Messages))
 	}
 
-	// 护栏:成员自己"清空历史"的边界不得被群设置改写。
+	// Guardrail: a member's own "clear history" boundary must not be rewritten by the group settings.
 	if _, err := channels.DeleteChannelHistory(ctx, domain.DeleteChannelHistoryRequest{
 		UserID: late.ID, ChannelID: channelID, Date: 1700000700,
 	}); err != nil {

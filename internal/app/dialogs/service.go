@@ -15,10 +15,10 @@ import (
 	"telesrv/internal/store"
 )
 
-// PremiumChecker 报告用户当前是否有效会员（pin 上限双档判断用）。
+// PremiumChecker reports whether the user currently has an active Premium membership (used for the two-tier pin limit decision).
 type PremiumChecker func(ctx context.Context, userID int64) bool
 
-// Service 提供会话列表查询。
+// Service provides dialog list queries.
 type Service struct {
 	dialogs          store.DialogStore
 	channels         store.ChannelStore
@@ -45,7 +45,7 @@ func WithContactStore(c store.ContactStore) Option {
 	return func(s *Service) { s.contacts = c }
 }
 
-// WithPremiumChecker 启用 pin 上限的 premium 双档（缺省一律按默认档）。
+// WithPremiumChecker enables the Premium two-tier pin limit (defaults to the default tier otherwise).
 func WithPremiumChecker(p PremiumChecker) Option {
 	return func(s *Service) { s.premium = p }
 }
@@ -100,7 +100,7 @@ func WithSharedDialogListSnapshotCache(cache store.DialogListSnapshotCache) Opti
 	return func(s *Service) { s.sharedListCache = cache }
 }
 
-// NewService 创建 dialogs 服务。
+// NewService creates the dialogs service.
 func NewService(dialogs store.DialogStore, channels ...store.ChannelStore) *Service {
 	s := &Service{
 		dialogs:          dialogs,
@@ -141,16 +141,17 @@ func (s *Service) rebuildProjector() {
 	)
 }
 
-// GetDialogs 返回当前登录账号的会话摘要。未登录或无持久化实现时按空账号处理。
+// GetDialogs returns the dialog summary of the currently logged-in account. When not logged in or with no durable implementation it is treated as an empty account.
 func (s *Service) GetDialogs(ctx context.Context, userID int64, filter domain.DialogFilter) (domain.DialogList, error) {
 	return s.getDialogs(ctx, userID, filter, false)
 }
 
-// getDialogs 是 GetDialogs 的实现。lightweight=true 跳过草稿附加、viewer 投影与
-// list-hash 写回,供 attachArchiveSummary 取归档顶部会话用:归档摘要只需 top
-// peer/message,草稿无意义;且追加进来的归档 users 会被外层 GetDialogs 的
-// projectDialogUsers 统一投影,内层再投影纯属重复(原归档递归走完整 GetDialogs
-// 会多跑一次 ListDrafts + 一次投影)。
+// getDialogs is the implementation of GetDialogs. lightweight=true skips draft attachment,
+// viewer projection and list-hash write-back, for attachArchiveSummary to take the top archived
+// dialog: the archive summary needs only the top peer/message, so drafts are meaningless; and
+// the appended archive users are uniformly projected by the outer GetDialogs via
+// projectDialogUsers, so projecting again inside is pure duplication (the original archive
+// recursion running the full GetDialogs would run ListDrafts + a projection an extra time).
 func (s *Service) getDialogs(ctx context.Context, userID int64, filter domain.DialogFilter, lightweight bool) (domain.DialogList, error) {
 	if s == nil || userID == 0 {
 		return domain.DialogList{}, nil
@@ -548,8 +549,9 @@ func orderMaterializedDialogs(headers, materialized []domain.Dialog) []domain.Di
 }
 
 func (s *Service) loadDialogs(ctx context.Context, userID int64, filter domain.DialogFilter, lightweight bool) (domain.DialogList, error) {
-	// 在加载任何会话状态前快照 list-hash epoch：若加载/投影期间发生 dialog_light 写失效，
-	// rememberDialogListHash 会据此拒绝写回 stale hash，避免后续 getDialogs 误返 NotModified。
+	// Snapshot the list-hash epoch before loading any dialog state: if a dialog_light write
+	// invalidation occurs during loading/projection, rememberDialogListHash will refuse to write
+	// back the stale hash accordingly, preventing a later getDialogs from wrongly returning NotModified.
 	listHashEpoch := s.listHashCache.cacheEpoch()
 	var out domain.DialogList
 	if s.dialogs != nil {
@@ -592,7 +594,8 @@ func (s *Service) loadDialogs(ctx context.Context, userID int64, filter domain.D
 		return domain.DialogList{}, err
 	}
 	if lightweight {
-		// 归档摘要顶部会话:不附草稿、不投影(由外层统一投影)、不写 list-hash。
+		// Archive summary top dialog: no draft attachment, no projection (projected uniformly by
+		// the outer layer), no list-hash write.
 		return out, nil
 	}
 	if err := s.attachDrafts(ctx, userID, &out); err != nil {
@@ -605,9 +608,10 @@ func (s *Service) loadDialogs(ctx context.Context, userID int64, filter domain.D
 	return out, nil
 }
 
-// attachArchiveSummary 在主列表第一页响应上聚合归档摘要：TDesktop 只能靠
-// 响应头部的 dialogFolder 条目发现 archive（新登录设备没有任何 update 可
-// 重放），缺少它归档会话将彻底不可见。归档/自定义 filter/置顶/翻页请求不附加。
+// attachArchiveSummary aggregates the archive summary onto the main list's first-page response:
+// TDesktop can only discover the archive from the dialogFolder entry in the response header (a
+// newly logged-in device has no updates to replay), and without it archived dialogs are entirely
+// invisible. Not attached for archive/custom filter/pinned/pagination requests.
 func (s *Service) attachArchiveSummary(ctx context.Context, userID int64, filter domain.DialogFilter, out *domain.DialogList) error {
 	if s == nil || out == nil {
 		return nil
@@ -615,10 +619,11 @@ func (s *Service) attachArchiveSummary(ctx context.Context, userID int64, filter
 	if filter.HasFolderID && filter.FolderID != domain.DialogMainFolderID {
 		return nil
 	}
-	// exclude_pinned 请求按官方语义排除 folder 条目（archive 行属 pinned 集合）。
-	// PinnedOnly（getPinnedDialogs）不能跳过：DrKLO 主列表 getDialogs 一律带
-	// exclude_pinned，archive 行的发现完全依赖 getPinnedDialogs 响应里的
-	// dialogFolder 条目（fetchFolderInLoadedPinnedDialogs）。
+	// exclude_pinned requests exclude the folder entry per official semantics (the archive row
+	// belongs to the pinned set). PinnedOnly (getPinnedDialogs) must not be skipped: DrKLO's main
+	// list getDialogs always carries exclude_pinned, so discovery of the archive row depends
+	// entirely on the dialogFolder entry in the getPinnedDialogs response
+	// (fetchFolderInLoadedPinnedDialogs).
 	if filter.ExcludePinned {
 		return nil
 	}
@@ -661,7 +666,7 @@ func (s *Service) attachArchiveSummary(ctx context.Context, userID int64, filter
 		}
 		archivePinned = pinned
 	}
-	// getPinnedDialogs 只返回置顶集合：archive 行被 unpin 后不再属于它。
+	// getPinnedDialogs returns only the pinned set: once the archive row is unpinned it no longer belongs to it.
 	if filter.PinnedOnly && !archivePinned {
 		return nil
 	}
@@ -674,8 +679,8 @@ func (s *Service) attachArchiveSummary(ctx context.Context, userID int64, filter
 		UnreadMessagesCount: unreadMessages,
 		Pinned:              archivePinned,
 	}
-	// dialogFolder.peer 指向的会话对象必须随响应下发：TDesktop
-	// Folder::applyDialog 会立即解引用该 peer（owner().history(peerId)）。
+	// The dialog object that dialogFolder.peer points to must be delivered with the response:
+	// TDesktop's Folder::applyDialog immediately dereferences that peer (owner().history(peerId)).
 	out.Messages = append(out.Messages, top.Messages...)
 	out.ChannelMessages = append(out.ChannelMessages, top.ChannelMessages...)
 	out.Users = append(out.Users, top.Users...)
@@ -688,7 +693,7 @@ func cloneDialogPtr(dialog domain.Dialog) *domain.Dialog {
 	return &clone
 }
 
-// GetPeerDialogs 返回指定 peer 的会话摘要。缺失的 peer 由 store 按空会话占位返回。
+// GetPeerDialogs returns the dialog summary for the given peers. A missing peer is returned by the store as an empty dialog placeholder.
 func (s *Service) GetPeerDialogs(ctx context.Context, userID int64, peers []domain.Peer) (domain.DialogList, error) {
 	if s == nil || userID == 0 || len(peers) == 0 {
 		return domain.DialogList{}, nil
@@ -902,7 +907,7 @@ func sameDialogDraftContent(a, b domain.DialogDraft) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// GetDraft 读取某会话当前云草稿（draft_message 事件重放时按 peer 重载用）。
+// GetDraft reads a dialog's current cloud draft (used to reload per peer when replaying a draft_message event).
 func (s *Service) GetDraft(ctx context.Context, userID int64, peer domain.Peer, topMessageID int) (domain.DialogDraft, bool, error) {
 	if s == nil || s.dialogs == nil || userID == 0 {
 		return domain.DialogDraft{}, false, nil
@@ -950,9 +955,10 @@ func (s *Service) ClearDrafts(ctx context.Context, userID int64, limit int) ([]d
 	return drafts, err
 }
 
-// TogglePinned 置顶/取消置顶一条会话；置顶顺序在会话当前 folder 内分配，
-// 返回 (changed, 该会话所在 folder_id) 供 updateDialogPinned.folder_id 使用。
-// pin 时按 folder 校验上限（重复 pin 幂等放行），超限返回 ErrPinnedDialogsTooMuch。
+// TogglePinned pins/unpins a dialog; the pin order is allocated within the dialog's current
+// folder, returning (changed, the dialog's folder_id) for updateDialogPinned.folder_id to use.
+// On pin it checks the per-folder limit (a repeat pin is idempotently allowed), and returns
+// ErrPinnedDialogsTooMuch when over the limit.
 func (s *Service) TogglePinned(ctx context.Context, userID int64, peer domain.Peer, pinned bool) (bool, int, error) {
 	if s == nil || userID == 0 || peer.Type == "" || peer.ID == 0 {
 		return false, 0, nil
@@ -1043,7 +1049,7 @@ func (s *Service) checkPinnedLimit(ctx context.Context, userID int64, peer domai
 			continue
 		}
 		if dialog.Pinned {
-			// 重复 pin 幂等，不占新名额。
+			// A repeat pin is idempotent and does not consume a new slot.
 			return nil
 		}
 		folderID = dialog.FolderID
@@ -1066,8 +1072,8 @@ func (s *Service) checkPinnedLimit(ctx context.Context, userID int64, peer domai
 	return nil
 }
 
-// ToggleArchivePinned 置顶/取消置顶 archive folder 行本身
-// （toggleDialogPin(inputDialogPeerFolder)），返回是否变化。
+// ToggleArchivePinned pins/unpins the archive folder row itself
+// (toggleDialogPin(inputDialogPeerFolder)), returning whether anything changed.
 func (s *Service) ToggleArchivePinned(ctx context.Context, userID int64, pinned bool) (bool, error) {
 	if s == nil || s.dialogs == nil || userID == 0 {
 		return false, nil
@@ -1079,8 +1085,8 @@ func (s *Service) ToggleArchivePinned(ctx context.Context, userID int64, pinned 
 	return changed, err
 }
 
-// ReorderPinned 重排指定 folder（0 主列表/1 归档）内的置顶顺序；
-// force 只清除该 folder 内不在 order 中的置顶，绝不跨 folder 误伤。
+// ReorderPinned reorders the pin order within the given folder (0 main list / 1 archive);
+// force clears only the pins within that folder that are not in order, never touching other folders.
 func (s *Service) ReorderPinned(ctx context.Context, userID int64, folderID int, order []domain.Peer, force bool) (bool, error) {
 	if s == nil || userID == 0 {
 		return false, nil

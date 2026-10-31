@@ -21,8 +21,9 @@ import (
 	"telesrv/internal/rpc"
 )
 
-// TestRPCGetConfig 验证 M3：握手后 client 加密 help.getConfig，
-// server 经 tlprofile.Dispatcher 路由并回 rpc_result（含本地 DC），外加 new_session_created + ack。
+// TestRPCGetConfig verifies M3: after the handshake the client sends an
+// encrypted help.getConfig, and the server routes it through tlprofile.Dispatcher
+// and replies with rpc_result (containing the local DC), plus new_session_created + ack.
 func TestRPCGetConfig(t *testing.T) {
 	const (
 		dc      = 2
@@ -188,7 +189,7 @@ func TestInboundRPCQueuedDeadlineReturnsRPCTimeout(t *testing.T) {
 
 	secondReqID := clientMsgID.New(proto.MessageFromClient)
 	sendEncryptedWithSeq(t, conn, cipher, auth, secondReqID, 3, &tg.HelpGetConfigRequest{})
-	// 第一条故意忽略 context，使第二条越过自身从入队起计算的 deadline 后才有机会出队。
+	// The first deliberately ignores its context so the second only gets dequeued after exceeding its own deadline counted from enqueue.
 	time.Sleep(120 * time.Millisecond)
 	close(handler.releaseFirst)
 

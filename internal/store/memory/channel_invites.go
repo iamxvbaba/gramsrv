@@ -61,8 +61,9 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 			AvailableMinPts: channelInitialAvailableMinPts(channel),
 			ReadInboxMaxID:  channel.TopMessageID,
 		}
-		// 批量拉人同样可能包含"重新入群"的成员:归还纯 prehistory 来源的读边界
-		// (available_min_id 只增不减),否则他们永久看到空频道。
+		// Bulk-add can also include members "re-joining": restore read bounds that came
+		// purely from prehistory (available_min_id only ever increases), otherwise they
+		// would see an empty channel forever.
 		if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
 			member.AvailableMinID = 0
 		}
@@ -197,8 +198,9 @@ func (s *ChannelStore) ExportInvite(_ context.Context, req domain.ExportChannelI
 	return domain.ExportChannelInviteResult{Channel: channel, Invite: invite}, nil
 }
 
-// EnsurePermanentInvite 幂等返回 (channel, admin) 当前未撤销的永久邀请；缺失则创建。
-// 与 postgres 实现语义对齐（官方语义：邀请权限管理员必有主链接）。
+// EnsurePermanentInvite idempotently returns the currently unrevoked permanent invite for
+// (channel, admin), creating one if missing. Semantics match the postgres implementation
+// (official semantics: an admin with the invite right always has a primary link).
 func (s *ChannelStore) EnsurePermanentInvite(_ context.Context, channelID, adminUserID int64, date int) (domain.ChannelInvite, error) {
 	if channelID == 0 || adminUserID == 0 {
 		return domain.ChannelInvite{}, domain.ErrChannelInvalid
@@ -221,7 +223,7 @@ func (s *ChannelStore) EnsurePermanentInvite(_ context.Context, channelID, admin
 		if invite.ChannelID != channelID || invite.AdminUserID != adminUserID || !invite.Permanent || invite.Revoked {
 			continue
 		}
-		// map 遍历无序：取最早创建的一条，对齐 postgres ORDER BY created_at ASC。
+		// Map iteration is unordered: take the earliest-created one, matching postgres ORDER BY created_at ASC.
 		if existing == nil || invite.Date < existing.Date || (invite.Date == existing.Date && invite.Hash < existing.Hash) {
 			copied := invite
 			existing = &copied
@@ -738,7 +740,7 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		AvailableMinPts: channelInitialAvailableMinPts(channel),
 		ReadInboxMaxID:  maxInt(minID, preJoinTopID),
 	}
-	// 通过邀请链接重新入群同样要归还 prehistory 读边界(只增不减,不显式归零则永久空频道)。
+	// Re-joining through an invite link must likewise restore prehistory read bounds (they only ever increase; without an explicit reset the channel stays empty forever).
 	if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
 		member.AvailableMinID = 0
 	}

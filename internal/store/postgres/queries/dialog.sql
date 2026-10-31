@@ -82,8 +82,10 @@ WITH base AS (
   LEFT JOIN message_boxes m ON m.owner_user_id = d.user_id AND m.box_id = d.top_message_id AND NOT m.deleted
   WHERE d.user_id = $1
     AND (
-      -- 不带 folder_id flag 视为主列表（folder 0）：官方语义下归档对话只以
-      -- dialogFolder 聚合条目出现在主列表，DrKLO Android 主列表请求不设 flag。
+      -- No folder_id flag is treated as the main list (folder 0): under official
+      -- semantics archived conversations appear in the main list only as a
+      -- dialogFolder aggregate entry, and DrKLO Android's main-list request sets
+      -- no flag.
       (NOT sqlc.arg(has_folder_id)::boolean AND d.folder_id = 0)
       OR (
         sqlc.arg(has_folder_id)::boolean
@@ -540,8 +542,9 @@ ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
   updated_at = now();
 
 -- name: UpsertOutboxDialog :exec
--- 发送方向该会话发出消息即视为已知晓内容：清除手动未读标记，
--- 与 channel 发送路径、readHistory 清除语义对齐。
+-- Sending a message into the conversation counts as having seen its content: clear
+-- the manual unread mark, consistent with the channel send path and readHistory
+-- clearing semantics.
 INSERT INTO dialogs (
   user_id,
   peer_type,
@@ -648,8 +651,9 @@ SELECT
 FROM updated;
 
 -- name: SetDialogPinned :one
--- 置顶顺序在 dialog 当前 folder（0 主列表/1 归档）内独立分配，
--- 返回 folder_id 供 updateDialogPinned.folder_id 使用。
+-- Pinned order is allocated independently within the dialog's current folder
+-- (0 main list / 1 archive), and folder_id is returned for
+-- updateDialogPinned.folder_id.
 WITH target AS (
   SELECT d.folder_id
   FROM dialogs d
@@ -658,8 +662,9 @@ WITH target AS (
     AND d.peer_id = sqlc.arg(peer_id)::bigint
 ),
 next_order AS (
-  -- order 空间跨 dialogs/channel_dialogs 两表统一（合并层按 pinned_order
-  -- 全局排序），但仅在目标会话所在 folder 内取最大值。
+  -- The order space is unified across the dialogs/channel_dialogs tables (the merge
+  -- layer sorts globally by pinned_order), but the max is taken only within the
+  -- folder the target conversation belongs to.
   SELECT GREATEST(
     COALESCE((
       SELECT MAX(d.pinned_order)
@@ -697,8 +702,9 @@ SELECT
   COALESCE((SELECT folder_id FROM updated), 0)::int AS folder_id;
 
 -- name: SetDialogUnreadMark :one
--- 值守卫 IS DISTINCT FROM：重复标记同一值不应算 changed，否则上层会记一条
--- 幽灵 durable 未读标事件并多推一次 update（对齐频道侧 SetChannelDialogUnreadMark）。
+-- Value guard with IS DISTINCT FROM: re-marking the same value must not count as
+-- changed, otherwise the caller records a ghost durable unread-mark event and pushes
+-- an extra update (aligned with the channel side's SetChannelDialogUnreadMark).
 WITH updated AS (
   UPDATE dialogs d
   SET unread_mark = sqlc.arg(unread)::boolean,
@@ -749,8 +755,9 @@ WITH requested AS (
   WHERE i <= cardinality(sqlc.arg(peer_types)::text[])
 ),
 deduped AS (
-  -- 请求数组首位是置顶区最顶部；统一编码为"值越大越靠前"，与频道
-  -- reorder、toggle 的 MAX+1 分配以及合并层排序方向一致。
+  -- The first element of the request array is the very top of the pinned area;
+  -- uniformly encoded as "larger value sorts earlier", consistent with the channel
+  -- reorder and toggle MAX+1 allocation and the merge layer's sort direction.
   SELECT DISTINCT ON (peer_type, peer_id)
     peer_type,
     peer_id,
@@ -788,8 +795,9 @@ deduped AS (
   ORDER BY peer_type, peer_id
 )
 UPDATE dialogs d
--- 换 folder 时清 pinned：TDesktop History::setFolderPointer 在归档/还原时
--- 本地无条件 unpin，服务端保留旧 pin 会在下次 getDialogs 时把状态漂移回来。
+-- Clear pinned when switching folders: TDesktop's History::setFolderPointer
+-- unconditionally unpins locally on archive/restore, and keeping the old pin
+-- server-side would drift the state back on the next getDialogs.
 SET folder_id = deduped.folder_id,
     pinned = CASE WHEN d.folder_id <> deduped.folder_id THEN false ELSE d.pinned END,
     pinned_order = CASE WHEN d.folder_id <> deduped.folder_id THEN 0 ELSE d.pinned_order END,
@@ -800,8 +808,9 @@ WHERE d.user_id = sqlc.arg(user_id)::bigint
   AND d.peer_id = deduped.peer_id;
 
 -- name: SetDialogArchivePinned :one
--- archive folder 行本身的置顶状态（toggleDialogPin(inputDialogPeerFolder)）。
--- 无行时官方默认视为 pinned=true，所以这里总是落一行显式值。
+-- The pinned state of the archive folder row itself
+-- (toggleDialogPin(inputDialogPeerFolder)). When no row exists the official default
+-- is pinned=true, so a row with an explicit value is always written here.
 WITH current AS (
   SELECT archive_pinned
   FROM dialog_filter_settings
@@ -824,7 +833,8 @@ FROM dialog_filter_settings
 WHERE user_id = $1;
 
 -- name: CountArchiveUnreadDialogs :one
--- 归档（folder_id=1）未读聚合：有未读或手动标记未读的会话数 + 未读消息总数。
+-- Archive (folder_id=1) unread aggregate: the count of conversations with unread or
+-- manually-marked-unread plus the total unread message count.
 SELECT
   COUNT(*) FILTER (WHERE unread_count > 0 OR unread_mark)::int AS unread_peers,
   COALESCE(SUM(unread_count), 0)::int AS unread_messages
@@ -886,7 +896,8 @@ WHERE d.user_id = sqlc.arg(user_id)::bigint
 
 -- name: DeleteDialogByPeer :exec
 WITH dropped_drafts AS (
-    -- 删除会话同时丢弃该 peer 的云草稿，避免对端重建会话后旧草稿复活。
+    -- Deleting the conversation also discards that peer's cloud draft, so the old
+    -- draft does not come back to life after the peer recreates the conversation.
     DELETE FROM dialog_drafts dd
     WHERE dd.user_id = sqlc.arg(user_id)::bigint
       AND dd.peer_type = sqlc.arg(peer_type)::text

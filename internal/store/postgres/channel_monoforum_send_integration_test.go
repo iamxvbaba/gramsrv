@@ -10,9 +10,9 @@ import (
 	"telesrv/internal/store"
 )
 
-// TestSendMonoforumMessageAndHistoryPostgres 回归频道私信(monoforum)发送+读历史的 PG 实现:
-// 私信存进 channel_messages 的 saved_peer 维度、复用 channel pts;按订阅者分子会话、幂等、无串话。
-// 门控于 TELESRV_TEST_POSTGRES_DSN。
+// TestSendMonoforumMessageAndHistoryPostgres regression for the PG implementation of channel Direct Messages (monoforum) send + history read:
+// direct messages are stored in channel_messages' saved_peer dimension and reuse channel pts; subscriber sub-dialogs, idempotency, no crosstalk.
+// Gated on TELESRV_TEST_POSTGRES_DSN.
 func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -107,8 +107,8 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 	if mainHist.Count != 1 || len(mainHist.Messages) != 1 {
 		t.Fatalf("main monoforum history count=%d len=%d, want only service message", mainHist.Count, len(mainHist.Messages))
 	}
-	// monoforum 的服务消息是创建消息(渲染 "Direct messages were enabled in this channel."),
-	// paid_messages_price 只进母广播频道。
+	// The monoforum's service message is the creation message (rendered "Direct messages were enabled in this channel."),
+	// and paid_messages_price goes only into the parent broadcast channel.
 	if action := mainHist.Messages[0].Action; action == nil || action.Type != domain.ChannelActionCreate {
 		t.Fatalf("main monoforum action = %+v, want channel_create", action)
 	}
@@ -128,7 +128,7 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 		}
 	}
 
-	// 幂等。
+	// Idempotency.
 	dup, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: sub.ID, SavedPeer: subPeer, RandomID: 111, Message: "hi", SuggestedPost: suggestedPost, Forward: forward, Date: 1700001004})
 	if err != nil {
 		t.Fatalf("dup send: %v", err)
@@ -147,7 +147,7 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 		t.Fatalf("monoforum fingerprint length = %d, want 32", len(monoforumFingerprint))
 	}
 
-	// 历史(经 scanChannelMessage 读回 saved_peer)。
+	// History (saved_peer read back via scanChannelMessage).
 	hist, err := channels.ListMonoforumHistory(ctx, domain.MonoforumHistoryFilter{MonoforumID: monoID, SavedPeer: subPeer, Limit: 10})
 	if err != nil {
 		t.Fatalf("history: %v", err)
@@ -177,7 +177,7 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 		t.Fatalf("invalid monoforum reply err = %v, want ErrReplyMessageIDInvalid", err)
 	}
 
-	// 另一个订阅者不串会话。
+	// Another subscriber does not cross conversations.
 	otherPeer := domain.Peer{Type: domain.PeerTypeUser, ID: other.ID}
 	otherMessage, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: other.ID, SavedPeer: otherPeer, RandomID: 201, Message: "other", Date: 1700001005})
 	if err != nil {
@@ -333,8 +333,8 @@ WHERE m.channel_id = $1 AND m.id = $2`, monoID, otherMessage.Message.ID, sub.ID)
 		t.Fatalf("subscriber active channels = %v, %v; want monoforum %d", activeChannelIDs, err, monoID)
 	}
 
-	// 去重按订阅者子会话维度(迁移 0022 唯一索引含 saved_peer_id):管理员用相同 random_id 向两个不同
-	// 订阅者发,不得互相去重(与 memory 行为一致)。
+	// Dedup is per subscriber sub-dialog (migration 0022's unique index includes saved_peer_id): an admin sending the same random_id
+	// to two different subscribers must not dedup against each other (consistent with memory behavior).
 	a, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: owner.ID, SavedPeer: subPeer, RandomID: 9001, Message: "to sub", Date: 1700001010})
 	if err != nil {
 		t.Fatalf("dedup send A: %v", err)
@@ -360,7 +360,7 @@ WHERE m.channel_id = $1 AND m.id = $2`, monoID, otherMessage.Message.ID, sub.ID)
 	}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
 		t.Fatalf("mismatched saved-peer fingerprint err = %v, want ErrMessageRandomIDDuplicate", err)
 	}
-	// 同一子会话真重发仍去重。
+	// A genuine resend in the same sub-dialog is still deduped.
 	again, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: owner.ID, SavedPeer: subPeer, RandomID: 9001, Message: "to sub", Date: 1700001012})
 	if err != nil {
 		t.Fatalf("dedup resend A: %v", err)
@@ -369,7 +369,7 @@ WHERE m.channel_id = $1 AND m.id = $2`, monoID, otherMessage.Message.ID, sub.ID)
 		t.Fatalf("same-sublist retry not deduped: again=%+v want dup of %d", again.Message, a.Message.ID)
 	}
 
-	// 订阅者子会话列表:两个订阅者,按 top 消息 id 倒序(other 最后发,排首)。
+	// Subscriber sub-dialog list: two subscribers, ordered by top message id descending (other sent last, so comes first).
 	dialogs, err := channels.ListMonoforumDialogs(ctx, domain.MonoforumDialogsFilter{MonoforumID: monoID, Limit: 10})
 	if err != nil {
 		t.Fatalf("list dialogs: %v", err)

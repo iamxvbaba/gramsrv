@@ -176,7 +176,8 @@ func TestSuccessfulBindSeedsPositiveIdentityCache(t *testing.T) {
 	}
 }
 
-// TestTempKeyResolveCacheExpires 验证 TTL 过期后会重新解析自然到期的 temp key。
+// TestTempKeyResolveCacheExpires verifies that an expired TTL re-resolves a
+// naturally expiring temp key.
 func TestTempKeyResolveCacheExpires(t *testing.T) {
 	tempAuthKeyID := [8]byte{0x78, 0x78, 0x78, 0x78, 0x78, 0x78, 0x78, 0x78}
 	permAuthKeyID := [8]byte{0x34, 0x34, 0x34, 0x34, 0x34, 0x34, 0x34, 0x34}
@@ -201,10 +202,10 @@ func TestTempKeyResolveCacheExpires(t *testing.T) {
 			t.Fatalf("dispatch: %v", err)
 		}
 	}
-	dispatch() // 首帧 !hasCached
-	dispatch() // 次帧填缓存
+	dispatch() // first frame: !hasCached
+	dispatch() // second frame: fills the cache
 	before := auth.resolveCount
-	time.Sleep(10 * time.Millisecond) // 等缓存过期
+	time.Sleep(10 * time.Millisecond) // wait for the cache to expire
 	dispatch()
 	if auth.resolveCount <= before {
 		t.Fatalf("ResolveAuthKey calls = %d, want > %d after TTL expiry (re-validation)", auth.resolveCount, before)

@@ -42,17 +42,18 @@ func inputDoc(id, accessHash int64) *tg.InputDocument {
 	return &tg.InputDocument{ID: id, AccessHash: accessHash}
 }
 
-// TestFavedStickersRoundTrip 回归：faveSticker/getFavedStickers 此前未注册/返空。
+// TestFavedStickersRoundTrip regression: faveSticker/getFavedStickers were previously
+// unregistered/returned empty.
 func TestFavedStickersRoundTrip(t *testing.T) {
 	r, _ := stickerCollectionRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
 
-	// 非贴纸文档拒绝。
+	// Non-sticker documents are rejected.
 	if ok, err := r.onMessagesFaveSticker(ctx, &tg.MessagesFaveStickerRequest{ID: inputDoc(301, 31)}); ok || !tgerr.Is(err, "STICKER_DOCUMENT_INVALID") {
 		t.Fatalf("fave non-sticker = ok %v err %v, want STICKER_DOCUMENT_INVALID", ok, err)
 	}
 
-	// fave 101 → 102（最新在前）。
+	// fave 101 -> 102 (newest first).
 	for _, id := range []int64{101, 102} {
 		if ok, err := r.onMessagesFaveSticker(ctx, &tg.MessagesFaveStickerRequest{ID: inputDoc(id, id%100+10)}); err != nil || !ok {
 			t.Fatalf("fave %d = ok %v err %v", id, ok, err)
@@ -60,10 +61,10 @@ func TestFavedStickersRoundTrip(t *testing.T) {
 	}
 	faved := favedStickerIDs(t, r, ctx, 0)
 	if len(faved) != 2 || faved[0] != 102 || faved[1] != 101 {
-		t.Fatalf("faved = %v, want [102 101]（最新在前）", faved)
+		t.Fatalf("faved = %v, want [102 101] (newest first)", faved)
 	}
 
-	// not-modified：用返回 hash 再请求。
+	// not-modified: request again with the returned hash.
 	full, err := r.onMessagesGetFavedStickers(ctx, 0)
 	if err != nil {
 		t.Fatalf("get faved: %v", err)
@@ -77,7 +78,7 @@ func TestFavedStickersRoundTrip(t *testing.T) {
 		t.Fatalf("re-get with hash = %T, want NotModified", again)
 	}
 
-	// unfave 101 → 只剩 102。
+	// unfave 101 -> only 102 remains.
 	if ok, err := r.onMessagesFaveSticker(ctx, &tg.MessagesFaveStickerRequest{ID: inputDoc(101, 11), Unfave: true}); err != nil || !ok {
 		t.Fatalf("unfave 101 = ok %v err %v", ok, err)
 	}
@@ -86,8 +87,9 @@ func TestFavedStickersRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFavedStickersSkipMissingDocument 回归：集合引用已被删除的文档时 getFavedStickers
-// 必须冷静跳过而不是整体 500（此前 forms 的 messages.getFavedStickers 报 INTERNAL_SERVER_ERROR）。
+// TestFavedStickersSkipMissingDocument regression: when a collection references a deleted
+// document, getFavedStickers must skip it calmly instead of failing the whole request with 500
+// (previously messages.getFavedStickers reported INTERNAL_SERVER_ERROR from forms).
 func TestFavedStickersSkipMissingDocument(t *testing.T) {
 	r, _ := stickerCollectionRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -99,14 +101,14 @@ func TestFavedStickersSkipMissingDocument(t *testing.T) {
 		t.Fatalf("fave 102 = ok %v err %v", ok, err)
 	}
 	files := r.deps.Files.(*fakeFiles)
-	delete(files.docs, 101) // 文档后来被删除
+	delete(files.docs, 101) // document later deleted
 	ids := favedStickerIDs(t, r, ctx, 0)
 	if len(ids) != 1 || ids[0] != 102 {
 		t.Fatalf("faved after doc deletion = %v, want [102]", ids)
 	}
 }
 
-// TestRecentStickersRoundTrip 验证 saveRecentSticker/getRecentStickers + dates + clear。
+// TestRecentStickersRoundTrip verifies saveRecentSticker/getRecentStickers + dates + clear.
 func TestRecentStickersRoundTrip(t *testing.T) {
 	r, _ := stickerCollectionRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -126,7 +128,7 @@ func TestRecentStickersRoundTrip(t *testing.T) {
 		t.Fatalf("recent dates = %v, want one non-zero date", recent.Dates)
 	}
 
-	// clear → 空。
+	// clear -> empty.
 	if ok, err := r.onMessagesClearRecentStickers(ctx, &tg.MessagesClearRecentStickersRequest{}); err != nil || !ok {
 		t.Fatalf("clear recent = ok %v err %v", ok, err)
 	}
@@ -136,12 +138,12 @@ func TestRecentStickersRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSavedGifsRoundTrip 验证 saveGif/getSavedGifs + 非 GIF 拒绝。
+// TestSavedGifsRoundTrip verifies saveGif/getSavedGifs + non-GIF rejection.
 func TestSavedGifsRoundTrip(t *testing.T) {
 	r, sessions := stickerCollectionRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
 
-	// 非 GIF（贴纸）拒绝。
+	// Non-GIF (sticker) documents are rejected.
 	if ok, err := r.onMessagesSaveGif(ctx, &tg.MessagesSaveGifRequest{ID: inputDoc(101, 11)}); ok || !tgerr.Is(err, "GIF_ID_INVALID") {
 		t.Fatalf("save non-gif = ok %v err %v, want GIF_ID_INVALID", ok, err)
 	}

@@ -1,16 +1,20 @@
-// Command botcheck 是 bot 客户端验证工具（开发用，非生产组件）。
+// Command botcheck is a bot client verification tool (development use, not a
+// production component).
 //
-// 它用 BotFather 发的 token 经 auth.importBotAuthorization 登录本地 telesrv，
-// 自检 bot 身份 / updates 状态 / userFull.bot_info，并可选以 echo 模式持续回显
-// 收到的私聊消息，验证 bot 收发闭环（在线推送 → bot 处理 → bot 回复）。
+// It logs in to the local telesrv through auth.importBotAuthorization with a
+// BotFather token, self-checks the bot identity / updates state /
+// userFull.bot_info, and optionally keeps echoing received private messages in
+// echo mode, verifying the bot send/receive loop (online push → bot handling →
+// bot reply).
 //
-// 用法：
+// Usage:
 //
-//	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>"            # 仅登录自检
-//	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>" -echo      # 自检后持续 echo
+//	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>"            # login self-check only
+//	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>" -echo      # self-check, then keep echoing
 //
-// 以 obfuscated TCP 连接生产 telesrv：server 会逐连接自动区分 plain/obfuscated；
-// 此探针靠 DCOption.TCPObfuscatedOnly=true 让 gotd 客户端选择 MTProto TCP obfuscation。
+// It connects to the production telesrv over obfuscated TCP: the server
+// auto-distinguishes plain/obfuscated per connection; this probe uses
+// DCOption.TCPObfuscatedOnly=true to make the gotd client choose MTProto TCP obfuscation.
 package main
 
 import (
@@ -41,9 +45,11 @@ import (
 	"telesrv/internal/mtprotoedge"
 )
 
-// obfuscatedResolver 用标准无-secret MTProto TCP obfuscation（obfuscated2）连接，
-// 匹配 telesrv 生产 server 自动检测后的 obfuscated2.Accept(conn, nil) 路径。
-// gotd 内置 dcs.Plain 的 obfuscated 路径走 MTProxy（强制 secret），不适用这里。
+// obfuscatedResolver connects with standard no-secret MTProto TCP obfuscation
+// (obfuscated2), matching the obfuscated2.Accept(conn, nil) path the production
+// telesrv server uses after auto-detection. gotd's built-in dcs.Plain
+// obfuscated path goes through MTProxy (which forces a secret), which does not
+// apply here.
 type obfuscatedResolver struct {
 	host string
 	port int
@@ -55,13 +61,13 @@ func (r obfuscatedResolver) dial(ctx context.Context, dc int) (transport.Conn, e
 	if err != nil {
 		return nil, err
 	}
-	// obfuscated2 握手携带 intermediate codec 的 init tag；空 secret = 标准 obfuscation。
+	// The obfuscated2 handshake carries the intermediate codec's init tag; an empty secret = standard obfuscation.
 	obf := obfuscator.Obfuscated2(rand.Reader, conn)
 	if err := obf.Handshake(codec.IntermediateClientStart, dc, mtproxy.Secret{}); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("obfuscated2 handshake: %w", err)
 	}
-	// NoHeader：tag 已由 obf 握手发出，codec 不再重发。
+	// NoHeader: the tag was already sent by the obf handshake, so the codec does not resend it.
 	proto := transport.NewProtocol(func() transport.Codec {
 		return codec.NoHeader{Codec: codec.Intermediate{}}
 	})
@@ -84,20 +90,20 @@ func (r obfuscatedResolver) CDN(ctx context.Context, dc int, _ dcs.List) (transp
 }
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:2398", "telesrv MTProto 地址")
+	addr := flag.String("addr", "127.0.0.1:2398", "telesrv MTProto address")
 	dcID := flag.Int("dc", 2, "DC id")
-	token := flag.String("token", os.Getenv("TELESRV_BOT_TOKEN"), "bot token <bot_id>:<secret>，默认取 env TELESRV_BOT_TOKEN")
-	rsaPath := flag.String("rsa", "data/server_rsa.pem", "server RSA key 路径（仅读 public key）")
+	token := flag.String("token", os.Getenv("TELESRV_BOT_TOKEN"), "bot token <bot_id>:<secret>, defaults to env TELESRV_BOT_TOKEN")
+	rsaPath := flag.String("rsa", "data/server_rsa.pem", "server RSA key path (public key is read only)")
 	apiID := flag.Int("api-id", 1, "api_id")
 	apiHash := flag.String("api-hash", "hash", "api_hash")
-	echo := flag.Bool("echo", false, "登录后持续 echo 收到的私聊消息")
-	sendTo := flag.Int64("send-to", 0, "主动发送目标 user_id（验证 bot 主动发起消息）")
-	sendText := flag.String("send-text", "", "主动发送的文本")
-	runFor := flag.Duration("for", 0, "echo 模式运行时长，0=直到 Ctrl+C")
+	echo := flag.Bool("echo", false, "after login, keep echoing received private messages")
+	sendTo := flag.Int64("send-to", 0, "user_id to proactively send to (verifies the bot initiating a message)")
+	sendText := flag.String("send-text", "", "text to proactively send")
+	runFor := flag.Duration("for", 0, "echo mode duration, 0 = until Ctrl+C")
 	flag.Parse()
 
 	if *token == "" {
-		fmt.Fprintln(os.Stderr, "缺少 -token（或设环境变量 TELESRV_BOT_TOKEN）")
+		fmt.Fprintln(os.Stderr, "missing -token (or set the TELESRV_BOT_TOKEN environment variable)")
 		os.Exit(2)
 	}
 
@@ -106,16 +112,16 @@ func main() {
 
 	priv, err := mtprotoedge.LoadOrGenerateRSAKey(*rsaPath)
 	if err != nil {
-		logger.Fatal("加载 RSA key 失败", zap.Error(err))
+		logger.Fatal("failed to load RSA key", zap.Error(err))
 	}
 
 	host, portStr, err := net.SplitHostPort(*addr)
 	if err != nil {
-		logger.Fatal("解析地址失败", zap.Error(err))
+		logger.Fatal("failed to parse address", zap.Error(err))
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		logger.Fatal("解析端口失败", zap.Error(err))
+		logger.Fatal("failed to parse port", zap.Error(err))
 	}
 
 	var client *telegram.Client
@@ -150,24 +156,24 @@ func main() {
 		}
 		a, ok := authz.(*tg.AuthAuthorization)
 		if !ok {
-			return fmt.Errorf("authorization 类型 = %T，want *tg.AuthAuthorization", authz)
+			return fmt.Errorf("authorization type = %T, want *tg.AuthAuthorization", authz)
 		}
 		self, ok := a.User.(*tg.User)
 		if !ok {
-			return fmt.Errorf("self 类型 = %T，want *tg.User", a.User)
+			return fmt.Errorf("self type = %T, want *tg.User", a.User)
 		}
 		ver, hasVer := self.GetBotInfoVersion()
-		fmt.Println("==== 登录成功 ====")
+		fmt.Println("==== login successful ====")
 		fmt.Printf("  id=%d  username=@%s  name=%q  bot=%v  self=%v  bot_info_version=%d(present=%v)\n",
 			self.ID, self.Username, self.FirstName, self.Bot, self.Self, ver, hasVer)
 		if !self.Bot || !hasVer {
-			fmt.Println("  [警告] self 缺 bot flag 或 bot_info_version —— TDesktop 不会当 bot 处理")
+			fmt.Println("  [warning] self is missing the bot flag or bot_info_version -- TDesktop will not treat it as a bot")
 		}
 		if _, hasStatus := self.GetStatus(); hasStatus {
-			fmt.Println("  [警告] bot 携带 status —— 官方 bot 不应有 presence")
+			fmt.Println("  [warning] bot carries a status -- an official bot should have no presence")
 		}
 		if self.Phone != "" {
-			fmt.Printf("  [警告] bot 携带 phone=%q —— 官方 bot 无手机号\n", self.Phone)
+			fmt.Printf("  [warning] bot carries phone=%q -- an official bot has no phone number\n", self.Phone)
 		}
 
 		state, err := raw.UpdatesGetState(ctx)
@@ -186,30 +192,32 @@ func main() {
 			cmds, _ := bi.GetCommands()
 			fmt.Printf("  bot_info: user_id=%d  description=%q  commands=%d\n", uid, desc, len(cmds))
 			if uid != self.ID {
-				fmt.Printf("  [警告] bot_info.user_id=%d != self.id=%d —— TDesktop 会整体忽略 bot_info\n", uid, self.ID)
+				fmt.Printf("  [warning] bot_info.user_id=%d != self.id=%d -- TDesktop ignores bot_info entirely\n", uid, self.ID)
 			}
 			for _, c := range cmds {
 				fmt.Printf("    /%s - %s\n", c.Command, c.Description)
 			}
 		} else {
-			fmt.Println("  [警告] userFull 缺 bot_info —— TDesktop 会反复重拉 getFullUser")
+			fmt.Println("  [warning] userFull is missing bot_info -- TDesktop will repeatedly re-fetch getFullUser")
 		}
 
-		fmt.Println("==== 自检通过 ====")
+		fmt.Println("==== self-check passed ====")
 
-		// 主动发起：bot 主动给指定用户发消息（用户须先与 bot 交互过）。
-		// access_hash 经 getUsers 解析（bot 重新登录时手里没有该用户的 update）。
+		// Proactive send: the bot proactively sends a message to the given user
+		// (the user must have interacted with the bot first). The access_hash is
+		// resolved via getUsers (the bot does not hold that user's update when it
+		// logs in again).
 		if *sendTo != 0 && *sendText != "" {
 			target := &tg.InputPeerUser{UserID: *sendTo}
 			if list, err := raw.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUser{UserID: *sendTo}}); err == nil {
 				for _, uc := range list {
 					if u, ok := uc.(*tg.User); ok && u.ID == *sendTo {
 						target.AccessHash = u.AccessHash
-						fmt.Printf("  解析目标用户: id=%d username=@%s name=%q\n", u.ID, u.Username, u.FirstName)
+						fmt.Printf("  resolved target user: id=%d username=@%s name=%q\n", u.ID, u.Username, u.FirstName)
 					}
 				}
 			} else {
-				fmt.Printf("  [警告] getUsers(%d) 失败: %v（仍尝试 access_hash=0 发送）\n", *sendTo, err)
+				fmt.Printf("  [warning] getUsers(%d) failed: %v (still trying to send with access_hash=0)\n", *sendTo, err)
 			}
 			rid, _ := randInt64()
 			if _, err := raw.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
@@ -217,17 +225,17 @@ func main() {
 				Message:  *sendText,
 				RandomID: rid,
 			}); err != nil {
-				return fmt.Errorf("主动发送: %w", err)
+				return fmt.Errorf("proactive send: %w", err)
 			}
-			fmt.Printf(">> 已主动发送给 %d: %q\n", *sendTo, *sendText)
+			fmt.Printf(">> proactively sent to %d: %q\n", *sendTo, *sendText)
 		}
 
 		if !*echo {
 			return nil
 		}
-		fmt.Println(">> echo 模式：从 TDesktop/Android 给这个 bot 发私聊消息，bot 会回 \"echo: <原文>\"")
+		fmt.Println(">> echo mode: send this bot a private message from TDesktop/Android and it replies \"echo: <original text>\"")
 		if *runFor > 0 {
-			fmt.Printf(">> 运行 %s 后自动退出（或 Ctrl+C）\n", *runFor)
+			fmt.Printf(">> will exit automatically after %s (or Ctrl+C)\n", *runFor)
 			t := time.NewTimer(*runFor)
 			defer t.Stop()
 			select {
@@ -236,16 +244,16 @@ func main() {
 			}
 			return nil
 		}
-		fmt.Println(">> Ctrl+C 退出")
+		fmt.Println(">> Ctrl+C to exit")
 		<-ctx.Done()
 		return nil
 	}); err != nil {
-		logger.Fatal("运行失败", zap.Error(err))
+		logger.Fatal("run failed", zap.Error(err))
 	}
-	fmt.Println("已退出")
+	fmt.Println("exited")
 }
 
-// echoUpdates 解析推送的 updates，对收到的 incoming 私聊消息回 "echo: <原文>"。
+// echoUpdates parses pushed updates and replies "echo: <original text>" to received incoming private messages.
 func echoUpdates(ctx context.Context, raw *tg.Client, u tg.UpdatesClass, logger *zap.Logger) error {
 	var ups []tg.UpdateClass
 	var users []tg.UserClass
@@ -279,17 +287,17 @@ func echoUpdates(ctx context.Context, raw *tg.Client, u tg.UpdatesClass, logger 
 			continue
 		}
 		from := peer.UserID
-		fmt.Printf("<< 收到来自 %d: %q\n", from, msg.Message)
+		fmt.Printf("<< received from %d: %q\n", from, msg.Message)
 		rid, _ := randInt64()
 		if _, err := raw.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
 			Peer:     &tg.InputPeerUser{UserID: from, AccessHash: hashByID[from]},
 			Message:  "echo: " + msg.Message,
 			RandomID: rid,
 		}); err != nil {
-			logger.Warn("echo 回复失败", zap.Int64("to", from), zap.Error(err))
+			logger.Warn("echo reply failed", zap.Int64("to", from), zap.Error(err))
 			continue
 		}
-		fmt.Printf(">> 已回复 %d: %q\n", from, "echo: "+msg.Message)
+		fmt.Printf(">> replied to %d: %q\n", from, "echo: "+msg.Message)
 	}
 	return nil
 }

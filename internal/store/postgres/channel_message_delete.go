@@ -123,7 +123,7 @@ func (s *ChannelStore) ModerationDeleteChannelMessages(ctx context.Context, chan
 	}, nil
 }
 
-// discussionRefsForMessages 取待删消息携带的讨论组转发根引用。
+// discussionRefsForMessages fetches the discussion-group forward-root references carried by the messages to delete.
 func (s *ChannelStore) discussionRefsForMessages(ctx context.Context, tx pgx.Tx, channelID int64, ids []int) (map[int]domain.ChannelDiscussionRef, error) {
 	id32, _, err := validUniqueChannelMessageIDs(ids)
 	if err != nil {
@@ -150,9 +150,9 @@ WHERE channel_id = $1 AND id = ANY($2::int[]) AND NOT deleted
 	return out, rows.Err()
 }
 
-// cascadeDeleteDiscussionRootsTx 随 broadcast post 删除其在 linked 讨论组的
-// 转发根（官方为服务端级联）；锁序固定 post channel → discussion channel，
-// 讨论组侧删根不反向级联，无交叉死锁路径。
+// cascadeDeleteDiscussionRootsTx deletes a broadcast post's forward root in its
+// linked discussion group (server-side cascade, as official); the lock order is fixed as post channel → discussion channel,
+// and deleting the root on the discussion side does not cascade back, so there is no crossing deadlock path.
 func (s *ChannelStore) cascadeDeleteDiscussionRootsTx(ctx context.Context, tx pgx.Tx, refs map[int]domain.ChannelDiscussionRef, deleted []int, actorUserID int64, date int) ([]domain.ChannelCascadeDelete, error) {
 	if len(refs) == 0 || len(deleted) == 0 {
 		return nil, nil
@@ -179,7 +179,7 @@ func (s *ChannelStore) cascadeDeleteDiscussionRootsTx(ctx context.Context, tx pg
 		if err != nil || group.Deleted {
 			continue
 		}
-		// 级联是服务端动作，按 creator 权限执行（频道 admin 未必是讨论组成员）。
+		// The cascade is a server-side action executed with creator rights (a channel admin is not necessarily a discussion group member).
 		systemMember := domain.ChannelMember{ChannelID: discussionChannelID, UserID: actorUserID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}
 		groupDeleted, groupEvent, group, err := s.deleteChannelMessagesTx(ctx, tx, group, systemMember, byChannel[discussionChannelID], actorUserID, date)
 		if err != nil {
@@ -324,9 +324,9 @@ ON CONFLICT (user_id, channel_id) DO UPDATE SET
 	if !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
-	// id=1 是建群服务消息，全员清空必须保留：它是清空后会话仅剩的
-	// top message，没有它客户端会把 lastMessage 视为空并从聊天列表
-	// 隐藏该会话（成员资格仍在，但会话条目对全员消失）。
+	// id=1 is the group-creation service message and must be kept on a full clear: it is the only
+	// top message left in the dialog after clearing, and without it the client would treat lastMessage as empty and
+	// hide the dialog from the chat list (membership remains, but the dialog entry disappears for everyone).
 	rows, err := tx.Query(ctx, `
 SELECT id
 FROM channel_messages
@@ -394,8 +394,8 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(ctx context.Context, req 
 	if !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
-	// 同全员清空：id=1 建群服务消息不随发送者（创建者）历史一起删除，
-	// 否则会话会因 lastMessage 为空从全员聊天列表隐藏。
+	// Same as a full clear: the id=1 group-creation service message is not deleted with the sender's (creator's) history,
+	// otherwise the dialog would be hidden from everyone's chat list because lastMessage is empty.
 	rows, err := tx.Query(ctx, `
 SELECT id
 FROM channel_messages
@@ -475,8 +475,8 @@ ORDER BY id`, channel.ID, id32)
 			return nil, domain.ChannelUpdateEvent{}, channel, domain.ErrChannelAdminRequired
 		}
 		if id <= 1 {
-			// id=1 建群服务消息是清空后会话仅剩的兜底 top message，所有
-			// 删除入口统一静默跳过（官方客户端对它禁用删除）。
+			// The id=1 group-creation service message is the fallback top message left in the dialog after clearing, so every
+			// delete entry point silently skips it (official clients disable deletion for it).
 			continue
 		}
 		deleted = append(deleted, id)
@@ -525,8 +525,8 @@ WHERE channel_id = $1 AND id = ANY($2::int[])`, channel.ID, deleted32, pts, len(
 	if err := tx.QueryRow(ctx, `
 UPDATE channels
 SET top_message_id = $2, pts = $3,
-    -- 删除即从置顶集合移除（pinned 查询过滤 NOT deleted 自动免疫），
-    -- 这里同步重算「最新置顶 id」缓存避免悬挂。
+    -- Deletion removes the message from the pinned set (pinned queries filtering NOT deleted are automatically immune),
+    -- so recompute the "latest pinned id" cache here in sync to avoid a dangling value.
     pinned_message_id = COALESCE((
         SELECT MAX(id) FROM channel_messages
         WHERE channel_id = $1 AND pinned AND NOT deleted
@@ -539,8 +539,8 @@ RETURNING pinned_message_id`, channel.ID, topID, pts).Scan(&latestPinned); err !
 	channel.TopMessageID = topID
 	channel.Pts = pts
 	channel.PinnedMessageID = latestPinned
-	// 删除后不再对全员刷新 channel_dialogs 缓存行（性能审计 H4a）：unread 读时由
-	// 可见 incoming 消息动态派生（deleted 自动出列），top 由 channels.top_message_id 提供。
+	// After deletion, no longer refresh channel_dialogs cache rows for all members (performance audit H4a): unread is derived
+	// dynamically at read time from visible incoming messages (deleted ones drop out automatically), and top is provided by channels.top_message_id.
 	event := domain.ChannelUpdateEvent{
 		ChannelID:    channel.ID,
 		Type:         domain.ChannelUpdateDeleteMessages,

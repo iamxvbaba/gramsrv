@@ -13,21 +13,27 @@ import (
 	"telesrv/internal/domain"
 )
 
-// channel fan-out 异步化（设计 docs/channel-fanout-async-design.md Phase 0 / §9 v1 最小实现）。
+// channel fan-out async-ification (design docs/channel-fanout-async-design.md Phase 0 / §9 v1 minimal implementation).
 //
-// 目标：把频道 payload fan-out 移出发送者 RPC 同步路径——发送者只等事务 + 自己视角 echo
-// （rpc_result），其余在线成员的投递交给本 dispatcher 的后台 worker。
+// Goal: move channel payload fan-out off the sender's RPC synchronous path -- the sender waits
+// only for the transaction + its own-perspective echo (rpc_result), and delivery to the other
+// online members is handed to this dispatcher's background workers.
 //
-// v1（单实例）关键取舍：
-//   - durable 真值仍是 channel_update_events；本 dispatcher 只做 best-effort 在线加速，
-//     丢失由客户端 getChannelDifference 兜底（设计决策 1）。
-//   - 按 channelID 哈希到固定分片，使同一 channel 串行处理（FIFO → 单调 pts），满足
-//     DrKLO Android ~1.5s 乱序窗口与 TDesktop PtsWaiter 的连续性期望（设计 §10.2）。
-//   - 单实例 + 无 durable 重投队列 + 同 channel 串行 → 无乱序、无自重复，故 v1 不需要
-//     per-session at-most-once 双水位（那是 Phase 3 跨实例的事，设计 §9/§10.1）。
-//   - 有界队列满时不静默丢弃恢复触发：真实 payload job 降级为按 channel 合并、只保留
-//     最高 pts 的 UpdateChannelTooLong nudge。每个 shard 独立公平 drain；即使该频道随后
-//     静默，也不依赖“下一条消息”才能触发 getChannelDifference（设计约束 B）。
+// v1 (single instance) key trade-offs:
+//   - the durable source of truth is still channel_update_events; this dispatcher only does
+//     best-effort online acceleration, and losses are covered by the client's
+//     getChannelDifference (design decision 1).
+//   - hash by channelID to a fixed shard so the same channel is processed serially (FIFO ->
+//     monotonic pts), satisfying DrKLO Android's ~1.5s out-of-order window and TDesktop
+//     PtsWaiter's continuity expectation (design §10.2).
+//   - single instance + no durable re-delivery queue + per-channel serialization -> no
+//     out-of-order, no self-duplication, so v1 does not need the per-session at-most-once double
+//     watermark (that is a Phase 3 cross-instance concern, design §9/§10.1).
+//   - when the bounded queue is full, do not silently drop the recovery trigger: downgrade the
+//     real payload job to a per-channel coalesced UpdateChannelTooLong nudge keeping only the
+//     highest pts. Each shard drains fairly and independently; even if the channel then goes
+//     quiet, it does not depend on "the next message" to trigger getChannelDifference (design
+//     constraint B).
 
 const (
 	defaultChannelFanoutShards = 64
@@ -49,15 +55,18 @@ const (
 	defaultChannelFanoutNudgeDeadline           = 5 * time.Second
 )
 
-// channelFanoutBuilder 按 viewer 构建该 viewer 视角的 channel updates。与同步
-// channelUpdatesBuilder 不同，它接受 worker 提供的后台 ctx（请求 ctx 在 fan-out 异步
-// 执行时已被取消），且实现不得从 ctx 读取 viewer/auth 派生数据（viewerUserID 显式传入）。
+// channelFanoutBuilder builds the channel updates from a viewer's perspective. Unlike the
+// synchronous channelUpdatesBuilder, it accepts a background ctx provided by the worker (the
+// request ctx is already canceled when fan-out runs asynchronously), and the implementation must
+// not read viewer/auth-derived data from ctx (viewerUserID is passed explicitly).
 type channelFanoutBuilder func(ctx context.Context, viewerUserID int64) *tg.Updates
 
-// channelFanoutJob 是一条频道 payload fan-out 任务。Pts 仅用于日志/折叠语义；真值仍是
-// channel_update_events，worker 只做在线投递。originAuthKeyID 是物理 raw auth key
-// （与 SessionManager.shouldExcludeSession 的比较侧一致），用于显式排除发起设备——异步
-// 执行时请求 ctx 已失效，不能再靠 ctx 派生排除。
+// channelFanoutJob is one channel payload fan-out task. Pts is only used for logging/coalescing
+// semantics; the source of truth is still channel_update_events, and the worker only does online
+// delivery. originAuthKeyID is the physical raw auth key (matching the comparison side of
+// SessionManager.shouldExcludeSession), used to explicitly exclude the originating device --
+// during asynchronous execution the request ctx is already invalid, so exclusion can no longer be
+// derived from ctx.
 type channelFanoutJob struct {
 	scope           channelFanoutScope
 	originUserID    int64
@@ -71,22 +80,26 @@ type channelFanoutJob struct {
 	// retainedBytes is a conservative reservation for the request-derived closure, result
 	// snapshots and explicit recipient slice.  It is charged before the job enters any queue.
 	retainedBytes int64
-	// queueSeq 是 dispatcher shard 内部的 FIFO 序号。仅成功进入正常 payload queue 的
-	// job 占用序号；overflow watermark 记录入队失败时已经接受的最大序号，等这些更早
-	// payload 处理完后才发 nudge，避免 nudge 越过其之前的正常 FIFO payload。
+	// queueSeq is the dispatcher shard's internal FIFO sequence number. Only jobs that successfully
+	// enter the normal payload queue consume a sequence number; the overflow watermark records the
+	// largest sequence number accepted when enqueueing failed, and the nudge is only sent after
+	// those earlier payloads are processed, so a nudge cannot overtake the normal FIFO payloads
+	// before it.
 	queueSeq uint64
 }
 
-// channelFanoutOverflow 是 queue full 时的 nudge-only 恢复水位。同一 channel 只保留
-// 最大 pts；barrier 是该次 overflow 之前已经进入正常 FIFO 的最后一个 shard 序号。
+// channelFanoutOverflow is the nudge-only recovery watermark when the queue is full. Only the
+// highest pts is kept per channel; barrier is the last shard sequence number that entered the
+// normal FIFO before this overflow.
 type channelFanoutOverflow struct {
 	pts     int
 	barrier uint64
 }
 
-// channelFanoutShard 把正常 payload FIFO 与 overflow nudge mailbox 放在同一个 worker
-// 下。overflowOrder 每个 channel 最多出现一次；热点 channel 只更新 map 水位，不会占满
-// order，从而不能把其它 channel 的唯一恢复 nudge 永久饿死。
+// channelFanoutShard puts the normal payload FIFO and the overflow nudge mailbox under the same
+// worker. overflowOrder contains each channel at most once; a hot channel only updates the map
+// watermark and cannot fill up order, so it cannot starve the other channels' single recovery
+// nudge forever.
 type channelFanoutShard struct {
 	jobs         chan channelFanoutJob
 	overflowWake chan struct{}
@@ -120,8 +133,9 @@ func newChannelFanoutShard(buffer int) *channelFanoutShard {
 	}
 }
 
-// enqueue 尝试把真实 payload 放入正常 FIFO；满时按 channel 合并最高 pts 的 nudge-only
-// watermark。返回 true 表示正常入队，false 表示已经安全降级为 overflow watermark。
+// enqueue tries to put the real payload into the normal FIFO; when full, coalesces into a
+// per-channel nudge-only watermark with the highest pts. Returns true for a normal enqueue, false
+// if it safely downgraded to an overflow watermark.
 func (s *channelFanoutShard) enqueue(job channelFanoutJob) bool {
 	s.mu.Lock()
 	job.queueSeq = s.nextSeq + 1
@@ -253,8 +267,9 @@ func (s *channelFanoutShard) signalOverflowSpaceLocked() {
 	s.overflowSpace = make(chan struct{})
 }
 
-// popOverflow 仅供 mailbox/cardinality 单元测试直接释放一个 overflow；生产 drain 必须走
-// tryQueueOverflow，确保 nudgeJobs 真正接收成功前不删除水位。
+// popOverflow is for mailbox/cardinality unit tests to release one overflow directly; the
+// production drain must go through tryQueueOverflow so the watermark is not deleted before
+// nudgeJobs has actually accepted it successfully.
 func (s *channelFanoutShard) popOverflow() (channelID int64, pts int, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,9 +292,11 @@ func (s *channelFanoutShard) popOverflow() (channelID int64, pts int, ok bool) {
 	return 0, 0, false
 }
 
-// tryQueueOverflow 尝试把一个 barrier 已满足的 overflow 水位非阻塞提交给共享 nudge queue。
-// 只有 channel send 成功才从 mailbox 删除；queue 满时保留原 item（包含并发合并后的最高 pts）
-// 和原 order 位置。整个操作在 shard.mu 下完成，因此不会出现“读到旧 pts 后删除新 pts”的竞态。
+// tryQueueOverflow tries to non-blockingly submit an overflow watermark whose barrier is satisfied
+// to the shared nudge queue. It is removed from the mailbox only when the channel send succeeds;
+// when the queue is full it keeps the original item (including the highest pts after concurrent
+// coalescing) and the original order position. The whole operation completes under shard.mu, so
+// there is no "read old pts then delete new pts" race.
 func (s *channelFanoutShard) tryQueueOverflow(offer func(channelFanoutNudge) bool) (queued, blocked bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -334,14 +351,16 @@ func (s *channelFanoutShard) signalEligibleOverflow() {
 	}
 }
 
-// channelFanoutPrefetch 在 worker 解析出最终 recipient 集合后、逐 viewer build 之前调用一次，
-// 用于跨全部 recipient 一次性预热每 viewer 的用户投影（fan-out 模板化，O(owner)）。为 nil
-// 表示该 payload 不含需要预热的 user envelope。在 worker goroutine 内串行执行，与 build 共享同一
-// viewerPeerCache，无跨 goroutine 竞态。返回 false 表示批量预热失败；worker 必须 fail-closed，
-// 不能静默退回逐 viewer 投影。
+// channelFanoutPrefetch is called once after the worker resolves the final recipient set and
+// before the per-viewer build, to warm each viewer's user projection in one pass across all
+// recipients (fan-out templating, O(owner)). A nil value means the payload has no user envelope
+// to warm. It runs serially inside the worker goroutine and shares the same viewerPeerCache as
+// build, with no cross-goroutine race. Returning false means batch warm-up failed; the worker must
+// fail closed and must not silently fall back to per-viewer projection.
 type channelFanoutPrefetch func(ctx context.Context, viewers []int64) bool
 
-// channelFanoutDispatcher 把频道 payload fan-out 移出发送者 RPC，按 channelID 分片串行处理。
+// channelFanoutDispatcher moves channel payload fan-out off the sender's RPC and processes it
+// serially, sharded by channelID.
 type channelFanoutDispatcher struct {
 	r         *Router
 	log       *zap.Logger
@@ -375,8 +394,9 @@ type channelFanoutDispatcher struct {
 	recoveryGeneration atomic.Uint64
 	recoveryCompleted  atomic.Uint64
 	recoveryWake       chan struct{}
-	// dropped 保留旧字段名供既有统计兼容；现在表示“真实 payload 因 queue full 被折叠为
-	// nudge-only overflow watermark”的次数，不再表示恢复触发也被静默丢弃。
+	// dropped keeps the old field name for compatibility with existing stats; it now counts the
+	// number of times a real payload was coalesced into a nudge-only overflow watermark due to a
+	// full queue, and no longer means the recovery trigger was silently dropped too.
 	dropped atomic.Int64
 }
 
@@ -385,17 +405,20 @@ type channelFanoutNudge struct {
 	pts       int
 }
 
-// enqueueChannelFanout 把一条 channel-payload-pts 的 fan-out 投入异步 dispatcher。
-// 从请求 ctx 抓取发起设备的 raw auth key + session_id 显式带入 job，使异步 worker 仍能
-// 排除发起设备回显（请求 ctx 异步时已失效）。仅用于会推进客户端 channel PtsWaiter 的真实
-// payload（新消息/编辑/删除/pin）；reaction/poll（viewer-only 零 pts）、participant/TTL/
-// channel state（无 channel pts）、typing（transient）不走此路径（设计 §2.1/§5 分类）。
+// enqueueChannelFanout submits one channel-payload-pts fan-out to the async dispatcher. It grabs
+// the originating device's raw auth key + session_id from the request ctx and explicitly carries
+// them into the job so the async worker can still exclude the originating device's echo (the
+// request ctx is invalid by the time it runs async). Used only for real payloads that advance the
+// client's channel PtsWaiter (new message/edit/delete/pin); reaction/poll (viewer-only, zero
+// pts), participant/TTL/channel state (no channel pts), and typing (transient) do not take this
+// path (design §2.1/§5 classification).
 func (r *Router) enqueueChannelFanout(ctx context.Context, scope channelFanoutScope, originUserID, channelID int64, pts int, recipients []int64, build channelFanoutBuilder) {
 	r.enqueueChannelFanoutWithPrefetch(ctx, scope, originUserID, channelID, pts, recipients, 0, nil, build)
 }
 
-// enqueueChannelFanoutWithPrefetch 同 enqueueChannelFanout，但额外带一个跨 viewer 用户投影预热钩子
-// （fan-out 模板化把每 recipient 的逐 viewer 投影折叠成一次 O(owner) 投影；见 prefetchChannelFanoutUsers）。
+// enqueueChannelFanoutWithPrefetch is like enqueueChannelFanout but with an extra cross-viewer
+// user-projection warm-up hook (fan-out templating folds each recipient's per-viewer projection
+// into one O(owner) projection; see prefetchChannelFanoutUsers).
 func (r *Router) enqueueChannelFanoutWithPrefetch(ctx context.Context, scope channelFanoutScope, originUserID, channelID int64, pts int, recipients []int64, retainedFloor int64, prefetch channelFanoutPrefetch, build channelFanoutBuilder) {
 	if r.channelFanout == nil || build == nil {
 		return
@@ -423,8 +446,9 @@ func (r *Router) enqueueChannelFanoutWithPrefetch(ctx context.Context, scope cha
 	})
 }
 
-// RunChannelFanout 启动频道 fan-out 后台 worker，由 main 与其它 dispatcher 一同 go 起。
-// 阻塞到 ctx 取消；未调用前 fan-out 同步执行（行为同旧版）。
+// RunChannelFanout starts the channel fan-out background workers, launched alongside the other
+// dispatchers by main. Blocks until ctx is canceled; before it is called, fan-out runs
+// synchronously (same behavior as the old version).
 func (r *Router) RunChannelFanout(ctx context.Context) {
 	r.channelFanout.Run(ctx)
 }
@@ -456,8 +480,9 @@ func newChannelFanoutDispatcher(r *Router, shards, buffer int) *channelFanoutDis
 	return d
 }
 
-// Run 启动 worker：每分片一个 goroutine，保证同 channel 串行。阻塞到 ctx 取消。
-// 未调用 Run 前 Enqueue 回退为同步执行（保持测试/未装配场景行为不变）。
+// Run starts the workers: one goroutine per shard, guaranteeing per-channel serialization. Blocks
+// until ctx is canceled. Before Run is called, Enqueue falls back to synchronous execution
+// (keeping tests/unwired setups unchanged).
 func (d *channelFanoutDispatcher) Run(ctx context.Context) {
 	if d == nil || !d.started.CompareAndSwap(false, true) {
 		return
@@ -561,9 +586,9 @@ func (d *channelFanoutDispatcher) Run(ctx context.Context) {
 					d.r.runChannelFanoutJob(ctx, job)
 					d.releaseQueuedJob(job)
 					shard.markProcessed(job.queueSeq)
-					// 每处理一条正常 FIFO payload，主动尝试 drain 一条已经越过
-					// barrier 的 overflow。这样持续灌满正常队列的热点频道也不能
-					// 永久饿死其它频道的恢复 nudge。
+					// After processing each normal FIFO payload, proactively try to drain one
+					// overflow that has passed its barrier. This way a hot channel that keeps the
+					// normal queue full cannot permanently starve the other channels' recovery nudge.
 					drain()
 				case <-shard.overflowWake:
 					drain()
@@ -606,11 +631,13 @@ func (d *channelFanoutDispatcher) shardIndex(channelID int64) int {
 	return int(idx)
 }
 
-// Enqueue 投递一条 fan-out 任务。dispatcher 未启动时同步执行（用请求 ctx，保持旧行为）；
-// 已启动时投入对应分片。满时正常 payload 不阻塞请求路径，而是按 channel 合并为最高 pts
-// 的 nudge-only overflow watermark，由同 shard worker 在更早的 FIFO payload 后公平 drain。
-// 若 overflow cardinality 也已满，只发布一个常量大小的全局 recovery generation；固定后台
-// actor 随后从 durable channel pts 重建全部在线 channel 的 nudge。RPC goroutine 永不等待 slot。
+// Enqueue submits a fan-out task. When the dispatcher is not started it runs synchronously (using
+// the request ctx, keeping the old behavior); when started it goes into the corresponding shard.
+// When full, a normal payload does not block the request path but is coalesced per channel into a
+// nudge-only overflow watermark with the highest pts, drained fairly by the same shard worker
+// after the earlier FIFO payloads. If the overflow cardinality is also full, it only publishes a
+// constant-sized global recovery generation; a fixed background actor then rebuilds the nudges
+// for all online channels from the durable channel pts. The RPC goroutine never waits for a slot.
 func (d *channelFanoutDispatcher) Enqueue(reqCtx context.Context, job channelFanoutJob) {
 	if d == nil || job.build == nil {
 		return
@@ -636,8 +663,9 @@ func (d *channelFanoutDispatcher) Enqueue(reqCtx context.Context, job channelFan
 	}
 	d.dropped.Add(1)
 	if job.scope != channelFanoutMembers && job.scope != channelFanoutMessageBox || job.pts <= 0 {
-		// 只有 durable member/message-box payload 可折叠为 channel nudge；viewer-only/no-pts
-		// 更新没有 difference 恢复契约，不能伪装成 channel PTS 水位。
+		// Only durable member/message-box payloads may be coalesced into a channel nudge;
+		// viewer-only/no-pts updates have no difference recovery contract and must not be disguised
+		// as a channel PTS watermark.
 		d.log.Error("channel fanout queue full for non-coalescible job; overflow contract violated",
 			zap.Int64("channel_id", job.channelID), zap.Int("pts", job.pts), zap.Int("scope", int(job.scope)))
 		d.enqueueMu.RUnlock()
@@ -861,9 +889,10 @@ func (d *channelFanoutDispatcher) sweepOnlineChannelRecovery(ctx context.Context
 	return nil
 }
 
-// runChannelFanoutOverflowNudge 是 queue-full 的 nudge-only 降级路径。不能复用原 job 的
-// origin exclude：同一 channel 水位可能合并多个不同发起 session；向全部在线成员发最高 pts
-// nudge 是保守且幂等的，已追上 pts 的 TDesktop 会直接忽略。
+// runChannelFanoutOverflowNudge is the nudge-only downgrade path for a full queue. It cannot reuse
+// the original job's origin exclude: the same channel watermark may coalesce several different
+// originating sessions; sending the highest-pts nudge to all online members is conservative and
+// idempotent, and a TDesktop already caught up to that pts ignores it.
 func (r *Router) runChannelFanoutOverflowNudge(ctx context.Context, channelID int64, pts int) bool {
 	if r.deps.Sessions == nil || channelID == 0 || pts <= 0 {
 		return true
@@ -871,19 +900,22 @@ func (r *Router) runChannelFanoutOverflowNudge(ctx context.Context, channelID in
 	return r.nudgeBeyondCapChannelMessageAudience(ctx, channelID, pts, nil)
 }
 
-// runChannelFanoutJob 执行一条 fan-out：与同步 pushChannelUpdatesWithScope 等价，区别是
-// build 接受 ctx、且排除发起设备用 job 显式携带的 (originAuthKeyID, originSessionID)
-// 叠加到 ctx 后复用 pushUserUpdates，而非依赖已失效的请求 ctx。
+// runChannelFanoutJob executes one fan-out: equivalent to the synchronous
+// pushChannelUpdatesWithScope, except build accepts a ctx and excludes the originating device by
+// overlaying the job's explicitly carried (originAuthKeyID, originSessionID) onto the ctx and
+// reusing pushUserUpdates, rather than relying on the invalidated request ctx.
 func (r *Router) runChannelFanoutJob(ctx context.Context, job channelFanoutJob) {
 	if r.deps.Sessions == nil || job.build == nil {
 		return
 	}
 	pushCtx := WithSessionID(WithRawAuthKeyID(ctx, job.originAuthKeyID), job.originSessionID)
 	recipients := r.channelFanoutRecipients(ctx, job.scope, job.channelID, job.recipients)
-	// 预热跨 viewer 用户投影（fan-out 模板化）：在逐 viewer build 之前一次性算好每 recipient 的
-	// 投影并预热共享 cache，使 build 只命中缓存、不再 O(viewer) 逐个 ForViewer。覆盖 recipients +
-	// 兜底 origin（无在线 recipient 时 build 会回退给 origin）。失败时禁止构造真实 payload，
-	// 改发 viewer-independent too-long nudge，让客户端从 durable difference 恢复。
+	// Warm the cross-viewer user projection (fan-out templating): compute each recipient's
+	// projection once before the per-viewer build and warm the shared cache, so build only hits the
+	// cache and no longer does an O(viewer) ForViewer per recipient. This covers recipients + the
+	// fallback origin (when there is no online recipient, build falls back to origin). On failure,
+	// constructing the real payload is forbidden; send a viewer-independent too-long nudge instead,
+	// letting the client recover from the durable difference.
 	if job.prefetch != nil {
 		viewers := recipients
 		if job.originUserID != 0 {
@@ -922,10 +954,12 @@ func (r *Router) runChannelFanoutJob(ctx context.Context, job channelFanoutJob) 
 			r.pushUserUpdates(pushCtx, job.originUserID, updates)
 		}
 	}
-	// P0-8：完整 payload 受 MaxChannelRealtimeFanout 封顶，超出 cap 的在线成员既收不到
-	// payload 也收不到任何东西（频道纯拉模型不会自发轮询）。给这些「已在线但未收完整 payload」
-	// 的成员发廉价 UpdateChannelTooLong{pts} nudge，促其 getChannelDifference 收敛。
-	// 仅对会推进客户端 channel PtsWaiter 的真实 payload（members scope + 带 channel pts）做。
+	// P0-8: the full payload is capped by MaxChannelRealtimeFanout, and online members beyond the
+	// cap receive neither the payload nor anything at all (the pure-pull channel model does not
+	// poll spontaneously). Send these members, who are online but did not receive the full payload,
+	// a cheap UpdateChannelTooLong{pts} nudge to prompt getChannelDifference convergence. This is
+	// done only for real payloads that advance the client's channel PtsWaiter (members scope +
+	// carrying channel pts).
 	if job.scope == channelFanoutMembers && job.pts > 0 {
 		r.nudgeBeyondCapChannelMembers(pushCtx, job.channelID, job.pts, seen)
 	} else if job.scope == channelFanoutMessageBox && job.pts > 0 {
@@ -975,10 +1009,12 @@ func (r *Router) recoverFailedChannelFanoutPrefetch(ctx context.Context, job cha
 	}
 }
 
-// prefetchChannelFanoutUsers 跨全部 recipient 一次性投影 owner 用户（fan-out 模板化，O(owner)），
-// 把结果按 viewer 预热进共享 cache；之后每 viewer 的 build 只命中缓存，不再逐 viewer ForViewer。
-// ownerIDs 由调用方从消息/事件 peer refs 收集。deps.Users 必须实现 BatchViewerUsersResolver；
-// 缺能力、解析失败或 envelope 不完整时返回 false，由 worker fail-closed，禁止逐 viewer 回退。
+// prefetchChannelFanoutUsers projects the owner users in one pass across all recipients (fan-out
+// templating, O(owner)), warming the results per viewer into the shared cache; afterwards each
+// viewer's build only hits the cache and no longer does a per-viewer ForViewer. ownerIDs are
+// collected by the caller from the message/event peer refs. deps.Users must implement
+// BatchViewerUsersResolver; on a missing capability, resolution failure, or incomplete envelope it
+// returns false, and the worker fails closed, with no per-viewer fallback permitted.
 func (r *Router) prefetchChannelFanoutUsers(ctx context.Context, cache *viewerPeerCache, viewers, ownerIDs []int64) bool {
 	viewers = uniquePeerIDs(viewers)
 	ownerIDs = uniquePeerIDs(ownerIDs)
@@ -1011,14 +1047,16 @@ func (r *Router) prefetchChannelFanoutUsers(ctx context.Context, cache *viewerPe
 	return true
 }
 
-// channelMessageFanoutOwnerIDs 收集一条频道消息 fan-out 会下发到 Users 数组里的全部 owner 用户 id
-// （sender/from/send_as/forward/via_bot/reply/contact/poll 等 peer refs，与
-// channelMessagesUpdatesWithPeerCache 的收集口径一致），用于预热跨 viewer 投影。
+// channelMessageFanoutOwnerIDs collects all owner user ids that a channel message fan-out will put
+// into the Users array (sender/from/send_as/forward/via_bot/reply/contact/poll and other peer
+// refs, matching the collection scope of channelMessagesUpdatesWithPeerCache), for warming the
+// cross-viewer projection.
 func channelMessageFanoutOwnerIDs(res domain.SendChannelMessageResult, extraUserIDs []int64) []int64 {
 	return channelMessagesFanoutOwnerIDs([]domain.SendChannelMessageResult{res}, extraUserIDs)
 }
 
-// channelMessagesFanoutOwnerIDs 同上，但取多条结果（批量转发汇成一个 job）的 owner id 并集。
+// channelMessagesFanoutOwnerIDs is the same, but takes the union of owner ids across several
+// results (a batch forward merged into one job).
 func channelMessagesFanoutOwnerIDs(results []domain.SendChannelMessageResult, extraUserIDs []int64) []int64 {
 	userIDs, _ := channelMessagesFanoutPeerRefs(results, extraUserIDs)
 	return peerIDMapKeys(userIDs)
@@ -1051,9 +1089,11 @@ func channelMessagesFanoutPeerRefs(results []domain.SendChannelMessageResult, ex
 	return userIDs, channelIDs
 }
 
-// enqueueChannelMessageFanout 异步 fan-out 单条频道消息并预热跨 viewer 投影（「频道里出现一条新消息」
-// 类事件的常见形态：发送/转发单条/讨论组联动/forum topic 消息）。语义与 enqueueChannelFanout 一致，
-// 仅多了把每 viewer 投影一次性算好预热进共享 cache（O(owner)），不改变投递/排除/nudge 行为。
+// enqueueChannelMessageFanout asynchronously fan-outs a single channel message and warms the
+// cross-viewer projection (the common form of a "a new message appeared in the channel" event:
+// send/forward one/discussion-group linkage/forum topic message). Semantics match
+// enqueueChannelFanout, with the only addition being computing each viewer's projection once and
+// warming it into the shared cache (O(owner)); delivery/exclusion/nudge behavior is unchanged.
 func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID int64, res domain.SendChannelMessageResult, extraUserIDs []int64) {
 	r.enqueueBotAPIChannelMessageUpdate(ctx, originUserID, res)
 	fanoutCache := newViewerPeerCache(r)
@@ -1071,11 +1111,13 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 			return true
 		},
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
-			// privacy bot 在 send 时被 SkipDeliveryUserIDs 排除（命令/@/回复以外的消息不可见）。
-			// channelFanoutRecipients 按「在线活跃成员」重算 recipients 会把它加回，故在线 fanout
-			// 必须在此跳过它的直接推送，否则在线 bot 仍能实时收到群里全部消息（持久 history/
-			// difference 已正确隐藏，仅此直接推送泄漏内容）。nudge 安全：bot 落在 seen 里不被 nudge，
-			// 即便 nudge 也会被 filterBotChannelDifference 过滤掉隐藏消息。
+			// A privacy bot is excluded by SkipDeliveryUserIDs at send time (messages other than
+			// commands/@/replies are invisible to it). channelFanoutRecipients recomputing
+			// recipients by "online active members" adds it back, so online fanout must skip its
+			// direct push here, otherwise the online bot still receives all group messages in
+			// realtime (persistent history/difference already hides them correctly; only this direct
+			// push leaks content). The nudge is safe: the bot lands in seen and is not nudged, and
+			// even a nudge would have hidden messages filtered out by filterBotChannelDifference.
 			if _, skipped := skip[viewerUserID]; skipped {
 				return nil
 			}
@@ -1105,7 +1147,7 @@ func (r *Router) enqueueMonoforumMessageFanout(ctx context.Context, originUserID
 		})
 }
 
-// skipDeliverySet 把 SkipDeliveryUserIDs 切片转成查找集合（nil 表示无排除）。
+// skipDeliverySet converts the SkipDeliveryUserIDs slice into a lookup set (nil means no exclusion).
 func skipDeliverySet(ids []int64) map[int64]struct{} {
 	if len(ids) == 0 {
 		return nil
@@ -1119,10 +1161,12 @@ func skipDeliverySet(ids []int64) map[int64]struct{} {
 	return set
 }
 
-// channelEditMessageFanoutOwnerIDs 收集一条频道编辑 fan-out 会下发到 Users 数组里的全部 owner 用户 id。
-// 严格镜像 channelEditMessageUpdates 的两容器 + pts 门控收集口径（Event/Message 仅 Event.Pts!=0 时收，
-// ServiceEvent/ServiceMessage 仅 ServiceEvent.Pts!=0 时收，对应 todo 编辑的服务消息第二容器），使预热
-// owner 集与 build 实际下发的 Users 集恰好一致——多收只会无害多预热，但镜像门控让等价测试最紧。
+// channelEditMessageFanoutOwnerIDs collects all owner user ids that a channel edit fan-out will put
+// into the Users array. It strictly mirrors channelEditMessageUpdates' two-container + pts-gated
+// collection scope (Event/Message only when Event.Pts!=0, ServiceEvent/ServiceMessage only when
+// ServiceEvent.Pts!=0, corresponding to the second container of the todo-edit service message), so
+// the warmed owner set exactly matches the Users set build actually sends -- collecting extra
+// would only harmlessly over-warm, but mirroring the gate keeps the equivalence test tightest.
 func channelEditMessageFanoutOwnerIDs(res domain.EditChannelMessageResult) []int64 {
 	userIDs, _ := channelEditMessageFanoutPeerRefs(res)
 	return peerIDMapKeys(userIDs)
@@ -1154,16 +1198,22 @@ func channelEditMessageFanoutPeerRefs(res domain.EditChannelMessageResult) (map[
 	return userIDs, channelIDs
 }
 
-// enqueueChannelEditMessageFanout 异步 fan-out 一条频道编辑并预热跨 viewer 投影（editMessage/geolive/
-// todo/bot-inline edit 的共同形态）。语义与原 enqueueChannelFanout(channelEditMessageUpdates) 一致，
-// 仅多了把每 viewer 投影一次性算好预热进共享 cache（O(owner)）。注意 edit 不做 per-viewer mention
-// overlay（EditChannelMessageResult 不带 MentionUserIDs，编辑新增 @ 走 durable channel_unread_mentions
-// 经 getChannelDifference 自愈），故各 viewer 的 mentioned/media_unread 字节恒等，预热不影响等价。
+// enqueueChannelEditMessageFanout asynchronously fan-outs a channel edit and warms the
+// cross-viewer projection (the common form of editMessage/geolive/todo/bot-inline edit). Semantics
+// match the original enqueueChannelFanout(channelEditMessageUpdates), with the only addition being
+// computing each viewer's projection once and warming it into the shared cache (O(owner)). Note
+// that an edit does no per-viewer mention overlay (EditChannelMessageResult carries no
+// MentionUserIDs, and a newly added @ in an edit self-heals via durable channel_unread_mentions
+// through getChannelDifference), so each viewer's mentioned/media_unread bytes are identical and
+// warming does not affect equivalence.
 //
-// nudge pts 取两容器较大值：edit 可产两条带 pts 事件（Event=编辑本身、ServiceEvent=如 todo 完成的
-// "X completed Y" 服务消息），ServiceEvent.Pts 在后分配恒更大；某些编辑只产 ServiceEvent（Event.Pts==0）。
-// nudge 须带 channel 当前最高 pts 才能让 >cap 在线成员的 getChannelDifference 拉齐到末尾——用 Event.Pts
-// 会在 Event.Pts==0 时漏发 nudge、或低于真实 pts。max() 在三种形态（仅 Event/仅 ServiceEvent/两者）都正确。
+// The nudge pts takes the larger of the two containers: an edit can produce two pts-bearing events
+// (Event = the edit itself, ServiceEvent = e.g. the "X completed Y" service message for a todo
+// completion), and ServiceEvent.Pts is allocated later and thus always larger; some edits produce
+// only a ServiceEvent (Event.Pts==0). The nudge must carry the channel's current highest pts for
+// an over-cap online member's getChannelDifference to catch up to the end -- using Event.Pts would
+// omit the nudge when Event.Pts==0 or report a pts lower than the real one. max() is correct in
+// all three forms (Event only/ServiceEvent only/both).
 func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUserID int64, res domain.EditChannelMessageResult) {
 	r.enqueueBotAPIChannelEditMessageUpdate(ctx, originUserID, res)
 	fanoutCache := newViewerPeerCache(r)
@@ -1185,9 +1235,11 @@ func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUser
 		})
 }
 
-// enqueueChannelMessagesFanout 同 enqueueChannelMessageFanout，但把多条结果汇成一个 job（批量转发：
-// 一个 Updates 内含多条 UpdateNewChannelMessage），peer refs 取全部结果并集预热。channelID/pts/
-// recipients 由调用方按批量语义给定（pts 取最后一条；recipients 受大群截断口径影响）。
+// enqueueChannelMessagesFanout is like enqueueChannelMessageFanout but merges several results into
+// one job (batch forward: one Updates containing several UpdateNewChannelMessage); peer refs take
+// the union across all results for warming. channelID/pts/recipients are given by the caller per
+// batch semantics (pts is the last one; recipients are affected by the large-group truncation
+// scope).
 func (r *Router) enqueueChannelMessagesFanout(ctx context.Context, originUserID, channelID int64, pts int, recipients []int64, results []domain.SendChannelMessageResult, extraUserIDs []int64) {
 	r.enqueueBotAPIChannelMessagesUpdate(ctx, originUserID, results)
 	fanoutCache := newViewerPeerCache(r)
@@ -1208,13 +1260,14 @@ func (r *Router) enqueueChannelMessagesFanout(ctx context.Context, originUserID,
 		})
 }
 
-// defaultChannelNudgeMaxTargets 限一次 fan-out 的 nudge 上限：nudge 是 O(1)/人廉价 push，但 nudge 被
-// 消费后客户端会 getChannelDifference（DrKLO 对未加载频道还会先 getPeerDialogs，设计 §10.3），
-// 大群高频下可能放大。可经 Config.ChannelNudgeMaxTargets 覆盖；客户端侧由 difference/getPeerDialogs
-// 的 FLOOD_WAIT（Phase 2）兜底（见 checkCatchupRateLimit）。
+// defaultChannelNudgeMaxTargets caps the nudges per fan-out: a nudge is a cheap O(1)/person push,
+// but once consumed the client calls getChannelDifference (for an unloaded channel DrKLO first
+// calls getPeerDialogs, design §10.3), which at high frequency in a large group can amplify. It
+// can be overridden via Config.ChannelNudgeMaxTargets; the client side is covered by the
+// difference/getPeerDialogs FLOOD_WAIT (Phase 2) (see checkCatchupRateLimit).
 const defaultChannelNudgeMaxTargets = 50000
 
-// channelNudgeMaxTargets 返回生效的 nudge 上限（Config 覆盖，否则默认）。
+// channelNudgeMaxTargets returns the effective nudge cap (a Config override, otherwise the default).
 func (r *Router) channelNudgeMaxTargets() int {
 	if r.cfg.ChannelNudgeMaxTargets > 0 {
 		return r.cfg.ChannelNudgeMaxTargets
@@ -1222,11 +1275,13 @@ func (r *Router) channelNudgeMaxTargets() int {
 	return defaultChannelNudgeMaxTargets
 }
 
-// nudgeBeyondCapChannelMembers 给频道在线成员中未收到完整 payload（不在 delivered 内）的成员发
-// UpdateChannelTooLong{pts}。nudge 必须带 pts（flags&1）——DrKLO 对不带 pts 的 tooLong 不触发
-// getChannelDifference（设计 §10.3）。走 pushUserUpdates（best-effort、未就绪入 pending、非
-// transient），符合设计 §决策4 的 nudge 投递可靠性要求。SessionManager 未实现 ChannelNudgeProvider
-// 时（测试/未装配）静默跳过，不影响完整 payload 投递。
+// nudgeBeyondCapChannelMembers sends UpdateChannelTooLong{pts} to channel online members that did
+// not receive the full payload (not in delivered). The nudge must carry pts (flags&1) -- DrKLO
+// does not trigger getChannelDifference for a tooLong without pts (design §10.3). It goes through
+// pushUserUpdates (best-effort, pends when not ready, non-transient), satisfying the nudge
+// delivery reliability requirement of design decision 4. When SessionManager does not implement
+// ChannelNudgeProvider (tests/unwired), it is silently skipped and does not affect full payload
+// delivery.
 func (r *Router) nudgeBeyondCapChannelMembers(ctx context.Context, channelID int64, pts int, delivered map[int64]struct{}) bool {
 	provider, ok := r.deps.Sessions.(ChannelNudgeProvider)
 	if !ok || channelID == 0 || pts <= 0 {

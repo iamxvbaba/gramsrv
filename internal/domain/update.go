@@ -1,7 +1,7 @@
 package domain
 
-// UpdateState 是账号的 update 状态（pts/qts/seq/date）。
-// 第一阶段空账号为零值；真实状态机属第二阶段。
+// UpdateState is the account's update state (pts/qts/seq/date).
+// In phase one an empty account is the zero value; the real state machine belongs to phase two.
 type UpdateState struct {
 	Pts  int
 	Qts  int

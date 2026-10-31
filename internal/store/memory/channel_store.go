@@ -34,10 +34,11 @@ type memoryPaidReactionReceipt struct {
 	result      domain.ChannelMessagePaidReactionResult
 }
 
-// channelReadWatermark 是 channel 级公共已读水位：任一成员推进过的最高两个
-// read_inbox。sender 的 read_outbox 由它派生（top1 持有者本人取 top2）。
-// memoryMention 是 owner 视角一条 mention 的状态：topID 支持 topic 过滤，
-// unread 翻转为 false 表示已读但 mentioned 高亮永久保留。
+// channelReadWatermark is the channel-level public read watermark: the two highest
+// read_inbox values any member has advanced. A sender's read_outbox is derived from it
+// (the top1 owner themselves take top2). memoryMention is the state of one mention from
+// the owner's perspective: topID enables topic filtering, and unread flipping to false
+// means read, with the mentioned highlight kept permanently.
 type memoryMention struct {
 	topID  int
 	unread bool
@@ -83,7 +84,7 @@ type ChannelStore struct {
 	topics    map[int64]map[int]domain.ChannelForumTopic
 	messages  map[int64][]domain.ChannelMessage
 	reactions map[int64]map[int]map[int64][]domain.ChannelMessagePeerReaction
-	// paidReactions 是 per-(channel,message,user) 付费 reaction 累计星数 + 匿名标志。
+	// paidReactions is the per-(channel,message,user) paid-reaction cumulative star count + anonymous flag.
 	paidReactions        map[int64]map[int]map[int64]memoryPaidReaction
 	paidReactionCommands map[paidReactionCommandKey]memoryPaidReactionReceipt
 	top                  map[int64]map[string]domain.TopMessageReaction
@@ -118,14 +119,14 @@ type ChannelStore struct {
 	suggestedPostApprovals map[memorySuggestedPostKey]memorySuggestedPostApproval
 	boostSlots             map[boostSlotKey]domain.PremiumBoostSlot
 	readMarks              map[int64]channelReadWatermark
-	// topicReads 是 per-(channel,user,topic) 已读水位（forum 话题独立已读，不碰频道级 member 水位）。
+	// topicReads is the per-(channel,user,topic) read watermark (forum topics track read state independently and do not touch the channel-level member watermark).
 	topicReads map[int64]map[int64]map[int]memoryTopicRead
-	// polls 是共享 poll 权威（与 MessageStore 同一实例）；nil 时 poll 链路按未接入处理。
+	// polls is the shared poll authority (the same instance as MessageStore); when nil the poll path is treated as not wired up.
 	polls            *PollStore
 	usernameRegistry *CollectibleUsernameStore
 }
 
-// AttachPollStore 注入共享 poll 权威。
+// AttachPollStore injects the shared poll authority.
 func (s *ChannelStore) AttachPollStore(polls *PollStore) {
 	s.polls = polls
 }

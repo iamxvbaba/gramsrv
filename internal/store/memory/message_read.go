@@ -124,7 +124,7 @@ func (s *MessageStore) GetOutboxReadDate(_ context.Context, req domain.OutboxRea
 	return date, nil
 }
 
-// ListUnreadReactionMessages 返回当前 owner 在该 peer 下 reaction_unread 的消息。
+// ListUnreadReactionMessages returns the messages with reaction_unread for the current owner under this peer.
 func (s *MessageStore) ListUnreadReactionMessages(_ context.Context, ownerUserID int64, peer domain.Peer, limit int) ([]domain.Message, error) {
 	if ownerUserID == 0 || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return nil, nil
@@ -146,7 +146,7 @@ func (s *MessageStore) ListUnreadReactionMessages(_ context.Context, ownerUserID
 	return out, nil
 }
 
-// ReadPeerReactions 清理当前 owner 在该 peer 下的全部未读 reaction 状态。
+// ReadPeerReactions clears all unread reaction state for the current owner under this peer.
 func (s *MessageStore) ReadPeerReactions(_ context.Context, ownerUserID int64, peer domain.Peer) (int, error) {
 	if ownerUserID == 0 || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return 0, nil

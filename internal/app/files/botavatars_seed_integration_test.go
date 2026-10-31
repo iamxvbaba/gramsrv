@@ -29,12 +29,13 @@ func (c *countingThumbnailer) Extract(_ context.Context, _ []byte, _ string) ([]
 	return buf.Bytes(), nil
 }
 
-// TestBotAvatarsSeedViaRealService 集成测试：通过真实 files.Service、真实
-// permanent-blob 后端与真实、分开的 upload-staging 后端调用 botavatars.Seed。
-// Seed 内部经 SeedTx 构造事务化服务——这里确保 uploadParts / thumbs 等字段在
-// 事务服务上完整保留，且 upload parts 被写入单独的 staging backend（而非主
-// blob 后端）。否则 premiumbot.mp4 的 CreateAvatarVideoFromBytes 会因 upload
-// part backend 未配置而失败，或视频静态帧回落成生成占位图。
+// TestBotAvatarsSeedViaRealService integration test: call botavatars.Seed through a real
+// files.Service, a real permanent-blob backend and a real, separate upload-staging backend. Seed
+// builds a transactional service internally via SeedTx — this ensures fields such as uploadParts /
+// thumbs are fully preserved on the transactional service and that upload parts are written to the
+// separate staging backend (not the main blob backend). Otherwise premiumbot.mp4's
+// CreateAvatarVideoFromBytes would fail because the upload part backend is unconfigured, or the video
+// static frame would fall back to a generated placeholder.
 func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	ctx := context.Background()
 
@@ -43,9 +44,9 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new local fs blob backend: %v", err)
 	}
-	// 独立的 upload-staging backend：与 permanent-blob 后端是分开的实例/目录。
+	// Independent upload-staging backend: a separate instance/directory from the permanent-blob backend.
 	staging := &countingUploadPartBackend{LocalFS: mustLocalFS(t, "staging backend")}
-	// Фейковый thumbnailer фиксирует, что SeedTx сохранил thumbs для видео-статика.
+	// The fake thumbnailer records that SeedTx preserved thumbs for the video static frame.
 	thumb := &countingThumbnailer{}
 	svc := NewService(media, blobs, 2, WithUploadPartBackend(staging), WithVideoThumbnailer(thumb))
 
@@ -58,18 +59,18 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		t.Fatalf("botavatars.SeedOfficialSystemAvatar failed: %v", err)
 	}
 
-	// premiumbot.mp4 走 CreateAvatarVideoFromBytes -> SaveFilePart -> PutUploadPart。
-	// uploadParts 必须被 SeedTx 保留，且确实落到了独立的 staging backend。
+	// premiumbot.mp4 goes through CreateAvatarVideoFromBytes -> SaveFilePart -> PutUploadPart.
+	// uploadParts must be preserved by SeedTx and actually land on the separate staging backend.
 	if staging.putUploadPartCalls == 0 {
 		t.Fatalf("staging backend was never used: uploadParts not carried into SeedTx")
 	}
-	// 视频静态帧必须从真实 thumbnailer 抽取，而不是回落成生成占位图——这证明
-	// SeedTx 保留了 thumbs。
+	// The video static frame must be extracted from the real thumbnailer rather than falling back to a
+	// generated placeholder — proving that SeedTx preserved thumbs.
 	if thumb.extractCalls == 0 {
 		t.Fatalf("video thumbnailer never invoked: thumbs not carried into SeedTx")
 	}
 
-	// 每个系统 bot/账号都应有头像相册与当前照片。
+	// Every system bot/account should have an avatar album and a current photo.
 	for peerID := range botavatarsPeersForSeed() {
 		ref, err := media.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{peerID}, domain.ProfilePhotoKindProfile)
 		if err != nil {
@@ -89,7 +90,7 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		if photo.DCID != 2 {
 			t.Fatalf("peer %d photo dc_id = %d, want 2", peerID, photo.DCID)
 		}
-		// 每个 photo size 都必须有真实 blob 可下载。
+		// Every photo size must have a real downloadable blob.
 		for _, size := range photo.Sizes {
 			blob, found, err := media.GetFileBlob(ctx, photoBlobKey(photo.ID, size.Type))
 			if err != nil {
@@ -108,9 +109,9 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		}
 	}
 
-	// 幂等：二次 Seed 不报错，且不再生成新照片。（官方系统账号的头像由
-	// SeedOfficialSystemAvatar 单独播种，每次调用都会重设，故不参与这里的
-	// 幂等断言。）
+	// Idempotent: a second Seed does not error and no longer generates new photos. (The official
+	// system account's avatar is seeded separately by SeedOfficialSystemAvatar and is reset on every
+	// call, so it does not participate in the idempotency assertion here.)
 	before := len(media.photos)
 	if err := botavatars.Seed(ctx, svc, 1750000001); err != nil {
 		t.Fatalf("second botavatars.Seed failed: %v", err)

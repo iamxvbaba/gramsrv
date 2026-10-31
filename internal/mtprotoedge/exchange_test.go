@@ -29,8 +29,9 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestKeyExchange 验证 M1：client 用 server 公钥完成 MTProto 密钥交换，
-// 双方得到一致的 auth key 与 server salt，且 server 将其存入 AuthKeyStore。
+// TestKeyExchange verifies M1: the client completes the MTProto key exchange
+// using the server's public key, both sides get a consistent auth key and server
+// salt, and the server stores them in AuthKeyStore.
 func TestKeyExchange(t *testing.T) {
 	const dc = 2
 
@@ -59,7 +60,7 @@ func TestKeyExchange(t *testing.T) {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, ln) }()
 
-	// client：TCP 拨号 + intermediate 握手，跑 client 端密钥交换。
+	// Client: TCP dial + intermediate handshake, running the client-side key exchange.
 	raw, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -81,7 +82,7 @@ func TestKeyExchange(t *testing.T) {
 		t.Fatalf("client exchange: %v", err)
 	}
 
-	// server 在 Run 返回后落库，轮询等待。
+	// The server persists after Run returns; poll and wait.
 	var saved store.AuthKeyData
 	found := false
 	deadline := time.Now().Add(5 * time.Second)

@@ -24,8 +24,8 @@ type seedCandidate struct {
 	modTime int64
 }
 
-// SeedDirectory 将导出的 .strings 文件清单原子对账到 LangPackStore。
-// root 可直接指向 data/langpack，也可指向包含 .strings 的具体平台目录。
+// SeedDirectory atomically reconciles the exported .strings file inventory into LangPackStore.
+// root may point directly at data/langpack, or at a specific platform directory containing .strings files.
 func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 	if s == nil || s.packs == nil || root == "" {
 		return 0, nil
@@ -63,9 +63,10 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 	}
 	for _, key := range keys {
 		candidate := candidates[key]
-		// 版本号（编码在文件名里）、文件大小和 mtime 都未变时复用上次的 hash。
-		// 同大小的编辑也必须重新校验；旧清单缺少 size/mtime 时先算一次 SHA256，
-		// 再补写完整 stat 元数据，不能把未知大小当作内容相同。
+		// Reuse the previous hash when the version (encoded in the filename), file size and
+		// mtime are all unchanged. Edits of the same size must also be revalidated; when the
+		// old inventory lacks size/mtime, compute SHA256 once, then backfill the full stat
+		// metadata — an unknown size must not be treated as identical content.
 		if old, ok := previousByKey[key]; ok &&
 			old.Version == candidate.meta.Version &&
 			old.Size > 0 && old.Size == candidate.size &&
@@ -124,12 +125,14 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 		})
 	}
 
-	// 目录内容没变时直接返回：ReconcileSeed 会为每个语言包做 2-3 次查询，远端 PG 上
-	// 是数百次往返（启动期数秒），而结果只会全部命中相同 hash。要强制重放，删掉
-	// seed_states 里的 langpack:v2:catalog:<catalog> 即可。
+	// Return directly when the directory contents are unchanged: ReconcileSeed does 2-3
+	// queries per langpack, which on a remote PG is hundreds of round trips (seconds during
+	// startup), while the result will only hit the same hashes. To force a replay, delete
+	// langpack:v2:catalog:<catalog> from seed_states.
 	if sameSeedCatalog(previous, seed) {
-		// 旧清单或 touch 后的文件已在上面通过内容 hash 校验；只补写 stat 快照，
-		// 下次启动即可复用 hash，不必再读整个文件。
+		// The old inventory or touched files have already passed content-hash validation above;
+		// only backfill the stat snapshot so the next startup can reuse the hash without reading
+		// the whole file again.
 		snapshot := seed.CatalogSnapshot()
 		if !domain.SameSeedCatalogSnapshot(previous, snapshot) {
 			if err := s.packs.PutSeedCatalog(ctx, snapshot); err != nil {
@@ -147,8 +150,9 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 	return seeded, nil
 }
 
-// sameSeedCatalog 判断导出目录算出的目录清单与上次落库的清单是否一致。比较按
-// pack/code 建映射，不依赖历史清单的写入顺序（早期的记录并非按路径排序写入）。
+// sameSeedCatalog reports whether the catalog computed from the export directory matches the
+// last persisted one. The comparison builds a map by pack/code and does not depend on the write
+// order of the historical inventory (early records were not written path-sorted).
 func sameSeedCatalog(previous domain.LangPackSeedCatalog, seed domain.LangPackSeed) bool {
 	if previous.Catalog != seed.Catalog ||
 		len(previous.Scopes) != len(seed.Scopes) ||
@@ -226,7 +230,7 @@ func scanSeedCandidates(root string) (map[string]seedCandidate, []string, error)
 		if err != nil {
 			return err
 		}
-		// 与 ParseTDesktopFile 一样跟随符号链接，校验实际被读取文件的 stat。
+		// Follow symlinks like ParseTDesktopFile and validate the stat of the file actually read.
 		info, err := os.Stat(path)
 		if err != nil {
 			return err

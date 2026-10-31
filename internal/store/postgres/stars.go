@@ -12,13 +12,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// StarsStore 用 PostgreSQL 实现 store.StarsStore（Stars 本地账本）。
-// 借记/贷记/授予各自在单事务内完成：余额与流水永不漂移。
+// StarsStore implements store.StarsStore with PostgreSQL (the local Stars ledger).
+// Debit/credit/grant each complete in a single transaction: the balance and the ledger never drift.
 type StarsStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewStarsStore 基于 pgx 连接池（或事务）创建 StarsStore。
+// NewStarsStore creates a StarsStore on top of a pgx pool (or transaction).
 func NewStarsStore(db sqlcgen.DBTX) *StarsStore {
 	return &StarsStore{db: db}
 }
@@ -44,7 +44,7 @@ func (s *StarsStore) EnsureGrant(ctx context.Context, userID, amount int64, date
 		return domain.StarsBalance{}, false, nil
 	}
 	if amount <= 0 {
-		// 授予额为 0 时只确保有一行且 granted=true（幂等关闭授予）。
+		// A zero grant amount only ensures a row exists with granted=true (idempotently disables the grant).
 		bal, err := s.GetBalance(ctx, userID)
 		return bal, false, err
 	}
@@ -145,7 +145,7 @@ func (s *StarsStore) ListTransactions(ctx context.Context, userID int64, query d
 	}
 	page := domain.StarsTransactionPage{Balance: bal.Balance}
 
-	// keyset：方向过滤先于 LIMIT，多取一条以探测同一视图是否还有下一页。
+	// keyset: the direction filter precedes LIMIT, and one extra row is fetched to probe whether the same view has a next page.
 	where, order, args := starsTransactionQueryParts("user_id", "amount", userID, query)
 	rows, err := s.db.Query(ctx, `
 SELECT id, peer_type, peer_id, amount, reason, title, description, date,
@@ -227,7 +227,7 @@ RETURNING balance`, recipientUserID, credited).Scan(&recipientBalance); err != n
 	return domain.PaidStarsCharge{Amount: amount, SenderBalance: balance - amount, RecipientBalance: recipientBalance}, nil
 }
 
-// CountCreditAllUsers 统计批量贷记的候选账号数（真实用户：is_bot=false 且非系统账号）。
+// CountCreditAllUsers counts the candidate accounts for a bulk credit (real users: is_bot=false and not a system account).
 func (s *StarsStore) CountCreditAllUsers(ctx context.Context) (int64, error) {
 	var count int64
 	err := s.db.QueryRow(ctx, `
@@ -240,10 +240,11 @@ WHERE is_bot = false AND id <> ALL($1::bigint[])`, domain.SystemUserIDs()).Scan(
 	return count, nil
 }
 
-// CreditAll 在单个事务内给所有真实用户批量贷记 amount（admin 的「发给所有人」）。
-// 每个受影响账号：新行建行 balance=amount、旧行余额累加，都置 granted=true——批量贷记
-// 本身就是一次授予，置 granted 避免惰性首读起始授予再叠加一份。随后每人写一条流水，
-// 余额与流水在同一个事务内原子完成。
+// CreditAll bulk-credits amount to all real users in a single transaction (the admin's "send to everyone").
+// For each affected account: a new row is inserted with balance=amount, an existing row's balance is
+// accumulated, both setting granted=true -- the bulk credit is itself a grant, and setting granted
+// avoids the lazy first-read starting grant stacking another one on top. Each user then gets a ledger
+// row; the balance and the ledger complete atomically in the same transaction.
 func (s *StarsStore) CreditAll(ctx context.Context, amount int64, reason domain.StarsTransactionReason, date int, title, desc string) (int64, error) {
 	if amount <= 0 {
 		return 0, domain.ErrStarsInvalidAmount
@@ -302,7 +303,7 @@ func starsTransactionQueryParts(ownerColumn, amountColumn string, ownerID int64,
 	return where, order, args
 }
 
-// insertStarsTxn 在事务内写一条流水（amount 带符号）。
+// insertStarsTxn writes one ledger row inside a transaction (amount is signed).
 func insertStarsTxn(ctx context.Context, tx pgx.Tx, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, date int, title, desc string) error {
 	if _, err := tx.Exec(ctx, `
 INSERT INTO stars_transactions (user_id, peer_type, peer_id, amount, reason, title, description, date)

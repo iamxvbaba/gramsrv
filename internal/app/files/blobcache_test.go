@@ -24,7 +24,7 @@ func TestBlobMetaCacheGetPutEvict(t *testing.T) {
 	if b, ok := c.get("a"); !ok || b.ObjectKey != "oa" {
 		t.Fatalf("get a = %+v ok=%v", b, ok)
 	}
-	// 容量 2：刚 access 过 a，再 put c 应淘汰最久未用的 b。
+	// Capacity 2: a was just accessed, so putting c should evict the least recently used b.
 	c.put("c", domain.FileBlob{LocationKey: "c", ObjectKey: "oc"})
 	if _, ok := c.get("b"); ok {
 		t.Error("b should be evicted (least recently used)")
@@ -37,7 +37,7 @@ func TestBlobMetaCacheGetPutEvict(t *testing.T) {
 	}
 }
 
-// countingMediaStore 统计 GetFileBlob 次数，验证元数据缓存命中后不再查 PG。
+// countingMediaStore counts GetFileBlob calls, verifying that a metadata cache hit no longer queries PG.
 type countingMediaStore struct {
 	*fakeMediaStore
 	getBlobCalls    int
@@ -56,7 +56,7 @@ func (c *countingMediaStore) GetStickerSetByID(ctx context.Context, id int64) (d
 
 type countingBlobBackend struct {
 	BlobBackend
-	// WarmCaches 并发读 blob，计数必须是原子的。
+	// WarmCaches reads blobs concurrently, so the count must be atomic.
 	getRangeCalls atomic.Int64
 }
 
@@ -83,7 +83,7 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	blobs := &countingBlobBackend{BlobBackend: local}
 	svc := NewService(counting, blobs, 2)
 
-	// 第一次：查 PG 一次并填充元数据缓存；小 blob 读整块进字节缓存后返回 [0,5)。
+	// First time: query PG once and fill the metadata cache; the small blob is read whole into the byte cache and [0,5) is returned.
 	c1, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "doc:42", Offset: 0, Limit: 5})
 	if err != nil || !ok {
 		t.Fatalf("getfile1 ok=%v err=%v", ok, err)
@@ -114,7 +114,7 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 		t.Errorf("getRangeCalls = %d, want 1", got)
 	}
 
-	// 第二次：同 location 命中元数据与字节缓存；[5,10) 直接从内存切片。
+	// Second time: the same location hits the metadata and byte caches; [5,10) is sliced directly from memory.
 	c2, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "doc:42", Offset: 5, Limit: 5})
 	if err != nil || !ok {
 		t.Fatalf("getfile2 ok=%v err=%v", ok, err)
@@ -513,7 +513,7 @@ func TestWarmCachesPreloadsStickerSetAndSmallBlobs(t *testing.T) {
 	}
 }
 
-// blockedStickerDocumentsStore 挂起第一次查询的已读快照，允许 RPC 在预热发布前完成写入。
+// blockedStickerDocumentsStore suspends the first query's read snapshot, letting an RPC complete a write before the warm-up publishes.
 type blockedStickerDocumentsStore struct {
 	*fakeMediaStore
 	loaded  chan struct{}
@@ -573,7 +573,7 @@ func TestStickerSetCacheRejectsConcurrentStaleLoads(t *testing.T) {
 				}
 
 				if mutation == "delete" {
-					// 缓存尚为空时的失效也必须挡住在途查询。
+					// An invalidation while the cache is still empty must also block an in-flight query.
 					if _, err := svc.AdminDeleteStickerSet(ctx, 1); err != nil {
 						t.Fatal(err)
 					}

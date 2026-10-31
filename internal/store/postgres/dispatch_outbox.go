@@ -12,8 +12,9 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// defaultDispatchLease 是 'dispatching' 行被判定租约过期、可被重新 claim 的默认时长。
-// 与 docs/message-module.md 的 outbox 背压参数对应；生产由 config 注入覆盖。
+// defaultDispatchLease is the default duration after which a 'dispatching' row is judged to have
+// an expired lease and may be re-claimed. It corresponds to the outbox backpressure parameter in
+// docs/message-module.md; production overrides it via config injection.
 const (
 	defaultDispatchLease              = 30 * time.Second
 	defaultDispatchPoisonCleanupBatch = 256
@@ -35,17 +36,17 @@ func enqueueDispatch(ctx context.Context, q *sqlcgen.Queries, arg sqlcgen.Enqueu
 	return q.EnqueueDispatch(ctx, arg)
 }
 
-// DispatchOutboxStore 用 PostgreSQL 实现 transactional outbox。
+// DispatchOutboxStore implements the transactional outbox with PostgreSQL.
 type DispatchOutboxStore struct {
 	db           sqlcgen.DBTX
 	q            *sqlcgen.Queries
 	leaseSeconds int32
 }
 
-// DispatchOutboxOption 调整 DispatchOutboxStore 的 claim 行为。
+// DispatchOutboxOption adjusts the DispatchOutboxStore claim behavior.
 type DispatchOutboxOption func(*DispatchOutboxStore)
 
-// WithLeaseTimeout 设置租约超时；<=0 时保持默认。
+// WithLeaseTimeout sets the lease timeout; <=0 keeps the default.
 func WithLeaseTimeout(d time.Duration) DispatchOutboxOption {
 	return func(s *DispatchOutboxStore) {
 		if d > 0 {
@@ -57,7 +58,7 @@ func WithLeaseTimeout(d time.Duration) DispatchOutboxOption {
 	}
 }
 
-// NewDispatchOutboxStore 基于 pgx 连接池（或事务）创建 DispatchOutboxStore。
+// NewDispatchOutboxStore creates a DispatchOutboxStore backed by a pgx pool (or transaction).
 func NewDispatchOutboxStore(db sqlcgen.DBTX, opts ...DispatchOutboxOption) *DispatchOutboxStore {
 	s := &DispatchOutboxStore{
 		db:           db,
@@ -89,9 +90,10 @@ func (s *DispatchOutboxStore) ClaimPending(ctx context.Context, limit int) ([]st
 	return dispatchItemsFromClaimRows(rows), nil
 }
 
-// ClaimPendingShards 只领取固定 logical shard 集合中的用户 head 事件。
-// shardCount 是稳定哈希空间，shardIDs 是当前 worker 独占的子集；worker 数变化只改变
-// shard→worker 的运行时归属，不改变 user→shard，从而避免同一用户被并行领取。
+// ClaimPendingShards claims only user head events within a fixed logical shard set.
+// shardCount is the stable hash space and shardIDs the subset currently owned by this worker;
+// a change in worker count only changes the runtime shard→worker ownership, not user→shard,
+// thereby avoiding the same user being claimed in parallel.
 func (s *DispatchOutboxStore) ClaimPendingShards(ctx context.Context, shardCount int, shardIDs []int, limit int) ([]store.DispatchOutboxItem, error) {
 	if shardCount <= 0 || len(shardIDs) == 0 {
 		return nil, nil
@@ -159,7 +161,8 @@ func dispatchItemsFromClaimRows(rows []sqlcgen.ClaimDispatchOutboxRow) []store.D
 	return out
 }
 
-// MarkDeliveredBatch 一次性删除一批已投递的 outbox 行（方案 A：投递成功即删），取代逐条 MarkDelivered。
+// MarkDeliveredBatch deletes a batch of delivered outbox rows in one go (plan A: delete on
+// successful delivery), replacing per-row MarkDelivered.
 func (s *DispatchOutboxStore) MarkDeliveredBatch(ctx context.Context, items []store.DispatchOutboxItem) error {
 	if len(items) == 0 {
 		return nil

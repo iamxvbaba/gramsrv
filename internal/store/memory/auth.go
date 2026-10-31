@@ -19,12 +19,12 @@ type authKeyState struct {
 	nextLayerObservation int64
 }
 
-// AuthKeyStore 是 store.AuthKeyStore 的内存实现。
+// AuthKeyStore is the in-memory implementation of store.AuthKeyStore.
 type AuthKeyStore struct {
 	state *authKeyState
 }
 
-// NewAuthKeyStore 创建内存 AuthKeyStore。
+// NewAuthKeyStore creates an in-memory AuthKeyStore.
 func NewAuthKeyStore() *AuthKeyStore {
 	return &AuthKeyStore{state: &authKeyState{
 		keys:                 make(map[[8]byte]store.AuthKeyData),
@@ -202,12 +202,12 @@ func (s *authKeyState) deleteProtocolAuthKeyLocked(id [8]byte) [][8]byte {
 	return append(deleted, id)
 }
 
-// TempAuthKeyBindingStore 是 store.TempAuthKeyBindingStore 的内存实现。
+// TempAuthKeyBindingStore is the in-memory implementation of store.TempAuthKeyBindingStore.
 type TempAuthKeyBindingStore struct {
 	state *authKeyState
 }
 
-// NewTempAuthKeyBindingStore 创建内存 TempAuthKeyBindingStore。
+// NewTempAuthKeyBindingStore creates an in-memory TempAuthKeyBindingStore.
 func NewTempAuthKeyBindingStore(authKeys *AuthKeyStore) *TempAuthKeyBindingStore {
 	if authKeys == nil {
 		panic("memory.NewTempAuthKeyBindingStore requires a non-nil AuthKeyStore")
@@ -287,7 +287,7 @@ func (s *TempAuthKeyBindingStore) DeleteExpired(_ context.Context, expiredBefore
 	return deleted, nil
 }
 
-// AuthorizationStore 是 store.AuthorizationStore 的内存实现。
+// AuthorizationStore is the in-memory implementation of store.AuthorizationStore.
 type AuthorizationStore struct {
 	linkMu   sync.RWMutex
 	authKeys *authKeyState
@@ -295,7 +295,7 @@ type AuthorizationStore struct {
 	m        map[[8]byte]domain.Authorization
 }
 
-// NewAuthorizationStore 创建内存 AuthorizationStore。
+// NewAuthorizationStore creates an in-memory AuthorizationStore.
 func NewAuthorizationStore() *AuthorizationStore {
 	return &AuthorizationStore{m: make(map[[8]byte]domain.Authorization)}
 }
@@ -545,14 +545,14 @@ func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int6
 	return out, nil
 }
 
-// CodeStore 是 store.CodeStore 的内存实现（带 TTL）。
+// CodeStore is the in-memory implementation of store.CodeStore (with TTL).
 type CodeStore struct {
 	mu     sync.Mutex
 	m      map[string]codeEntry
 	scopes map[store.PhoneCodeScope]string
 }
 
-// NewCodeStore 创建内存 CodeStore。
+// NewCodeStore creates an in-memory CodeStore.
 func NewCodeStore() *CodeStore {
 	return &CodeStore{
 		m:      make(map[string]codeEntry),

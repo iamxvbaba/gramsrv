@@ -170,8 +170,10 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 		return nil, scheduleDateInvalidErr()
 	}
 	if peer.Type == domain.PeerTypeUser && p.randomID == 0 {
-		// 私聊发送要求非零 random_id（幂等键）。random_id==0 的定时私聊消息到点
-		// 投递必然在 SendPrivateText 失败并陷入重试，故在排程入口即拒绝。
+		// Private sends require a non-zero random_id (idempotency key). A scheduled
+		// private message with random_id==0 would always fail in SendPrivateText at
+		// delivery time and get stuck retrying, so it is rejected at the scheduling
+		// entry point.
 		return nil, randomIDEmptyErr()
 	}
 	if peer.Type == domain.PeerTypeUser && r.deps.Users != nil && peer.ID != userID {

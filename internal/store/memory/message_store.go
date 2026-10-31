@@ -5,7 +5,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// MessageStore 是 store.MessageStore 的内存实现。
+// MessageStore is the in-memory implementation of store.MessageStore.
 type MessageStore struct {
 	mu                  sync.RWMutex
 	noForwardsMu        sync.Mutex
@@ -22,9 +22,9 @@ type MessageStore struct {
 	albumGroups         map[albumGroupKey]albumGroupRecord
 	dialogs             *DialogStore
 	updateEvents        *UpdateEventStore
-	// polls 是共享 poll 权威（投票校验与读路径 enrichment）；nil 时 poll 链路按未接入处理。
+	// polls is the shared poll authority (vote validation and read-path enrichment); when nil, the poll path is treated as not wired in.
 	polls *PollStore
-	// savedPins 是收藏夹子会话置顶顺序（下标即 pinned_order，越小越前）。
+	// savedPins is the pin order of saved-message sub-conversations (the index is pinned_order; smaller is earlier).
 	savedPins map[int64][]domain.Peer
 	// privateNoForwards is keyed by the sorted user pair. Requests are keyed by
 	// the shared logical private-message id so both local box ids resolve to one
@@ -33,7 +33,7 @@ type MessageStore struct {
 	privateNoForwardsRequests map[int64]memoryNoForwardsRequest
 }
 
-// AttachPollStore 注入共享 poll 权威（与 ChannelStore 共用同一实例）。
+// AttachPollStore injects the shared poll authority (the same instance as ChannelStore uses).
 func (s *MessageStore) AttachPollStore(polls *PollStore) {
 	s.polls = polls
 }
@@ -48,7 +48,7 @@ type readOutboxDateKey struct {
 	msgID       int
 }
 
-// NewMessageStore 创建内存 MessageStore。
+// NewMessageStore creates an in-memory MessageStore.
 func NewMessageStore(dialogs ...*DialogStore) *MessageStore {
 	s := &MessageStore{
 		m:                         make(map[int64][]domain.Message),

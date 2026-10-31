@@ -21,14 +21,14 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// MediaStore 用 PostgreSQL 实现 store.MediaStore（媒体元数据 + blob 索引）。
+// MediaStore implements store.MediaStore with PostgreSQL (media metadata + blob index).
 type MediaStore struct {
 	db        sqlcgen.DBTX
 	q         *sqlcgen.Queries
 	documents *documentMetaCache
 }
 
-// NewMediaStore 基于 pgx 连接池（或事务）创建 MediaStore。
+// NewMediaStore creates a MediaStore backed by a pgx pool (or transaction).
 func NewMediaStore(db sqlcgen.DBTX) *MediaStore {
 	return &MediaStore{
 		db:        db,
@@ -37,7 +37,7 @@ func NewMediaStore(db sqlcgen.DBTX) *MediaStore {
 	}
 }
 
-// bytesOrEmpty 把 nil []byte 归一为空切片，避免落入 NOT NULL bytea 列时被当作 NULL。
+// bytesOrEmpty normalizes a nil []byte to an empty slice, avoiding it being treated as NULL when inserted into a NOT NULL bytea column.
 func bytesOrEmpty(b []byte) []byte {
 	if b == nil {
 		return []byte{}
@@ -110,7 +110,7 @@ ON CONFLICT (owner_user_id, file_id) DO NOTHING`,
 	return stored, tag.RowsAffected() == 1, nil
 }
 
-// ---- 上传分片 ----
+// ---- Upload parts ----
 
 func (s *MediaStore) SaveFilePart(ctx context.Context, part domain.UploadPart) error {
 	backend := string(part.Backend)
@@ -204,7 +204,7 @@ func (s *MediaStore) DeleteExpiredUploadParts(ctx context.Context, before time.T
 	})
 }
 
-// ---- blob 索引 ----
+// ---- Blob index ----
 
 func (s *MediaStore) PutFileBlob(ctx context.Context, blob domain.FileBlob) error {
 	if blob.LocationKey == "" || blob.Size < 0 {
@@ -256,8 +256,9 @@ func (s *MediaStore) GetFileBlob(ctx context.Context, locationKey string) (domai
 	}, true, nil
 }
 
-// GetFileBlobs 一发 ANY 查询批量取多个 location_key 的 blob 元数据，替代逐个 GetFileBlob 往返
-// （启动预热曾对 ~2400 个 blob 各打一次 PG，是启动期 N+1）。缺失的 key 不在返回 map 中。
+// GetFileBlobs fetches the blob metadata for multiple location_keys in a single ANY query,
+// replacing per-call GetFileBlob round trips (startup warming used to hit PG once per ~2400 blobs,
+// an N+1 at startup). Missing keys are not in the returned map.
 func (s *MediaStore) GetFileBlobs(ctx context.Context, locationKeys []string) (map[string]domain.FileBlob, error) {
 	if len(locationKeys) == 0 {
 		return nil, nil
@@ -288,8 +289,9 @@ WHERE location_key = ANY($1::text[])`, locationKeys)
 	return out, nil
 }
 
-// SeedThumbStates 批量取文档缩略图的校验元数据。刻意只解码前 16 个 base64 字符：
-// 启动期校验几千个 seed 文档时，把 thumbs 里的内联字节整段拉回内存才是主要开销。
+// SeedThumbStates batch-fetches the verification metadata for document thumbnails. It
+// deliberately decodes only the first 16 base64 characters: when validating thousands of seed
+// documents at startup, pulling the full inline bytes of thumbs back into memory is the main cost.
 func (s *MediaStore) SeedThumbStates(ctx context.Context, documentIDs []int64) ([]store.SeedThumbState, error) {
 	if len(documentIDs) == 0 {
 		return nil, nil
@@ -407,7 +409,7 @@ ON CONFLICT (key) DO UPDATE SET
 	return nil
 }
 
-// ---- 文档 ----
+// ---- Documents ----
 
 func (s *MediaStore) PutDocument(ctx context.Context, doc domain.Document) error {
 	params, err := putDocumentParams(doc)
@@ -625,7 +627,7 @@ func documentFromRow(row sqlcgen.GetDocumentRow) (domain.Document, error) {
 	}, nil
 }
 
-// ---- 照片 ----
+// ---- Photos ----
 
 func (s *MediaStore) PutPhoto(ctx context.Context, photo domain.Photo) error {
 	sizes, err := jsonArrayOrEmpty(photo.Sizes)
@@ -744,7 +746,7 @@ func photoFromFields(id, accessHash int64, fileReference []byte, date, dcID int,
 	}, nil
 }
 
-// ---- 贴纸集 ----
+// ---- Sticker sets ----
 
 func (s *MediaStore) PutStickerSet(ctx context.Context, set domain.StickerSet) error {
 	thumbs, err := jsonArrayOrEmpty(set.Thumbs)
@@ -1259,7 +1261,7 @@ func stickerSetFromRow(row sqlcgen.GetStickerSetByIDRow) (domain.StickerSet, boo
 	}, true, nil
 }
 
-// ---- 可用 reaction ----
+// ---- Available reactions ----
 
 func (s *MediaStore) PutAvailableReaction(ctx context.Context, r domain.AvailableReaction) error {
 	return s.q.PutAvailableReaction(ctx, sqlcgen.PutAvailableReactionParams{
@@ -1308,7 +1310,7 @@ func (s *MediaStore) CountAvailableReactions(ctx context.Context) (int, error) {
 	return int(n), err
 }
 
-// ---- 头像历史 ----
+// ---- Profile photo history ----
 
 func (s *MediaStore) AddProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) error {
 	kind = normalizeProfilePhotoKind(kind)

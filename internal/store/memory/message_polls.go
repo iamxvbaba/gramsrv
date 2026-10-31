@@ -7,8 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 私聊消息 poll 投票/关闭：消息可见性在本 store 校验，poll 级校验与状态全部
-// 委托共享 PollStore（与 postgres 实现共用 domain 纯函数语义）。
+// Private-message poll voting/closing: message visibility is checked in this store, while
+// all poll-level validation and state are delegated to the shared PollStore (sharing domain
+// pure-function semantics with the postgres implementation).
 
 func (s *MessageStore) VoteMessagePoll(_ context.Context, req domain.VotePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error) {
 	target, err := s.pollMessageTarget(req.UserID, req.Peer, req.MessageID)
@@ -38,7 +39,7 @@ func (s *MessageStore) CloseMessagePoll(_ context.Context, req domain.ClosePriva
 	return s.privatePollResult(target.UID, target.Media.Poll.ID, req.Date), nil
 }
 
-// pollMessageTarget 定位 viewer box 中带 poll 的目标消息。
+// pollMessageTarget locates the target message carrying a poll in the viewer's box.
 func (s *MessageStore) pollMessageTarget(userID int64, peer domain.Peer, messageID int) (domain.Message, error) {
 	if s == nil || s.polls == nil {
 		return domain.Message{}, domain.ErrMessageIDInvalid
@@ -60,7 +61,7 @@ func (s *MessageStore) pollMessageTarget(userID int64, peer domain.Peer, message
 	return domain.Message{}, domain.ErrMessageIDInvalid
 }
 
-// privatePollResult 收集同一 UID 的全部 owner 副本，并按各自 owner 视角 enrich poll。
+// privatePollResult collects all owner copies of the same UID and enriches the poll from each owner's perspective.
 func (s *MessageStore) privatePollResult(uid, pollID int64, now int) domain.PrivateMessagePollResult {
 	out := domain.PrivateMessagePollResult{PollID: pollID}
 	s.mu.RLock()
@@ -78,7 +79,7 @@ func (s *MessageStore) privatePollResult(uid, pollID int64, now int) domain.Priv
 	return out
 }
 
-// enrichPrivateMessagePolls 是私聊读路径的 poll enrichment 入口（与 reactions 填充并列）。
+// enrichPrivateMessagePolls is the poll enrichment entry point for the private-chat read path (parallel to reaction filling).
 func (s *MessageStore) enrichPrivateMessagePolls(messages []domain.Message, now int) {
 	if s == nil || s.polls == nil {
 		return

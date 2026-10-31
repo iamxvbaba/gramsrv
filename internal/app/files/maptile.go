@@ -10,10 +10,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// 本文件实现 geo 消息地图缩略图（upload.getWebFile / inputWebFileGeoPointLocation）的
-// 本地占位渲染：服务端按坐标确定性合成一张「街区网格 + 定位针」风格的静态图，
-// 同一 (lat,long,zoom,w,h,scale) 输入字节级可重现，保证客户端分片续传一致。
-// 配置了 Mapbox 代理（maptile_proxy.go）时优先返回真实地图，本渲染降级为故障回退。
+// This file implements local placeholder rendering of geo message map thumbnails
+// (upload.getWebFile / inputWebFileGeoPointLocation): the server deterministically synthesizes a
+// static image in a "street grid + location pin" style, byte-for-byte reproducible for the same
+// (lat,long,zoom,w,h,scale) input, so client chunked downloads stay consistent across resends.
+// When a Mapbox proxy is configured (maptile_proxy.go) the real map is preferred and this rendering
+// degrades to a failure fallback.
 
 const (
 	mapTileMinEdge  = 16
@@ -23,15 +25,16 @@ const (
 	mapTileMaxScale = 3
 )
 
-// GeoMapTile 返回一张 w×h（逻辑像素，输出按 scale 放大）的静态地图与 mime。
-// 入参越界时按协议约束 clamp（w/h 16-1024、zoom 13-20、scale 1-3），不报错。
-// 配置了 Mapbox 代理时优先真实地图（落盘缓存），抓取失败回退确定性占位渲染。
+// GeoMapTile returns a static map and mime of w×h (logical pixels, output scaled by scale).
+// Out-of-range inputs are clamped to the protocol constraints (w/h 16-1024, zoom 13-20, scale 1-3)
+// without erroring. When a Mapbox proxy is configured the real map (disk-cached) is preferred, and
+// a fetch failure falls back to the deterministic placeholder rendering.
 func (s *Service) GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, string) {
 	w = clampInt(w, mapTileMinEdge, mapTileMaxEdge)
 	h = clampInt(h, mapTileMinEdge, mapTileMaxEdge)
 	zoom = clampInt(zoom, mapTileMinZoom, mapTileMaxZoom)
 	scale = clampInt(scale, 1, mapTileMaxScale)
-	// nil receiver 合法：占位渲染是纯函数（既有调用方/测试依赖这一点），代理仅在配置后启用。
+	// A nil receiver is valid: placeholder rendering is a pure function (existing callers/tests rely on this), and the proxy is only enabled once configured.
 	if s != nil && s.mapTiles != nil {
 		if data, mime, err := s.mapTiles.tile(lat, long, w, h, zoom, scale); err == nil {
 			return data, mime
@@ -51,7 +54,7 @@ func (s *Service) GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, 
 
 	rng := newMapTileRNG(lat, long, zoom)
 
-	// 街区网格：间距与抖动由坐标种子决定，平移随经纬度连续变化，避免所有地点一张脸。
+	// Street grid: spacing and jitter are determined by the coordinate seed, and the offset varies continuously with latitude/longitude, avoiding the same face for every location.
 	spacing := (48 + int(rng.next()%32)) * scale
 	offX := int(math.Abs(long*1e4)) % spacing
 	offY := int(math.Abs(lat*1e4)) % spacing
@@ -64,8 +67,9 @@ func (s *Service) GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, 
 		drawHorizontalRoad(img, y+int(rng.next()%uint64(spacing/3)), pw, ph, scale, major, road, roadEdge)
 	}
 
-	// 两块「绿地」：取网格内随机街块，铺底色之上、道路之下的视觉层级太复杂，
-	// 这里直接半覆盖即可（占位图不追求制图精度）。
+	// Two "green spaces": pick random street blocks within the grid; layering them above the
+	// background but below the roads would be visually too complex, so a half-cover is enough here
+	// (the placeholder does not aim for cartographic accuracy).
 	for i := 0; i < 2; i++ {
 		bx := int(rng.next() % uint64(pw))
 		by := int(rng.next() % uint64(ph))
@@ -80,7 +84,7 @@ func (s *Service) GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, 
 	return buf.Bytes(), "image/png"
 }
 
-// mapTileRNG 是确定性 xorshift64，种子来自量化坐标与 zoom。
+// mapTileRNG is a deterministic xorshift64 seeded from the quantized coordinates and zoom.
 type mapTileRNG struct{ state uint64 }
 
 func newMapTileRNG(lat, long float64, zoom int) *mapTileRNG {
@@ -127,7 +131,7 @@ func drawHorizontalRoad(img *image.RGBA, y, pw, ph, scale int, major bool, road,
 	fillRect(img, 0, y-width/2, pw, y+width/2, road)
 }
 
-// drawCenterPin 在图中心画红色定位针（圆头 + 下尖三角 + 白色内点），中心即坐标点。
+// drawCenterPin draws a red location pin at the center of the image (round head + downward-pointing triangle + white inner dot); the center is the coordinate point.
 func drawCenterPin(img *image.RGBA, pw, ph, scale int) {
 	pin := color.RGBA{R: 0xE5, G: 0x39, B: 0x35, A: 0xFF}
 	pinDark := color.RGBA{R: 0xB7, G: 0x1C, B: 0x1C, A: 0xFF}
@@ -135,7 +139,7 @@ func drawCenterPin(img *image.RGBA, pw, ph, scale int) {
 	cx, cy := pw/2, ph/2
 	headR := 9 * scale
 	headCY := cy - 14*scale
-	// 尖角三角形：从圆头两侧收敛到坐标点。
+	// Pointed triangle: converges from the two sides of the round head down to the coordinate point.
 	for y := headCY; y <= cy; y++ {
 		t := float64(y-headCY) / float64(cy-headCY)
 		half := int(float64(headR) * (1 - t) * 0.82)
@@ -143,7 +147,7 @@ func drawCenterPin(img *image.RGBA, pw, ph, scale int) {
 			img.SetRGBA(x, y, pin)
 		}
 	}
-	// 圆头（带一圈深色描边）。
+	// Round head (with a ring of dark outline).
 	for dy := -headR - scale; dy <= headR+scale; dy++ {
 		for dx := -headR - scale; dx <= headR+scale; dx++ {
 			d2 := dx*dx + dy*dy

@@ -15,8 +15,8 @@ const readModelChangeNotifyChannel = "telesrv_read_model_changed"
 
 const privacyReadModelWarmTimeout = 5 * time.Second
 
-// ReadModelCacheSet 是 read_model_versions 通知可失效的进程内投影缓存集合。
-// 后续新增 read model 时，把缓存接到这里即可复用同一条 LISTEN 连接。
+// ReadModelCacheSet is the set of in-process projection caches that read_model_versions notifications can invalidate.
+// When adding a new read model, wire its cache in here to reuse the same LISTEN connection.
 type ReadModelCacheSet struct {
 	ReadModelVersions   store.ReadModelVersionCache
 	ChannelRows         *ChannelRowCache
@@ -64,17 +64,18 @@ type AccountSettingsReadModelWarmer interface {
 	WarmAccountSettingsReadModel(context.Context, int64) error
 }
 
-// BaseUserCache 是跨进程共享的 user:base 缓存(Redis)。user_base/user_deleted
-// read-model 事件必须删除对应 user 键，否则 RPC 投影失效后会从陈旧的
-// user:base 重建(失效被未失效的源自我抵消)。
-// 不参与重连 flush：Redis 是跨实例共享的，整库清空是错的，漏掉的通知靠其自身 TTL 兜底。
+// BaseUserCache is the cross-process-shared user:base cache (Redis). user_base/user_deleted
+// read-model events must delete the corresponding user key, otherwise after an RPC projection
+// invalidation the entry is rebuilt from a stale user:base (the invalidation cancels itself out).
+// It does not take part in reconnect flush: Redis is shared across instances, so clearing the whole
+// store would be wrong; missed notifications are covered by its own TTL fallback.
 type BaseUserCache interface {
 	Delete(ctx context.Context, ids []int64) error
 }
 
-// BotProfileReadModelCache 是 bots 服务的进程内 bot 资料缓存。每次 bot 写都会 bump
-// bot_info_version 从而触发 user_base 事件，据此跨实例失效 bot 资料(命令/菜单/简介等
-// 仅存内存的字段，TTL 24h 太长不能只靠它)。
+// BotProfileReadModelCache is the bots service's in-process bot profile cache. Every bot write bumps
+// bot_info_version and thereby fires a user_base event, which cross-instance invalidates the bot
+// profile (commands/menu/about and other in-memory-only fields; a 24h TTL is too long to rely on alone).
 type BotProfileReadModelCache interface {
 	InvalidateBotProfileReadModel(userID int64)
 	FlushBotProfileReadModel()
@@ -193,7 +194,7 @@ type readModelChangePayload struct {
 	Hash        int64  `json:"hash"`
 }
 
-// ReadModelChangeListener 消费统一 read model invalidation 通道，驱动进程内 snapshot 失效。
+// ReadModelChangeListener consumes the unified read model invalidation channel and drives in-process snapshot invalidation.
 type ReadModelChangeListener struct {
 	dsn    string
 	caches ReadModelCacheSet
@@ -382,8 +383,8 @@ func (l *ReadModelChangeListener) flush(reasons ...string) {
 		l.caches.UserProjectionFacts.FlushUserProjectionFactReadModel()
 		flushed = append(flushed, "user_projection_facts")
 	}
-	// 注意：BaseUsers(Redis) 刻意不在重连时 flush——它是跨实例共享缓存，整库清空会误伤
-	// 其它实例；漏掉的通知由其 5min TTL 兜底。
+	// Note: BaseUsers (Redis) is deliberately not flushed on reconnect -- it is a cross-instance shared
+	// cache, and clearing the whole store would hurt other instances; missed notifications fall back to its 5min TTL.
 	l.log.Info("read model caches flushed",
 		zap.String("reason", reason),
 		zap.Int("cache_groups", len(flushed)),
@@ -462,15 +463,16 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			if l.caches.RPCProjections != nil {
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForUser(evt.PeerID)
 			}
-			// 跨实例失效 Redis user:base：否则本实例的 RPC 投影失效后会从其它实例仍陈旧的
-			// (其实是本实例自己的) user:base 重建，等于没失效；这也覆盖了 system-user upsert。
+			// Cross-instance invalidate the Redis user:base: otherwise this instance's RPC projection
+			// invalidation would rebuild from another instance's still-stale (in fact this instance's own)
+			// user:base, which is as good as no invalidation; this also covers system-user upserts.
 			if l.caches.BaseUsers != nil {
 				if err := l.caches.BaseUsers.Delete(context.Background(), []int64{evt.PeerID}); err != nil {
 					l.log.Warn("invalidate base user cache on user_base event",
 						zap.Int64("user_id", evt.PeerID), zap.Error(err))
 				}
 			}
-			// bot 写 bump bot_info_version 也走 user_base：跨实例失效 bot 资料缓存。
+			// A bot write bumps bot_info_version and also goes through user_base: cross-instance invalidate the bot profile cache.
 			if l.caches.BotProfiles != nil {
 				l.caches.BotProfiles.InvalidateBotProfileReadModel(evt.PeerID)
 			}
@@ -510,11 +512,12 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			}
 		}
 	case "bot_full":
-		// bot 资料(name/about/description/commands/menu_button)变更经 bot_info_version
-		// bump 触发(迁移 0013)。channelFullBotInfoCache 按 (viewer,channel) 键、无法按 botID
-		// 精确定位某 bot 涉及的频道,故整体 flush(bot 改资料频率低,代价是偶发全量重建)。
-		// 这覆盖了 user_base 分支漏失效的群信息页 bot_info 陈旧:本地 BotFather 改资料路径
-		// 与跨实例 bots.* RPC 两条更新路径都经此失效。
+		// A bot profile change (name/about/description/commands/menu_button) is triggered by a
+		// bot_info_version bump (migration 0013). channelFullBotInfoCache is keyed by (viewer,channel)
+		// and cannot pinpoint by botID which channels a bot is involved in, so it is flushed wholesale
+		// (bot profile changes are infrequent; the cost is an occasional full rebuild).
+		// This covers the group-info-page bot_info staleness missed by the user_base branch: both the
+		// local BotFather profile-change path and the cross-instance bots.* RPC path are invalidated here.
 		if l.caches.ChannelFullBots != nil {
 			l.caches.ChannelFullBots.FlushChannelFullBotInfoReadModel()
 		}
@@ -529,9 +532,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			l.caches.RPCProjections.InvalidateRPCProjectionReadModelForViewer(evt.OwnerUserID)
 		}
 	case "story_peer":
-		// stories / story_hidden_peers 写(基础 trigger + 0194 sparse read-model trigger)
-		// → 按 owner peer 失效该 peer 的
-		// 故事投影(ring/hidden/置顶可用性/置顶分页),实现跨实例失效。
+		// stories / story_hidden_peers writes (base trigger + 0194 sparse read-model trigger)
+		// -> invalidate that peer's story projection by owner peer
+		// (ring/hidden/pin availability/pin pagination), achieving cross-instance invalidation.
 		if peerType, ok := readModelPeerType(evt.PeerType); ok && evt.PeerID != 0 && l.caches.Stories != nil {
 			l.caches.Stories.InvalidateStoryReadModelPeer(domain.Peer{Type: peerType, ID: evt.PeerID})
 		}

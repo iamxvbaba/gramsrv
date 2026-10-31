@@ -392,8 +392,9 @@ type BatchListDispatchEventsRow struct {
 	ReplyUserEmojiStatusUntil      int64
 }
 
-// 按 (user_id, pts) 精确批量取账号事件，供 outbox worker 一次性加载一批 claim 的事件详情，
-// 取代逐条 ListUserUpdateEventsAfter。列与 ListUserUpdateEventsAfter 完全一致以复用转换逻辑。
+// Fetch account events in bulk precisely by (user_id, pts), so the outbox worker can load the details
+// of a batch of claimed events at once, replacing per-item ListUserUpdateEventsAfter. The columns match
+// ListUserUpdateEventsAfter exactly to reuse the conversion logic.
 func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDispatchEventsParams) ([]BatchListDispatchEventsRow, error) {
 	rows, err := q.db.Query(ctx, batchListDispatchEvents, arg.UserIds, arg.PtsList)
 	if err != nil {
@@ -588,8 +589,9 @@ type ClaimDispatchOutboxRow struct {
 	Attempts         int32
 }
 
-// durable head 表只保留每用户一行，并同步 head 的 readiness。claim 先锁
-// lane head 再更新对应 outbox 行，既不会扫描 backlog，也不会并发领取同一用户。
+// The durable head table keeps only one row per user and keeps the head's readiness in sync. A claim
+// locks the lane head first and then updates the corresponding outbox row, so it neither scans the
+// backlog nor claims the same user concurrently.
 func (q *Queries) ClaimDispatchOutbox(ctx context.Context, arg ClaimDispatchOutboxParams) ([]ClaimDispatchOutboxRow, error) {
 	rows, err := q.db.Query(ctx, claimDispatchOutbox, arg.LeaseSeconds, arg.LimitCount)
 	if err != nil {
@@ -622,8 +624,8 @@ const claimDispatchOutboxShards = `-- name: ClaimDispatchOutboxShards :many
 WITH picked_heads AS (
   SELECT h.target_user_id, h.head_id
   FROM dispatch_outbox_user_heads h
-  -- 256 与 store.DispatchOutboxLogicalShards、0069 generated column 是同一
-  -- schema 常量；不得随 worker 数变化。
+  -- 256 is the same schema constant as store.DispatchOutboxLogicalShards and the 0069 generated
+  -- column; it must not vary with the worker count.
   WHERE h.logical_shard = ANY($1::smallint[])
     AND (
       (
@@ -673,8 +675,8 @@ type ClaimDispatchOutboxShardsRow struct {
 	Attempts         int32
 }
 
-// 固定 logical shard 由 target_user_id 决定；运行时 worker 只领取分配给自己的
-// shard 集合，因此同一用户永远只有一条串行 lane，而不同用户可并行。
+// The fixed logical shard is determined by target_user_id; at runtime a worker claims only the shard
+// set assigned to it, so the same user always has a single serial lane while different users can run in parallel.
 func (q *Queries) ClaimDispatchOutboxShards(ctx context.Context, arg ClaimDispatchOutboxShardsParams) ([]ClaimDispatchOutboxShardsRow, error) {
 	rows, err := q.db.Query(ctx, claimDispatchOutboxShards, arg.ShardIds, arg.LeaseSeconds, arg.LimitCount)
 	if err != nil {
@@ -731,9 +733,10 @@ type DeleteFailedDispatchOutboxParams struct {
 	LimitCount       int32
 }
 
-// failed 只能成为 lane head；从 head 表开始并先锁 head，既走 0074 的小索引，也与
-// claim/completion 保持同一 user_heads→outbox 锁序。删除的只是在线任务，durable
-// user_update_events 不动，故客户端仍可经 difference 恢复。
+// A failed row can only become a lane head; starting from the head table and locking the head first
+// both goes through 0074's small index and keeps the same user_heads->outbox lock order as
+// claim/completion. Only the online task is deleted; the durable user_update_events are untouched, so
+// clients can still recover via difference.
 func (q *Queries) DeleteFailedDispatchOutbox(ctx context.Context, arg DeleteFailedDispatchOutboxParams) (int32, error) {
 	row := q.db.QueryRow(ctx, deleteFailedDispatchOutbox, arg.OlderThanSeconds, arg.TargetUserIds, arg.LimitCount)
 	var deleted_count int32
@@ -1223,10 +1226,11 @@ type MarkDispatchDeliveredParams struct {
 	TargetUserID     int64
 }
 
-// 方案 A：投递成功即删除。outbox 是任务队列，delivered 行无保留价值
-// （消息在 message_boxes、离线补偿在 user_update_events），删除让表维持「未完成任务」小稳态。
-// claim 的锁序是 user_heads→outbox；completion 必须先显式锁同一 head 再删 outbox，
-// 否则租约过期 claim 与完成恰好竞争时会形成 outbox→head / head→outbox 环路。
+// Option A: delete on successful delivery. The outbox is a task queue, and delivered rows have no
+// retention value (messages live in message_boxes, offline compensation in user_update_events), so
+// deleting keeps the table in a small steady state of "unfinished tasks". The claim lock order is
+// user_heads->outbox; completion must first explicitly lock the same head and then delete the outbox
+// row, otherwise a lease-expired claim racing with completion forms an outbox->head / head->outbox cycle.
 func (q *Queries) MarkDispatchDelivered(ctx context.Context, arg MarkDispatchDeliveredParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markDispatchDelivered, arg.ID, arg.ExpectedAttempts, arg.TargetUserID)
 	if err != nil {
@@ -1267,7 +1271,7 @@ type MarkDispatchDeliveredBatchParams struct {
 	ExpectedAttempts []int32
 }
 
-// 批量删除一批已投递的 (target_user_id, id)；target_user_id 入 WHERE 命中唯一索引并避免串删。
+// Delete a batch of delivered (target_user_id, id) rows in bulk; target_user_id in the WHERE clause hits the unique index and avoids cross-deletion.
 func (q *Queries) MarkDispatchDeliveredBatch(ctx context.Context, arg MarkDispatchDeliveredBatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markDispatchDeliveredBatch, arg.TargetUserIds, arg.Ids, arg.ExpectedAttempts)
 	if err != nil {

@@ -9,9 +9,10 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// ListSavedDialogs 返回收藏夹子会话分页：首页（offset 无效）且不排除置顶时
-// 置顶块按 pinned_order 在前，普通块按 top box id 严格降序；翻页恒排除置顶
-// （置顶只随首页返回，避免跨页重复）。Count 按过滤口径（含/不含置顶）。
+// ListSavedDialogs returns a page of saved-message sub-dialogs: on the first page (invalid offset)
+// with pinned not excluded, the pinned block comes first ordered by pinned_order and the normal block
+// strictly descends by top box id; subsequent pages always exclude pinned entries
+// (pins are returned only with the first page to avoid duplicates across pages). Count follows the filter (with/without pins).
 func (s *MessageStore) ListSavedDialogs(ctx context.Context, userID int64, filter domain.SavedDialogsFilter) (domain.SavedDialogList, error) {
 	out := domain.SavedDialogList{}
 	if userID == 0 {
@@ -21,11 +22,12 @@ func (s *MessageStore) ListSavedDialogs(ctx context.Context, userID int64, filte
 	if limit <= 0 || limit > domain.MaxSavedDialogsLimit {
 		limit = domain.MaxSavedDialogsLimit
 	}
-	// TDesktop 首页 offset_id=0，DrKLO Android 首页 offset_id=int32 max；
-	// 两者都视为"从最新开始"。
+	// TDesktop's first page has offset_id=0, DrKLO Android's first page has offset_id=int32 max;
+	// both are treated as "start from the newest".
 	offsetID := filter.OffsetID
-	// DrKLO Android 首页恰好发 offset_id = MaxMessageBoxID（int32 max），必须用 >=
-	// 才能命中首页分支；否则该值被误判为续页，置顶子会话块被整体跳过、首页丢置顶。
+	// DrKLO Android's first page sends exactly offset_id = MaxMessageBoxID (int32 max), so >= is
+	// required to hit the first-page branch; otherwise the value is misread as a continuation page,
+	// the pinned sub-dialog block is skipped entirely, and the first page loses its pins.
 	firstPage := offsetID <= 0 || offsetID >= domain.MaxMessageBoxID
 	if firstPage {
 		offsetID = 0
@@ -57,8 +59,8 @@ func (s *MessageStore) ListSavedDialogs(ctx context.Context, userID int64, filte
 		rows, err := s.q.ListSavedDialogTops(ctx, sqlcgen.ListSavedDialogTopsParams{
 			OwnerUserID: userID,
 			OffsetID:    pgInt32NonNegative(offsetID),
-			// 普通块恒排除置顶：置顶要么已随首页置顶块返回，要么被
-			// exclude_pinned 显式排除，任何一页都不允许再出现。
+			// The normal block always excludes pinned entries: a pin either already came back with the
+			// first page's pinned block or is explicitly excluded by exclude_pinned, and must never reappear on any page.
 			ExcludePinned: true,
 			LimitCount:    int32(remaining + 1),
 		})
@@ -97,7 +99,7 @@ func (s *MessageStore) ListSavedDialogs(ctx context.Context, userID int64, filte
 	return out, nil
 }
 
-// ListPinnedSavedDialogs 返回全部置顶子会话（messages.getPinnedSavedDialogs）。
+// ListPinnedSavedDialogs returns all pinned sub-dialogs (messages.getPinnedSavedDialogs).
 func (s *MessageStore) ListPinnedSavedDialogs(ctx context.Context, userID int64) (domain.SavedDialogList, error) {
 	out := domain.SavedDialogList{Full: true}
 	if userID == 0 {
@@ -126,8 +128,8 @@ func (s *MessageStore) ListPinnedSavedDialogs(ctx context.Context, userID int64)
 	return out, nil
 }
 
-// ListSavedDialogsByPeers 返回指定子会话（messages.getSavedDialogsByID）；
-// 不存在的 peer 静默缺席。
+// ListSavedDialogsByPeers returns the specified sub-dialogs (messages.getSavedDialogsByID);
+// non-existent peers are silently absent.
 func (s *MessageStore) ListSavedDialogsByPeers(ctx context.Context, userID int64, peers []domain.Peer) (domain.SavedDialogList, error) {
 	out := domain.SavedDialogList{Full: true}
 	if userID == 0 {
@@ -172,8 +174,8 @@ func (s *MessageStore) ListSavedDialogsByPeers(ctx context.Context, userID int64
 	return out, nil
 }
 
-// ToggleSavedDialogPin 翻转一个子会话的置顶状态；新置顶插到最前。
-// 返回状态是否实际变化。
+// ToggleSavedDialogPin toggles a sub-dialog's pinned state; a new pin is inserted at the front.
+// Returns whether the state actually changed.
 func (s *MessageStore) ToggleSavedDialogPin(ctx context.Context, userID int64, peer domain.Peer, pinned bool) (bool, error) {
 	if userID == 0 || peer.Type == "" || peer.ID == 0 {
 		return false, fmt.Errorf("toggle saved dialog pin: invalid input")
@@ -207,8 +209,8 @@ func (s *MessageStore) ToggleSavedDialogPin(ctx context.Context, userID int64, p
 	return rows > 0, nil
 }
 
-// ReorderPinnedSavedDialogs 全量重排置顶顺序；force 时清掉不在 order 中的
-// 既有置顶（与 messages.reorderPinnedDialogs 的 force 语义一致）。
+// ReorderPinnedSavedDialogs fully reorders the pins; when force is set it clears existing
+// pins not present in order (matching the force semantics of messages.reorderPinnedDialogs).
 func (s *MessageStore) ReorderPinnedSavedDialogs(ctx context.Context, userID int64, order []domain.Peer, force bool) error {
 	if userID == 0 {
 		return fmt.Errorf("reorder pinned saved dialogs: missing user id")
@@ -247,9 +249,9 @@ func (s *MessageStore) ReorderPinnedSavedDialogs(ctx context.Context, userID int
 	return nil
 }
 
-// DeleteSavedHistory 删除 self-chat 中一个 saved 子会话的消息（单批，
-// 上限 MaxDeleteHistoryBatch），生成带 pts 的 delete_messages durable 事件，
-// 修复 self dialog top；子会话删空时顺带清掉它的置顶行。
+// DeleteSavedHistory deletes the messages of one saved sub-dialog in the self-chat (single batch,
+// capped at MaxDeleteHistoryBatch), produces a pts-carrying delete_messages durable event and
+// repairs the self dialog top; when the sub-dialog is emptied it also clears its pin row.
 func (s *MessageStore) DeleteSavedHistory(ctx context.Context, req domain.DeleteSavedHistoryRequest) (domain.DeleteSavedHistoryResult, error) {
 	res := domain.DeleteSavedHistoryResult{}
 	if req.OwnerUserID == 0 || req.SavedPeer.Type == "" || req.SavedPeer.ID == 0 {
@@ -317,8 +319,8 @@ func (s *MessageStore) DeleteSavedHistory(ctx context.Context, req domain.Delete
 		}
 		res.More = more
 		if !more {
-			// 边界口径外可能还有残留（如 max_id 截断），子会话仍存活时
-			// 不能清置顶；只有全量删空才清。
+			// There may be leftovers outside the boundary range (e.g. max_id truncation), so the pin
+			// must not be cleared while the sub-dialog is still alive; only a full wipe clears it.
 			alive, err := qtx.HasDeletableMessageBoxBySavedPeer(ctx, sqlcgen.HasDeletableMessageBoxBySavedPeerParams{
 				OwnerUserID:   req.OwnerUserID,
 				SavedPeerType: string(req.SavedPeer.Type),
@@ -351,7 +353,7 @@ func (s *MessageStore) DeleteSavedHistory(ctx context.Context, req domain.Delete
 	return res, nil
 }
 
-// savedDialogTopRowFields 是三个 saved dialog top 查询共有的行字段。
+// savedDialogTopRowFields is the row shape shared by the three saved dialog top queries.
 type savedDialogTopRowFields struct {
 	BoxID                int32
 	PrivateMessageID     int64

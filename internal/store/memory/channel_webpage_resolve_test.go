@@ -8,8 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelStoreResolveWebPage 验证频道 WebPageResolve 模式：只换 media、不碰 body/edit_date，
-// 事件为 channel_web_page，幂等。
+// TestChannelStoreResolveWebPage verifies the channel WebPageResolve mode: only media is
+// swapped, body/edit_date are untouched, the event is channel_web_page, and it is idempotent.
 func TestChannelStoreResolveWebPage(t *testing.T) {
 	st := NewChannelStore()
 	ctx := context.Background()
@@ -56,7 +56,7 @@ func TestChannelStoreResolveWebPage(t *testing.T) {
 		t.Fatalf("re-resolve err = %v, want ErrMessageNotModified", err)
 	}
 
-	// 错误的 expectedID → 不替换。
+	// A wrong expectedID -> no replacement.
 	_, err = st.EditChannelMessage(ctx, domain.EditChannelMessageRequest{
 		UserID: creator, ChannelID: channelID, ID: sent.Message.ID,
 		Media:          &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, WebPage: &domain.MessageWebPage{State: domain.MessageWebPageStateDone, ID: 999, URL: url}},

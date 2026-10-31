@@ -10,14 +10,20 @@ import (
 	"telesrv/internal/domain"
 )
 
-// resolveMonoforumForAdmin 解析 TDesktop messages.getSavedDialogs/getSavedHistory 的 parent_peer，
-// 并校验当前用户可管理母广播频道的 Direct Messages。TDesktop 的 SavedSublist 实际会把
-// parentChat()->input() 作为 parent_peer；根据客户端 materialize 路径，它既可能是 monoforum
-// 虚拟频道，也可能是与之关联的母广播频道。因此这里把两种 wire peer 归一到同一个 monoforum，
-// 授权仍只认母频道的 creator / ManageDirectMessages，绝不能把普通 admin 放进管理者视图。
+// resolveMonoforumForAdmin resolves the parent_peer of TDesktop
+// messages.getSavedDialogs/getSavedHistory and verifies the current user can
+// manage the parent broadcast channel's Direct Messages. TDesktop's SavedSublist
+// actually passes parentChat()->input() as parent_peer; depending on the client
+// materialization path it may be either the monoforum virtual channel or the
+// parent broadcast channel linked to it. So both wire peers are normalized to the
+// same monoforum here, and authorization only recognizes the parent channel's
+// creator / ManageDirectMessages -- an ordinary admin must never be let into the
+// manager view.
 //
-// 返回 (monoforum频道, isMonoforum, err)：parent 是有效但未关联 Direct Messages 的普通频道时
-// 返回 (零, false, nil)，由调用方保留良性空响应；关联频道的非管理者返回 CHAT_ADMIN_REQUIRED。
+// Returns (monoforum channel, isMonoforum, err): when parent is a valid ordinary
+// channel not linked to Direct Messages it returns (zero, false, nil), leaving a
+// benign empty response to the caller; a non-manager of a linked channel gets
+// CHAT_ADMIN_REQUIRED.
 func (r *Router) resolveMonoforumForAdmin(ctx context.Context, userID int64, parent domain.Peer) (domain.Channel, bool, error) {
 	if r.deps.Channels == nil {
 		return domain.Channel{}, false, notImplementedErr()
@@ -27,8 +33,10 @@ func (r *Router) resolveMonoforumForAdmin(ctx context.Context, userID int64, par
 	}
 	mono, isAdmin, err := r.deps.Channels.ResolveMonoforumSend(ctx, userID, parent.ID)
 	if errors.Is(err, domain.ErrChannelInvalid) {
-		// TDesktop 当前的 Direct Messages subsection 会传母广播频道。只接受显式的
-		// linked_monoforum 关系，不能把任意普通频道猜成 monoforum。
+		// TDesktop's current Direct Messages subsection passes the parent
+		// broadcast channel. Only an explicit linked_monoforum relation is
+		// accepted; an arbitrary ordinary channel must not be guessed as a
+		// monoforum.
 		views, viewErr := r.deps.Channels.GetChannels(ctx, userID, []int64{parent.ID})
 		if viewErr != nil {
 			return domain.Channel{}, false, internalErr()
@@ -55,13 +63,14 @@ func (r *Router) resolveMonoforumForAdmin(ctx context.Context, userID int64, par
 		return domain.Channel{}, false, internalErr()
 	}
 	if !isAdmin {
-		// 是 monoforum,但调用者不是母频道管理员:读私信列表/历史仅限管理员。
+		// It is a monoforum, but the caller is not a parent-channel manager:
+		// reading the private-message list/history is managers-only.
 		return domain.Channel{}, false, tgerr400("CHAT_ADMIN_REQUIRED")
 	}
 	return mono, true, nil
 }
 
-// monoforumSavedDialogs 返回 monoforum 的订阅者子会话列表(管理员视角的私信列表)。mono 已解析+鉴权。
+// monoforumSavedDialogs returns the monoforum's subscriber sub-dialog list (the manager-view private-message list). mono is already resolved and authorized.
 func (r *Router) monoforumSavedDialogs(ctx context.Context, userID int64, mono domain.Channel, limit, offsetID int) (tg.MessagesSavedDialogsClass, error) {
 	list, err := r.deps.Channels.ListMonoforumDialogs(ctx, domain.MonoforumDialogsFilter{
 		MonoforumID: mono.ID,
@@ -104,7 +113,7 @@ func (r *Router) monoforumSavedDialogs(ctx context.Context, userID int64, mono d
 	}, nil
 }
 
-// monoforumSavedHistory 返回某订阅者在 monoforum 内的私信历史。mono 已解析+鉴权。
+// monoforumSavedHistory returns a subscriber's private-message history within the monoforum. mono is already resolved and authorized.
 func (r *Router) monoforumSavedHistory(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, limit, offsetID int) (tg.MessagesMessagesClass, error) {
 	if savedPeer.ID == 0 {
 		return nil, peerIDInvalidErr()
@@ -138,8 +147,10 @@ func (r *Router) monoforumSavedHistory(ctx context.Context, userID int64, mono d
 	return result, nil
 }
 
-// monoforumChats 投影客户端 materialize monoforum 私信所需的频道:monoforum 自身直接投影，
-// 再按 viewer 补母广播频道。订阅者没有 monoforum member row，管理员身份也只来自母频道。
+// monoforumChats projects the channels a client needs to materialize monoforum
+// private messages: the monoforum itself is projected directly, then the parent
+// broadcast channel is added per viewer. Subscribers have no monoforum member
+// row, and manager status only comes from the parent channel.
 func (r *Router) monoforumChats(ctx context.Context, userID int64, mono domain.Channel) []tg.ChatClass {
 	chats := []tg.ChatClass{tgChannelChatForView(userID, domain.ChannelView{Channel: mono})}
 	if mono.LinkedMonoforumID != 0 && r.deps.Channels != nil {
@@ -309,8 +320,10 @@ func (r *Router) monoforumSubscriberUsersWithPeerCacheAndOverlaysStrict(ctx cont
 	return out, nil
 }
 
-// monoforumReplyPresent 判断 sendMessage 的 reply_to 是否显式携带 monoforum_peer_id。
-// 管理员回复必须带目标订阅者；普通订阅者按官方 TDesktop 行为不携带 reply_to，目标由调用者推导。
+// monoforumReplyPresent reports whether sendMessage's reply_to explicitly carries
+// monoforum_peer_id. An admin reply must carry the target subscriber; an ordinary
+// subscriber does not carry reply_to per official TDesktop behavior, and the
+// target is derived by the caller.
 func monoforumReplyPresent(input tg.InputReplyToClass) bool {
 	switch v := input.(type) {
 	case *tg.InputReplyToMonoForum:
@@ -326,7 +339,7 @@ func monoforumReplyPresent(input tg.InputReplyToClass) bool {
 	}
 }
 
-// monoforumReplyTargetPeer 从 reply_to 的 monoforum_peer_id 解析订阅者子会话 peer。
+// monoforumReplyTargetPeer resolves the subscriber sub-dialog peer from reply_to's monoforum_peer_id.
 func (r *Router) monoforumReplyTargetPeer(userID int64, input tg.InputReplyToClass) (domain.Peer, bool) {
 	var inputPeer tg.InputPeerClass
 	switch v := input.(type) {
@@ -384,8 +397,11 @@ func (r *Router) monoforumMessageReplyFromInput(ctx context.Context, userID int6
 	}
 }
 
-// sendMonoforumMessage 处理向频道私信(monoforum)发送:订阅者发到自己的子会话,管理员回复到目标订阅者。
-// saved_peer 对订阅者由调用者推导、对管理员来自 reply_to;管理员可写任意订阅者子会话,订阅者只能写自己的。
+// sendMonoforumMessage handles sending to channel private messages (monoforum):
+// a subscriber sends to their own sub-dialog, an admin replies to the target
+// subscriber. saved_peer is derived by the caller for a subscriber and comes from
+// reply_to for an admin; an admin may write any subscriber's sub-dialog, a
+// subscriber only its own.
 func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer domain.Peer, mono domain.Channel, isAdmin bool, req domain.SendMonoforumMessageRequest) (tg.UpdatesClass, error) {
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
@@ -397,7 +413,7 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 		return nil, replyToMonoforumPeerInvalidErr()
 	}
 	if !isAdmin && req.SavedPeer.ID != userID {
-		// 普通订阅者只能写自己的子会话,不能写他人的。
+		// An ordinary subscriber may only write its own sub-dialog, not others'.
 		return nil, replyToMonoforumPeerInvalidErr()
 	}
 	req.MonoforumID = mono.ID
@@ -418,8 +434,10 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 	return r.monoforumSendUpdatesStrict(ctx, userID, mono, req.SavedPeer, res)
 }
 
-// monoforumSendUpdates 给发送者构造回声 Updates:updateMessageID(关联 random_id)+ updateNewChannelMessage
-// (monoforum 走 channel pts)。另一方经 monoforum 频道的 getChannelDifference 收取该 durable 事件。
+// monoforumSendUpdates builds the sender's echo Updates: updateMessageID (tying
+// the random_id) + updateNewChannelMessage (monoforum uses channel pts). The
+// other side receives this durable event via the monoforum channel's
+// getChannelDifference.
 func (r *Router) monoforumSendUpdatesStrict(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) (tg.UpdatesClass, error) {
 	return r.monoforumSendUpdatesWithPeerCacheAndOverlaysStrict(ctx, userID, mono, savedPeer, res, nil, nil)
 }

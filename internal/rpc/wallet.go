@@ -15,8 +15,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// WalletService 是 deps.go 里声明的应用内 TON 钱包边界；本文件只负责把它
-// 映射到 Layer 230 的 wallet.* / toncenter.* 语义方法。
+// WalletService is the in-app TON wallet boundary declared in deps.go; this file only
+// maps it to the Layer 230 wallet.* / toncenter.* semantic methods.
 func (r *Router) registerWallet(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.WalletSendTransferRequest](d, tlprofile.SemanticMethodWalletSendTransfer, func(ctx context.Context, req *tg.WalletSendTransferRequest) (any, error) {
 		return r.onWalletSendTransfer(ctx, req)
@@ -446,7 +446,8 @@ func walletRPCError(err error) error {
 	case errors.Is(err, domain.ErrWalletPasswordRequired):
 		return tgerr.New(400, "PASSWORD_HASH_INVALID")
 	case errors.Is(err, walletapp.ErrWalletCreationDisabled), errors.Is(err, walletapp.ErrWalletKeyFile):
-		// telesrv 没法保管私钥（未配置主密钥）。这是能力不可用，不是内部错误。
+		// telesrv cannot custody a private key (no master key configured). This is an
+		// unavailable capability, not an internal error.
 		return tgerr.New(400, "WALLET_UNAVAILABLE")
 	case errors.Is(err, walletapp.ErrProviderRequest), errors.Is(err, domain.ErrStarsTransactionQueryInvalid):
 		return inputRequestInvalidErr()

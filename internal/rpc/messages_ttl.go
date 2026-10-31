@@ -6,10 +6,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// maxHistoryTTLPeriod 限制自毁倒计时上界（366 天）。无上界时客户端可传接近
-// int32 上限的 period，使发送路径 expires_at = date + ttl_period 经 int32 截断
-// 回绕为负值，被到期扫描的 expires_at>0 过滤掉，导致 TTL 静默失效（消息以为
-// 会自毁实则永久留存）。
+// maxHistoryTTLPeriod caps the self-destruct countdown (366 days). Without a cap a client could
+// send a period near the int32 limit, so the send-path expires_at = date + ttl_period would wrap
+// to a negative value after int32 truncation, get filtered out by the expiry scan's expires_at>0,
+// and make the TTL silently fail (the message appears to self-destruct but is kept forever).
 const maxHistoryTTLPeriod = 366 * 24 * 3600
 
 func (r *Router) onMessagesGetDefaultHistoryTTL(ctx context.Context) (*tg.DefaultHistoryTTL, error) {

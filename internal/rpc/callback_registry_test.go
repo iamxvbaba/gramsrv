@@ -24,7 +24,7 @@ func TestCallbackRegistryResolveDelivers(t *testing.T) {
 	default:
 		t.Fatal("answer not delivered to channel")
 	}
-	// 解挂后条目已删除：再次 resolve 失败、registry 计数归零。
+	// After unblock the entry is removed: resolving again fails and the registry count drops to zero.
 	if reg.resolve(100, queryID, want) {
 		t.Fatal("second resolve must fail (already deregistered)")
 	}
@@ -36,7 +36,7 @@ func TestCallbackRegistryResolveDelivers(t *testing.T) {
 func TestCallbackRegistryNonOwnerRejected(t *testing.T) {
 	reg := newCallbackRegistry()
 	queryID, p := reg.register(100, 200)
-	// 非属主 bot（999）不得解挂（I6）。
+	// A non-owner bot (999) must not unblock (I6).
 	if reg.resolve(999, queryID, domain.BotCallbackAnswer{Message: "evil"}) {
 		t.Fatal("non-owner resolve must be rejected")
 	}

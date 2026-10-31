@@ -20,9 +20,10 @@ import (
 
 var errClientDTLSStateMissing = errors.New("client dtls state missing")
 
-// fakeTgcallsClient 按 tgcalls GroupNetworkManager 的角色契约模拟客户端：
-// ICE CONTROLLED（等待 SFU 发起连通性检查）、DTLS setup="passive"（server 角色，
-// 等 SFU 主动握手）、SRTP isClient=false。
+// fakeTgcallsClient simulates a client per the tgcalls GroupNetworkManager role
+// contract: ICE CONTROLLED (waits for the SFU to initiate connectivity checks), DTLS
+// setup="passive" (server role, waits for the SFU to actively handshake), SRTP
+// isClient=false.
 type fakeTgcallsClient struct {
 	t           *testing.T
 	ufrag, pwd  string
@@ -61,7 +62,7 @@ func (c *fakeTgcallsClient) offer() ClientOffer {
 	}
 }
 
-// connect 完成 ICE(controlled)+DTLS(server)+SRTP 建链。
+// connect completes ICE(controlled)+DTLS(server)+SRTP bring-up.
 func (c *fakeTgcallsClient) connect(ctx context.Context, answer ServerAnswer) error {
 	agent, err := ice.NewAgent(&ice.AgentConfig{
 		NetworkTypes:    []ice.NetworkType{ice.NetworkTypeUDP4},
@@ -124,7 +125,7 @@ func (c *fakeTgcallsClient) connect(ctx context.Context, answer ServerAnswer) er
 	if !ok {
 		return errClientDTLSStateMissing
 	}
-	// 服务端证书指纹应等于信令面下发的 answer.FingerprintSHA256。
+	// The server certificate fingerprint should equal the answer.FingerprintSHA256 delivered by the signaling plane.
 	gotFP, err := certificateFingerprint(state.PeerCertificates[0])
 	if err != nil || normalizeFingerprint(gotFP) != normalizeFingerprint(answer.FingerprintSHA256) {
 		return fmt.Errorf("sfu fingerprint mismatch: %v / %s vs %s", err, gotFP, answer.FingerprintSHA256)
@@ -156,7 +157,7 @@ func (c *fakeTgcallsClient) close() {
 	}
 }
 
-// sendOpusPacket 构造带 audio-level 扩展（one-byte header，id=1）的 RTP 包。
+// sendOpusPacket builds an RTP packet with the audio-level extension (one-byte header, id=1).
 func (c *fakeTgcallsClient) sendOpusPacket(seq uint16, payload []byte, audioLevel byte) error {
 	pkt := &rtp.Packet{
 		Header: rtp.Header{
@@ -181,7 +182,7 @@ func (c *fakeTgcallsClient) sendOpusPacket(seq uint16, payload []byte, audioLeve
 	return err
 }
 
-// sendVideoPacket 构造指定 ssrc 的视频 RTP 包（VP8 PT=100）。
+// sendVideoPacket builds a video RTP packet for the given ssrc (VP8 PT=100).
 func (c *fakeTgcallsClient) sendVideoPacket(ssrc uint32, seq uint16) error {
 	pkt := &rtp.Packet{
 		Header: rtp.Header{
@@ -201,8 +202,9 @@ func (c *fakeTgcallsClient) sendVideoPacket(ssrc uint32, seq uint16) error {
 	return err
 }
 
-// 视频选层：发布端三层 simulcast，SFU 只转发 SIM[0] 层（订阅端只为该 ssrc 建
-// 解码 sink，高层包客户端会丢弃，SFU 侧直接终结省下行）。
+// Video layer selection: the publisher sends three simulcast layers, and the SFU
+// forwards only the SIM[0] layer (the subscriber creates a decode sink only for that
+// ssrc; the client drops higher-layer packets, so the SFU terminates them to save downlink).
 func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e sfu test")
@@ -245,7 +247,7 @@ func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 		}
 	}
 
-	// alice 同时在 layer0（应转发）与 layer1（应被 SFU 终结）发包。
+	// alice sends packets on both layer0 (should be forwarded) and layer1 (should be terminated at the SFU).
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
@@ -264,7 +266,7 @@ func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 		}
 	}()
 
-	// bob 第一条转发流必须是 layer0；观察窗口内绝不能出现 layer1。
+	// bob's first forwarded stream must be layer0; layer1 must never appear within the observation window.
 	type accepted struct{ ssrc uint32 }
 	got := make(chan accepted, 4)
 	go func() {
@@ -299,7 +301,7 @@ func TestPionSFUForwardsOnlyBaseSimulcastLayer(t *testing.T) {
 			t.Fatalf("bob never received base layer stream")
 		}
 	}
-	// 再观察一段时间确认高层不漏。
+	// Observe a while longer to confirm no higher layer leaks through.
 	quiet := time.After(2 * time.Second)
 	for {
 		select {
@@ -347,7 +349,7 @@ func TestPionSFUForwardsOpusBetweenClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("join bob: %v", err)
 	}
-	// 两端建链（ICE prflx → DTLS 由 SFU 主动握手 → SRTP）。
+	// Both ends bring up the link (ICE prflx → DTLS actively handshaken by the SFU → SRTP).
 	errCh := make(chan error, 2)
 	go func() { errCh <- alice.connect(ctx, answerA) }()
 	go func() { errCh <- bob.connect(ctx, answerB) }()
@@ -357,7 +359,7 @@ func TestPionSFUForwardsOpusBetweenClients(t *testing.T) {
 		}
 	}
 
-	// alice 持续发包（SFU AcceptStream 在首包后建立读流）。
+	// alice keeps sending packets (the SFU's AcceptStream establishes the read stream after the first packet).
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
@@ -375,7 +377,7 @@ func TestPionSFUForwardsOpusBetweenClients(t *testing.T) {
 		}
 	}()
 
-	// bob 收到来自 alice 的转发流：SSRC 不重写、扩展保留。
+	// bob receives the stream forwarded from alice: SSRC not rewritten, extensions preserved.
 	acceptCtx, acceptCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer acceptCancel()
 	type accepted struct {
@@ -396,7 +398,7 @@ func TestPionSFUForwardsOpusBetweenClients(t *testing.T) {
 		t.Fatalf("bob never received forwarded stream")
 	}
 	if inbound.ssrc != alice.ssrc {
-		t.Fatalf("forwarded ssrc = %#x, want alice %#x（SFU 不得重写 SSRC）", inbound.ssrc, alice.ssrc)
+		t.Fatalf("forwarded ssrc = %#x, want alice %#x (the SFU must not rewrite SSRC)", inbound.ssrc, alice.ssrc)
 	}
 	buf := make([]byte, 1500)
 	n, err := inbound.stream.Read(buf)
@@ -411,11 +413,13 @@ func TestPionSFUForwardsOpusBetweenClients(t *testing.T) {
 		t.Fatalf("forwarded packet = %+v", pkt.Header)
 	}
 	if ext := pkt.Header.GetExtension(1); len(ext) != 1 || ext[0] != 0x7F {
-		t.Fatalf("audio-level extension lost: %v（speaking 指示依赖逐包透传）", ext)
+		t.Fatalf("audio-level extension lost: %v (the speaking indication relies on per-packet passthrough)", ext)
 	}
 
-	// 媒体面活性：双端都应在 alive 集合（alice 发包、bob 收包均计活性…bob 仅收不发，
-	// 其活性来自 SFU 写出？写出不计；bob 至少 connected+握手活性在窗口内）。
+	// Media-plane liveness: both ends should be in the alive set (alice sending and bob
+	// receiving both count as activity... but bob only receives and never sends, so is its
+	// liveness from the SFU's writes? Writes do not count; bob is at least connected, and
+	// its handshake activity is within the window).
 	alive := svc.AliveUserIDs(callID)
 	aliveSet := map[int64]bool{}
 	for _, id := range alive {

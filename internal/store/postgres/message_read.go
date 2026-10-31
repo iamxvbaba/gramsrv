@@ -53,8 +53,9 @@ func (s *MessageStore) ReadMessageContents(ctx context.Context, req domain.ReadM
 		}
 		_ = tx.Rollback(ctx)
 	}()
-	// 先做只读预查推导本次涉及的对端 sender，保证 advisory lock 仍按
-	// user_id 升序统一获取，避免与 send/read 路径形成交叉锁序。
+	// First do a read-only pre-check to derive the peer senders involved, so the advisory lock is
+	// still acquired uniformly in ascending user_id order, avoiding a crossed lock order with the
+	// send/read paths.
 	senderRows, err := tx.Query(ctx, `
 SELECT DISTINCT message_sender_id
 FROM message_boxes
@@ -127,10 +128,12 @@ ORDER BY box_id`, req.OwnerUserID, ids)
 			return res, fmt.Errorf("scan read message contents: %w", err)
 		}
 		res.MessageIDs = append(res.MessageIDs, int(id))
-		// reaction 与 media(语音/圆形视频)未读清除都要 UPDATE dialogs 行:
-		// dialog_light 触发器仅挂在 dialogs 表，message_boxes.media_unread 翻转不 bump 版本。
-		// 不补这一下,「语音先历史已读、之后单独点听」会让 getPeerDialogs 的 per-peer 缓存
-		// 顶层消息一直带 media_unread=true(蓝点不消),直到该会话因别的写被失效。
+		// Both reaction and media (voice/round video) unread clears must UPDATE the dialogs row:
+		// the dialog_light trigger is attached only to the dialogs table, and flipping
+		// message_boxes.media_unread does not bump the version. Without this extra step, the
+		// sequence "voice read via history first, then listened to individually" would leave the
+		// per-peer cached top message from getPeerDialogs carrying media_unread=true (the blue dot
+		// never clears) until the conversation is invalidated by some other write.
 		if (reactionUnread || mediaUnread) && peerID != 0 {
 			affectedPeers[domain.Peer{Type: domain.PeerType(peerType), ID: peerID}] = struct{}{}
 		}
@@ -325,8 +328,9 @@ func loadDeleteUnreadCorrections(ctx context.Context, q *sqlcgen.Queries, delete
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				// dialog 行已随本次删除被移除（peer 下已无存活消息），没有读边界
-				// 可推进，不应再对一个正在丢弃的会话发悬空的 read 校正。
+				// The dialog row was removed along with this deletion (no surviving messages under
+				// the peer), so there is no read boundary to advance and a dangling read correction
+				// should not be sent for a conversation being discarded.
 				continue
 			}
 			return nil, fmt.Errorf("load dialog read state after delete: %w", err)
@@ -378,8 +382,8 @@ WHERE user_id = $1
 	return err
 }
 
-// ListUnreadReactionMessages 返回当前 owner 在该 peer 下 reaction_unread 的
-// 消息（含最新 reactions 聚合），供 messages.getUnreadReactions 跳转。
+// ListUnreadReactionMessages returns the current owner's reaction_unread messages under the
+// peer (with the latest reactions aggregate), for messages.getUnreadReactions navigation.
 func (s *MessageStore) ListUnreadReactionMessages(ctx context.Context, ownerUserID int64, peer domain.Peer, limit int) ([]domain.Message, error) {
 	if ownerUserID == 0 || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return nil, nil
@@ -410,15 +414,19 @@ func (s *MessageStore) ListUnreadReactionMessages(ctx context.Context, ownerUser
 	return out, nil
 }
 
-// ReadPeerReactions 清理当前 owner 在该 peer 下的全部未读 reaction 状态，
-// 对应 messages.readReactions 的私聊分支。
+// ReadPeerReactions clears all of the current owner's unread reaction state under the peer,
+// corresponding to the private-chat branch of messages.readReactions.
 //
-// 必须在单事务内、且持与 SetMessageReactions 同键空间(owner, peer)的 advisory 锁:
-// 否则「清 message_boxes.reaction_unread」与「重置 dialogs 计数」是两条独立 autocommit
-// 语句，既有原子性缺口(stmt1 成功 stmt2 失败 → 底层已清但计数与缓存仍陈旧)，又会与并发
-// 入站 SetMessageReactions 交错产生 lost-update(本侧硬归零 clobber 掉对端刚自增的正确计数，
-// 角标永久偏低)。计数按存活 reaction_unread 重算而非硬置 0:既保留历史坏数据的 stale-counter
-// 自愈(无存活行时 COUNT 自然为 0)，又在并发交错时只得出与当前 box 状态一致的值。
+// It must run in a single transaction and hold the same key-space (owner, peer) advisory lock as
+// SetMessageReactions: otherwise "clear message_boxes.reaction_unread" and "reset the dialogs
+// count" are two independent autocommit statements, with both an atomicity gap (stmt1 succeeds,
+// stmt2 fails → the underlying state is cleared but the count and cache are still stale) and a
+// lost-update when interleaved with a concurrent inbound SetMessageReactions (our hard reset to
+// zero clobbers the peer's correctly incremented count, keeping the badge permanently low). The
+// count is recomputed from surviving reaction_unread rows rather than hard-set to 0: this both
+// preserves stale-counter self-healing of historical bad data (with no surviving rows COUNT is
+// naturally 0) and, under concurrent interleaving, yields only a value consistent with the current
+// box state.
 func (s *MessageStore) ReadPeerReactions(ctx context.Context, ownerUserID int64, peer domain.Peer) (int, error) {
 	if ownerUserID == 0 || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return 0, nil
@@ -451,8 +459,9 @@ WHERE owner_user_id = $1
 	if err != nil {
 		return 0, fmt.Errorf("read peer reactions: %w", err)
 	}
-	// 计数始终重算(且无条件 UPDATE dialogs 行)以 bump dialog_light 失效缓存；
-	// COUNT 在同事务内读到清除后的 box 状态，无存活行即为 0，保留 stale-counter 自愈。
+	// The count is always recomputed (and the dialogs row is unconditionally UPDATEed) to bump
+	// dialog_light cache invalidation; the COUNT reads the post-clear box state in the same
+	// transaction, so with no surviving rows it is 0, preserving stale-counter self-healing.
 	if _, err := tx.Exec(ctx, `
 UPDATE dialogs d
 SET unread_reactions_count = (

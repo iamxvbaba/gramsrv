@@ -238,7 +238,7 @@ func TestChannelFullViewReadModelCacheDefaultTTLIsLongLived(t *testing.T) {
 		t.Fatalf("default full channel read model TTL = %v, want 24h", defaultChannelViewReadModelTTL)
 	}
 	if cache := newChannelViewReadModelCache(0); cache == nil {
-		t.Fatal("newChannelViewReadModelCache(0) 应返回非 nil 缓存")
+		t.Fatal("newChannelViewReadModelCache(0) should return a non-nil cache")
 	}
 }
 
@@ -1203,10 +1203,12 @@ func TestGroupBotPolicies(t *testing.T) {
 	}
 }
 
-// TestPrivacyBotReceivesDeleteEventsInDifference 回归: privacy-mode bot 经
-// getChannelDifference 补差必须收到删除事件。旧逻辑用 GetChannelMessages 重取已删消息
-// 判可见性,而该查询带 AND NOT deleted 恒返空→整条 delete 事件被丢弃,导致 bot 对所有删除
-// 失明、客户端缓存残留"未删"态。修复后删除事件直接放行(与在线推送一致,删除 id 不泄漏内容)。
+// TestPrivacyBotReceivesDeleteEventsInDifference regression: a privacy-mode bot catching up
+// via getChannelDifference must receive delete events. The old logic re-fetched the deleted
+// message with GetChannelMessages to judge visibility, but that query carries AND NOT deleted
+// and always returns empty → the whole delete event was dropped, leaving the bot blind to all
+// deletions and the client cache in a stale "not deleted" state. After the fix delete events
+// pass straight through (consistent with the online push, a deleted id leaks no content).
 func TestPrivacyBotReceivesDeleteEventsInDifference(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewChannelStore()
@@ -1224,7 +1226,7 @@ func TestPrivacyBotReceivesDeleteEventsInDifference(t *testing.T) {
 		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
 	}
 
-	// 命令消息 privacy bot 可见(messageIsCommand)。
+	// Command messages are visible to the privacy bot (messageIsCommand).
 	command, err := service.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: created.Channel.ID,
 		RandomID:  2001,
@@ -1371,7 +1373,7 @@ func TestChannelUnreadMentionsArePagedAndCleared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHistory after read mentions: %v", err)
 	}
-	// 官方语义：mention 已读后 mentioned 高亮永久保留，仅 media_unread 清除。
+	// Official semantics: after a mention is read the mentioned highlight is kept permanently; only media_unread is cleared.
 	if len(history.Messages) == 0 || !history.Messages[0].Mentioned || history.Messages[0].MediaUnread {
 		t.Fatalf("mentioned history after read = %+v, want mentioned kept with media_unread cleared", history.Messages)
 	}
@@ -2584,8 +2586,8 @@ func TestChannelBanAndDeletePermissions(t *testing.T) {
 	if banned.Participant.Status != domain.ChannelMemberKicked || banned.Channel.ParticipantsCount != 1 || banned.Channel.KickedCount != 1 {
 		t.Fatalf("banned = %+v, want kicked participant and counts", banned)
 	}
-	// megagroup 踢人产生 "X removed Y" 服务消息并占一个 channel pts；
-	// participant update 自身仍是 transient。
+	// Kicking in a megagroup produces an "X removed Y" service message and consumes one
+	// channel pts; the participant update itself remains transient.
 	if banned.Channel.Pts != ptsBeforeBan+1 || banned.ServiceEvent.Pts != ptsBeforeBan+1 {
 		t.Fatalf("banned channel pts = %d service %d, want kick service message at %d", banned.Channel.Pts, banned.ServiceEvent.Pts, ptsBeforeBan+1)
 	}

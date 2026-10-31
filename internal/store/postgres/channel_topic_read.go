@@ -10,9 +10,10 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// topicReadFallbackInbox 是 viewer 在某 topic 无已读行时的初始已读水位：话题根之前的消息
-// 视为已读（root-1），且不低于 available_min（裁剪线之前不可见）。General(topic 1) 的
-// root-1=0，即“从头未读”。这样迁移上线时不会把存量话题整体翻成未读暴涨。
+// topicReadFallbackInbox is the viewer's initial read watermark for a topic with no read row:
+// messages before the topic root are treated as read (root-1), and it is not below available_min
+// (invisible before the trim line). For General (topic 1), root-1=0, i.e. "unread from the start".
+// This way, when the migration goes live it does not turn all existing topics unread in one jump.
 func topicReadFallbackInbox(topicID, availableMinID int) int {
 	base := topicID - 1
 	if availableMinID > base {
@@ -24,19 +25,21 @@ func topicReadFallbackInbox(topicID, availableMinID int) int {
 	return base
 }
 
-// channelTopicMessageCond 返回某 topic 的消息归属条件，占位符承载 topicID。General(=1) 归并
-// reply_to_top_id IN (placeholder, 0)：General 内新消息(=1)与开 forum 前历史消息(=0)都算 General。
+// channelTopicMessageCond returns the message-belonging predicate for a topic, with the placeholder carrying topicID.
+// General(=1) merges reply_to_top_id IN (placeholder, 0): both new messages inside General (=1) and
+// pre-forum historical messages (=0) count as General.
 func channelTopicMessageCond(topicID int, placeholder string) string {
 	if topicID == domain.ForumGeneralTopicID {
-		// General 归并 reply_to_top_id ∈ {placeholder,0}，但排除其它话题的根服务消息
-		// （它们 reply_to_top_id=0，但 id 是某话题根，不属于 General）。
+		// General merges reply_to_top_id ∈ {placeholder,0}, but excludes other topics' root
+		// service messages (their reply_to_top_id=0, but their id is some topic root, so they
+		// are not part of General).
 		return "(cm.reply_to_top_id = " + placeholder + " OR cm.reply_to_top_id = 0)" +
 			" AND NOT EXISTS (SELECT 1 FROM channel_forum_topics gt WHERE gt.channel_id = cm.channel_id AND gt.topic_id = cm.id AND NOT gt.deleted)"
 	}
 	return "cm.reply_to_top_id = " + placeholder
 }
 
-// channelTopicReadInbox 取 viewer 在某 topic 的已读水位，无行时回落 fallback。
+// channelTopicReadInbox returns the viewer's read watermark for a topic, falling back when there is no row.
 func (s *ChannelStore) channelTopicReadInbox(ctx context.Context, db sqlcgen.DBTX, channelID, userID int64, topicID, availableMinID int) (int, error) {
 	var v int
 	err := db.QueryRow(ctx, `SELECT read_inbox_max_id FROM channel_topic_read WHERE channel_id = $1 AND user_id = $2 AND topic_id = $3`, channelID, userID, topicID).Scan(&v)
@@ -52,14 +55,14 @@ func (s *ChannelStore) channelTopicReadInbox(ctx context.Context, db sqlcgen.DBT
 	return v, nil
 }
 
-// topicReadWater 是 viewer 在某 topic 的 inbox/outbox 已读水位。
+// topicReadWater is the viewer's inbox/outbox read watermark for a topic.
 type topicReadWater struct {
 	Inbox  int
 	Outbox int
 }
 
-// channelTopicReadBatch 批量取多个 topic 的 per-viewer 已读水位（getForumTopics 现算与下发用），
-// 无行的 topic 回落 fallback（inbox=root-1，outbox=0）。返回 topicID -> 水位。
+// channelTopicReadBatch fetches the per-viewer read watermarks for multiple topics in a batch (used by getForumTopics for on-the-fly computing and delivery);
+// topics with no row fall back (inbox=root-1, outbox=0). Returns topicID -> watermark.
 func (s *ChannelStore) channelTopicReadBatch(ctx context.Context, channelID, userID int64, topicIDs []int32, availableMinID int) (map[int]topicReadWater, error) {
 	out := make(map[int]topicReadWater, len(topicIDs))
 	for _, t := range topicIDs {
@@ -88,7 +91,7 @@ func (s *ChannelStore) channelTopicReadBatch(ctx context.Context, channelID, use
 	return out, rows.Err()
 }
 
-// channelTopicTopMessageID 取某 topic 当前最新可见消息 id，作为 readDiscussion 推进上界。
+// channelTopicTopMessageID returns a topic's current latest visible message id, as the upper bound for advancing readDiscussion.
 func (s *ChannelStore) channelTopicTopMessageID(ctx context.Context, channelID int64, topicID, availableMinID int) (int, error) {
 	var v int
 	err := s.db.QueryRow(ctx, `
@@ -102,8 +105,8 @@ WHERE cm.channel_id = $1 AND `+channelTopicMessageCond(topicID, "$2")+` AND cm.i
 	return v, nil
 }
 
-// ReadChannelTopicHistory 推进 viewer 在 forum 单话题的 per-topic 已读水位（messages.readDiscussion），
-// 不碰频道级 channel_members.read_inbox_max_id（消除话题间已读串扰），并返回需推进 outbox 的发送者。
+// ReadChannelTopicHistory advances the viewer's per-topic read watermark for a single forum topic (messages.readDiscussion),
+// without touching the channel-level channel_members.read_inbox_max_id (eliminating cross-topic read crosstalk), and returns the senders whose outbox needs advancing.
 func (s *ChannelStore) ReadChannelTopicHistory(ctx context.Context, req domain.ReadChannelTopicHistoryRequest) (domain.ReadChannelTopicHistoryResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.TopicID <= 0 {
 		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelInvalid
@@ -150,9 +153,10 @@ ON CONFLICT (channel_id, user_id, topic_id) DO UPDATE SET
 	return domain.ReadChannelTopicHistoryResult{Channel: channel, TopicID: req.TopicID, MaxID: maxID, Changed: true, Pts: channel.Pts, OutboxUpdates: outbox}, nil
 }
 
-// advanceChannelTopicReadOutbox 推进话题内被本次已读覆盖到的发送者的 per-topic read_outbox 水位，
-// 返回这些发送者用于在线下发 updateReadChannelDiscussionOutbox（已读回执 ✓✓）。回执 UPSERT 幂等，
-// 无需与 inbox 强原子。
+// advanceChannelTopicReadOutbox advances the per-topic read_outbox watermark of the senders
+// covered by this read within the topic, and returns those senders for online delivery of
+// updateReadChannelDiscussionOutbox (read receipt ✓✓). The receipt UPSERT is idempotent and does
+// not need to be strongly atomic with the inbox.
 func (s *ChannelStore) advanceChannelTopicReadOutbox(ctx context.Context, channelID, readerUserID int64, topicID, prev, maxID int) ([]domain.ChannelReadOutboxUpdate, error) {
 	rows, err := s.db.Query(ctx, `
 SELECT DISTINCT cm.sender_user_id
@@ -192,8 +196,8 @@ ON CONFLICT (channel_id, user_id, topic_id) DO UPDATE SET
 	return updates, nil
 }
 
-// GeneralForumTopic 现算 General 话题（id=1）对 viewer 的状态：归属 reply_to_top_id ∈ {0,1} 且
-// 排除其它话题根服务消息，未读用 General 自己的 per-topic 水位（不被普通话题已读串扰）。
+// GeneralForumTopic computes on the fly the state of the General topic (id=1) for the viewer: it belongs to reply_to_top_id ∈ {0,1} and
+// excludes other topics' root service messages; unread uses General's own per-topic watermark (not crosstalked by ordinary topic reads).
 func (s *ChannelStore) GeneralForumTopic(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelForumTopic, error) {
 	if viewerUserID == 0 || channelID == 0 {
 		return domain.ChannelForumTopic{}, domain.ErrChannelInvalid

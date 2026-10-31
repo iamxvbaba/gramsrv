@@ -7,11 +7,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// MediaStore 持久化媒体元数据：上传分片、blob 索引、文档/照片注册表、
-// 贴纸集、可用 reaction、头像历史。blob 字节本身由 blob backend 按 object_key 读写，
-// 本接口只管 file_blobs 索引行。
+// MediaStore persists media metadata: upload parts, blob index, document/photo registry,
+// sticker sets, available reactions, and profile photo history. The blob bytes themselves are
+// read/written by the blob backend by object_key; this interface only manages the file_blobs
+// index rows.
 type MediaStore interface {
-	// 上传分片（transient：组装成 blob 后即清理）。
+	// Upload parts (transient: cleaned up once assembled into a blob).
 	SaveFilePart(ctx context.Context, part domain.UploadPart) error
 	UploadPartUsage(ctx context.Context, ownerUserID int64) (domain.UploadPartUsage, error)
 	UploadPartSlot(ctx context.Context, ownerUserID, fileID int64, part int) (domain.UploadPartSlot, error)
@@ -24,33 +25,36 @@ type MediaStore interface {
 	GetUploadedMediaReceipt(ctx context.Context, ownerUserID, fileID int64) (domain.UploadedMediaReceipt, bool, error)
 	PutUploadedMediaReceipt(ctx context.Context, receipt domain.UploadedMediaReceipt) (stored domain.UploadedMediaReceipt, created bool, err error)
 
-	// blob 索引。
+	// blob index.
 	PutFileBlob(ctx context.Context, blob domain.FileBlob) error
 	GetFileBlob(ctx context.Context, locationKey string) (domain.FileBlob, bool, error)
-	// GetFileBlobs 批量按 location_key 取 FileBlob 元数据（缺失的 key 不出现在返回 map 中）。
-	// 供启动预热等需一次性加载大量 blob 的路径，替代逐个 GetFileBlob 的 N+1 往返。
+	// GetFileBlobs batch-fetches FileBlob metadata by location_key (missing keys do not appear
+	// in the returned map). For paths such as startup warm-up that load many blobs at once,
+	// replacing the N+1 round trips of per-blob GetFileBlob.
 	GetFileBlobs(ctx context.Context, locationKeys []string) (map[string]domain.FileBlob, error)
-	// SeedThumbStates 批量返回文档缩略图的校验元数据，刻意不返回内联字节：启动期
-	// 校验几千个 seed 文档时，把 thumbs 里的 base64 全部拉回内存解码才是主要开销。
+	// SeedThumbStates batch-returns document thumbnail validation metadata, deliberately not
+	// the inline bytes: when validating thousands of seed documents at startup, pulling all the
+	// base64 from thumbs back into memory to decode is the main cost.
 	SeedThumbStates(ctx context.Context, documentIDs []int64) ([]SeedThumbState, error)
 
-	// seed 状态。只记录静态资源 catalog 的内容 hash，用于启动时跳过未变化的重复导入；
-	// 真实可服务性仍由 documents/file_blobs 校验保证，不能只相信这里的 hash。
+	// seed state. It records only the content hash of the static asset catalog, used at
+	// startup to skip unchanged duplicate imports; real servability is still guaranteed by
+	// documents/file_blobs validation, so this hash alone cannot be trusted.
 	GetSeedState(ctx context.Context, key string) (hash string, found bool, err error)
 	PutSeedState(ctx context.Context, key, hash string) error
 
-	// 文档 / 照片注册表。
+	// document / photo registry.
 	PutDocument(ctx context.Context, doc domain.Document) error
 	GetDocument(ctx context.Context, id int64) (domain.Document, bool, error)
 	GetDocuments(ctx context.Context, ids []int64) ([]domain.Document, error)
 	PutPhoto(ctx context.Context, photo domain.Photo) error
 	GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error)
 
-	// 链接预览解析缓存（web_pages）。按规范化 URL 哈希去重，snapshot 为完整快照。
+	// Link preview resolution cache (web_pages). Deduplicated by normalized URL hash; snapshot is a full snapshot.
 	PutWebPage(ctx context.Context, urlHash int64, page domain.MessageWebPage, now int) error
 	GetWebPageByURLHash(ctx context.Context, urlHash int64) (page domain.MessageWebPage, refreshedAt int, found bool, err error)
 
-	// 贴纸集 / 可用 reaction。
+	// sticker sets / available reactions.
 	PutStickerSet(ctx context.Context, set domain.StickerSet) error
 	CreateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error
 	UpdateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error
@@ -66,8 +70,8 @@ type MediaStore interface {
 	ListStickerSetsByCreator(ctx context.Context, creatorUserID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error)
 	StickerSetShortNameAvailable(ctx context.Context, shortName string) (bool, error)
 	CountStickerSets(ctx context.Context) (int, error)
-	// CountStickerSetsByIDs 统计给定 id 中仍存在的贴纸集数量；启动快速路径用它发现
-	// 被删除的种子集，从而触发重新导入。
+	// CountStickerSetsByIDs counts how many of the given ids still exist; the startup fast path
+	// uses it to detect deleted seed sets and trigger a re-import.
 	CountStickerSetsByIDs(ctx context.Context, ids []int64) (int, error)
 	PutAvailableReaction(ctx context.Context, r domain.AvailableReaction) error
 	ListAvailableReactions(ctx context.Context) ([]domain.AvailableReaction, error)
@@ -78,7 +82,7 @@ type MediaStore interface {
 	// is rolled back.
 	WithTx(ctx context.Context, fn func(ctx context.Context, txMedia MediaStore) error) error
 
-	// 头像历史（owner = user/channel；current = active 中 sort_order 最大者）。
+	// Profile photo history (owner = user/channel; current = the active one with the largest sort_order).
 	AddProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) error
 	CurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) (int64, bool, error)
 	CurrentProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerIDs []int64) (map[int64]domain.ProfilePhotoRef, error)
@@ -89,9 +93,10 @@ type MediaStore interface {
 	DeleteProfilePhotosKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoIDs []int64) ([]int64, error)
 }
 
-// SeedThumbState 是一个文档缩略图的可服务性校验信息。Head 为内联字节的前 12 字节，
-// 足以判断图片类型；DataSize 是解码后的字节数，HasBlob/BlobSize/BlobMime 来自
-// file_blobs 索引（location_key = doc:<id>:<type>）。
+// SeedThumbState is the servability validation info for one document thumbnail. Head is the
+// first 12 bytes of the inline bytes, enough to determine the image type; DataSize is the
+// decoded byte count, and HasBlob/BlobSize/BlobMime come from the file_blobs index
+// (location_key = doc:<id>:<type>).
 type SeedThumbState struct {
 	DocumentID   int64
 	Type         string

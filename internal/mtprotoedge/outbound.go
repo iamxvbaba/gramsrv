@@ -23,20 +23,24 @@ import (
 )
 
 var (
-	// ErrConnClosed 表示连接的出站 actor 已关闭。
+	// ErrConnClosed means the connection's outbound actor has been closed.
 	ErrConnClosed = errors.New("mtproto connection closed")
-	// ErrOutboundQueueFull 表示 best-effort update push 未能在预算内进入出站队列。
+	// ErrOutboundQueueFull means a best-effort update push could not enter the outbound queue within budget.
 	ErrOutboundQueueFull = errors.New("mtproto outbound queue full")
-	// ErrOutboundTrackedBudget 表示消息无法进入 Server 级 resend tracking 预算。可靠 RPC
-	// 响应会终止连接让客户端重试；best-effort update 仅丢弃加速推送，由 difference 恢复。
+	// ErrOutboundTrackedBudget means a message could not enter the Server-level
+	// resend tracking budget. A reliable RPC response terminates the connection so
+	// the client can retry; a best-effort update only drops the accelerated push,
+	// which difference recovery compensates for.
 	ErrOutboundTrackedBudget   = errors.New("mtproto outbound tracked byte budget exhausted")
 	ErrOutboundMessageTooLarge = errors.New("mtproto outbound message exceeds transport frame limit")
 )
 
 const (
-	// 原实现为每条 Conn eager 分配 1024 + 256 个 outboundOp 槽；在大连接数下仅空队列
-	// backing 就占据大量常驻内存。默认缩至 128 + 32，仍覆盖 TDesktop 启动/推送突发，
-	// 慢消费者继续由 best-effort timeout + durable difference 降级。
+	// The original implementation eagerly allocated 1024 + 256 outboundOp slots
+	// per Conn; with many connections, even empty queue backing occupied a lot of
+	// resident memory. The default is reduced to 128 + 32, which still covers
+	// TDesktop startup/push bursts, while slow consumers continue to degrade via
+	// best-effort timeout + durable difference.
 	defaultOutboundQueueSize         = 128
 	defaultOutboundControlQueueSize  = 32
 	defaultOutboundCriticalQueueSize = 16
@@ -52,9 +56,10 @@ const (
 
 	maxTrackedServerMsgIDs = 4096
 	maxTrackedAckedMsgIDs  = 1024
-	// maxTrackedServerBytes 是 pending（已发送待 ack、用于 resend）总 body 字节上限。
-	// 与 maxTrackedServerMsgIDs 并列；到达任一上限后拒绝新可靠 frame，绝不滚动
-	// 丢弃尚未 ACK 的旧 frame。
+	// maxTrackedServerBytes is the cap on the total body bytes of pending frames
+	// (sent, awaiting ack, kept for resend). It sits alongside
+	// maxTrackedServerMsgIDs; on reaching either cap, new reliable frames are
+	// rejected, and old frames not yet ACKed are never rolled off.
 	maxTrackedServerBytes = 64 << 20 // 64 MiB
 	defaultBulkACKWindow  = 32
 	// Encrypted transport adds auth-key/msg-key, plaintext headers, randomized
@@ -1167,11 +1172,13 @@ func (m *encodedOutboundMessage) releaseBulkCredit() {
 	credit.release()
 }
 
-// outboundTrackedBudget 是 body/control/write 三类预算共用的原子 byte-budget primitive。
-// 每个实例只负责一类：普通 encoded body、encoded service frame + 控制向量，或 write
-// scratch；同一 reservation 不跨实例释放。
-// 预算在入队前预留，写成功后从 queue reservation 原子转交给 pending；CAS 避免所有
-// outbound producer/actor 在一把全局 mutex 上串行。
+// outboundTrackedBudget is the atomic byte-budget primitive shared by the three
+// budget classes body/control/write. Each instance only serves one class: ordinary
+// encoded body, encoded service frame + control vectors, or write scratch; a
+// reservation is not released across instances.
+// The budget is reserved before enqueue and atomically handed over from the queue
+// reservation to pending after a successful write; the CAS keeps all outbound
+// producers/actors from serializing on one global mutex.
 type outboundTrackedBudget struct {
 	maxBytes int64
 	used     atomic.Int64
@@ -1383,7 +1390,8 @@ func (c *Conn) startOutbound() {
 	go c.outboundLoop()
 }
 
-// Close 停止连接的出站 actor。它不关闭底层 transport；transport 生命周期仍由 serveConn 管理。
+// Close stops the connection's outbound actor. It does not close the underlying
+// transport; the transport lifecycle is still managed by serveConn.
 func (c *Conn) Close() {
 	c.beginTerminalShutdown()
 	c.closeInboundRPCScheduler()
@@ -1422,8 +1430,9 @@ func (c *Conn) waitOutboundShutdownUntil(timeout time.Duration) bool {
 	}
 }
 
-// closeTransport 只关闭物理 transport，不等待 outbound actor。写失败路径运行在
-// actor 自身 goroutine 中，若在这里调用 Close 会等待 outboundDone 而自锁。
+// closeTransport only closes the physical transport and does not wait for the
+// outbound actor. The write-failure path runs on the actor's own goroutine, so
+// calling Close here would wait for outboundDone and self-deadlock.
 func (c *Conn) closeTransport() {
 	if c == nil {
 		return
@@ -1439,9 +1448,11 @@ func (c *Conn) closeTransport() {
 	})
 }
 
-// failTransport 把不可恢复的写错误提升为连接级 terminal failure。它只负责
-// 把 lifecycle 推进到 retired 并关闭 socket；handleOutboundOp 返回后，actor 自己发停止信号并退出，
-// serveConn 被 Close 解开 Recv 后负责注销索引。
+// failTransport promotes an unrecoverable write error to a connection-level
+// terminal failure. It is only responsible for advancing the lifecycle to retired
+// and closing the socket; after handleOutboundOp returns, the actor signals stop
+// and exits itself, and serveConn, once Recv is unblocked by Close, handles
+// unregistering the index.
 func (c *Conn) failTransport() {
 	// Publish both producer gates before Close: a custom/broken transport may block in
 	// Close, but it must not keep accepting queued bodies or RPC work meanwhile.
@@ -1492,10 +1503,13 @@ func (c *Conn) fenceUndeliveredRPCResult() {
 	})
 }
 
-// dropSlowConsumer 把出站队列持续拥塞的连接降级为离线连接。它不能等待 outbound
-// actor：调用方位于 fan-out 热路径，等待单个慢 socket 会把同一用户的健康设备和
-// transactional outbox lane 一起拖住。关闭 transport 会打断可能阻塞的写；serveConn
-// 随后负责 Unregister，durable update 由该设备重连后的 getDifference 补偿。
+// dropSlowConsumer degrades a connection whose outbound queue is persistently
+// congested to an offline connection. It must not wait for the outbound actor:
+// the caller is on the fan-out hot path, and waiting for a single slow socket
+// would drag down the healthy devices and the transactional outbox lane of the
+// same user. Closing the transport interrupts a possibly blocking write; serveConn
+// then handles Unregister, and the durable update is compensated by this device's
+// getDifference after it reconnects.
 func (c *Conn) dropSlowConsumer() {
 	c.beginTerminalShutdown()
 	c.closeTransport()
@@ -1512,7 +1526,7 @@ func (c *Conn) signalOutboundStop() {
 	})
 }
 
-// Send 加密并发送一条 server 消息。
+// Send encrypts and sends a server message.
 func (c *Conn) Send(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
 	return c.send(ctx, t, msg, false)
 }
@@ -1552,8 +1566,10 @@ func (c *Conn) SendRequiredControl(ctx context.Context, t proto.MessageType, msg
 	return err
 }
 
-// SendBestEffort 只等待消息进入普通 outbound 队列，不等待网络写完成。
-// 用于 updates fanout：队列拥塞时返回 ErrOutboundQueueFull，durable outbox/getDifference 负责兜底。
+// SendBestEffort only waits for the message to enter the ordinary outbound queue
+// and does not wait for the network write to complete. Used for updates fanout:
+// on queue congestion it returns ErrOutboundQueueFull, with the durable
+// outbox/getDifference as the fallback.
 func (c *Conn) SendBestEffort(ctx context.Context, t proto.MessageType, msg bin.Encoder, timeout time.Duration) error {
 	return c.sendBestEffort(ctx, t, msg, nil, timeout)
 }
@@ -1594,8 +1610,10 @@ func (c *Conn) sendBestEffort(ctx context.Context, t proto.MessageType, msg bin.
 	defer c.endOutboundEnqueue()
 	op.ctx = writeCtx
 	op.enqueuedAt = time.Now()
-	// 快路径：非阻塞入队。fan-out 每 (conn × push) 都走这里，队列有空位时不为
-	// 本次推送分配任何 timer（此前 timeout>0 无条件 WithTimeout，稳态白建 timer）。
+	// Fast path: non-blocking enqueue. Fan-out goes through here for every
+	// (conn × push), and when the queue has room it allocates no timer for this push
+	// (previously timeout>0 meant an unconditional WithTimeout, wastefully creating
+	// a timer in steady state).
 	q := c.outboundQueue(op)
 	select {
 	case q <- op:
@@ -1887,7 +1905,7 @@ func (c *Conn) SendAsync(ctx context.Context, t proto.MessageType, msg bin.Encod
 	op.control = true
 	op.ctx = ctx
 	op.enqueuedAt = time.Now()
-	// done 为 nil：fire-and-forget，handleOutboundSend 的 finish 对 nil done 安全跳过。
+	// done is nil: fire-and-forget, and handleOutboundSend's finish safely skips a nil done.
 	select {
 	case c.outboundControl <- op:
 		return nil
@@ -1903,7 +1921,7 @@ func (c *Conn) SendAsync(ctx context.Context, t proto.MessageType, msg bin.Encod
 	}
 }
 
-// AckServerMessages 接收客户端 msgs_ack，释放已确认的 server 出站消息。
+// AckServerMessages receives the client's msgs_ack and releases acknowledged server outbound messages.
 func (c *Conn) AckServerMessages(ids []int64) {
 	if len(ids) == 0 || c.outbound == nil || c.outboundControl == nil || c.isRetired() {
 		return
@@ -1931,8 +1949,9 @@ func (c *Conn) AckServerMessages(ids []int64) {
 	}
 }
 
-// OutgoingStateInfo 返回本连接出站消息的状态。返回值中 0 表示无出站侧意见，
-// 调用方可继续用入站 connState 兜底。
+// OutgoingStateInfo returns the status of this connection's outbound messages. A
+// 0 return value means there is no outbound-side opinion, and the caller may
+// continue to fall back to the inbound connState.
 func (c *Conn) OutgoingStateInfo(ctx context.Context, ids []int64) ([]byte, error) {
 	if c.outbound == nil {
 		return nil, ErrConnClosed
@@ -1960,7 +1979,7 @@ func (c *Conn) OutgoingStateInfo(ctx context.Context, ids []int64) ([]byte, erro
 	}
 }
 
-// ResendMessages 重发仍在 outgoing queue 中的 server 消息，并返回对应状态。
+// ResendMessages resends server messages still in the outgoing queue and returns their status.
 func (c *Conn) ResendMessages(ctx context.Context, ids []int64) ([]byte, error) {
 	if c.outbound == nil {
 		return nil, ErrConnClosed
@@ -1988,7 +2007,8 @@ func (c *Conn) ResendMessages(ctx context.Context, ids []int64) ([]byte, error) 
 	}
 }
 
-// ResendByRequest 在重复 RPC 请求到达时，按原 client msg_id 找到并重发已有 rpc_result。
+// ResendByRequest, when a duplicate RPC request arrives, finds and resends the
+// existing rpc_result by the original client msg_id.
 func (c *Conn) ResendByRequest(ctx context.Context, reqMsgID int64) (bool, error) {
 	if c.outbound == nil {
 		return false, ErrConnClosed
@@ -2828,9 +2848,12 @@ func isLayerInvariantControlEncoder(msg bin.Encoder) bool {
 	}
 }
 
-// peekSeqNo 计算本帧的 seq_no，但不提交 content 计数递增——递增延到 writeFrame 成功后
-// （commitContentSeqNo）。这样写失败（超时/连接关）但连接存活时，下一条 content 帧会复用
-// 同一 seq_no 而非留下间隙，避免严格校验的客户端把间隙误判为丢帧。只由 outbound actor 调用。
+// peekSeqNo computes this frame's seq_no but does not commit the content counter
+// increment—the increment is deferred until after writeFrame succeeds
+// (commitContentSeqNo). This way, when a write fails (timeout/connection close)
+// but the connection survives, the next content frame reuses the same seq_no
+// instead of leaving a gap, avoiding strict clients misreading the gap as a lost
+// frame. Called only by the outbound actor.
 func (c *Conn) peekSeqNo(content bool) int32 {
 	seqNo := c.sentContentMessages * 2
 	if content {
@@ -2839,14 +2862,17 @@ func (c *Conn) peekSeqNo(content bool) int32 {
 	return seqNo
 }
 
-// commitContentSeqNo 在一条 content 帧成功写出后提交 seq_no 递增。只由 outbound actor 调用。
+// commitContentSeqNo commits the seq_no increment after a content frame is
+// successfully written. Called only by the outbound actor.
 func (c *Conn) commitContentSeqNo() {
 	c.sentContentMessages++
 }
 
-// deadlineOutboundWriter 是可选的直管写超时接口：telesrv-owned compat transport 实现它，
-// 让 outbound actor 每帧只做一次 SetWriteDeadline，不再为写超时分配 context timer
-// （gotd transport.Conn 的 Send 本身也只消费 ctx.Deadline，不监听 ctx.Done，语义等价）。
+// deadlineOutboundWriter is an optional direct write-timeout interface: the
+// telesrv-owned compat transport implements it so the outbound actor only does one
+// SetWriteDeadline per frame and no longer allocates a context timer for the write
+// timeout (gotd transport.Conn's Send itself only consumes ctx.Deadline and does
+// not watch ctx.Done, so it is semantically equivalent).
 type deadlineOutboundWriter interface {
 	SendDeadline(deadline time.Time, b *bin.Buffer) error
 }
@@ -2919,7 +2945,7 @@ func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 	} else if dw, ok := writer.(deadlineOutboundWriter); ok {
 		err = dw.SendDeadline(deadline, out)
 	} else {
-		// 回落路径：gotd full codec / 测试注入 codec 仍走 ctx deadline。
+		// Fallback path: the gotd full codec / test-injected codec still uses the ctx deadline.
 		sendCtx := ctx
 		cancel := func() {}
 		if !deadline.IsZero() {
@@ -2941,8 +2967,9 @@ func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 		return ErrConnClosed
 	}
 	if err != nil {
-		// 任一 partial write / timeout 都可能破坏 MTProto 帧边界；该 socket
-		// 不可继续复用。这里只发 terminal 信号，不在 actor 内等待自身退出。
+		// Any partial write / timeout may break the MTProto frame boundary; this
+		// socket cannot be reused. Here we only signal terminal, without waiting
+		// inside the actor for its own exit.
 		c.failTransport()
 		return fmt.Errorf("send: %w", err)
 	}
@@ -3012,9 +3039,11 @@ func (c *Conn) encryptOutboundFrameInto(frame *outboundFrame, wire *bin.Buffer) 
 	copy(plain[encryptedFrameHeaderLen:], frame.body)
 
 	paddingOffset := encryptedFrameHeaderLen + len(frame.body)
-	// padding 随机数走 per-Conn 缓冲读：每帧 12..1024 字节直读 crypto/rand 是一次
-	// getrandom syscall，缓冲后按 ~1KiB 批量取。只由 outbound actor 单 goroutine 访问，
-	// 随机源本身不变（仍是 cipher 的 CSPRNG），只是预读。
+	// Padding random data is read through a per-Conn buffer: reading 12..1024 bytes
+	// per frame directly from crypto/rand is one getrandom syscall, and buffering
+	// reads it in batches of ~1KiB. Accessed only by the single outbound actor
+	// goroutine; the random source itself is unchanged (still the cipher's CSPRNG),
+	// this is only a pre-read.
 	if c.outboundRand == nil {
 		c.outboundRand = bufio.NewReaderSize(c.cipher.Rand(), 1024)
 	}
@@ -3127,8 +3156,9 @@ func outboundRequestMsgID(msg bin.Encoder) int64 {
 	}
 }
 
-// addReserved 接管调用方已经取得的全局 body 预算。pending 的每个元素恰好对应一份
-// reservation；后续只有 removePending/releaseAll 能归还。
+// addReserved takes over the global body budget the caller has already acquired.
+// Each element of pending corresponds to exactly one reservation; afterward only
+// removePending/releaseAll can return it.
 func (s *outboundState) admitReserved(frame *outboundFrame) error {
 	if _, exists := s.pending[frame.msgID]; exists {
 		return fmt.Errorf("mtprotoedge: duplicate outbound msg_id inserted into resend tracking")

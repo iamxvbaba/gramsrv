@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	appConfigHash     = 22 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 22 // must be incremented when the app config content changes, or caching clients only get notModified.
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -36,12 +36,13 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "fragment_prefixes", Value: &tg.JSONArray{Value: []tg.JSONValueClass{
 			&tg.JSONString{Value: "888"},
 		}}},
-		// premium_purchase_blocked=false：客户端把 star gift「Send a Gift」入口与
-		// premiumCanBuy()=!premium_purchase_blocked 耦合，置 true 会同时隐藏送礼入口
-		// （详见 app/help/service.go 主配置注释）。这里是无 HelpService 时的最小回退。
+		// premium_purchase_blocked=false: the client couples the star gift "Send a Gift"
+		// entry with premiumCanBuy()=!premium_purchase_blocked, so setting it true would
+		// also hide the gifting entry (see the main config comments in app/help/service.go).
+		// This is the minimal fallback for when HelpService is absent.
 		{Key: "premium_purchase_blocked", Value: &tg.JSONBool{Value: false}},
 		{Key: "stars_purchase_blocked", Value: &tg.JSONBool{Value: false}},
-		// stargifts_blocked=false：DrKLO 缺省 stargiftsBlocked=true 会隐藏 star gift 送礼网格。
+		// stargifts_blocked=false: DrKLO's default stargiftsBlocked=true would hide the star gift grid.
 		{Key: "stargifts_blocked", Value: &tg.JSONBool{Value: false}},
 		// The Stars resale floor enforced on payments.updateStarGiftPrice.
 		{Key: "stars_stargift_resale_amount_min", Value: &tg.JSONNumber{Value: float64(domain.MinStarGiftResaleStars)}},
@@ -52,18 +53,20 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "giveaway_period_max", Value: &tg.JSONNumber{Value: 604800}},
 		{Key: "premium_playmarket_direct_currency_list", Value: tgStringArray(compatandroid.DirectInvoiceCurrencies())},
 		{Key: "reactions_user_max_premium", Value: &tg.JSONNumber{Value: 3}},
-		// DrKLO 频道自定义 reaction 编辑页用它作为可选 reaction 数量上限。
+		// DrKLO's channel custom reaction editor uses this as the maximum number of selectable reactions.
 		{Key: "boosts_channel_level_max", Value: &tg.JSONNumber{Value: 100}},
-		// TDesktop 富文本编辑入口：官方默认缺省 disabled，显式 enabled 才显示/允许进入编辑器。
+		// TDesktop rich-text editor entry: the official default is disabled, and only an explicit enabled shows/allows entering the editor.
 		{Key: "rich_message_posting", Value: &tg.JSONString{Value: "enabled"}},
 		{Key: "ephemeral_welcome_messages_max", Value: &tg.JSONNumber{Value: float64(domain.MaxWelcomeMessagesPerPeer)}},
-		// dialog_filters_enabled=true：TDesktop 据此(或已有文件夹)才显示 Settings→Folders 入口。
+		// dialog_filters_enabled=true: TDesktop shows the Settings→Folders entry based on this (or existing folders).
 		{Key: "dialog_filters_enabled", Value: &tg.JSONBool{Value: true}},
-		// settings_display_passkeys=true：按 core.telegram.org/api/passkeys，客户端仅在
-		// 此 key 为 true 时显示 Settings→Privacy→Passkeys 注册入口；缺 key 则无人能注册。
+		// settings_display_passkeys=true: per core.telegram.org/api/passkeys, the client
+		// only shows the Settings→Privacy→Passkeys registration entry when this key is true;
+		// with the key absent no one can register.
 		{Key: "settings_display_passkeys", Value: &tg.JSONBool{Value: true}},
-		// can_edit_factcheck=true：TDesktop/WebK 据此显示「Add Fact-Check」入口；
-		// 缺 key 时 canEdit() 恒为 false，服务端实现的事实核查方法没有 UI 入口。
+		// can_edit_factcheck=true: TDesktop/WebK show the "Add Fact-Check" entry based on
+		// this; with the key absent canEdit() is always false, leaving the server-implemented
+		// fact-check methods without a UI entry.
 		{Key: "can_edit_factcheck", Value: &tg.JSONBool{Value: true}},
 		{Key: "factcheck_length_limit", Value: &tg.JSONNumber{Value: float64(domain.MaxFactCheckTextLength)}},
 		{Key: "chatlist_update_period", Value: &tg.JSONNumber{Value: 3600}},
@@ -79,11 +82,13 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "aicompose_tone_prompt_length_max", Value: &tg.JSONNumber{Value: 1024}},
 		{Key: "aicompose_tone_saved_limit_default", Value: &tg.JSONNumber{Value: 5}},
 		{Key: "aicompose_tone_saved_limit_premium", Value: &tg.JSONNumber{Value: 20}},
-		// upload_markup_video=true 即官方默认（emoji/sticker 头像由客户端本地渲染 mp4 后随
-		// markup 一起上传）。显式下发是为了把曾收到过 false 的客户端持久化配置洗回默认——
-		// 客户端对缺失的 key 会保留本地旧值，仅删除 key 无法恢复。
+		// upload_markup_video=true is the official default (emoji/sticker avatars are
+		// rendered locally by the client as mp4 and uploaded together with the markup).
+		// Sending it explicitly is meant to wash the persisted config of clients that once
+		// received false back to the default — a client keeps the old local value for a
+		// missing key, so merely removing the key cannot restore it.
 		{Key: "upload_markup_video", Value: &tg.JSONBool{Value: true}},
-		// 单 emoji 消息转 InputMediaDice 的白名单；须与 rpc 层 dice 取值表同步。
+		// Whitelist of single-emoji messages converted to InputMediaDice; must stay in sync with the rpc layer's dice value table.
 		{Key: "emojies_send_dice", Value: &tg.JSONArray{Value: []tg.JSONValueClass{
 			&tg.JSONString{Value: "\U0001F3B2"}, // 🎲
 			&tg.JSONString{Value: "\U0001F3AF"}, // 🎯
@@ -95,8 +100,9 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		}}},
 	}
 	if mapboxToken != "" {
-		// TDesktop 位置选点器（WebView+Mapbox GL）与 business 位置设置的地图 token；
-		// 缺失时选点器地图空白（瓦片直连 api.mapbox.com，不经服务端）。
+		// Map token for the TDesktop location picker (WebView+Mapbox GL) and the business
+		// location settings; when absent the picker's map is blank (tiles connect directly
+		// to api.mapbox.com, not through the server).
 		values = append(values, tg.JSONObjectValue{Key: "tdesktop_config_map", Value: &tg.JSONObject{Value: []tg.JSONObjectValue{
 			{Key: "maps", Value: &tg.JSONString{Value: mapboxToken}},
 			{Key: "geo", Value: &tg.JSONString{Value: mapboxToken}},
@@ -115,7 +121,7 @@ func tgStringArray(values []string) *tg.JSONArray {
 	return result
 }
 
-// fallbackTimezones 是 catalog 未 seed 时的内置最小时区集。
+// fallbackTimezones is the built-in minimal timezone set used when the catalog is not seeded.
 var fallbackTimezones = []tg.Timezone{
 	{ID: "Etc/UTC", Name: "UTC", UtcOffset: 0},
 	{ID: "America/New_York", Name: "Eastern Time", UtcOffset: -5 * 60 * 60},
@@ -125,7 +131,7 @@ var fallbackTimezones = []tg.Timezone{
 	{ID: "Asia/Shanghai", Name: "China Standard Time", UtcOffset: 8 * 60 * 60},
 }
 
-// TimezonesList 返回时区目录:优先用 catalog 固化的官方全量(~419 个),未 seed 时回退内置最小集。
+// TimezonesList returns the timezone catalog: it prefers the full official set fixed in the catalog (~419), falling back to the built-in minimal set when not seeded.
 func TimezonesList(hash int) tg.HelpTimezonesListClass {
 	seeded, h := catalog.Timezones()
 	src := seeded
@@ -145,9 +151,11 @@ func TimezonesList(hash int) tg.HelpTimezonesListClass {
 	return &tg.HelpTimezonesList{Hash: h, Timezones: items}
 }
 
-// SuggestedDialogFilters 返回新建对话文件夹时的「推荐文件夹」模板(官方固定语义:
-// Unread/Personal/Unmuted/Groups/Channels/Bots)。客户端据此一键创建对应规则的文件夹;
-// 模板 id 仅占位,用户采纳时客户端会以新 id 调 updateDialogFilter 真正创建。
+// SuggestedDialogFilters returns the "suggested folders" templates for creating a new
+// dialog folder (fixed official semantics: Unread/Personal/Unmuted/Groups/Channels/Bots).
+// The client uses them to create folders with the corresponding rules in one click; the
+// template ids are placeholders only, and on adoption the client creates the folder for
+// real by calling updateDialogFilter with new ids.
 func SuggestedDialogFilters() []tg.DialogFilterSuggested {
 	mk := func(id int, title, desc string, set func(*tg.DialogFilter)) tg.DialogFilterSuggested {
 		df := &tg.DialogFilter{
@@ -173,9 +181,11 @@ func SuggestedDialogFilters() []tg.DialogFilterSuggested {
 	}
 }
 
-// CountriesList 返回登录页国家区号目录:优先用 catalog 固化的官方全量(~235 国),未 seed
-// 时回退内置最小集(US/CN)。生产路径通常经 HelpService.GetCountries → defaultCountries
-// 走 catalog;此函数是 HelpService 缺省时的兜底。
+// CountriesList returns the login-page country-code catalog: it prefers the full official
+// set fixed in the catalog (~235 countries), falling back to the built-in minimal set
+// (US/CN) when not seeded. The production path usually goes through
+// HelpService.GetCountries → defaultCountries to the catalog; this function is the
+// fallback for when HelpService is absent.
 func CountriesList(hash int) tg.HelpCountriesListClass {
 	list := catalog.Countries()
 	if len(list.Countries) == 0 {

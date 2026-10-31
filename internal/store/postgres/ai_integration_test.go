@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestAIComposeStoreRoundTripPostgres 验证自定义 AI tone 与保存列表持久化，
-// 含 creator/saved 视角、slug/id 解析和删除级联。
+// TestAIComposeStoreRoundTripPostgres verifies persistence of custom AI tones and the saved list,
+// including creator/saved perspectives, slug/id resolution and delete cascade.
 func TestAIComposeStoreRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

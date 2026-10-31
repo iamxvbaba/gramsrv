@@ -7,8 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 频道/超级群消息 poll 投票与关闭：成员资格与消息可见性沿用 reaction 同款校验，
-// poll 级语义委托共享 PollStore。
+// Channel/supergroup message poll voting and closing: membership and message visibility
+// reuse the same checks as reactions, while poll-level semantics are delegated to the
+// shared PollStore.
 
 func (s *ChannelStore) VoteChannelMessagePoll(_ context.Context, req domain.VoteChannelMessagePollRequest) (domain.ChannelMessagePollResult, error) {
 	if req.Date == 0 {
@@ -61,10 +62,12 @@ func (s *ChannelStore) pollChannelMessageTarget(userID, channelID int64, message
 	return cloneChannel(channel), cloneChannelMessage(msg), nil
 }
 
-// ChannelPollFanoutViews 批量加载一条 poll 消息对一组 viewer 的 per-viewer enrich（与 postgres 同口径，
-// 消除 fan-out 逐 viewer 重载 N+1）：成员/AvailableMinID 可见性复刻 channelAndMemberLocked +
-// pollChannelMessageTarget；poll enrich 委托 PollStore.EnrichPollForViewers（模板一次）。bot 历史过滤
-// 在 app 层叠加。Polls：key 存在=已评估；nil=不可见；非 nil=可见 enrich poll。
+// ChannelPollFanoutViews batch-loads per-viewer enrichment of one poll message for a set of
+// viewers (same convention as postgres, eliminating the fan-out N+1 of reloading per
+// viewer): member/AvailableMinID visibility replicates channelAndMemberLocked +
+// pollChannelMessageTarget; poll enrichment is delegated to PollStore.EnrichPollForViewers
+// (templated once). Bot history filtering is layered on in the app layer. Polls: key
+// present = evaluated; nil = not visible; non-nil = visible enriched poll.
 func (s *ChannelStore) ChannelPollFanoutViews(_ context.Context, channelID int64, msgID int, viewers []int64, now int) (domain.ChannelPollFanoutViews, error) {
 	out := domain.ChannelPollFanoutViews{Polls: map[int64]*domain.MessagePoll{}}
 	if s == nil || s.polls == nil || channelID == 0 || msgID <= 0 || len(viewers) == 0 {
@@ -92,7 +95,7 @@ func (s *ChannelStore) ChannelPollFanoutViews(_ context.Context, channelID int64
 		}
 		member, ok := s.members[channelID][viewer]
 		if !ok || member.Status != domain.ChannelMemberActive || member.BannedRights.ViewMessages || (member.AvailableMinID > 0 && msgID <= member.AvailableMinID) {
-			out.Polls[viewer] = nil // 已评估但不可见
+			out.Polls[viewer] = nil // evaluated but not visible
 			continue
 		}
 		visible = append(visible, viewer)
@@ -104,7 +107,7 @@ func (s *ChannelStore) ChannelPollFanoutViews(_ context.Context, channelID int64
 	return out, nil
 }
 
-// channelPollResult 为投票者视角组装结果；实时 fan-out 与 reaction 同款由 rpc 层按 viewer 重建。
+// channelPollResult assembles the result from the voter's perspective; like reactions, real-time fan-out is rebuilt per viewer by the rpc layer.
 func (s *ChannelStore) channelPollResult(channel domain.Channel, msg domain.ChannelMessage, viewerUserID int64, now int) domain.ChannelMessagePollResult {
 	msg.Media = enrichPollMediaForViewer(s.polls, msg.Media, viewerUserID, now)
 	return domain.ChannelMessagePollResult{

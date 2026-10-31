@@ -41,8 +41,9 @@ func tgUpdatesDifference(viewerUserID int64, diff domain.UpdateDifference) tg.Up
 				out.OtherUpdates = append(out.OtherUpdates, update)
 			}
 		case domain.UpdateEventMessagePoll:
-			// 同时下发消息快照（含最新聚合）与对应通知 update；事件无 TL pts，
-			// pts 推进靠 difference state 本身。
+			// Emit both the message snapshot (with the latest aggregate) and the
+			// corresponding notification update; the event has no TL pts, and pts
+			// advancement relies on the difference state itself.
 			if messageSnapshotVisible(event.Message) {
 				if msg := tgMessage(event.Message); msg != nil {
 					out.NewMessages = append(out.NewMessages, msg)
@@ -83,7 +84,7 @@ func tgUpdatesDifference(viewerUserID int64, diff domain.UpdateDifference) tg.Up
 			addChannelNudgeChat(out, seenChats, tgChannelChatForView(viewerUserID, *nudge.Channel))
 		}
 	}
-	// Partial：连续事件被 limit 截断、后面还有 → updates.differenceSlice，客户端据 IntermediateState 续拉。
+	// Partial: a run of events was cut off by the limit with more to come → updates.differenceSlice; the client continues via IntermediateState.
 	if diff.Partial {
 		return &tg.UpdatesDifferenceSlice{
 			NewMessages:       out.NewMessages,
@@ -147,8 +148,9 @@ func tgChannelDifference(viewerUserID int64, diff domain.ChannelDifference) tg.U
 		}
 	}
 	updates := make([]tg.UpdateClass, 0, len(diff.OtherUpdates))
-	// 断线后经差量首次看到自己消息时，updateMessageID 让客户端把本地
-	// pending 按 random_id 对账，避免短暂的重复气泡。
+	// When the client first sees its own message via a difference after a reconnect,
+	// updateMessageID lets it reconcile the local pending by random_id, avoiding a
+	// brief duplicate bubble.
 	for _, msg := range diff.NewMessages {
 		if msg.SenderUserID == viewerUserID && viewerUserID != 0 && msg.RandomID != 0 && msg.ID > 0 {
 			updates = append(updates, &tg.UpdateMessageID{ID: msg.ID, RandomID: msg.RandomID})
@@ -191,8 +193,9 @@ func tgChannelUpdate(viewerUserID int64, event domain.ChannelUpdateEvent) tg.Upd
 		}
 		return &tg.UpdateEditChannelMessage{Message: msg, Pts: event.Pts, PtsCount: event.PtsCount}
 	case domain.ChannelUpdateWebPage:
-		// 频道链接预览就地替换：updateChannelWebPage 仅携已解析 webPage（按 id 关联消息里的
-		// pending 占位），客户端就地换卡片、不触碰 edit_date。
+		// In-place channel link preview replacement: updateChannelWebPage carries only
+		// the resolved webPage (associated by id with the pending placeholder in the
+		// message); the client swaps the card in place without touching edit_date.
 		if event.Message.Media == nil || event.Message.Media.WebPage == nil {
 			return nil
 		}
@@ -327,9 +330,9 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 	case domain.UpdateEventContactsReset:
 		return &tg.UpdateContactsReset{}
 	case domain.UpdateEventDialogPinned:
-		// archive folder 行自身的置顶：peer 是 dialogPeerFolder 且绝不能带
-		// folder_id flag（TDesktop Folder::applyPinnedUpdate 视其为
-		// "Nested folders" 错误）。
+		// Pin of the archive folder row itself: the peer is dialogPeerFolder and must
+		// never carry the folder_id flag (TDesktop Folder::applyPinnedUpdate treats it
+		// as a "Nested folders" error).
 		if event.Peer.Type == domain.PeerTypeFolder {
 			if event.Peer.ID == 0 {
 				return nil
@@ -340,8 +343,9 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 		if peer == nil {
 			return nil
 		}
-		// FolderID 零值不编码 flag（EncodeBare 自动 SetFlags），归档内置顶
-		// 必须带 folder_id=1，否则离线重放会把它应用到主列表。
+		// A zero-value FolderID does not encode the flag (EncodeBare SetFlags
+		// automatically); an archived pin must carry folder_id=1, otherwise an offline
+		// replay would apply it to the main list.
 		return &tg.UpdateDialogPinned{Pinned: event.Bool, Peer: peer, FolderID: event.FolderID}
 	case domain.UpdateEventPinnedDialogs:
 		update := &tg.UpdatePinnedDialogs{FolderID: event.FolderID}
@@ -372,7 +376,7 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 		if peer == nil {
 			return nil
 		}
-		// Draft 由 enrichDraftMessageEvent 按当前权威态填充；nil/空 = 草稿已删。
+		// Draft is filled by enrichDraftMessageEvent from the current authoritative state; nil/empty = draft deleted.
 		var draft tg.DraftMessageClass
 		if event.Draft != nil && !event.Draft.Empty() {
 			draft = tgDialogDraft(*event.Draft)
@@ -448,8 +452,8 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			PtsCount: event.PtsCount,
 		}
 		if event.Date > 0 {
-			// date 是内容被读取的时刻：客户端用它调度 TTL 媒体的
-			// "自读取起算"删除与 sender 侧已听时间。
+			// date is the moment the content was read: the client uses it to schedule
+			// TTL media "delete from read time" and the sender-side listened duration.
 			contents.SetDate(event.Date)
 		}
 		return contents
@@ -464,8 +468,9 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			PtsCount: event.PtsCount,
 		}
 	case domain.UpdateEventWebPage:
-		// 链接预览就地替换：updateWebPage 仅携带已解析 webPage（按 webPage id 与消息里的
-		// pending 占位关联），客户端就地换卡片、不触碰 edit_date。
+		// In-place link preview replacement: updateWebPage carries only the resolved
+		// webPage (associated by webPage id with the pending placeholder in the
+		// message); the client swaps the card in place without touching edit_date.
 		if event.Message.Media == nil || event.Message.Media.WebPage == nil {
 			return nil
 		}

@@ -1515,7 +1515,7 @@ func TestSessionOfflinePersistsLastSeenAndPushes(t *testing.T) {
 		Sessions: sessions,
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(now, 0)})
 
-	// offline 广播经去抖宽限后异步执行；缩短宽限并轮询等待。
+	// The offline broadcast runs asynchronously after a debounce grace; shorten the grace and poll-wait.
 	grace := offlineAnnounceGrace
 	offlineAnnounceGrace = 10 * time.Millisecond
 	defer func() { offlineAnnounceGrace = grace }()
@@ -1549,9 +1549,10 @@ func TestSessionOfflinePersistsLastSeenAndPushes(t *testing.T) {
 	}
 }
 
-// TestSessionOfflineSkipsAnnounceWhenUserReconnects 验证去抖宽限内用户重新上线时
-// 跳过 offline 广播——移动端重连/换 session 是「先断旧再建新」，没有去抖会对
-// 全部好友广播一轮 offline→online 抖动。
+// TestSessionOfflineSkipsAnnounceWhenUserReconnects verifies that when the user comes
+// back online within the debounce grace, the offline broadcast is skipped -- a mobile
+// reconnect / session change is "drop the old then build the new", and without the
+// debounce every friend would get a round of offline→online flapping.
 func TestSessionOfflineSkipsAnnounceWhenUserReconnects(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -1560,7 +1561,7 @@ func TestSessionOfflineSkipsAnnounceWhenUserReconnects(t *testing.T) {
 		t.Fatalf("create bob: %v", err)
 	}
 	const now = 1700000300
-	// bob 在 IsUserOnline 名单里：模拟宽限期内已重新上线。
+	// bob is in the IsUserOnline list: simulate having come back online within the grace.
 	sessions := &captureSessions{onlineUserIDs: []int64{bob.ID}}
 	r := New(Config{}, Deps{
 		Users:    appusers.NewService(userStore),

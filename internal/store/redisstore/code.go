@@ -14,12 +14,12 @@ import (
 	"telesrv/internal/store"
 )
 
-// CodeStore 用 Redis 实现 store.CodeStore（验证码带 TTL 自动过期）。
+// CodeStore implements store.CodeStore with Redis (codes auto-expire via TTL).
 type CodeStore struct {
 	c *redis.Client
 }
 
-// NewCodeStore 创建 Redis CodeStore。
+// NewCodeStore creates a Redis CodeStore.
 func NewCodeStore(c *redis.Client) *CodeStore {
 	return &CodeStore{c: c}
 }
@@ -29,7 +29,7 @@ const codeKeyPrefix = "phonecode:"
 func codeKey(hash string) string { return codeKeyPrefix + hash }
 
 func codeScopeKey(scope store.PhoneCodeScope) string {
-	// 不把手机号/auth key 明文放进 Redis key；JSON 仅作为稳定的长度分隔编码输入。
+	// Do not put the phone number/auth key in plaintext into the Redis key; the JSON is only used as stable, length-delimited encoding input.
 	raw, _ := json.Marshal(scope)
 	digest := sha256.Sum256(raw)
 	return "phonecodescope:" + hex.EncodeToString(digest[:])

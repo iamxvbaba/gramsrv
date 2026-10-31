@@ -11,13 +11,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// EditFactCheck 写入或删除一条消息的事实核查标签。
+// EditFactCheck writes or deletes a message's fact-check label.
 //
-// 权限与频道消息编辑一致：消息作者本人，或频道创作者/具备 edit_messages 权限的
-// 管理员。事实核查挂在消息行上，因此所有订阅者读到的是同一份结论。
+// Permissions match channel message editing: the message author themself, or the channel creator / an admin
+// with the edit_messages right. The fact check hangs on the message row, so all subscribers read the same verdict.
 //
-// 写操作占用一个 channel pts 并产生一条 edit_message 事件，客户端据此在原消息
-// 上就地更新事实核查标签。
+// The write consumes one channel pts and produces an edit_message event, on which the client updates the fact-check
+// label in place on the original message.
 func (s *ChannelStore) EditFactCheck(ctx context.Context, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.MessageID <= 0 {
 		return domain.EditFactCheckResult{}, domain.ErrChannelInvalid

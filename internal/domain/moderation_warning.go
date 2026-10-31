@@ -1,26 +1,26 @@
 package domain
 
-// 本文件实现 SCAM/FAKE 标记在个人资料描述（About）中的服务端文字化：
-// 官方客户端依据 tg.User.scam / tg.Channel.scam 渲染本地化角标，但纯角标
-// 在自建部署的受众里常被忽略；因此 getFullUser / channels.getFullChannel /
-// 邀请预览返回的 About 会在首行注入一句平台警告，其后才是 peer 自己的描述。
+// This file implements the server-side text form of SCAM/FAKE marks in the profile description (About):
+// official clients render a localized badge based on tg.User.scam / tg.Channel.scam, but a bare badge
+// is often ignored by the audience of a self-hosted deployment; so the About returned by getFullUser / channels.getFullChannel /
+// invite previews injects a platform warning on the first line, followed by the peer's own description.
 //
-// 警告文本来自 TELESRV_SCAM_WARNING / TELESRV_FAKE_WARNING（见 internal/config，
-// 由 cmd/telesrv/main.go 启动时注入），留空时使用内置英文默认值——与
-// .env.example 中 «Empty keeps built-in English defaults» 的说明一致。
+// The warning text comes from TELESRV_SCAM_WARNING / TELESRV_FAKE_WARNING (see internal/config,
+// injected at startup by cmd/telesrv/main.go), and an empty value uses the built-in English default — consistent with
+// the .env.example note «Empty keeps built-in English defaults».
 //
-// 存储层的描述永远不会被改写：警告只存在于读路径投影上，owner 每次编辑
-// 描述后警告依旧重新出现在首行（语义守护见 rpc/moderation_flags_projection_test.go）。
+// The stored description is never rewritten: the warning exists only on the read-path projection, and after the owner edits
+// the description the warning still reappears on the first line (semantic guard in rpc/moderation_flags_projection_test.go).
 
 import (
 	"strings"
 	"sync/atomic"
 )
 
-// 内置默认文案是完整的一句警告（而非官方客户端的 SCAM/FAKE 徽标词）：官方客户端只
-// 在名字旁画一个两字母角标，描述里没有可读的解释；这里把「为什么被标记」直接写进
-// 描述首行，与 operator 在 .env 中可覆盖的语义保持一致（空值 → 下面这段）。
-// 两句都用官方措辞：fake 是冒充真人/知名机构，scam 是涉诈与索取钱款。
+// The built-in default text is a full warning sentence (rather than the official client's SCAM/FAKE badge word): the official client only
+// draws a two-letter badge next to the name, with no readable explanation in the description; here "why it was flagged" is written directly
+// into the first line of the description, consistent with the operator-overridable semantics in .env (empty value → the text below).
+// Both use official wording: fake is impersonating a real person/well-known organization, scam is fraud and demanding money.
 const (
 	defaultScamProfileWarning = "⚠️ Warning: This account has received numerous complaints " +
 		"related to fraud or attempts to impersonate an official account. Be cautious, " +
@@ -29,22 +29,22 @@ const (
 		"impersonating a well-known person or organization."
 )
 
-// atomic.Value 承载，与 officialSystemUserDisplayName 等启动期配置同一写法：
-// 投影路径只读，避免未来接入运行期刷新时引入数据竞争。
+// Held in an atomic.Value, the same pattern as startup-time configuration such as officialSystemUserDisplayName:
+// the projection path is read-only, avoiding a data race if runtime refresh is added later.
 var (
 	scamProfileWarning atomic.Value // string
 	fakeProfileWarning atomic.Value // string
 )
 
-// SetModerationProfileWarning 记录 operator 配置的警告文本，启动时调用一次。
-// 空值（或纯空白）表示使用内置英文默认值。
+// SetModerationProfileWarning records the operator-configured warning text; called once at startup.
+// An empty value (or pure whitespace) means use the built-in English default.
 func SetModerationProfileWarning(scam, fake string) {
 	scamProfileWarning.Store(strings.TrimSpace(scam))
 	fakeProfileWarning.Store(strings.TrimSpace(fake))
 }
 
-// moderationProfileWarning 返回当前生效的警告文本；未标记的 peer 返回空串。
-// admin 拒绝同时置两个标记（ErrPeerModerationFlagsInvalid），因此 scam 优先即可。
+// moderationProfileWarning returns the currently effective warning text; an unflagged peer returns an empty string.
+// admin rejects setting both flags at once (ErrPeerModerationFlagsInvalid), so scam taking priority is enough.
 func moderationProfileWarning(scam, fake bool) string {
 	if scam {
 		if text, ok := scamProfileWarning.Load().(string); ok && text != "" {
@@ -61,9 +61,9 @@ func moderationProfileWarning(scam, fake bool) string {
 	return ""
 }
 
-// ModerationProfileWarning 把平台警告拼在 peer 自己的描述前：
-// 未被标记时原样返回 about（零分配）；被标记时返回「警告\n描述」，
-// 描述为空时只返回警告。分隔符用单个换行——About 在客户端逐行渲染。
+// ModerationProfileWarning prepends the platform warning to the peer's own description:
+// when unflagged it returns about verbatim (zero allocation); when flagged it returns "warning\ndescription",
+// and when the description is empty it returns only the warning. The separator is a single newline — About renders line by line in the client.
 func ModerationProfileWarning(scam, fake bool, about string) string {
 	warning := moderationProfileWarning(scam, fake)
 	if warning == "" {

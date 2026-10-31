@@ -187,9 +187,10 @@ func (s *recoveryFanoutChannels) callCount() int {
 	return s.calls
 }
 
-// TestChannelFanoutDispatcherSyncFallback：dispatcher 未启动时 Enqueue 同步执行——
-// 保持测试/未装配场景行为不变，recipients 立即被推送、发起 session 作为 exclude 透传。
-// deps.Channels=nil 时 channelFanoutRecipients 直接返回 explicit recipients。
+// TestChannelFanoutDispatcherSyncFallback: when the dispatcher is not started, Enqueue runs
+// synchronously -- keeping tests/unwired setups unchanged; recipients are pushed immediately and
+// the originating session is passed through as exclude. When deps.Channels=nil,
+// channelFanoutRecipients directly returns the explicit recipients.
 func TestChannelFanoutDispatcherSyncFallback(t *testing.T) {
 	cs := &captureSessions{}
 	r := New(Config{}, Deps{Sessions: cs}, zaptest.NewLogger(t), clock.System)
@@ -208,8 +209,8 @@ func TestChannelFanoutDispatcherSyncFallback(t *testing.T) {
 	}
 }
 
-// TestChannelFanoutDispatcherDeliversAsync：dispatcher 启动后 Enqueue 异步投递，
-// recipients 最终被 worker 推送（不阻塞 Enqueue 调用方）。
+// TestChannelFanoutDispatcherDeliversAsync: after the dispatcher starts, Enqueue delivers
+// asynchronously and recipients are eventually pushed by the worker (without blocking the Enqueue caller).
 func TestChannelFanoutDispatcherDeliversAsync(t *testing.T) {
 	cs := &captureSessions{}
 	r := New(Config{}, Deps{Sessions: cs}, zaptest.NewLogger(t), clock.System)
@@ -223,7 +224,7 @@ func TestChannelFanoutDispatcherDeliversAsync(t *testing.T) {
 		t.Fatal("dispatcher did not start")
 	}
 
-	// built map 跨 goroutine，只断言 mutex 保护的 pushedUserIDs，不读 built。
+	// The built map crosses goroutines, so only assert on the mutex-protected pushedUserIDs and do not read built.
 	r.channelFanout.Enqueue(context.Background(), fanoutTestJob([]int64{3001}, 0, 7, nil))
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -241,8 +242,9 @@ func TestChannelFanoutDispatcherDeliversAsync(t *testing.T) {
 	}
 }
 
-// TestChannelFanoutDispatcherInvokesPrefetch：worker 在逐 viewer build 之前调用一次 prefetch，
-// 且传入「解析后的 recipients + 兜底 origin」——这是 fan-out 跨 viewer 投影预热（O(owner)）的入口。
+// TestChannelFanoutDispatcherInvokesPrefetch: the worker calls prefetch once before the per-viewer
+// build, passing "resolved recipients + fallback origin" -- this is the entry point for the
+// fan-out cross-viewer projection warm-up (O(owner)).
 func TestChannelFanoutDispatcherInvokesPrefetch(t *testing.T) {
 	cs := &captureSessions{}
 	r := New(Config{}, Deps{Sessions: cs}, zaptest.NewLogger(t), clock.System)
@@ -253,7 +255,7 @@ func TestChannelFanoutDispatcherInvokesPrefetch(t *testing.T) {
 		gotViewers = append([]int64(nil), viewers...)
 		return true
 	}
-	// deps.Channels=nil → channelFanoutRecipients 返回 explicit recipients=[2001 2002]；origin=5 兜底追加。
+	// deps.Channels=nil -> channelFanoutRecipients returns explicit recipients=[2001 2002]; origin=5 is appended as fallback.
 	r.channelFanout.Enqueue(context.Background(), job)
 
 	want := map[int64]bool{2001: true, 2002: true, 5: true}
@@ -297,8 +299,9 @@ func TestChannelFanoutJobPrefetchFailureSendsRecoveryNudge(t *testing.T) {
 	}
 }
 
-// editFanoutTestResult 构造一条覆盖两容器的 EditChannelMessageResult：主容器(Event/Message)带
-// sender A + reply B，服务消息容器(ServiceEvent/ServiceMessage)带 sender C + Action.UserIDs=[D]。
+// editFanoutTestResult builds an EditChannelMessageResult covering both containers: the main
+// container (Event/Message) carries sender A + reply B, and the service-message container
+// (ServiceEvent/ServiceMessage) carries sender C + Action.UserIDs=[D].
 func editFanoutTestResult(eventPts, servicePts int) domain.EditChannelMessageResult {
 	res := domain.EditChannelMessageResult{
 		Channel:    domain.Channel{ID: 1001},
@@ -319,9 +322,10 @@ func ownerIDSet(ids []int64) map[int64]bool {
 	return out
 }
 
-// TestChannelEditMessageFanoutOwnerIDsCoversBothContainers：编辑预热的 owner-id 收集必须并集两个
-// 容器（主消息 + 服务消息），否则服务消息的 sender/Action.UserIDs 漏出缓存预热（edit 相对 send
-// 路径唯一新增的等价面，见 editVerify）。
+// TestChannelEditMessageFanoutOwnerIDsCoversBothContainers: the edit warm-up's owner-id collection
+// must union both containers (main message + service message), otherwise the service message's
+// sender/Action.UserIDs would miss the cache warm-up (the only equivalence surface the edit path
+// adds relative to send, see editVerify).
 func TestChannelEditMessageFanoutOwnerIDsCoversBothContainers(t *testing.T) {
 	got := ownerIDSet(channelEditMessageFanoutOwnerIDs(editFanoutTestResult(5, 6)))
 	for _, want := range []int64{2001, 2002, 2003, 2004} {
@@ -331,11 +335,13 @@ func TestChannelEditMessageFanoutOwnerIDsCoversBothContainers(t *testing.T) {
 	}
 }
 
-// TestChannelEditMessageFanoutOwnerIDsGating：owner-id 收集必须严格镜像 builder 的 pts 门控——
-// ServiceEvent.Pts==0 时不收服务消息容器；Event.Pts==0 时不收主容器。保证预热集与 build 下发的
-// Users 集恰好一致（多收无害但破坏等价测试紧致性）。
+// TestChannelEditMessageFanoutOwnerIDsGating: the owner-id collection must strictly mirror the
+// builder's pts gating -- do not collect the service-message container when ServiceEvent.Pts==0,
+// and do not collect the main container when Event.Pts==0. This guarantees the warmed set exactly
+// matches the Users set build sends (collecting extra is harmless but breaks the equivalence
+// test's tightness).
 func TestChannelEditMessageFanoutOwnerIDsGating(t *testing.T) {
-	// 仅主容器（服务消息 pts=0）。
+	// Main container only (service-message pts=0).
 	noService := ownerIDSet(channelEditMessageFanoutOwnerIDs(editFanoutTestResult(5, 0)))
 	if !noService[2001] || !noService[2002] {
 		t.Fatalf("event-only owner ids %v should contain 2001/2002", noService)
@@ -343,14 +349,15 @@ func TestChannelEditMessageFanoutOwnerIDsGating(t *testing.T) {
 	if noService[2003] || noService[2004] {
 		t.Fatalf("event-only owner ids %v must not contain service-container ids 2003/2004", noService)
 	}
-	// 两容器都无 pts → 空。
+	// Neither container has pts -> empty.
 	if ids := channelEditMessageFanoutOwnerIDs(editFanoutTestResult(0, 0)); len(ids) != 0 {
 		t.Fatalf("no-pts owner ids = %v, want empty", ids)
 	}
 }
 
-// prefetchRecordingUsersService 在 mapUsersService 基础上实现 BatchViewerUsersResolver 并记录
-// ByIDsForViewers 收到的 (viewers, ownerIDs)，用于断言 edit fan-out 用正确 owner 集预热。
+// prefetchRecordingUsersService implements BatchViewerUsersResolver on top of mapUsersService and
+// records the (viewers, ownerIDs) received by ByIDsForViewers, to assert the edit fan-out warms
+// with the correct owner set.
 type prefetchRecordingUsersService struct {
 	mapUsersService
 	mu            sync.Mutex
@@ -417,9 +424,10 @@ func TestPrefetchChannelFanoutUsersRejectsMissingViewersAndOwners(t *testing.T) 
 	}
 }
 
-// TestChannelEditMessageFanoutInvokesPrefetch：enqueueChannelEditMessageFanout 在逐 viewer build
-// 前用「channelEditMessageFanoutOwnerIDs(res) + recipients+origin」预热（dispatcher 未启动→同步
-// 回退，prefetch 同步执行）。锁定 edit 路径接入了 O(owner) 预热而非逐 viewer 投影。
+// TestChannelEditMessageFanoutInvokesPrefetch: enqueueChannelEditMessageFanout warms with
+// "channelEditMessageFanoutOwnerIDs(res) + recipients+origin" before the per-viewer build
+// (dispatcher not started -> synchronous fallback, prefetch runs synchronously). Locks in that the
+// edit path wires in the O(owner) warm-up rather than per-viewer projection.
 func TestChannelEditMessageFanoutInvokesPrefetch(t *testing.T) {
 	users := &prefetchRecordingUsersService{mapUsersService: mapUsersService{users: map[int64]domain.User{}}}
 	registry := newFakeUsernameRegistry()
@@ -450,8 +458,9 @@ func TestChannelEditMessageFanoutInvokesPrefetch(t *testing.T) {
 	}
 }
 
-// nudgeSessions 在 captureSessions 基础上实现 ChannelNudgeProvider 并按 user 记录最近一次推送，
-// 用于断言 >cap 在线成员收到带 pts 的 UpdateChannelTooLong nudge。
+// nudgeSessions implements ChannelNudgeProvider on top of captureSessions and records the most
+// recent push per user, to assert that >cap online members receive the pts-bearing
+// UpdateChannelTooLong nudge.
 type nudgeSessions struct {
 	*captureSessions
 	online []int64
@@ -459,8 +468,9 @@ type nudgeSessions struct {
 	byUser map[int64]bin.Encoder
 }
 
-// overflowNudgeSessions 为 queue-full 回归按 channel 提供不同在线成员，并只记录
-// UpdateChannelTooLong。正常 FIFO payload 仍委托 captureSessions 记录，但不会污染 nudge 断言。
+// overflowNudgeSessions provides different online members per channel for the queue-full
+// regression and records only UpdateChannelTooLong. Normal FIFO payloads are still delegated to
+// captureSessions for recording, but do not pollute the nudge assertions.
 type overflowNudgeSessions struct {
 	*captureSessions
 	onlineByChannel map[int64][]int64
@@ -553,13 +563,15 @@ func (s *nudgeSessions) msgFor(userID int64) bin.Encoder {
 	return s.byUser[userID]
 }
 
-// TestChannelFanoutDispatcherNudgesBeyondCapMembers（P0-8）：完整 payload 投递给 cap 内
-// recipients 后，cap 外在线成员收到带 pts 的 UpdateChannelTooLong nudge；cap 内成员不重复 nudge。
+// TestChannelFanoutDispatcherNudgesBeyondCapMembers (P0-8): after the full payload is delivered to
+// the in-cap recipients, out-of-cap online members receive the pts-bearing UpdateChannelTooLong
+// nudge; in-cap members are not nudged again.
 func TestChannelFanoutDispatcherNudgesBeyondCapMembers(t *testing.T) {
 	cs := newNudgeSessions([]int64{2001, 2002, 2003})
 	r := New(Config{}, Deps{Sessions: cs}, zaptest.NewLogger(t), clock.System)
-	// deps.Channels=nil → channelFanoutRecipients 返回 explicit recipients=[2001]（收完整 payload）。
-	// 2002/2003 是 cap 外在线成员（OnlineChannelMemberUserIDsExcluding 排除 2001 后返回）。
+	// deps.Channels=nil -> channelFanoutRecipients returns explicit recipients=[2001] (they get the
+	// full payload). 2002/2003 are out-of-cap online members (returned by
+	// OnlineChannelMemberUserIDsExcluding after excluding 2001).
 	r.channelFanout.Enqueue(context.Background(), fanoutTestJob([]int64{2001}, 0, 99, nil))
 
 	pushed := cs.pushedUserIDs()
@@ -568,7 +580,7 @@ func TestChannelFanoutDispatcherNudgesBeyondCapMembers(t *testing.T) {
 			t.Fatalf("user %d not pushed: %v", want, pushed)
 		}
 	}
-	// 2002/2003 必须是带 pts 的 UpdateChannelTooLong（DrKLO 对不带 pts 的 tooLong 不触发 difference）。
+	// 2002/2003 must be the pts-bearing UpdateChannelTooLong (DrKLO does not trigger difference for a tooLong without pts).
 	for _, uid := range []int64{2002, 2003} {
 		ups, ok := cs.msgFor(uid).(*tg.Updates)
 		if !ok || len(ups.Updates) != 1 {
@@ -584,14 +596,16 @@ func TestChannelFanoutDispatcherNudgesBeyondCapMembers(t *testing.T) {
 	}
 }
 
-// TestChannelEditMessageFanoutNudgePtsUsesMaxContainer：edit 可只产服务消息容器（Event.Pts==0、
-// ServiceEvent.Pts!=0，如纯 todo 完成）。此时 >cap 在线成员的 nudge 必须带 ServiceEvent.Pts（两容器
-// 较大值），否则用 Event.Pts==0 会被 job.pts>0 门控吞掉 nudge、beyond-cap 成员错过 getChannelDifference。
+// TestChannelEditMessageFanoutNudgePtsUsesMaxContainer: an edit may produce only the
+// service-message container (Event.Pts==0, ServiceEvent.Pts!=0, e.g. a pure todo completion). In
+// that case the >cap online member's nudge must carry ServiceEvent.Pts (the larger of the two
+// containers), otherwise Event.Pts==0 would be swallowed by the job.pts>0 gate, making beyond-cap
+// members miss getChannelDifference.
 func TestChannelEditMessageFanoutNudgePtsUsesMaxContainer(t *testing.T) {
-	cs := newNudgeSessions([]int64{3001, 4001}) // 4001 是 cap 外在线成员（不在 recipients）
+	cs := newNudgeSessions([]int64{3001, 4001}) // 4001 is an out-of-cap online member (not in recipients)
 	r := New(Config{}, Deps{Sessions: cs, Users: mapUsersService{users: map[int64]domain.User{}}}, zaptest.NewLogger(t), clock.System)
 
-	// 仅服务消息容器有 pts：Event.Pts=0, ServiceEvent.Pts=11。deps.Channels=nil → recipients=[3001 3002]。
+	// Only the service-message container has pts: Event.Pts=0, ServiceEvent.Pts=11. deps.Channels=nil -> recipients=[3001 3002].
 	res := editFanoutTestResult(0, 11)
 	r.enqueueChannelEditMessageFanout(context.Background(), 0, res)
 
@@ -608,9 +622,10 @@ func TestChannelEditMessageFanoutNudgePtsUsesMaxContainer(t *testing.T) {
 	}
 }
 
-// TestChannelFanoutDispatcherOverflowCoalescesHighestPtsAndDrains 验证 queue full 不再静默
-// 丢掉恢复触发：正常 payload 仍按 FIFO 执行；同 channel 多次 overflow 只发最高 pts nudge；
-// 另一个落在同 shard 的 channel 也最终得到 nudge，且不需要后续再 Enqueue 才唤醒 worker。
+// TestChannelFanoutDispatcherOverflowCoalescesHighestPtsAndDrains verifies a full queue no longer
+// silently drops the recovery trigger: normal payloads are still executed in FIFO order; multiple
+// overflows for the same channel send only the highest-pts nudge; another channel in the same
+// shard also eventually gets a nudge, without needing a further Enqueue to wake the worker.
 func TestChannelFanoutDispatcherOverflowCoalescesHighestPtsAndDrains(t *testing.T) {
 	const (
 		hotChannel   = int64(1001)
@@ -623,7 +638,7 @@ func TestChannelFanoutDispatcherOverflowCoalescesHighestPtsAndDrains(t *testing.
 		otherChannel: {otherUser},
 	})
 	r := New(Config{}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)
-	// 单 shard + 单 buffer 让测试确定地产生：1 条执行中、1 条正常 FIFO pending、其余 overflow。
+	// A single shard + single buffer makes the test deterministically produce: 1 executing, 1 normal FIFO pending, the rest overflow.
 	r.channelFanout = newChannelFanoutDispatcher(r, 1, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -676,7 +691,7 @@ func TestChannelFanoutDispatcherOverflowCoalescesHighestPtsAndDrains(t *testing.
 		t.Fatal("first FIFO payload did not start")
 	}
 
-	// 这条占满唯一正常 buffer；overflow barrier 必须等它完成后才允许发 nudge。
+	// This one fills the only normal buffer; the overflow barrier must wait for it to finish before the nudge may be sent.
 	r.channelFanout.Enqueue(context.Background(), job(hotChannel, 2, []int64{hotUser}, func(context.Context, int64) *tg.Updates {
 		sessions.recordOrder("payload:1001:2")
 		return payload(hotChannel)
@@ -688,11 +703,11 @@ func TestChannelFanoutDispatcherOverflowCoalescesHighestPtsAndDrains(t *testing.
 		}
 		return nil
 	}
-	// 热点 channel 连续灌入只占一个 overflow mailbox 项，最终仅保留 pts=20。
+	// A hot channel's continuous feed occupies only one overflow mailbox item, ultimately keeping only pts=20.
 	for pts := 3; pts <= 20; pts++ {
 		r.channelFanout.Enqueue(context.Background(), job(hotChannel, pts, []int64{hotUser}, overflowBuild))
 	}
-	// 同 shard 的其它 channel 也必须最终 drain，不能被热点 channel 永久饿死。
+	// Other channels in the same shard must also eventually drain and cannot be starved forever by the hot channel.
 	r.channelFanout.Enqueue(context.Background(), job(otherChannel, 7, []int64{otherUser}, overflowBuild))
 	if got, want := r.channelFanout.dropped.Load(), int64(19); got != want {
 		cancel()

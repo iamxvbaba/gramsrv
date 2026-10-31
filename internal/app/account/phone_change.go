@@ -14,11 +14,12 @@ import (
 	"telesrv/internal/store"
 )
 
-// SendChangePhoneCode 创建只允许当前 user + perm auth_key 消费的改号验证码。
-// CodeStore 会按 purpose+user+auth_key+phone 原子轮换：同一作用域的新请求
-// 立即使旧 hash 失效，避免 Android 返回重进页面时留下并行有效验证码。
-// SessionID 被记录用于审计，但验证时不要求相等：同一设备在等待短信期间发生
-// MTProto session 重建仍可完成流程；其它设备因 auth_key 不同无法复用。
+// SendChangePhoneCode creates a phone-change verification code that only the current user + perm auth_key
+// may consume. CodeStore atomically rotates by purpose+user+auth_key+phone: a new request in the same
+// scope immediately invalidates the old hash, so Android going back and re-entering the page does not
+// leave parallel valid codes behind. SessionID is recorded for auditing but need not match at verification
+// time: the same device can still complete the flow if the MTProto session is rebuilt while waiting for the
+// SMS; other devices cannot reuse it because their auth_key differs.
 func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64, phone string) (string, domain.AuthCodeDelivery, error) {
 	phone = domain.NormalizePhone(phone)
 	if !domain.ValidPhone(phone) {
@@ -89,8 +90,8 @@ func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKey
 	return hash, domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliverySMS, Length: len(rec.Code)}, nil
 }
 
-// ChangePhone 验证作用域和验证码后执行原子改号。返回事件用于当前 session 的
-// pts 簿记；其它 session 由 transactional outbox 投递 updateUserPhone。
+// ChangePhone performs an atomic phone change after verifying the scope and code. The returned event is
+// used for the current session's pts bookkeeping; other sessions receive updateUserPhone via the transactional outbox.
 func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID, originRawAuthKeyID [8]byte, sessionID int64, phone, phoneCodeHash, code string, date int) (domain.PhoneChangeResult, error) {
 	if strings.TrimSpace(phoneCodeHash) == "" || strings.TrimSpace(code) == "" {
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeEmpty

@@ -32,13 +32,15 @@ var allPrivacyRuleKeys = []domain.PrivacyKey{
 	domain.PrivacyKeySavedMusic,
 }
 
-// privacyRulesMap 是单个 owner 的全部隐私规则(空 map = 查过且无规则,即负缓存)。
+// privacyRulesMap holds all privacy rules of a single owner (an empty map = looked up with no rules, i.e. a negative cache).
 type privacyRulesMap map[domain.PrivacyKey]domain.PrivacyRules
 
-// CachedPrivacyStore 是 account privacy rules 的 owner 级 read-model 缓存,由统一缓存原语承载
-// (LRU 单条驱逐 / epoch 守卫 / clone)。owner 级、变更稀少:一次性装入某 owner 全部 key,让
-// projectBatch/CanSeeMatrix 在内存里判 phone/status/photo 可见性,免去反复规划 account_privacy_rules。
-// 单 owner 走 GetOrLoad,多 owner 走 GetOrLoadBatch(一次 LoadEpoch + 合批 ListPrivacyRules + 写回)。
+// CachedPrivacyStore is an owner-level read-model cache of account privacy rules carried by
+// the shared cache primitive (single-entry LRU eviction / epoch guard / clone). Owner-level
+// with rare changes: it loads all keys of an owner at once so projectBatch/CanSeeMatrix can
+// decide phone/status/photo visibility in memory, avoiding repeatedly querying
+// account_privacy_rules. A single owner goes through GetOrLoad; multiple owners go through
+// GetOrLoadBatch (one LoadEpoch + batched ListPrivacyRules + write-back).
 type CachedPrivacyStore struct {
 	inner store.PrivacyStore
 	cache *readmodelcache.Cache[int64, privacyRulesMap]
@@ -81,22 +83,25 @@ func (c *CachedPrivacyStore) SetPrivacyRules(ctx context.Context, rules domain.P
 		return err
 	}
 	c.InvalidateOwners(rules.OwnerUserID)
-	// 数据写入已提交，预热失败不能伪装成写失败；LISTEN/NOTIFY 也会在每个
-	// 实例上再次失效并预热，覆盖本实例通知晚于这里到达的时序。
+	// The data write is already committed; a failed warm-up must not masquerade as a write
+	// failure. LISTEN/NOTIFY also invalidates and warms up again on every instance, covering
+	// the timing where a notification reaches this instance later than this point.
 	_ = c.WarmOwners(ctx, rules.OwnerUserID)
 	return nil
 }
 
-// WarmOwners 在低频写/变更通知路径一次性装入 owner 的完整规则集。调用方必须先
-// InvalidateOwners；epoch 保证预热期间若又发生失效，不会把旧快照写回。
+// WarmOwners loads an owner's complete rule set in one go on the low-frequency
+// write/change-notification path. The caller must InvalidateOwners first; the epoch ensures
+// that if another invalidation happens during warm-up, the old snapshot is not written back.
 func (c *CachedPrivacyStore) WarmOwners(ctx context.Context, ownerUserIDs ...int64) error {
 	owners := dedupPrivacyOwnerIDs(ownerUserIDs)
 	if len(owners) == 0 || c == nil || c.cache == nil {
 		return nil
 	}
 
-	// 隐私规则变更很少、读取极热。必须重建全部 key，
-	// 不能只塞本次 key，否则会把 owner 的其它持久规则误当成默认规则。
+	// Privacy rules change rarely and are read very frequently. All keys must be rebuilt; we
+	// must not stuff in only this call's keys, otherwise the owner's other persistent rules
+	// would be mistaken for default rules.
 	loadEpoch := c.cache.LoadEpoch()
 	list, err := c.inner.ListPrivacyRules(ctx, owners, allPrivacyRuleKeys)
 	if err != nil {
@@ -160,7 +165,7 @@ func (c *CachedPrivacyStore) ownerRulesBatch(ctx context.Context, owners []int64
 		return loadMissing(ctx, owners)
 	}
 	return c.cache.GetOrLoadBatch(ctx, owners,
-		func(int64) (int64, bool) { return 0, true }, // 纯 TTL,无版本闸门
+		func(int64) (int64, bool) { return 0, true }, // pure TTL, no version gate
 		loadMissing,
 	)
 }
@@ -219,8 +224,9 @@ func (s *Service) FlushReadModelCache() {
 	s.flushFactCaches()
 }
 
-// buildPrivacyRulesByOwner 把扁平规则按 owner 归组;每个 owner 都建一个条目(无规则即空 map),
-// 这样「查过且无规则」的 owner 也被负缓存,不会反复打后端。
+// buildPrivacyRulesByOwner groups flat rules by owner; an entry is created for every owner
+// (an empty map when there are no rules), so an owner that was "looked up with no rules" is
+// also negatively cached and does not repeatedly hit the backend.
 func buildPrivacyRulesByOwner(list []domain.PrivacyRules, owners []int64) map[int64]privacyRulesMap {
 	out := make(map[int64]privacyRulesMap, len(owners))
 	for _, owner := range owners {

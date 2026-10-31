@@ -11,8 +11,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestStarGiftStorePostgres 回归迁移 0089：目录不可变版本与用户收到礼物实例对真实 PG 的 CRUD
-// （版本固定 / 创建 / keyset 分页 / excludeUnsaved / 隐藏切换 / 转换幂等）。
+// TestStarGiftStorePostgres regresses migration 0089: CRUD of immutable catalog revisions and
+// received gift instances against a real PG (version pinning / create / keyset pagination / excludeUnsaved / hide toggle / idempotent conversion).
 func TestStarGiftStorePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -57,7 +57,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, from.ID})
 	})
 
-	// 创建三份礼物（msg_id 递增）。
+	// Create three gifts (msg_id increasing).
 	savedIDs := make([]int64, 3)
 	for i := 0; i < 3; i++ {
 		savedID, err := st.Create(ctx, domain.SavedStarGift{
@@ -70,7 +70,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		savedIDs[i] = savedID
 	}
 
-	// active revision 更新后，已收到的礼物必须继续固定到购买瞬间的 immutable revision。
+	// After the active revision is updated, received gifts must stay pinned to the immutable revision as of the purchase moment.
 	docID2 := docID + 1
 	documentIDs = append(documentIDs, docID2)
 	locationKeys = append(locationKeys, "doc:"+fmt.Sprint(docID2))
@@ -98,7 +98,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		t.Fatalf("historical revision = %+v found %v err %v", historical, found, err)
 	}
 
-	// keyset 分页：每页 2，末页省略游标。
+	// keyset pagination: 2 per page, the last page omits the cursor.
 	page1, err := st.ListByOwner(ctx, ownerPeer, false, "", 2)
 	if err != nil {
 		t.Fatalf("list page1: %v", err)
@@ -117,8 +117,8 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		t.Fatalf("page2 = %d next %q, want 1 + empty (terminal)", len(page2.Gifts), page2.NextOffset)
 	}
 
-	// 资料页顺序：完整 pin vector 的顺序必须成为列表前缀；游标即使切在
-	// pinned block 内或 pinned/unpinned 边界，也不能重复或漏项。
+	// Profile-page order: the full pin vector's order must become the list prefix; even when the cursor
+	// splits inside the pinned block or at the pinned/unpinned boundary, nothing may be duplicated or skipped.
 	if err := st.SetPinned(ctx, ownerPeer, []int64{savedIDs[0], savedIDs[2]}); err != nil {
 		t.Fatalf("set pinned profile order: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		t.Fatalf("clear pinned profile order: %v", err)
 	}
 
-	// 隐藏 msg_id=101 → excludeUnsaved 列表少一份。
+	// Hiding msg_id=101 -> the excludeUnsaved list has one fewer entry.
 	if ok, err := st.SetUnsaved(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 101}, true); err != nil || !ok {
 		t.Fatalf("set unsaved = %v err %v", ok, err)
 	}
@@ -175,13 +175,13 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		t.Fatalf("excludeUnsaved = %d count %d err %v, want 2/2", len(shown.Gifts), shown.Count, err)
 	}
 
-	// GetByRef(user msg_id)。
+	// GetByRef(user msg_id).
 	g, found, err := st.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 100})
 	if err != nil || !found || g.GiftID != entry.Gift.ID || g.RevisionID != entry.Gift.RevisionID || g.ConvertStars != 50 {
 		t.Fatalf("get = %+v found %v err %v", g, found, err)
 	}
 
-	// 转换 msg_id=100 → converted，从列表消失；重复转换被拒。
+	// Convert msg_id=100 -> converted, it disappears from the list; a duplicate conversion is rejected.
 	conv, err := st.MarkConverted(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 100})
 	if err != nil || conv.ConvertStars != 50 || !conv.Converted {
 		t.Fatalf("convert = %+v err %v, want ConvertStars 50 converted", conv, err)
@@ -193,18 +193,18 @@ func TestStarGiftStorePostgres(t *testing.T) {
 	if full.Count != 2 {
 		t.Fatalf("count after convert = %d, want 2", full.Count)
 	}
-	// 转换不存在的礼物。
+	// Convert a non-existent gift.
 	if _, err := st.MarkConverted(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 999}); !errors.Is(err, domain.ErrStarGiftNotFound) {
 		t.Fatalf("convert missing err = %v, want ErrStarGiftNotFound", err)
 	}
 
-	// CountByOwner（持有总数 = 活跃且含隐藏，不含已转换）：100 已转换、101 已隐藏、102 仍展示 → 2。
+	// CountByOwner (held total = active including hidden, excluding converted): 100 converted, 101 hidden, 102 still shown -> 2.
 	n, err := st.CountByOwner(ctx, ownerPeer)
 	if err != nil || n != 2 {
 		t.Fatalf("CountByOwner = %d err %v, want 2 (100 converted, 101 hidden, 102 shown)", n, err)
 	}
 
-	// 频道礼物用 saved_id 定位，和用户 msg_id 身份键隔离。
+	// Channel gifts are located by saved_id and their identity key is isolated from the user msg_id.
 	channelPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: 987654321}
 	if _, err := st.Create(ctx, domain.SavedStarGift{
 		Owner: ownerPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID, MsgID: 700,
@@ -228,7 +228,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		t.Fatalf("channel CountByOwner = %d err %v, want 1", cn, err)
 	}
 
-	// support_only 标记持久化并在 CatalogRevision 读取时还原。
+	// The support_only flag is persisted and restored when CatalogRevision is read.
 	docID3 := docID + 2
 	documentIDs = append(documentIDs, docID3)
 	locationKeys = append(locationKeys, "doc:"+fmt.Sprint(docID3))
@@ -251,9 +251,10 @@ func TestStarGiftStorePostgres(t *testing.T) {
 	}
 }
 
-// 回归：资料页按收到时刻（gift_date）倒序。礼物实例行在所有权转移时被复用，
-// gift_date 被重置为转移时刻而 id 不变，按 id 排序会让被转送的礼物停在旧位置。
-// keyset 游标必须携带日期，且同秒礼物靠 id 兜底。
+// Regression: the profile page is ordered by received time (gift_date) descending. A gift instance row
+// is reused on ownership transfer, gift_date is reset to the transfer moment while the id stays the
+// same, so ordering by id would leave a transferred gift in its old position. The keyset cursor must
+// carry the date, with same-second gifts broken by id.
 func TestStarGiftProfileDateOrderPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -305,7 +306,7 @@ func TestStarGiftProfileDateOrderPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create newest gift: %v", err)
 	}
-	// 与 newest 同秒收到：资料页用 id 兜底，游标也要跨得过同秒边界。
+	// Received in the same second as newest: the profile page breaks ties by id, and the cursor must cross the same-second boundary too.
 	sameSecond, err := st.Create(ctx, domain.SavedStarGift{
 		Owner: ownerPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
 		MsgID: 301, Date: 1700000900, ConvertStars: 50,
@@ -313,7 +314,7 @@ func TestStarGiftProfileDateOrderPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create same-second gift: %v", err)
 	}
-	// id 最大但收到时刻最旧（等价于转移后复用旧行、日期未变旧的对照组）。
+	// Largest id but oldest received time (the control group equivalent to reusing an old row after transfer without refreshing the date).
 	oldest, err := st.Create(ctx, domain.SavedStarGift{
 		Owner: ownerPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
 		MsgID: 302, Date: 1700000100, ConvertStars: 50,
@@ -364,7 +365,7 @@ func TestStarGiftProfileDateOrderPostgres(t *testing.T) {
 	walk("single page", 100)
 	walk("page size 1", 1)
 
-	// pinned 段仍然在最前，段内同样按收到时刻倒序。
+	// The pinned block stays first, and within it the order is likewise by received time descending.
 	if err := st.SetPinned(ctx, ownerPeer, []int64{oldest}); err != nil {
 		t.Fatalf("set pinned: %v", err)
 	}

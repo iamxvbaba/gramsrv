@@ -67,8 +67,9 @@ func (r *Router) onChannelsDeleteParticipantHistory(ctx context.Context, req *tg
 		return nil, channelDeleteErr(err)
 	}
 	if res.Event.Pts != 0 {
-		// deleteParticipantHistory fan-out 异步化（设计 Phase 0），与已异步的 messages.deleteMessages
-		// 频道分支对齐。builder 纯 viewer 无关（仅 delete update + ChatMin，无 Users），无需预热。
+		// deleteParticipantHistory fan-out is async-ified (design Phase 0), aligned with the
+		// already-async channel branch of messages.deleteMessages. The builder is purely
+		// viewer-independent (only a delete update + ChatMin, no Users), so no prefetch is needed.
 		r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelDeleteMessagesUpdates(viewerUserID, res.Channel, res.Event)
 		})
@@ -401,8 +402,8 @@ func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChanne
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdates(ctx, viewerUserID, res)
 	})
-	// Layer 227：channels.joinChannel 返回 messages.ChatInviteJoinResult；
-	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
+	// Layer 227: channels.joinChannel returns messages.ChatInviteJoinResult; a normal join is
+	// chatInviteJoinResultOk wrapping this operation's updates.
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil
 }
 
@@ -432,9 +433,9 @@ func (r *Router) onChannelsLeaveChannel(ctx context.Context, input tg.InputChann
 	return updates, nil
 }
 
-// recordChannelStateForUser 给该账号写一条 durable channel 状态事件：
-// 离线设备经 difference 收到 updateChannel 后重拉 channel，发现 left/
-// forbidden 并移除会话；excludeCurrent 时当前 session 由 RPC 响应承担。
+// recordChannelStateForUser writes a durable channel state event for this account: offline
+// devices receive updateChannel via difference, re-fetch the channel, discover left/forbidden and
+// remove the conversation; with excludeCurrent the current session is covered by the RPC response.
 func (r *Router) recordChannelStateForUser(ctx context.Context, userID, channelID int64, excludeCurrent bool) {
 	if r.deps.Updates == nil || userID == 0 || channelID == 0 {
 		return
@@ -555,9 +556,10 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 		return nil, channelAdminErr(err)
 	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
-	// 与 onChannelsEditAdmin 对称维护在线成员路由索引：踢出/封禁后立即摘除，
-	// 否则被踢在线成员会留着 stale byMemberChannel 条目直到断线（占用实时
-	// fan-out cap 名额，且群通话推送等未过 PG 复核的路径会继续投递）。
+	// Symmetrically with onChannelsEditAdmin, maintain the online-member routing index: remove it
+	// immediately on kick/ban, otherwise the kicked online member keeps a stale byMemberChannel
+	// entry until disconnect (occupying a realtime fan-out cap slot, and paths not re-checked
+	// against PG such as group-call pushes would keep delivering).
 	if res.Participant.Status == domain.ChannelMemberActive {
 		r.addOnlineChannelMemberships(res.Channel.ID, res.Participant.UserID)
 	} else {
@@ -570,8 +572,9 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 	build := func(viewerUserID int64) *tg.Updates {
 		updates := r.channelParticipantUpdatesWithPeerCache(ctx, viewerUserID, userID, res.Channel, res.Previous, res.Participant, res.Date, cache)
 		if updates != nil && res.ServiceEvent.Pts != 0 {
-			// megagroup 踢人服务消息占 channel pts，必须先于 participant
-			// update 应用，让成员面板/人数与消息流一起收敛。
+			// The megagroup kick service message consumes channel pts, so it must be applied before
+			// the participant update, letting the member panel/count converge together with the
+			// message stream.
 			if update := tgChannelUpdate(viewerUserID, res.ServiceEvent); update != nil {
 				updates.Updates = append([]tg.UpdateClass{update}, updates.Updates...)
 			}
@@ -811,9 +814,9 @@ func (r *Router) channelParticipantUpdatesWithPeerCache(ctx context.Context, vie
 	if participant.UserID != 0 {
 		update.SetNewParticipant(tgChannelParticipantForUpdate(viewerUserID, participant))
 	}
-	// 当事成员必须收到完整 channel 投影：被踢/被封禁状态只有通过非 min
-	// 对象的 left/banned_rights 才会被客户端应用，min 形态会让被踢者
-	// 永远不知道自己已离开会话。其它接收者用 min 保护各自本地权限。
+	// The affected member must receive the full channel projection: the kicked/banned state is
+	// only applied by the client via the left/banned_rights of a non-min object, and the min form
+	// would make the kicked member never know it has left the conversation. The other recipients use min to protect their own local permissions.
 	var chat tg.ChatClass
 	if viewerUserID != 0 && viewerUserID == participant.UserID {
 		self := participant

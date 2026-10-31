@@ -134,8 +134,8 @@ func TestChannelStoreJoinRejectsKickedMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kick member: %v", err)
 	}
-	// participant update 不占 channel pts，但 megagroup 踢人产生
-	// "X removed Y" 服务消息占一个 pts，离线成员靠它收敛成员状态。
+	// A participant update does not consume channel pts, but kicking in a megagroup produces an
+	// "X removed Y" service message that consumes one pts; offline members converge their member state via it.
 	if banned.Event.Pts != 0 || banned.Event.PtsCount != 0 {
 		t.Fatalf("kick participant event = (%d,%d), must stay transient", banned.Event.Pts, banned.Event.PtsCount)
 	}
@@ -470,9 +470,9 @@ WHERE channel_id = $1 AND invite_id = $2`, channelID, invite.Invite.InviteID); e
 	}
 }
 
-// TestChannelStoreEnsurePermanentInvite 验证主链接幂等保障：缺失即建、存在复用、
-// 撤销后重建、非授权用户被拒（DrKLO 建频道后 getExportedChatInvites 直接取
-// invites[0]，主链接缺失即客户端闪退）。
+// TestChannelStoreEnsurePermanentInvite verifies the primary link's idempotency guarantee: create when missing, reuse when present,
+// recreate after revocation, and reject unauthorized users (after creating a channel DrKLO takes
+// invites[0] directly from getExportedChatInvites; a missing primary link crashes the client).
 func TestChannelStoreEnsurePermanentInvite(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// registerMessages 注册 messages.* RPC handler。
+// registerMessages registers the messages.* RPC handlers.
 func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesRequestURLAuthRequest](d, tlprofile.SemanticMethodMessagesRequestURLAuth, func(ctx context.Context, req *tg.MessagesRequestURLAuthRequest) (any, error) {
 		return r.onMessagesRequestURLAuth(ctx, req)
@@ -515,10 +515,12 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err := r.checkFrozenChannelParticipants(ctx, userID, channelIDs...); err != nil {
 			return nil, err
 		}
-		// difference 类 catch-up FLOOD_WAIT（设计 Phase 2 / §10.3）：DrKLO 收 nudge 对未加载频道
-		// 走 loadUnknownChannel→getPeerDialogs，限速须同时覆盖它（不止 getChannelDifference）。
-		// 冻结账号的 guest/non-member 必须先返回 FROZEN_PARTICIPANT_MISSING，拒绝路径不能
-		// 消耗限流额度或产生其它可变状态。
+		// difference-class catch-up FLOOD_WAIT (design Phase 2 / §10.3): when DrKLO
+		// receives a nudge for an unloaded channel it goes through
+		// loadUnknownChannel -> getPeerDialogs, so rate limiting must cover that
+		// too (not just getChannelDifference). A frozen account's guest/non-member
+		// must return FROZEN_PARTICIPANT_MISSING first; the rejection path must not
+		// consume rate-limit quota or produce other mutable state.
 		if err := r.checkCatchupRateLimit(ctx, userID, peerDialogsRateLimitKeyPrefix); err != nil {
 			return nil, err
 		}
@@ -836,8 +838,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			if r.deps.Messages == nil || !filter.HasPeer || filter.Peer.Type != domain.PeerTypeUser {
 				return &tg.MessagesMessages{}, nil
 			}
-			// 私聊置顶列表：客户端置顶栏经 filterPinned 分页拉取，必须
-			// 带总数（NotModified 哈希不参与该过滤器）。
+			// Private pinned list: the client's pinned bar pages via filterPinned
+			// and must carry the total count (the NotModified hash does not apply to
+			// this filter).
 			filter.PinnedOnly = true
 			filter.NeedTotalCount = true
 			filter.Hash = 0

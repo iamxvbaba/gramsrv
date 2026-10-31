@@ -58,7 +58,7 @@ func TestLangPackSeedReconciliationPostgres(t *testing.T) {
 	if err != nil || !domain.SameSeedCatalogSnapshot(catalog, seedV1.CatalogSnapshot()) {
 		t.Fatalf("seed catalog = %+v, %v", catalog, err)
 	}
-	// stat-only 刷新须保留源 hash，并在 JSON 往返后保留纳秒精度。
+	// A stat-only refresh must keep the source hash and preserve nanosecond precision through the JSON round-trip.
 	catalog.Packs[0].ModTime++
 	if err := store.PutSeedCatalog(ctx, catalog); err != nil {
 		t.Fatalf("refresh seed catalog: %v", err)

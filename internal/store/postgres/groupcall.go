@@ -13,14 +13,15 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// GroupCallStore 是 store.GroupCallStore 的 PostgreSQL 实现（迁移 0092）。
-// 所有参与者维度变更在事务内对 group_calls 行 FOR UPDATE 后 version+1，
-// 行锁天然串行化并发变更，保证 version 单调无跳号。
+// GroupCallStore is the PostgreSQL implementation of store.GroupCallStore (migration 0092).
+// Every participant-dimension change takes FOR UPDATE on the group_calls row in a transaction and
+// then increments version; the row lock naturally serializes concurrent changes, keeping version
+// monotonic with no skips.
 type GroupCallStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewGroupCallStore 基于 pgx 连接池创建 GroupCallStore。
+// NewGroupCallStore creates a GroupCallStore backed by a pgx pool.
 func NewGroupCallStore(db sqlcgen.DBTX) *GroupCallStore {
 	return &GroupCallStore{db: db}
 }
@@ -96,7 +97,7 @@ func (s *GroupCallStore) begin(ctx context.Context, op string) (pgx.Tx, error) {
 	return tx, nil
 }
 
-// lockGroupCallTx 锁定 call 行（串行化参与者变更的唯一入口）。
+// lockGroupCallTx locks the call row (the single entry point that serializes participant changes).
 func lockGroupCallTx(ctx context.Context, tx pgx.Tx, callID int64) (domain.GroupCall, error) {
 	call, err := scanGroupCall(tx.QueryRow(ctx,
 		`SELECT `+groupCallColumns+` FROM group_calls WHERE call_id = $1 FOR UPDATE`, callID))
@@ -310,7 +311,7 @@ func (s *GroupCallStore) JoinGroupCall(ctx context.Context, req domain.JoinGroup
 		JoinBlock:       append([]byte(nil), req.JoinBlock...),
 	}
 	if wasActive {
-		// 同人换 ssrc 的 rejoin 保留原 join_date（列表排序稳定）。
+		// A rejoin by the same person with a new ssrc keeps the original join_date (stable list ordering).
 		p.JoinDate = existing.JoinDate
 	}
 	if call.JoinMuted && !req.IsAdmin {
@@ -318,8 +319,8 @@ func (s *GroupCallStore) JoinGroupCall(ctx context.Context, req domain.JoinGroup
 		p.MutedByAdmin = true
 	}
 	p.VideoJSON = append([]byte(nil), req.VideoJSON...)
-	// video_json 整体替换、presentation_json 清空（rejoin 后客户端会重发
-	// joinGroupCallPresentation，旧屏幕登记必须作废）。
+	// video_json is replaced wholesale and presentation_json is cleared (after a rejoin the client
+	// re-sends joinGroupCallPresentation, so the old screen registration must be invalidated).
 	if _, err := tx.Exec(ctx, `
 INSERT INTO group_call_participants (call_id, user_id, join_as_channel_id, ssrc, join_date, active_date, muted, muted_by_admin, volume_by_admin, raise_hand_rating, video_json, public_key, join_block, left_call, last_check_date)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, $9, $10, $11, FALSE, $12)
@@ -804,7 +805,7 @@ LIMIT $2`, checkOlderThan, limit)
 	for _, k := range stale {
 		mut, err := s.LeaveGroupCall(ctx, k.callID, k.userID, now)
 		if errors.Is(err, domain.ErrGroupCallNotJoined) || errors.Is(err, domain.ErrGroupCallInvalid) {
-			continue // 并发 leave/discard 竞态，无害
+			continue // concurrent leave/discard race, harmless
 		}
 		if err != nil {
 			return out, err
@@ -882,7 +883,7 @@ RETURNING `+groupCallColumns, callID, now))
 	return out, nil
 }
 
-// applyGroupCallParticipantUpdateRow 与 memory 实现共享同一字段语义（contract test 钉死）。
+// applyGroupCallParticipantUpdateRow shares the same field semantics with the memory implementation (pinned by the contract test).
 func applyGroupCallParticipantUpdateRow(p *domain.GroupCallParticipant, u domain.GroupCallParticipantUpdate) bool {
 	changed := false
 	if u.Muted != nil && p.Muted != *u.Muted {
@@ -943,7 +944,7 @@ func formatGroupCallOffset(joinDate int, userID int64) string {
 }
 
 func (s *GroupCallStore) NextRaiseHandRating(ctx context.Context, callID int64) (int64, error) {
-	// 全局单调序号用 sequence；group_calls.version 同步推进保证跨进程单调。
+	// The globally monotonic number uses a sequence; group_calls.version advances in step to guarantee cross-process monotonicity.
 	var rating int64
 	if err := s.db.QueryRow(ctx, `
 UPDATE group_calls SET version = version + 1 WHERE call_id = $1 RETURNING version`, callID).Scan(&rating); err != nil {
@@ -1195,7 +1196,7 @@ func (s *GroupCallStore) StartScheduledGroupCall(ctx context.Context, callID int
 		return domain.GroupCall{}, false, domain.ErrGroupCallDiscarded
 	}
 	if call.ScheduleDate == 0 {
-		// 幂等：已开始。
+		// Idempotent: already started.
 		if err := tx.Commit(ctx); err != nil {
 			return domain.GroupCall{}, false, fmt.Errorf("commit start scheduled noop: %w", err)
 		}

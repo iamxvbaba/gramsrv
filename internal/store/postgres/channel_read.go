@@ -10,8 +10,9 @@ import (
 )
 
 func channelDialogDynamicUnreadCountSQL(readInboxExpr, topIDExpr string) string {
-	// LIMIT 子查询把动态未读 COUNT 钳到 MaxDialogUnreadCount（P1-v）：既限定扫描工作量
-	// （最多 cap 行，避免广播/大群积压时 O(积压) 扫描），又把下发角标钳到上界。
+	// The LIMIT subquery clamps the dynamic unread COUNT to MaxDialogUnreadCount (P1-v): it
+	// bounds the scan work (at most cap rows, avoiding an O(backlog) scan when a
+	// broadcast/large group has a backlog) and clamps the delivered badge to the upper bound.
 	return fmt.Sprintf(`(
            SELECT COUNT(*)::int
            FROM (
@@ -39,10 +40,12 @@ func channelDialogDynamicUnreadExistsSQL(readInboxExpr, topIDExpr string) string
        )`, readInboxExpr, topIDExpr)
 }
 
-// channelDialogVisibleUnreadCountSQL 恒走读时动态派生（性能审计 H4a）：broadcast/大群
-// 自 P0-1 起即读时派生并经生产验证，≤1000 megagroup 也统一到同一路径后，发送事务不再
-// 对全员 upsert channel_dialogs，`channel_dialogs.unread_count` 缓存列不再被任何读路径
-// 消费（真值 = read boundary + 可见 incoming 消息重算）。
+// channelDialogVisibleUnreadCountSQL always derives dynamically at read time (performance
+// audit H4a): broadcast/large groups have derived at read time since P0-1 and are
+// production-validated; now that ≤1000-member megagroups are unified onto the same path too,
+// the send transaction no longer upserts channel_dialogs for all members, and the
+// `channel_dialogs.unread_count` cache column is no longer consumed by any read path
+// (the truth = read boundary + visible incoming messages recomputed).
 func channelDialogVisibleUnreadCountSQL(readInboxExpr, topIDExpr string) string {
 	return channelDialogDynamicUnreadCountSQL(readInboxExpr, topIDExpr)
 }
@@ -65,8 +68,9 @@ WITH target AS (
     WHERE c.id = $2 AND m.user_id = $1 AND m.status = 'active' AND NOT c.deleted
 ),
 ensured AS (
-    -- 惰性建行必须带 member 真实水位与未读数：0 值缓存行一旦存在就会
-    -- 遮蔽真值（小群读取信缓存列）。
+    -- A lazily created row must carry the member's real watermarks and unread count:
+    -- once a zero-valued cache row exists it would mask the truth (small groups read the
+    -- trusted cache column).
     INSERT INTO channel_dialogs (user_id, channel_id, top_message_id, top_message_date,
                                  read_inbox_max_id, read_outbox_max_id, unread_count)
     SELECT $1, channel_id, top_message_id, top_message_date,
@@ -98,8 +102,10 @@ updated_member AS (
 SELECT EXISTS (SELECT 1 FROM updated_dialog)::boolean`, userID, channelID, unread).Scan(&changed); err != nil {
 		return false, fmt.Errorf("set channel dialog unread mark: %w", err)
 	}
-	// 连接池写后同步失效本进程缓存(dialog 的 unread_mark 与 member 的 unread_mark 都被改)，
-	// 保证同实例 read-your-write；跨实例由 dialog_light / channel_member NOTIFY 异步兜底。
+	// After the pool write, synchronously invalidate this process's caches (both the
+	// dialog's unread_mark and the member's unread_mark changed), guaranteeing same-instance
+	// read-your-write; cross-instance is eventually covered asynchronously by dialog_light /
+	// channel_member NOTIFY.
 	if changed && s.dialogCacheActive(s.db) {
 		s.dialogCache.delete(userID, channelID)
 		s.memberCache.delete(channelID, userID)
@@ -231,8 +237,9 @@ ORDER BY id DESC`, args...)
 	}, nil
 }
 
-// readChannelMentionsForMessageIDsTx 把指定可见消息上的未读 mention 翻转为
-// 已读并重算 dialog 计数；视口内容已读（readMessageContents）的主路径。
+// readChannelMentionsForMessageIDsTx flips unread mentions on the specified visible messages
+// to read and recomputes the dialog count; the main path for readMessageContents (viewport
+// contents read).
 func readChannelMentionsForMessageIDsTx(ctx context.Context, tx pgx.Tx, userID, channelID int64, ids []int32) ([]int, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -484,7 +491,8 @@ func populateChannelMessageUnreadFlags(ctx context.Context, db sqlcgen.DBTX, vie
 	if len(idsByChannel) == 0 {
 		return nil
 	}
-	// 跨频道一次批量取，消除「每个频道一条 SQL」的 N+1（getDialogs/getChannelDifference 多频道页放大）。
+	// Batch-fetch across channels in one go, eliminating the "one SQL per channel" N+1
+	// (amplified by multi-channel pages in getDialogs/getChannelDifference).
 	pairChannels, pairMessages := channelMessagePairs(idsByChannel)
 	{
 		rows, err := db.Query(ctx, `
@@ -505,9 +513,10 @@ WHERE user_id = $1
 			}
 			key := channelReactionMessageKey{channelID: channelID, messageID: messageID}
 			for _, idx := range indexes[key] {
-				// mentioned 永久保留（官方语义）；客户端的未读提及判定要求
-				// mentioned 与 media_unread 同时置位，media_unread 跟随 mention
-				// 的未读状态而非消息是否含媒体。
+				// mentioned is retained permanently (official semantics); the client's
+				// unread-mention determination requires mentioned and media_unread to be set
+				// together, so media_unread follows the mention's unread state rather than
+				// whether the message contains media.
 				messages[idx].Mentioned = true
 				messages[idx].MediaUnread = unread
 			}
@@ -529,7 +538,8 @@ func (s *ChannelStore) channelReadWatermarks(ctx context.Context, channelID, use
 
 func (s *ChannelStore) channelThreadUnreadCount(ctx context.Context, channelID int64, rootID int, viewerUserID int64, readMaxID int) int {
 	var count int
-	// LIMIT 子查询把 thread 未读 COUNT 钳到上界（P1-v）：限定扫描工作量与下发角标。
+	// The LIMIT subquery clamps the thread unread COUNT to the upper bound (P1-v): it bounds
+	// the scan work and the delivered badge.
 	_ = s.db.QueryRow(ctx, `
 SELECT COUNT(*)::int
 FROM (
@@ -546,8 +556,10 @@ func countChannelUnreadMessages(ctx context.Context, db sqlcgen.DBTX, userID, ch
 		return 0, nil
 	}
 	var count int
-	// LIMIT 子查询把未读 COUNT 钳到上界（P1-v）：该值会写回 channel_dialogs.unread_count 缓存，
-	// 钳制既限定扫描工作量也限定缓存列上界，与动态/可见投影口径一致。
+	// The LIMIT subquery clamps the unread COUNT to the upper bound (P1-v): this value is
+	// written back to the channel_dialogs.unread_count cache; the clamp bounds both the scan
+	// work and the cache column's upper bound, consistent with the dynamic/visible projection
+	// semantics.
 	if err := db.QueryRow(ctx, `
 SELECT COUNT(*)::int
 FROM (
@@ -695,7 +707,7 @@ func channelUnreadMentionBaseWhere(userID int64, filter domain.ChannelUnreadMent
 	}
 	if filter.TopMsgID > 0 {
 		args = append(args, filter.TopMsgID)
-		// forum General（root=1）的无主题消息存储 top=0。
+		// Forum General (root=1) stores topic-less messages with top=0.
 		where += fmt.Sprintf(" AND (um.top_message_id = $%d OR ($%d = 1 AND um.top_message_id = 0))", len(args), len(args))
 	}
 	if filter.MaxID > 0 {
@@ -817,7 +829,8 @@ WITH target AS (
     LIMIT $4
 ),
 deleted AS (
-    -- 已读=翻转标记而非删行：mentioned 高亮在历史回放中永久保留。
+    -- Read = flip the flag rather than delete the row: the mentioned highlight is retained
+    -- permanently in history replay.
     UPDATE channel_unread_mentions um
     SET unread = false
     FROM target t
@@ -1004,8 +1017,8 @@ func channelMentionTopID(msg domain.ChannelMessage) int {
 	return msg.ReplyTo.MessageID
 }
 
-// clearChannelMentionsForUserTx 在成员离开/被踢时清空其该频道的全部提及
-// 状态，避免重新加入后出现指向入群前消息的 @ 角标。
+// clearChannelMentionsForUserTx clears all of a member's mention state for the channel when
+// they leave/are kicked, to avoid an @ badge pointing at pre-join messages after rejoining.
 func clearChannelMentionsForUserTx(ctx context.Context, tx pgx.Tx, channelID, userID int64) error {
 	if channelID == 0 || userID == 0 {
 		return nil

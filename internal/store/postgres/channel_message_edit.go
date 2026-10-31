@@ -67,8 +67,8 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	if req.WebPageResolve {
-		// 频道链接预览就地替换：只换 media（不碰 body/entities/edit_date）+ reserve 频道 pts +
-		// channel_web_page 事件。幂等守卫：仅当前 media 仍是匹配 id 的 pending 占位才换。
+		// Channel link preview replacement in place: only swaps media (without touching body/entities/edit_date) + reserves channel pts +
+		// a channel_web_page event. Idempotency guard: swap only when the current media is still the pending placeholder with the matching id.
 		if req.Media == nil || !domain.IsPendingWebPageMedia(msg.Media, req.ExpectedWebPageID) {
 			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 		}
@@ -111,9 +111,9 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 		recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 		return domain.EditChannelMessageResult{Channel: channel, Message: msg, Event: event, Recipients: recipients}, nil
 	}
-	// participant todo 协作（append/toggle）等同于在频道产生新内容/服务消息，
-	// 必须满足与正常发消息相同的权限：被 send_messages 禁言的成员、或无发帖权的
-	// broadcast 订阅者不得借 OthersCanComplete/Append 绕过发言限制。
+	// Participant todo collaboration (append/toggle) is equivalent to producing new content/a service message in the channel,
+	// so it must satisfy the same permissions as normal sending: a member muted by send_messages, or a
+	// broadcast subscriber without posting rights, must not bypass the send restriction via OthersCanComplete/Append.
 	participantTodoEdit := isChannelTodoParticipantEdit(req, msg) && canSendChannelMessage(channel, member)
 	viaBotEditRequested := req.ViaBotEditBotID != 0
 	viaBotEdit := viaBotEditRequested && msg.ViaBotID == req.ViaBotEditBotID
@@ -166,7 +166,7 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON); err != ni
 	}
 	msg.Body = req.Message
 	msg.Entities = append([]domain.MessageEntity(nil), req.Entities...)
-	// 共享媒体索引(0118):编辑可换媒体、也可改文本里的链接实体 → 按编辑后的有效媒体+实体重建索引。
+	// Shared media index (0118): an edit may swap media and may change link entities in the text → rebuild the index from the post-edit effective media+entities.
 	if err := replaceChannelMediaIndexTx(ctx, tx, req.ChannelID, req.ID, msg.Date, msg.Media, msg.Entities); err != nil {
 		return domain.EditChannelMessageResult{}, err
 	}
@@ -211,12 +211,12 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON); err != ni
 	}); err != nil {
 		return domain.EditChannelMessageResult{}, err
 	}
-	// 编辑后的 @ 集合与现有未读提及对账：新增者补提及（仍按"未读到该
-	// 消息"的写入边界），被移除的实体提及删除；reply 隐式提及保留。
-	// 仅在 body/entities 实际变化时执行：geolive 续报、todo append/toggle、poll
-	// 关闭等 media-only 编辑保持正文与 @ 实体不变却不携带 MentionUserIDs（=nil），
-	// 无条件对账会把 caption 里仍未读的 @ 提及当成"被移除"误删，导致未读提及计数
-	// 无法由可见消息重算。
+	// Reconcile the post-edit @ set with the existing unread mentions: add mentions for new targets (still at the "has not read the
+	// message" write boundary), delete entity mentions that were removed; the reply implicit mention is kept.
+	// Run only when body/entities actually change: media-only edits such as geolive updates, todo append/toggle, poll
+	// close keep the body and @ entities unchanged but carry no MentionUserIDs (=nil), and an unconditional
+	// reconcile would wrongly treat still-unread @ mentions in the caption as "removed" and delete them, so the unread mention count
+	// could not be recomputed from visible messages.
 	if prevMsg.Body != req.Message || !sameMessageEntities(prevMsg.Entities, req.Entities) {
 		if err := s.reconcileChannelEditMentionsTx(ctx, tx, channel, msg, req.UserID, req.MentionUserIDs); err != nil {
 			return domain.EditChannelMessageResult{}, err
@@ -352,8 +352,8 @@ func (s *ChannelStore) UpdatePinnedMessage(ctx context.Context, req domain.Updat
 	if err != nil || msg.Deleted {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrMessageIDInvalid
 	}
-	// 多置顶模型：pin/unpin 只翻转目标消息自身的 pinned flag，不影响其它
-	// 置顶；与官方一致不设数量上限。
+	// Multi-pin model: pin/unpin only flips the target message's own pinned flag and does not affect other
+	// pins; consistent with official, no count limit is imposed.
 	if msg.Pinned == req.Pinned {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelNotModified
 	}
@@ -366,7 +366,7 @@ UPDATE channel_messages SET pinned = $3
 WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.MessageID, req.Pinned); err != nil {
 		return domain.UpdateChannelPinnedMessageResult{}, fmt.Errorf("update channel message pinned: %w", err)
 	}
-	// channels.pinned_message_id 维护为最新置顶 id（channelFull.pinned_msg_id 输出语义）。
+	// channels.pinned_message_id is maintained as the latest pinned id (the output semantics of channelFull.pinned_msg_id).
 	var latestPinned int
 	if err := tx.QueryRow(ctx, `
 UPDATE channels
@@ -505,14 +505,14 @@ func canPinChannelMessages(channel domain.Channel, member domain.ChannelMember) 
 		return true
 	}
 	if member.Role == domain.ChannelRoleAdmin {
-		// broadcast 频道管理员按 edit_messages 判定（频道的权限编辑 UI
-		// 没有 pin_messages 位）；megagroup 管理员按 pin_messages。
+		// A broadcast channel admin is judged by edit_messages (the channel's rights edit UI
+		// has no pin_messages bit); a megagroup admin is judged by pin_messages.
 		if channel.Broadcast && !channel.Megagroup {
 			return member.AdminRights.EditMessages
 		}
 		return member.AdminRights.PinMessages
 	}
-	// 公开 megagroup 普通成员不可 pin；私有 megagroup 按默认/个人禁言位。
+	// An ordinary member of a public megagroup cannot pin; a private megagroup follows the default/per-member restriction bits.
 	if !channel.Megagroup || channel.Username != "" {
 		return false
 	}
@@ -523,8 +523,8 @@ func canEditChannelMessage(member domain.ChannelMember) bool {
 	return member.Role == domain.ChannelRoleCreator || (member.Role == domain.ChannelRoleAdmin && member.AdminRights.EditMessages)
 }
 
-// ClearDanglingPinnedMessage 把指向已删除消息的置顶值清零；不占 channel
-// pts、不发事件（官方删除即从置顶集合移除，无对应 update）。
+// ClearDanglingPinnedMessage zeroes a pinned value that points at a deleted message; it consumes no channel
+// pts and emits no event (officially, deletion removes it from the pinned set with no corresponding update).
 func (s *ChannelStore) ClearDanglingPinnedMessage(ctx context.Context, channelID int64, messageID int) error {
 	if channelID == 0 || messageID <= 0 {
 		return domain.ErrChannelInvalid
@@ -539,9 +539,9 @@ WHERE id = $1 AND pinned_message_id = $2`, channelID, messageID)
 	return nil
 }
 
-// reconcileChannelEditMentionsTx 在文本编辑后维护 channel_unread_mentions：
-// 新出现的 @ 目标按发送时的写入边界补行；不再被 @ 的用户删除其行并重算
-// dialog 计数。被回复消息作者的隐式提及不在实体集合内，显式排除。
+// reconcileChannelEditMentionsTx maintains channel_unread_mentions after a text edit:
+// newly appearing @ targets get rows at the send-time write boundary; users no longer @-ed have their rows deleted and the
+// dialog count recomputed. The implicit mention of the replied-to message author is not in the entity set and is explicitly excluded.
 func (s *ChannelStore) reconcileChannelEditMentionsTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, msg domain.ChannelMessage, actorUserID int64, newTargets []int64) error {
 	if channel.Broadcast && !channel.Megagroup {
 		return nil

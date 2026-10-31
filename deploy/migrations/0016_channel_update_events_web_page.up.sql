@@ -1,8 +1,10 @@
--- 频道链接预览异步回填（updateChannelWebPage）新增 channel_update_events 事件类型
--- 'channel_web_page'：频道消息的 pending 链接预览被带外解析后，经 EditChannelMessage 的
--- WebPageResolve 模式就地替换并 append 一条 channel_web_page durable 事件。0001 的白名单未含它，
--- 真 Postgres 上 append 会被 CHECK 约束拒绝（SQLSTATE 23514）；memory store 无约束故单测未暴露
--- （同 0015/0003 教训）。
+-- Channel link-preview async backfill (updateChannelWebPage) adds the
+-- channel_update_events event type 'channel_web_page': once a channel message's
+-- pending link preview is resolved out of band, EditChannelMessage's WebPageResolve
+-- mode replaces it in place and appends a channel_web_page durable event. The 0001
+-- allowlist did not include it, so on real Postgres the append is rejected by the
+-- CHECK constraint (SQLSTATE 23514); the memory store has no constraint, so unit
+-- tests did not expose it (same lesson as 0015/0003).
 ALTER TABLE public.channel_update_events DROP CONSTRAINT IF EXISTS channel_update_events_type_check;
 ALTER TABLE public.channel_update_events ADD CONSTRAINT channel_update_events_type_check CHECK (
     (event_type)::text = ANY (ARRAY[

@@ -8,10 +8,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// Регрессия (postgres-口径): top_msg_id не должен быть причиной отказа.
-// TDesktop в messages.sendMedia проставляет inputReplyToMessage.top_msg_id (наблюдалось 1),
-// messages.sendMessage — нет. Раньше расхождение с серверным thread root давало
-// ErrReplyMessageIDInvalid, т.е. "ответ фотографией в группе" был невозможен.
+// Regression (postgres semantics): top_msg_id must not be a reason for rejection.
+// In messages.sendMedia TDesktop sets inputReplyToMessage.top_msg_id (observed 1), while
+// messages.sendMessage does not. Previously the mismatch with the server's thread root yielded
+// ErrReplyMessageIDInvalid, i.e. "replying with a photo in a group" was impossible.
 func TestChannelReplyTopMsgIDMismatchIsAccepted(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -59,7 +59,7 @@ func TestChannelReplyTopMsgIDMismatchIsAccepted(t *testing.T) {
 		t.Fatalf("send photo: %v", err)
 	}
 
-	// top_msg_id=1 — ровно то, что присылает TDesktop для ответа медиа.
+	// top_msg_id=1 — exactly what TDesktop sends for a media reply.
 	res, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
 		UserID: member.ID, ChannelID: channelID, RandomID: 7003, Date: 1700000303, Message: "reply",
 		ReplyTo: &domain.MessageReply{MessageID: photoTarget.Message.ID, TopMessageID: 1, Peer: channelPeer},
@@ -75,7 +75,7 @@ func TestChannelReplyTopMsgIDMismatchIsAccepted(t *testing.T) {
 	}
 	_ = root
 
-	// 护栏: несуществующая цель по-прежнему отвергается.
+	// Guardrail: a nonexistent target is still rejected.
 	if _, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
 		UserID: member.ID, ChannelID: channelID, RandomID: 7004, Date: 1700000304, Message: "bad",
 		ReplyTo: &domain.MessageReply{MessageID: 999999, Peer: channelPeer},

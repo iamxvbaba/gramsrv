@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendMonoforumMessageAndHistory 验证频道私信(monoforum)发送+按订阅者读历史:
-// 订阅者发、管理员回复同进一个 saved_peer 子会话;幂等;不同订阅者互不串会话。
+// TestSendMonoforumMessageAndHistory verifies channel DM (monoforum) send + per-subscriber
+// history reads: a subscriber send and an admin reply land in the same saved_peer
+// sub-conversation; idempotent; different subscribers do not cross into each other's conversations.
 func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()
@@ -42,7 +43,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 42, SavedPeer: sub, RandomID: 112, Message: "again", Date: 1_700_001_002}); err != nil {
 		t.Fatalf("subscriber send 2: %v", err)
 	}
-	// 管理员回复:发件人是 creator,saved_peer 仍是该订阅者(同一子会话)。
+	// Admin reply: the sender is the creator, and saved_peer is still that subscriber (same sub-conversation).
 	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 113, Message: "reply", ReplyTo: &domain.MessageReply{MessageID: m1.Message.ID, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: monoID}}, Date: 1_700_001_003}); err != nil {
 		t.Fatalf("admin reply: %v", err)
 	}
@@ -54,8 +55,8 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if mainHist.Count != 1 || len(mainHist.Messages) != 1 {
 		t.Fatalf("main monoforum history count=%d len=%d, want only service message", mainHist.Count, len(mainHist.Messages))
 	}
-	// monoforum 的服务消息是创建消息(渲染 "Direct messages were enabled in this channel."),
-	// paid_messages_price 只进母广播频道。
+	// The monoforum's service message is the creation message (rendered as
+	// "Direct messages were enabled in this channel."); paid_messages_price goes only into the parent broadcast channel.
 	if action := mainHist.Messages[0].Action; action == nil || action.Type != domain.ChannelActionCreate {
 		t.Fatalf("main monoforum action = %+v, want channel_create", action)
 	}
@@ -75,7 +76,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 		}
 	}
 
-	// 幂等:相同 randomID 返回原消息、不重复。
+	// Idempotent: the same randomID returns the original message, without a duplicate.
 	dup, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 42, SavedPeer: sub, RandomID: 111, Message: "hi", Forward: forward, Date: 1_700_001_004})
 	if err != nil {
 		t.Fatalf("dup send: %v", err)
@@ -112,7 +113,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 		}
 	}
 
-	// 另一个订阅者的私信不串会话。
+	// Another subscriber's DMs do not cross into this conversation.
 	other := domain.Peer{Type: domain.PeerTypeUser, ID: 99}
 	otherMessage, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 99, SavedPeer: other, RandomID: 201, Message: "other", Date: 1_700_001_005})
 	if err != nil {
@@ -255,7 +256,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 		t.Fatalf("subscriber active channels = %v, want monoforum %d for offline recovery", activeChannelIDs, monoID)
 	}
 
-	// 去重按订阅者子会话维度:同一发件人(此处管理员)用相同 random_id 向两个不同订阅者发,不得互相去重。
+	// Dedup is scoped to the subscriber sub-conversation: the same sender (here the admin) sending to two different subscribers with the same random_id must not dedup against each other.
 	a, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 9001, Message: "to sub", Date: 1_700_001_010})
 	if err != nil {
 		t.Fatalf("dedup send A: %v", err)
@@ -267,7 +268,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if b.Duplicate || b.Message.ID == a.Message.ID {
 		t.Fatalf("cross-sublist same random_id wrongly deduped: a=%d b=%d dup=%v", a.Message.ID, b.Message.ID, b.Duplicate)
 	}
-	// 同一子会话真重发(相同 random_id)仍去重。
+	// A genuine resend within the same sub-conversation (same random_id) is still deduped.
 	again, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 9001, Message: "to sub", Date: 1_700_001_012})
 	if err != nil {
 		t.Fatalf("dedup resend A: %v", err)
@@ -276,7 +277,7 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 		t.Fatalf("same-sublist retry not deduped: again=%+v want dup of %d", again.Message, a.Message.ID)
 	}
 
-	// 订阅者子会话列表:两个订阅者,按 top 消息 id 倒序(other 最后发,排首)。
+	// Subscriber sub-conversation list: two subscribers, in descending top-message id order (other sent last, so it is first).
 	dialogs, err := store.ListMonoforumDialogs(ctx, domain.MonoforumDialogsFilter{MonoforumID: monoID, Limit: 10})
 	if err != nil {
 		t.Fatalf("list dialogs: %v", err)

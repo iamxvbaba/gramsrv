@@ -14,7 +14,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// registerHelp 注册 help.* RPC handler（DC 配置、最近 DC）。
+// registerHelp registers the help.* RPC handlers (DC config, nearest DC).
 func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.HelpGetConfigRequest](d, tlprofile.SemanticMethodHelpGetConfig, func(ctx context.Context, layerRequest *tg.HelpGetConfigRequest) (any, error) {
 		return r.onHelpGetConfig(ctx)
@@ -81,11 +81,14 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[
 
-	// 客户端遇到无法识别的 tg:// 深链时会查询 help.getDeepLinkInfo。telesrv 不维护
-	// “需更新 App”的特殊深链提示库，对所有 path 返回 deepLinkInfoEmpty——这是规范的
-	// “无特殊信息”应答：DrKLO 仅在收到非空 deepLinkInfo 时才弹“请更新 App”弹窗
-	// （LaunchActivity.java:5175），收到 Empty 则静默放行按普通链接处理。此前未注册
-	// handler 会落 fallback 返回 500 NOT_IMPLEMENTED（污染日志且非正确协议行为）。
+	// Clients query help.getDeepLinkInfo when they hit an unrecognized tg:// deep
+	// link. telesrv keeps no library of special "app update required" deep-link
+	// hints and answers every path with deepLinkInfoEmpty -- the canonical "no
+	// special info" response: DrKLO only shows its "please update the app" dialog
+	// on a non-empty deepLinkInfo (LaunchActivity.java:5175); on Empty it silently
+	// passes the link through as an ordinary one. Registering no handler here
+	// previously fell through to a 500 NOT_IMPLEMENTED fallback (log noise and
+	// incorrect protocol behavior).
 	*tg.HelpGetDeepLinkInfoRequest](d, tlprofile.SemanticMethodHelpGetDeepLinkInfo, func(ctx context.Context, layerRequest *tg.HelpGetDeepLinkInfoRequest) (any, error) {
 		path := layerRequest.
 			Path
@@ -101,10 +104,12 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 	})
 }
 
-// onHelpSaveAppLog 为官方客户端的 fire-and-forget 应用遥测提供有界兼容应答。
-// telesrv 当前不运营遥测产品，因此不读取、记录或持久化事件内容；请求已在 exact
-// Layer admission 处受 wire/vector/aggregate/depth 限制。该方法按 TL 访问约束允许
-// 未授权连接调用，但已登录 bot 必须拒绝。
+// onHelpSaveAppLog provides a bounded compatibility response for the official
+// clients' fire-and-forget app telemetry. telesrv does not run a telemetry
+// product today, so it never reads, records or persists the event payload; the
+// request is already bounded by wire/vector/aggregate/depth limits at exact-layer
+// admission. Per the TL access constraints this method allows unauthenticated
+// connections to call it, but an authenticated bot must be rejected.
 func (r *Router) onHelpSaveAppLog(ctx context.Context) (bool, error) {
 	userID, authorized, err := r.currentUserID(ctx)
 	if err != nil {
@@ -139,10 +144,12 @@ func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
 	return config, nil
 }
 
-// onHelpDismissSuggestion 为 DrKLO 改号成功后的 suggestion 清理提供有界兼容。
-// Android 会先把 suggestion 从本地状态删除，再发送该 RPC，且 generic 500 会被
-// 连接层持续重试。当前 server 不发布 pending suggestions，故非空 dismissal
-// 无需持久化，幂等 BoolTrue 即为完整的当前边界语义。
+// onHelpDismissSuggestion provides bounded compatibility for DrKLO's suggestion
+// cleanup after a successful number change. Android deletes the suggestion from
+// local state first and then sends this RPC, and a generic 500 is retried
+// continuously by the connection layer. The server publishes no pending
+// suggestions today, so a non-empty dismissal needs no persistence; an
+// idempotent BoolTrue is the complete current boundary semantics.
 func (r *Router) onHelpDismissSuggestion(ctx context.Context, req *tg.HelpDismissSuggestionRequest) (bool, error) {
 	userID, found, err := r.currentUserID(ctx)
 	if err != nil {

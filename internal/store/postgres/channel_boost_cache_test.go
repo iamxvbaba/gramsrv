@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// boostClock 是 boost 缓存 TTL 测试用的可推进单调时钟(注入 readmodelcache.Config.Now)。
+// boostClock is an advanceable monotonic clock for boost cache TTL tests (injected as readmodelcache.Config.Now).
 type boostClock struct {
 	mu sync.Mutex
 	t  int64
@@ -33,10 +33,10 @@ func (b *boostClock) set(unix int64) {
 
 func TestChannelBoostCacheNilDisabled(t *testing.T) {
 	if c := NewChannelBoostCache(0, time.Second); c != nil {
-		t.Fatalf("max<=0 应返回 nil(禁用)，got %v", c)
+		t.Fatalf("max<=0 should return nil (disabled), got %v", c)
 	}
 	if c := NewChannelBoostCache(16, 0); c != nil {
-		t.Fatalf("ttl<=0 应返回 nil(禁用)，got %v", c)
+		t.Fatalf("ttl<=0 should return nil (disabled), got %v", c)
 	}
 	var nilCache *ChannelBoostCache
 	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: 10}
@@ -47,10 +47,10 @@ func TestChannelBoostCacheNilDisabled(t *testing.T) {
 	nilCache.deleteUser(1)
 	nilCache.flush()
 	if _, ok := nilCache.get(1, peer); ok {
-		t.Fatalf("nil 缓存 get 必须返回 ok=false")
+		t.Fatalf("nil cache get must return ok=false")
 	}
 	if _, ok := nilCache.getPeerTotal(peer); ok {
-		t.Fatalf("nil 缓存 getPeerTotal 必须返回 ok=false")
+		t.Fatalf("nil cache getPeerTotal must return ok=false")
 	}
 }
 
@@ -63,7 +63,7 @@ func TestChannelBoostCachePutGetExpireDelete(t *testing.T) {
 	c.put(100, peer, 3)
 	c.put(100, otherPeer, 1)
 
-	clk.set(1005) // < 1000+10:仍有效
+	clk.set(1005) // < 1000+10: still valid
 	if got, ok := c.get(100, peer); !ok || got != 3 {
 		t.Fatalf("get before ttl = %d ok=%v, want 3/true", got, ok)
 	}
@@ -71,26 +71,26 @@ func TestChannelBoostCachePutGetExpireDelete(t *testing.T) {
 		t.Fatalf("other before ttl = %d ok=%v, want 1/true", got, ok)
 	}
 
-	clk.set(1010) // == 1000+10:expiresAt<=now 视为过期
+	clk.set(1010) // == 1000+10: expiresAt<=now is treated as expired
 	if _, ok := c.get(100, peer); ok {
-		t.Fatalf("expiresAt==now 应视为过期")
+		t.Fatalf("expiresAt==now should be treated as expired")
 	}
 
-	// delete 精确失效(在新鲜窗口内重写两个 peer,使其 expireAt=1020)。
+	// delete invalidates exactly (rewrite both peers within the freshness window so expireAt=1020).
 	c.put(100, peer, 4)
 	c.put(100, otherPeer, 1)
 	c.delete(100, peer)
 	clk.set(1011)
 	if _, ok := c.get(100, peer); ok {
-		t.Fatalf("delete 后不应命中")
+		t.Fatalf("should not hit after delete")
 	}
 	if got, ok := c.get(100, otherPeer); !ok || got != 1 {
-		t.Fatalf("delete exact 不应影响其它频道: %d ok=%v", got, ok)
+		t.Fatalf("delete exact should not affect other channels: %d ok=%v", got, ok)
 	}
 
 	c.deleteUser(100)
 	if _, ok := c.get(100, otherPeer); ok {
-		t.Fatalf("deleteUser 后同用户其它频道也应失效")
+		t.Fatalf("after deleteUser the same user's other channels should also be invalidated")
 	}
 }
 
@@ -113,7 +113,7 @@ func TestChannelBoostCachePeerTotalPutGetExpireDelete(t *testing.T) {
 
 	clk.set(1010)
 	if _, ok := c.getPeerTotal(peer); ok {
-		t.Fatalf("peer total expiresAt==now 应视为过期")
+		t.Fatalf("peer total expiresAt==now should be treated as expired")
 	}
 
 	c.putPeerTotal(peer, 31)
@@ -121,10 +121,10 @@ func TestChannelBoostCachePeerTotalPutGetExpireDelete(t *testing.T) {
 	c.deletePeerTotal(peer)
 	clk.set(1011)
 	if _, ok := c.getPeerTotal(peer); ok {
-		t.Fatalf("deletePeerTotal 后不应命中")
+		t.Fatalf("should not hit after deletePeerTotal")
 	}
 	if got, ok := c.getPeerTotal(otherPeer); !ok || got != 12 {
-		t.Fatalf("deletePeerTotal 不应影响其它频道: %d ok=%v", got, ok)
+		t.Fatalf("deletePeerTotal should not affect other channels: %d ok=%v", got, ok)
 	}
 }
 
@@ -133,19 +133,19 @@ func TestChannelBoostCacheCapFlush(t *testing.T) {
 	ch := func(id int64) domain.Peer { return domain.Peer{Type: domain.PeerTypeChannel, ID: id} }
 	c.put(1, ch(1), 1)
 	c.put(1, ch(2), 1)
-	c.put(1, ch(3), 1) // 超 cap=2:LRU 单条驱逐最旧的 ch1,而非整表清空
+	c.put(1, ch(3), 1) // over cap=2: LRU evicts the oldest single entry ch1, not the whole table
 	if _, ok := c.get(1, ch(1)); ok {
-		t.Fatalf("超限后最旧条目(ch1)应被驱逐")
+		t.Fatalf("over the limit the oldest entry (ch1) should be evicted")
 	}
 	if _, ok := c.get(1, ch(2)); !ok {
-		t.Fatalf("LRU 单条驱逐应保留次新条目(ch2),证明非整表 flush")
+		t.Fatalf("single-entry LRU eviction should keep the next-newest entry (ch2), proving it is not a whole-table flush")
 	}
 	if got, ok := c.get(1, ch(3)); !ok || got != 1 {
-		t.Fatalf("最新条目(ch3)应在: %d ok=%v", got, ok)
+		t.Fatalf("the newest entry (ch3) should be present: %d ok=%v", got, ok)
 	}
 	c.flush()
 	if _, ok := c.get(1, ch(3)); ok {
-		t.Fatalf("flush 后不应命中")
+		t.Fatalf("should not hit after flush")
 	}
 }
 
@@ -269,19 +269,19 @@ func TestReadModelChangeListenerInvalidatesChannelBoostCache(t *testing.T) {
 	listener.handlePayload(`{"model":"channel_self_boosts","owner_user_id":100,"peer_type":"channel","peer_id":7}`)
 
 	if _, ok := boosts.get(100, peer); ok {
-		t.Fatalf("channel_self_boosts 事件应失效精确 user/channel")
+		t.Fatalf("a channel_self_boosts event should invalidate the exact user/channel")
 	}
 	if _, ok := boosts.getPeerTotal(peer); ok {
-		t.Fatalf("channel_self_boosts 事件应失效 channel total")
+		t.Fatalf("a channel_self_boosts event should invalidate the channel total")
 	}
 	if got, ok := boosts.get(100, otherPeer); !ok || got != 3 {
-		t.Fatalf("其它频道不应失效: %d ok=%v", got, ok)
+		t.Fatalf("other channels should not be invalidated: %d ok=%v", got, ok)
 	}
 	if got, ok := boosts.get(200, peer); !ok || got != 4 {
-		t.Fatalf("其它用户不应失效: %d ok=%v", got, ok)
+		t.Fatalf("other users should not be invalidated: %d ok=%v", got, ok)
 	}
 	if got, ok := boosts.getPeerTotal(otherPeer); !ok || got != 11 {
-		t.Fatalf("其它频道 total 不应失效: %d ok=%v", got, ok)
+		t.Fatalf("other channels' total should not be invalidated: %d ok=%v", got, ok)
 	}
 }
 
@@ -305,21 +305,21 @@ func TestChannelStoreInvalidateBoostCacheForUserAndPeers(t *testing.T) {
 	})
 
 	if _, ok := boosts.get(100, oldPeer); ok {
-		t.Fatalf("当前用户 old peer self boost cache 应失效")
+		t.Fatalf("the current user's old peer self boost cache should be invalidated")
 	}
 	if _, ok := boosts.get(100, newPeer); ok {
-		t.Fatalf("当前用户 new peer self boost cache 应失效")
+		t.Fatalf("the current user's new peer self boost cache should be invalidated")
 	}
 	if got, ok := boosts.get(200, oldPeer); !ok || got != 1 {
-		t.Fatalf("其它用户 self boost cache 不应失效: %d ok=%v", got, ok)
+		t.Fatalf("other users' self boost cache should not be invalidated: %d ok=%v", got, ok)
 	}
 	if _, ok := boosts.getPeerTotal(oldPeer); ok {
-		t.Fatalf("old peer total cache 应失效")
+		t.Fatalf("the old peer total cache should be invalidated")
 	}
 	if _, ok := boosts.getPeerTotal(newPeer); ok {
-		t.Fatalf("new peer total cache 应失效")
+		t.Fatalf("the new peer total cache should be invalidated")
 	}
 	if got, ok := boosts.getPeerTotal(otherPeer); !ok || got != 12 {
-		t.Fatalf("其它频道 total cache 不应失效: %d ok=%v", got, ok)
+		t.Fatalf("other channels' total cache should not be invalidated: %d ok=%v", got, ok)
 	}
 }

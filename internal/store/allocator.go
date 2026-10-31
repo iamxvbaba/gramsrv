@@ -2,7 +2,7 @@ package store
 
 import "context"
 
-// BoxIDAllocator 分配用户视角 message box id。box_id 允许空洞，但不能回退。
+// BoxIDAllocator allocates user-visible message box ids. box_id may have gaps but must not go backwards.
 type BoxIDAllocator interface {
 	NextBoxID(ctx context.Context, userID int64) (int, error)
 	// NextBoxIDs allocates one monotonic id for every distinct user in one
@@ -21,7 +21,7 @@ type DistributedBoxIDAllocator interface {
 	DistributedBoxIDAllocation()
 }
 
-// CounterSource 用于 Redis 计数器冷启动时从 PostgreSQL durable log 恢复当前值。
+// CounterSource restores the current value from the PostgreSQL durable log when a Redis counter cold-starts.
 type CounterSource interface {
 	Current(ctx context.Context, userID int64) (int, error)
 	CurrentBatch(ctx context.Context, userIDs []int64) (map[int64]int, error)

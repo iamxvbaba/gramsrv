@@ -29,7 +29,7 @@ const (
 	storyStealthCooldownSeconds     = 3 * 60 * 60
 )
 
-// registerStories 注册 TDesktop/Android 已发现的 stories.* RPC。
+// registerStories registers the stories.* RPCs discovered by TDesktop/Android.
 func (r *Router) registerStories(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.StoriesGetAllStoriesRequest](d, tlprofile.SemanticMethodStoriesGetAllStories, func(ctx context.Context, layerRequest *tg.StoriesGetAllStoriesRequest) (any, error) {
 		return r.onStoriesGetAllStories(ctx, layerRequest)
@@ -2525,8 +2525,10 @@ func (r *Router) onStoriesIncrementStoryViews(ctx context.Context, req *tg.Stori
 	if _, err := r.deps.Stories.IncrementViews(ctx, userID, peer, uniqueStoryIDs(req.ID), int(r.clock.Now().Unix())); err != nil {
 		return false, storyErr(err)
 	}
-	// 浏览计数变化主要影响作者自己查看自己故事时的 ViewsCount。view 增量高频，
-	// 只失效作者自视角这一条缓存，避免按 peer 全量失效把热门故事的缓存打穿。
+	// A view-count change mainly affects the ViewsCount the author sees when viewing their own
+	// story. View increments are high-frequency, so invalidate only the author's own-perspective
+	// entry rather than invalidating the whole peer, which would blow through the cache of popular
+	// stories.
 	if peer.Type == domain.PeerTypeUser {
 		r.invalidateStoryProjectionCache(peer.ID, peer)
 	}
@@ -2792,8 +2794,9 @@ func (r *Router) onStoriesSendReaction(ctx context.Context, req *tg.StoriesSendR
 		return nil, storyErr(err)
 	}
 	if res.Changed {
-		// 反应改变了该故事的 reaction 计数(所有 viewer 可见)与本 viewer 的 SentReaction，
-		// 必须失效该 peer 的故事投影缓存，否则 getPinnedStories 会命中陈旧页(陈旧 SentReaction/计数)。
+		// The reaction changed this story's reaction count (visible to all viewers) and this
+		// viewer's SentReaction, so the peer's story projection cache must be invalidated; otherwise
+		// getPinnedStories would hit a stale page (stale SentReaction/count).
 		r.invalidateStoryProjectionCacheForPeer(peer)
 	}
 	if reaction != nil && res.Changed {

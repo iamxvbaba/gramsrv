@@ -11,14 +11,15 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// EncryptedQueueStore 是 store.EncryptedQueueStore 的 PostgreSQL 实现。
-// 盲中继 qts 投递队列：qts 分配（secret_qts_watermarks.reserved_qts 自增）+ 写队列行
-// 在单事务内完成，保证设备 qts 无空洞。bytes 原样 BYTEA 存储，永不解密。
+// EncryptedQueueStore is the PostgreSQL implementation of store.EncryptedQueueStore.
+// Blind-relay qts delivery queue: qts allocation (incrementing secret_qts_watermarks.reserved_qts)
+// plus writing the queue row complete in a single transaction, guaranteeing no gaps in a device's
+// qts. bytes is stored as-is as BYTEA and never decrypted.
 type EncryptedQueueStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewEncryptedQueueStore 基于 pgx 连接池创建 EncryptedQueueStore。
+// NewEncryptedQueueStore creates an EncryptedQueueStore backed by a pgx pool.
 func NewEncryptedQueueStore(db sqlcgen.DBTX) *EncryptedQueueStore {
 	return &EncryptedQueueStore{db: db}
 }
@@ -81,7 +82,7 @@ func (s *EncryptedQueueStore) AppendEncryptedMessage(ctx context.Context, msg do
 		}
 	}()
 
-	// 幂等：同接收设备同 chat 同 random_id 已存在 → 返回既有行（不重分配 qts）。
+	// Idempotent: if the same receiver device, same chat, same random_id already exists, return the existing row (without reallocating qts).
 	existing, err := scanEncryptedMessage(tx.QueryRow(ctx,
 		`SELECT `+encryptedMessageColumns+` FROM encrypted_message_queue
 WHERE receiver_auth_key_id = $1 AND chat_id = $2 AND random_id = $3`,
@@ -97,7 +98,7 @@ WHERE receiver_auth_key_id = $1 AND chat_id = $2 AND random_id = $3`,
 		return domain.SecretChatMessage{}, false, fmt.Errorf("dedup lookup: %w", err)
 	}
 
-	// 分配下一个 qts（首值 1），与写队列同事务。
+	// Allocate the next qts (first value 1), in the same transaction as the queue write.
 	var qts int
 	if err := tx.QueryRow(ctx, `
 INSERT INTO secret_qts_watermarks (auth_key_id, reserved_qts)
@@ -135,7 +136,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 }
 
 func (s *EncryptedQueueStore) ListEncryptedMessagesSince(ctx context.Context, receiverAuthKeyID int64, sinceQts, limit int) ([]domain.SecretChatMessage, error) {
-	// RPC difference 以 1000 条为一页，并额外读取 1 条探测 hasMore。
+	// RPC difference pages 1000 at a time and reads 1 extra row to probe hasMore.
 	if limit <= 0 || limit > 1001 {
 		limit = 1000
 	}
@@ -178,7 +179,7 @@ func (s *EncryptedQueueStore) AckEncryptedMessages(ctx context.Context, receiver
 	if maxQts <= 0 {
 		return nil
 	}
-	// 推进 confirmed_qts（GREATEST 幂等，回退忽略）。
+	// Advance confirmed_qts (idempotent via GREATEST; a retreat is ignored).
 	if _, err := s.db.Exec(ctx, `
 INSERT INTO secret_qts_watermarks (auth_key_id, confirmed_qts)
 VALUES ($1, $2)
@@ -207,7 +208,7 @@ RETURNING id`,
 }
 
 func (s *EncryptedQueueStore) ListUndeliveredStateEvents(ctx context.Context, targetUserID, deviceAuthKeyID int64, limit int) ([]domain.EncryptedStateEvent, error) {
-	// RPC difference 以 1000 条为一页，并额外读取 1 条探测 hasMore。
+	// RPC difference pages 1000 at a time and reads 1 extra row to probe hasMore.
 	if limit <= 0 || limit > 1001 {
 		limit = 1000
 	}

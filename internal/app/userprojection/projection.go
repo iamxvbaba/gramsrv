@@ -37,22 +37,25 @@ type CollectiblePhoneProvider interface {
 	OwnedCollectiblePhones(ctx context.Context, userIDs []int64) (map[int64]domain.CollectiblePhone, error)
 }
 
-// BatchPrivacyEvaluator 批量评估多 owner 对单 viewer 的可见性，消除 projectBatch / fan-out
-// 投影里 per-user 3×CanSee 的 N+1。可选：实现了它的 evaluator（privacy.Service）会被
-// projectBatch 优先用批量预取，否则回退逐 CanSee。结果必须与逐 CanSee 字节等价。
+// BatchPrivacyEvaluator evaluates visibility of multiple owners to a single viewer in a
+// batch, eliminating the per-user 3×CanSee N+1 in projectBatch / fan-out projection.
+// Optional: an evaluator that implements it (privacy.Service) makes projectBatch prefer
+// batch prefetch, otherwise it falls back to per-CanSee. Results must be byte-equivalent to
+// per-CanSee.
 type BatchPrivacyEvaluator interface {
 	CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64, keys []domain.PrivacyKey) (map[int64]map[domain.PrivacyKey]bool, error)
 }
 
-// MatrixPrivacyEvaluator 批量评估 owners×viewers×keys 的可见性矩阵（一次 ListPrivacyRules +
-// 每 owner 一次 GetMany + 内存 Evaluate），供 ForViewers 把 fan-out 跨 viewer 投影的 privacy
-// 查询从 O(viewer) 降到 O(owner)。可选：privacy.Service 实现了它，否则 ForViewers 回退逐 CanSee。
-// 结果必须与逐 CanSee 字节等价。
+// MatrixPrivacyEvaluator evaluates the owners×viewers×keys visibility matrix in a batch
+// (one ListPrivacyRules + one GetMany per owner + in-memory Evaluate), letting ForViewers
+// reduce the privacy queries of cross-viewer fan-out projection from O(viewer) to O(owner).
+// Optional: privacy.Service implements it, otherwise ForViewers falls back to per-CanSee.
+// Results must be byte-equivalent to per-CanSee.
 type MatrixPrivacyEvaluator interface {
 	CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs []int64, keys []domain.PrivacyKey) (map[int64]map[int64]map[domain.PrivacyKey]bool, error)
 }
 
-// privacyProjectionKeys 是 projectBatch 投影会用到的 privacy key（phone/status/photo）。
+// privacyProjectionKeys are the privacy keys projectBatch projection uses (phone/status/photo).
 var privacyProjectionKeys = []domain.PrivacyKey{
 	domain.PrivacyKeyPhoneNumber,
 	domain.PrivacyKeyStatusTimestamp,
@@ -126,14 +129,15 @@ func (p *Projector) One(ctx context.Context, viewerUserID int64, user domain.Use
 	return projected[0], nil
 }
 
-// ForViewers 跨多个 viewer 批量投影同一组 owner 用户（fan-out 模板化）。它把 per-viewer 各跑
-// 一遍 ForViewer(=projectBatch) 的成本（O(viewer)×(photos+contacts+privacy) 查询）压成：
-//   - 一次 profile/fallback 头像批量（跨 viewer 复用）
-//   - 一次 viewer-owned contact projection（联系人改名/电话覆盖 + personal photo overlay）
-//   - O(owner) 次 GetMany + 一次 ListPrivacyRules（CanSeeMatrix 内做）
+// ForViewers projects the same set of owner users in a batch across multiple viewers
+// (fan-out templating). It compresses the cost of running ForViewer (=projectBatch) once per
+// viewer (O(viewer)×(photos+contacts+privacy) queries) into:
+//   - one profile/fallback photo batch (reused across viewers)
+//   - one viewer-owned contact projection (contact rename/phone override + personal photo overlay)
+//   - O(owner) GetMany calls + one ListPrivacyRules (done inside CanSeeMatrix)
 //
-// 返回 map[viewerID][]domain.User，每个切片与对应 viewer 的 ForViewer(viewer, users) 字节等价。
-// 调用方传入的 users 不被修改（内部复制）。
+// It returns map[viewerID][]domain.User, each slice byte-equivalent to that viewer's
+// ForViewer(viewer, users). The caller's users are never modified (copied internally).
 func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users []domain.User) (map[int64][]domain.User, error) {
 	users = sanitizeDeletedUsers(users)
 	out := make(map[int64][]domain.User, len(viewerUserIDs))
@@ -152,7 +156,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 	}
 	ids := uniqueUserIDs(users)
 
-	// 三组预取互不依赖（共享头像、viewer-owned 联系人投影、privacy 矩阵），并发执行收敛成一波。
+	// The three prefetch groups are independent (shared photos, viewer-owned contact projection, privacy matrix), so they run concurrently in a single wave.
 	var (
 		profileRefs          map[int64]domain.ProfilePhotoRef
 		fallbackRefs         map[int64]domain.ProfilePhotoRef
@@ -163,14 +167,14 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 		collectiblePhones    map[int64]domain.CollectiblePhone
 	)
 	g, gctx := errgroup.WithContext(ctx)
-	// 1) 共享头像：profile/fallback 一次批量，跨全部 viewer 复用。
+	// 1) Shared photos: one profile/fallback batch, reused across all viewers.
 	g.Go(func() error {
 		var err error
 		profileRefs, fallbackRefs, err = p.batchProfileFallbackPhotos(gctx, ids)
 		return err
 	})
-	// 2) 改名/电话覆盖 + personal photo：按 viewer 拥有的联系人行批量读取，
-	//    与 projectBatch 的 GetMany/PersonalPhotos(viewer, owners) 命中同一语义。
+	// 2) Rename/phone override + personal photo: read the contact rows the viewer owns in a
+	//    batch, matching the same semantics as projectBatch's GetMany/PersonalPhotos(viewer, owners).
 	g.Go(func() error {
 		if p.contacts == nil || len(ids) == 0 || len(viewers) == 0 {
 			return nil
@@ -183,7 +187,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 		personalRefsByViewer = batch.PersonalPhotos
 		return err
 	})
-	// 3) privacy 可见性矩阵：O(owner) 查询；nil（无 MatrixPrivacyEvaluator）时 applyPrivacy 回退逐 CanSee。
+	// 3) privacy visibility matrix: O(owner) queries; when nil (no MatrixPrivacyEvaluator), applyPrivacy falls back to per-CanSee.
 	if me, ok := p.privacy.(MatrixPrivacyEvaluator); ok && p.privacy != nil {
 		g.Go(func() error {
 			var err error
@@ -208,7 +212,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	// 4) 逐 viewer 组装，复用与 projectBatch 完全相同的 apply* 链。
+	// 4) Assemble per viewer, reusing the exact same apply* chain as projectBatch.
 	for _, viewer := range viewers {
 		personalRefs := personalRefsByViewer[viewer]
 		projected := cloneUsers(users)
@@ -255,8 +259,9 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 	return out, nil
 }
 
-// batchProfileFallbackPhotos 取 owner 的 profile/fallback 头像（与 projectBatch 同逻辑）。
-// photos 为 nil 时返回空 map（applyBasePhotos 视为无头像查询）。
+// batchProfileFallbackPhotos fetches owners' profile/fallback photos (same logic as
+// projectBatch). When photos is nil it returns empty maps (applyBasePhotos treats it as no
+// photo lookups).
 func (p *Projector) batchProfileFallbackPhotos(ctx context.Context, ids []int64) (profileRefs, fallbackRefs map[int64]domain.ProfilePhotoRef, err error) {
 	profileRefs = map[int64]domain.ProfilePhotoRef{}
 	fallbackRefs = map[int64]domain.ProfilePhotoRef{}
@@ -403,9 +408,10 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 		freezes           map[int64]domain.AccountFreeze
 		collectiblePhones map[int64]domain.CollectiblePhone
 	)
-	// 这些预取查询互不依赖（头像 profile/fallback、联系人 GetMany/PersonalPhotos、privacy 可见性），
-	// 并发执行把 ~6 次串行 round-trip 收敛成一波；每个 goroutine 只写自己那一个变量，组装循环在
-	// Wait 之后串行进行（纯内存、无查询），无数据竞争。
+	// These prefetch queries are independent (photo profile/fallback, contact
+	// GetMany/PersonalPhotos, privacy visibility); running them concurrently collapses ~6
+	// serial round-trips into one wave. Each goroutine writes only its own variable and the
+	// assembly loop runs serially after Wait (pure memory, no queries), so there is no data race.
 	g, gctx := errgroup.WithContext(ctx)
 	if photos != nil && len(ids) > 0 {
 		if kindPhotos, ok := photos.(ProfilePhotoKindProvider); ok {
@@ -454,8 +460,9 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 			return nil
 		})
 	}
-	// 批量预取 privacy 可见性（若 evaluator 支持）：把 per-user 3×CanSee×2行 的 N+1 降到
-	// 一次 ListPrivacyRules + 一次 GetReverseContacts + 内存 Evaluate；nil 时 applyPrivacy 回退逐 CanSee。
+	// Batch-prefetch privacy visibility (if the evaluator supports it): reduces the per-user
+	// 3×CanSee×2-row N+1 to one ListPrivacyRules + one GetReverseContacts + in-memory
+	// Evaluate; when nil, applyPrivacy falls back to per-CanSee.
 	g.Go(func() error {
 		v, err := prefetchPrivacyVisibility(gctx, privacy, viewerUserID, out)
 		if err != nil {
@@ -499,8 +506,8 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 			continue
 		}
 		projected := applyBasePhotos(u, profileRefs, fallbackRefs, personalRefs, viewerUserID)
-		// bot 与系统账号豁免联系人/privacy 投影：官方 bot 无 phone/last seen，
-		// 不参与联系人改名与隐私裁剪。
+		// Bots and the system account are exempt from contact/privacy projection: official
+		// bots have no phone/last seen, and do not take part in contact rename or privacy trimming.
 		if viewerUserID != 0 && u.ID != viewerUserID && u.ID != domain.OfficialSystemUserID && !u.Bot {
 			contact, found := contactsByID[u.ID]
 			projected = applyContactProjection(projected, contact, found)
@@ -692,8 +699,8 @@ func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID in
 		}
 		return user, nil
 	}
-	// vis 为批量预取结果（projectBatch 一次 ListPrivacyRules+GetReverseContacts 算得）；
-	// 为 nil 时回退逐 CanSee，二者结果等价。
+	// vis is the batch-prefetch result (computed by projectBatch via one ListPrivacyRules +
+	// GetReverseContacts); when nil it falls back to per-CanSee, and the two are equivalent.
 	canSee := func(key domain.PrivacyKey) (bool, error) {
 		if vis != nil {
 			return vis[key], nil

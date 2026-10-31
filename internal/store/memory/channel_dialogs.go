@@ -99,7 +99,7 @@ func (s *ChannelStore) ListChannelDialogs(_ context.Context, viewerUserID int64,
 			out.Messages = append(out.Messages, msg)
 		}
 	}
-	// 与 PG 同因：getDialogs top message 按 viewer 补未读提及标志。
+	// Same reason as PG: getDialogs top messages get their unread-mention flags populated per viewer.
 	s.populateChannelMessageUnreadFlagsLocked(viewerUserID, out.Messages)
 	return out, nil
 }
@@ -142,10 +142,12 @@ func (s *ChannelStore) GetChannelDialogs(_ context.Context, viewerUserID int64, 
 		dialog := channelDialogToDialog(s.dialogForMemberLocked(viewerUserID, channel, member), channel.Pts, member.Status)
 		out.Dialogs = append(out.Dialogs, dialog)
 		out.Channels = append(out.Channels, channel)
-		// 与 postgres GetChannelDialogs 一致:monoforum 私信会话须同批下发母广播频道,客户端
-		// 才能 resolve linked_monoforum_id 并派生 MonoforumAdmin 渲染 Direct-Messages 容器;否则
-		// 退化成普通 megagroup。到达此处的 monoforum 必为管理员预览(非管理员在
-		// channelForViewerLocked 已返 ErrChannelPrivate 被 skip),不泄漏给无关用户。
+		// Same as postgres GetChannelDialogs: a monoforum DM dialog must be delivered in
+		// the same batch as the parent broadcast channel, so the client can resolve
+		// linked_monoforum_id and derive MonoforumAdmin to render the Direct-Messages
+		// container; otherwise it degrades into an ordinary megagroup. A monoforum
+		// reaching this point is always an admin preview (non-admins get ErrChannelPrivate
+		// from channelForViewerLocked and are skipped) and is never leaked to unrelated users.
 		if channel.Monoforum && channel.LinkedMonoforumID != 0 {
 			if parent, ok := s.channels[channel.LinkedMonoforumID]; ok && !parent.Deleted {
 				out.Channels = append(out.Channels, cloneChannel(parent))
@@ -308,8 +310,9 @@ func (s *ChannelStore) SetChannelDialogPinned(_ context.Context, userID, channel
 	}
 	dialog := s.dialogForUserLocked(userID, channel)
 	targetFolderID := dialog.FolderID
-	// order 仅在目标会话所在 folder 内分配；memory 双 store 互不可见，
-	// 与 postgres 跨表统一 order 空间相比此处只看 channel 表（reorder 会统一重排）。
+	// order is only assigned within the folder the target dialog belongs to; the two
+	// memory stores are invisible to each other, so unlike postgres's unified cross-table
+	// order space this only looks at the channel table (reorder reassigns everything uniformly).
 	nextOrder := 1
 	for _, d := range s.dialogs[userID] {
 		if d.Pinned && d.FolderID == targetFolderID && d.PinnedOrder >= nextOrder {
@@ -397,8 +400,9 @@ func (s *ChannelStore) EditChannelPeerFolders(_ context.Context, userID int64, p
 			continue
 		}
 		dialog := s.dialogForUserLocked(userID, channel)
-		// 换 folder 时清 pinned：与私聊 EditPeerFolders 一致，TDesktop
-		// 在归档/还原时本地无条件 unpin，服务端保留旧 pin 会造成状态漂移。
+		// Clear pinned when changing folder: same as private-chat EditPeerFolders,
+		// TDesktop unpins unconditionally locally on archive/restore, and keeping an old
+		// pin server-side would cause state drift.
 		if dialog.FolderID != folderID {
 			dialog.Pinned = false
 			dialog.PinnedOrder = 0
@@ -423,7 +427,7 @@ func (s *ChannelStore) CountChannelArchiveUnread(_ context.Context, userID int64
 		if dialog.FolderID != domain.DialogArchiveFolderID {
 			continue
 		}
-		// 与 postgres 一致：仅统计 active 成员的会话。
+		// Same as postgres: only count dialogs of active members.
 		if _, err := s.channelForMemberLocked(userID, channelID); err != nil {
 			continue
 		}
@@ -451,13 +455,14 @@ func (s *ChannelStore) upsertChannelDialogLocked(userID int64, channel domain.Ch
 		dialog.ReadInboxMaxID = member.ReadInboxMaxID
 	}
 	if selfAction {
-		// 只推进 inbox：自己动作产生的消息不算自己的未读。outbox 回执水位
-		// 表示"已被其他成员读到的最大 ID"，绝不随自己的发送/动作推进，
-		// 否则同账号另一设备会把自己的消息渲染成对端已读。
+		// Only advance inbox: messages produced by one's own actions do not count as one's
+		// own unread. The outbox read-receipt watermark means "the largest ID read by other
+		// members" and must never advance with one's own send/action, otherwise another
+		// device on the same account would render one's own messages as read by the peer.
 		if channel.TopMessageID > dialog.ReadInboxMaxID {
 			dialog.ReadInboxMaxID = channel.TopMessageID
 		}
-		// 发送方向清手动未读标记，对齐 postgres 发送路径双表清除。
+		// On the send direction, clear the manual unread mark, matching postgres's two-table clear on the send path.
 		dialog.UnreadMark = false
 	}
 	dialog.UnreadCount = s.channelUnreadCountLocked(userID, channel.ID, dialog.ReadInboxMaxID, dialog.TopMessageID)
@@ -469,7 +474,7 @@ func (s *ChannelStore) upsertChannelDialogLocked(userID int64, channel domain.Ch
 func channelDialogToDialog(dialog domain.ChannelDialog, channelPts int, memberStatus domain.ChannelMemberStatus) domain.Dialog {
 	return domain.Dialog{
 		Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: dialog.ChannelID},
-		// 非成员预览(publicPreviewMember/被踢)须标记 ChannelLeft,客户端据此把频道渲染为只读 left 预览。
+		// Non-member previews (publicPreviewMember/kicked) must be marked ChannelLeft, so the client renders the channel as a read-only left preview.
 		ChannelLeft:            memberStatus == domain.ChannelMemberLeft,
 		FolderID:               dialog.FolderID,
 		TopMessage:             dialog.TopMessageID,
@@ -524,7 +529,7 @@ func channelDialogMatchesFilter(dialog domain.Dialog, channel domain.Channel, fi
 			return false
 		}
 	} else if dialog.FolderID != domain.DialogMainFolderID {
-		// 不带 folder_id 视为主列表（folder 0），与私聊侧/官方语义一致。
+		// No folder_id is treated as the main list (folder 0), consistent with the private-chat side / official semantics.
 		return false
 	}
 	if filter.PinnedOnly && !dialog.Pinned {
@@ -558,8 +563,9 @@ func channelDialogMatchesFilter(dialog domain.Dialog, channel domain.Channel, fi
 	if channel.Broadcast && folder.Broadcasts {
 		return true
 	}
-	// 群/频道只能经 Groups/Broadcasts 开关或显式 include/pinned 进入自定义文件夹；
-	// 仅勾 Contacts/NonContacts/Bots 的文件夹不含任何群/频道（与 postgres 对齐）。
+	// Groups/channels enter a custom folder only through the Groups/Broadcasts toggles or
+	// an explicit include/pinned; a folder with only Contacts/NonContacts/Bots ticked
+	// contains no groups/channels (aligned with postgres).
 	return false
 }
 

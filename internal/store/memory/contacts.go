@@ -9,7 +9,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// ContactStore 是 store.ContactStore 的内存实现。
+// ContactStore is the in-memory implementation of store.ContactStore.
 type ContactStore struct {
 	mu                sync.RWMutex
 	m                 map[int64]domain.ContactList
@@ -33,7 +33,7 @@ func (s *ContactStore) AttachPrivacyStore(privacy *PrivacyStore) {
 	s.mu.Unlock()
 }
 
-// NewContactStore 创建内存 ContactStore。
+// NewContactStore creates an in-memory ContactStore.
 func NewContactStore() *ContactStore {
 	return &ContactStore{
 		m:            make(map[int64]domain.ContactList),
@@ -263,8 +263,9 @@ func (s *ContactStore) Upsert(_ context.Context, userID int64, input domain.Cont
 		contact.User.CountryCode = existing.User.CountryCode
 		contact.User.Verified = existing.User.Verified
 		contact.User.Support = existing.User.Support
-		// premium/emoji/bot 列随快照保留（postgres 路径 JOIN users 始终带真实值；
-		// 双 store 行为对齐，防止重复 Upsert 抹掉已知状态）。
+		// The premium/emoji/bot columns are preserved from the snapshot (the postgres path's
+		// JOIN users always carries real values; the two stores' behaviour is aligned to keep
+		// a repeated Upsert from wiping known state).
 		contact.User.Bot = existing.User.Bot
 		contact.User.BotInfoVersion = existing.User.BotInfoVersion
 		contact.User.PremiumUntil = existing.User.PremiumUntil
@@ -477,7 +478,7 @@ func (s *ContactStore) ListBlocked(_ context.Context, userID int64, offset, limi
 	return domain.BlockedContactList{Blocked: out, Count: total}, nil
 }
 
-// SaveList 保存一份用户通讯录，供测试和本地替身使用。
+// SaveList saves a user's contact list, for tests and local doubles.
 func (s *ContactStore) SaveList(_ context.Context, userID int64, list domain.ContactList) error {
 	list.Contacts = cloneContacts(list.Contacts)
 	list.Hash = contactListHash(list.Contacts)

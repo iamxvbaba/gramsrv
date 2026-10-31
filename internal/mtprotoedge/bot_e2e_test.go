@@ -39,11 +39,12 @@ import (
 
 var botTokenRe = regexp.MustCompile(`(\d+):([A-Za-z0-9_-]{35})`)
 
-// TestBotFatherCreateAndBotLoginFlow 是 bot 主链路端到端验证：
-// TestBotManagementRPCFlow 验证 P2 bots.* 管理 RPC 端到端：
-// bot 自己调 setBotCommands/setBotInfo/setBotMenuButton 后 getFullUser 反映新值且
-// bot_info_version 单调递增；owner 视角 getFullUser(bot) 带 bot_can_edit 且 owner 可
-// 经 bot:InputUser 代改 bot name。
+// TestBotFatherCreateAndBotLoginFlow is the bot main-chain end-to-end verification:
+// TestBotManagementRPCFlow verifies the P2 bots.* management RPC end to end:
+// after the bot itself calls setBotCommands/setBotInfo/setBotMenuButton, getFullUser
+// reflects the new values and bot_info_version increases monotonically; from the
+// owner's perspective getFullUser(bot) carries bot_can_edit and the owner can
+// modify the bot name via bot:InputUser.
 func TestBotManagementRPCFlow(t *testing.T) {
 	const (
 		dc   = 2
@@ -106,7 +107,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 		return telegram.NewClient(1, "hash", opts)
 	}
 
-	// owner 注册。
+	// Owner registers.
 	ownerStorage := &session.StorageMemory{}
 	var owner tg.User
 	{
@@ -132,7 +133,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 		}
 	}
 
-	// 直接经 service 建 bot（绕过 BotFather 对话，聚焦管理 RPC）。
+	// Create the bot directly via the service (bypassing the BotFather conversation, focusing on the management RPC).
 	botUser, botToken, err := botsService.CreateBot(context.Background(), owner.ID, "Mgmt Bot", "mgmt_test_bot")
 	if err != nil {
 		t.Fatalf("create bot: %v", err)
@@ -151,7 +152,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 		return bi, full.Users[0].(*tg.User)
 	}
 
-	// bot 登录并调管理 RPC。
+	// The bot logs in and calls the management RPC.
 	botStorage := &session.StorageMemory{}
 	var verAfterCommands int
 	{
@@ -184,7 +185,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 			}
 			verAfterCommands = v1
 
-			// getBotCommands 回读。
+			// Read back getBotCommands.
 			got, err := raw.BotsGetBotCommands(ctx, &tg.BotsGetBotCommandsRequest{Scope: &tg.BotCommandScopeDefault{}})
 			if err != nil || len(got) != 2 {
 				t.Fatalf("getBotCommands = %+v, %v", got, err)
@@ -203,7 +204,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 				t.Fatalf("menu button = %#v, want webview", mb)
 			}
 
-			// setBotInfo(description) by bot self（不带 bot 参数）；Description 是 flag.1，须 SetDescription 置位。
+			// setBotInfo(description) by the bot itself (without the bot parameter); Description is flag.1 and must be set via SetDescription.
 			infoReq := &tg.BotsSetBotInfoRequest{LangCode: ""}
 			infoReq.SetDescription("what I do")
 			if ok, err := raw.BotsSetBotInfo(ctx, infoReq); err != nil || !ok {
@@ -214,7 +215,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 				t.Fatalf("getBotInfo = %#v, %v", info, err)
 			}
 
-			// bot self 不应带 bot_can_edit（owner 视角才有）。
+			// The bot itself should not carry bot_can_edit (only the owner's perspective has it).
 			_, selfU := getFullSelfBotInfo(raw)
 			if selfU.GetBotCanEdit() {
 				t.Fatalf("bot self carries bot_can_edit, want only owner view")
@@ -225,7 +226,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 		}
 	}
 
-	// owner 视角：getFullUser(bot) 带 bot_can_edit + commands；owner 代改 name。
+	// Owner's perspective: getFullUser(bot) carries bot_can_edit + commands; the owner modifies the name.
 	{
 		client := newClient(ownerStorage)
 		if err := client.Run(ctx, func(ctx context.Context) error {
@@ -249,7 +250,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 					t.Fatalf("owner view bot commands = %d, want 2", len(cmds))
 				}
 			}
-			// owner 代改 bot name（带 bot:InputUser）。
+			// The owner modifies the bot name (with bot:InputUser).
 			req := &tg.BotsSetBotInfoRequest{LangCode: ""}
 			req.SetBot(botInput)
 			req.SetName("Owner Renamed")
@@ -277,9 +278,9 @@ func TestBotManagementRPCFlow(t *testing.T) {
 	}
 }
 
-// 用户注册 → resolveUsername(BotFather) → /newbot 对话拿 token →
-// 外部客户端 auth.importBotAuthorization 登录为 bot →
-// 用户与 bot 互发消息 → 错误 token 拿 ACCESS_TOKEN_INVALID。
+// User registers → resolveUsername(BotFather) → /newbot conversation to obtain a
+// token → an external client logs in as the bot via auth.importBotAuthorization →
+// the user and bot exchange messages → a wrong token gets ACCESS_TOKEN_INVALID.
 func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 	const (
 		dc   = 2
@@ -355,7 +356,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 1) owner 注册。
+	// 1) Owner registers.
 	ownerStorage := &session.StorageMemory{}
 	var owner tg.User
 	{
@@ -387,7 +388,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 2) owner 与 BotFather 对话创建 bot，拿 token。
+	// 2) The owner talks to BotFather to create a bot and obtain a token.
 	var (
 		botToken    string
 		botUsername = "owner_e2e_bot"
@@ -416,7 +417,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			}
 			peer := &tg.InputPeerUser{UserID: botFather.ID, AccessHash: botFather.AccessHash}
 
-			// userFull.bot_info 必须存在且 user_id 匹配（TDesktop P0 兼容点）。
+			// userFull.bot_info must exist and user_id must match (a TDesktop P0 compatibility point).
 			full, err := raw.UsersGetFullUser(ctx, &tg.InputUser{UserID: botFather.ID, AccessHash: botFather.AccessHash})
 			if err != nil {
 				return err
@@ -433,7 +434,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			}
 
 			randomID := int64(31001)
-			// BotFather 回复异步到达（go routine），轮询历史顶部直到出现新的 incoming 回复。
+			// BotFather's reply arrives asynchronously (a goroutine); poll the top of the history until a new incoming reply appears.
 			sendAndReply := func(text string) string {
 				t.Helper()
 				randomID++
@@ -482,7 +483,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			}
 			botToken = match[0]
 
-			// 新 bot 可被 resolve，且带 bot flags。
+			// The new bot can be resolved, and carries the bot flags.
 			resolvedBot, err := raw.ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: botUsername})
 			if err != nil {
 				return err
@@ -501,7 +502,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 3) 错误 token 必须拿 ACCESS_TOKEN_INVALID。
+	// 3) A wrong token must get ACCESS_TOKEN_INVALID.
 	{
 		client := newClient(&session.StorageMemory{})
 		if err := client.Run(ctx, func(ctx context.Context) error {
@@ -518,7 +519,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 4) bot 客户端凭 token 登录；self 必须是 bot；userFull.bot_info 自洽。
+	// 4) The bot client logs in with the token; self must be a bot; userFull.bot_info is self-consistent.
 	botStorage := &session.StorageMemory{}
 	{
 		client := newClient(botStorage)
@@ -541,7 +542,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			if v, ok := self.GetBotInfoVersion(); !ok || v < 1 {
 				t.Fatalf("bot self bot_info_version = %d,%v, want >=1", v, ok)
 			}
-			// 登录态生效：getUsers(self) 与 getState 正常。
+			// Login takes effect: getUsers(self) and getState work normally.
 			got, err := raw.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUserSelf{}})
 			if err != nil {
 				return err
@@ -569,7 +570,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 5) owner 给 bot 发消息。
+	// 5) The owner sends a message to the bot.
 	{
 		client := newClient(ownerStorage)
 		if err := client.Run(ctx, func(ctx context.Context) error {
@@ -592,12 +593,12 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 6) bot 读到消息并回复。
+	// 6) The bot reads the message and replies.
 	{
 		client := newClient(botStorage)
 		if err := client.Run(ctx, func(ctx context.Context) error {
 			raw := tg.NewClient(client)
-			// access_hash=0 跳过校验（与现有 users.getUsers 语义一致），bot 据此拿 owner 资料。
+			// access_hash=0 skips validation (consistent with the existing users.getUsers semantics), so the bot obtains the owner's profile this way.
 			got, err := raw.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUser{UserID: owner.ID}})
 			if err != nil {
 				return err
@@ -627,7 +628,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 				return err
 			}
 
-			// P2: bot 自管理（bot-only RPC）：setBotCommands / setBotMenuButton。
+			// P2: bot self-management (bot-only RPC): setBotCommands / setBotMenuButton.
 			ok2, err := raw.BotsSetBotCommands(ctx, &tg.BotsSetBotCommandsRequest{
 				Scope:    &tg.BotCommandScopeDefault{},
 				LangCode: "",
@@ -665,7 +666,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 7) owner 看到 bot 回复。
+	// 7) The owner sees the bot's reply.
 	{
 		client := newClient(ownerStorage)
 		if err := client.Run(ctx, func(ctx context.Context) error {
@@ -691,12 +692,12 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 				t.Fatalf("owner latest = %#v, want incoming 'hello human'", msgs[0])
 			}
 
-			// P2: owner 视角的 bot 元数据闭环。
-			// (a) bot 设置命令+菜单按钮后 bot_info_version 已 bump（>1）。
+			// P2: the owner's-perspective bot metadata loop.
+			// (a) after the bot sets commands + menu button, bot_info_version has bumped (>1).
 			if v, ok := created.GetBotInfoVersion(); !ok || v <= 1 {
 				t.Fatalf("bot_info_version = %d,%v after metadata changes, want > 1", v, ok)
 			}
-			// (b) getFullUser：bot_info 带新命令与 webview 菜单按钮；owner 看到 bot_can_edit。
+			// (b) getFullUser: bot_info carries the new commands and the webview menu button; the owner sees bot_can_edit.
 			full, err := raw.UsersGetFullUser(ctx, &tg.InputUser{UserID: created.ID, AccessHash: created.AccessHash})
 			if err != nil {
 				return err
@@ -717,7 +718,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			if !fullUser.BotCanEdit {
 				t.Fatalf("owner getFullUser(bot) user lacks bot_can_edit: %+v", fullUser)
 			}
-			// (c) owner 经 bot 参数代设 setBotInfo（about+description）→ getFullUser 反映。
+			// (c) the owner sets setBotInfo (about+description) on the bot's behalf via the bot parameter → getFullUser reflects it.
 			setReq := &tg.BotsSetBotInfoRequest{LangCode: ""}
 			setReq.SetBot(&tg.InputUser{UserID: created.ID, AccessHash: created.AccessHash})
 			setReq.SetAbout("e2e about")
@@ -737,14 +738,14 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			} else if desc, _ := bi2.GetDescription(); desc != "e2e description" {
 				t.Fatalf("description = %q, want 'e2e description'", desc)
 			}
-			// (d) owner 对非自己的 bot（BotFather）代设 → BOT_INVALID。
+			// (d) the owner setting on a bot that is not theirs (BotFather) → BOT_INVALID.
 			badReq := &tg.BotsSetBotInfoRequest{LangCode: ""}
 			badReq.SetBot(&tg.InputUser{UserID: domain.BotFatherUserID, AccessHash: domain.BotFatherAccessHash})
 			badReq.SetAbout("nope")
 			if _, err := raw.BotsSetBotInfo(ctx, badReq); !tgerr.Is(err, "BOT_INVALID") {
 				t.Fatalf("setBotInfo on BotFather err = %v, want BOT_INVALID", err)
 			}
-			// (e) 非 bot 用户调 bot-only RPC → USER_BOT_REQUIRED。
+			// (e) a non-bot user calling a bot-only RPC → USER_BOT_REQUIRED.
 			if _, err := raw.BotsGetBotCommands(ctx, &tg.BotsGetBotCommandsRequest{
 				Scope: &tg.BotCommandScopeDefault{}, LangCode: "",
 			}); !tgerr.Is(err, "USER_BOT_REQUIRED") {
@@ -756,8 +757,9 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 		}
 	}
 
-	// 8) owner 走 BotFather /revoke：旧 token 失效 + bot 全部 authorization 被撤销
-	//（已登录 session 失效闭环；bot 凭旧 auth_key 重连后将得 401）。
+	// 8) The owner uses BotFather /revoke: the old token becomes invalid + all the
+	// bot's authorizations are revoked (the logged-in session invalidation loop; the
+	// bot reconnecting with the old auth_key will then get 401).
 	{
 		if auths, err := authzStore.ListByUser(ctx, botUserID); err != nil || len(auths) == 0 {
 			t.Fatalf("bot authorizations before revoke = %d err=%v, want >=1", len(auths), err)
@@ -772,8 +774,10 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			bf := resolved.Users[0].(*tg.User)
 			peer := &tg.InputPeerUser{UserID: bf.ID, AccessHash: bf.AccessHash}
 			randomID := int64(61001)
-			// 等到 BotFather 对该条的回复出现再发下一条——回复异步处理，裸 sleep 在
-			// 负载下会乱序（见 P2 审查的 sleep flaky 项）。轮询顶部 incoming 回复。
+			// Wait until BotFather's reply to this entry appears before sending the
+			// next—replies are handled asynchronously, and a bare sleep would reorder
+			// them under load (see the sleep flaky item in the P2 review). Poll the top
+			// for the incoming reply.
 			sendAwait := func(text string) {
 				t.Helper()
 				before := 0
@@ -810,7 +814,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 			}
 			sendAwait("/revoke")
 			sendAwait("@" + botUsername)
-			// revoke 在 BotFather goroutine 内执行；轮询 authorization 清空。
+			// revoke runs inside the BotFather goroutine; poll until the authorization is cleared.
 			deadline := time.Now().Add(10 * time.Second)
 			for {
 				auths, err := authzStore.ListByUser(ctx, botUserID)

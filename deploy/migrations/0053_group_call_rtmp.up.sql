@@ -1,5 +1,6 @@
--- Live Stream（RTMP 直播）：group_calls 增加 rtmp_stream 标记；
--- per-channel 持久 RTMP 推流密钥（revoke 轮换后旧 key 立即失效）。
+-- Live Stream (RTMP live): group_calls gains an rtmp_stream flag;
+-- a per-channel persistent RTMP stream key (after a revoke rotation the old key is
+-- invalid immediately).
 ALTER TABLE group_calls
     ADD COLUMN IF NOT EXISTS rtmp_stream boolean DEFAULT false NOT NULL;
 

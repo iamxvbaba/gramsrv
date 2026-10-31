@@ -12,9 +12,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// GroupCallStore 是 store.GroupCallStore 的进程内实现（rpc 单测 fixture 用）。
-// 行为契约与 postgres 实现由共享 contract test 钉死（groupcall contract test），
-// 凡动 version/参与者语义两边必须同步并跑 PG 集成。
+// GroupCallStore is the in-process implementation of store.GroupCallStore (used as
+// an rpc unit-test fixture). Its behavioral contract with the postgres implementation
+// is pinned by a shared contract test (the groupcall contract test); any change to
+// version/participant semantics must be synced on both sides and run against PG integration.
 type overrideKey struct {
 	callID, setter, target int64
 }
@@ -45,13 +46,13 @@ type GroupCallStore struct {
 	inviteByMessage map[inviteMessageKey]domain.GroupCallInvite
 	chainBlocks     map[chainKey][]domain.GroupCallChainBlock
 	overrides       map[overrideKey]domain.GroupCallParticipantOverride
-	raiseHandSeq    map[int64]int64              // callID → 单调举手序号
-	rtmpKeys        map[int64]string             // channelID → RTMP 推流密钥
-	scheduleSubs    map[int64]map[int64]struct{} // callID → 订阅开播提醒的 userID
+	raiseHandSeq    map[int64]int64              // callID → monotonic raise-hand sequence
+	rtmpKeys        map[int64]string             // channelID → RTMP stream key
+	scheduleSubs    map[int64]map[int64]struct{} // callID → userIDs subscribed to the start notification
 	nextSyntheticID int64
 }
 
-// NewGroupCallStore 创建内存实现。
+// NewGroupCallStore creates the in-memory implementation.
 func NewGroupCallStore() *GroupCallStore {
 	return &GroupCallStore{
 		calls:           make(map[int64]domain.GroupCall),
@@ -187,17 +188,17 @@ func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCa
 		JoinDate:        req.Now,
 		ActiveDate:      req.Now,
 		LastCheckDate:   req.Now,
-		// VideoJSON 整体替换、PresentationJSON 随全新行清空（rejoin 后客户端
-		// 会重发 joinGroupCallPresentation，旧屏幕登记必须作废）。
+		// VideoJSON is replaced wholesale and PresentationJSON is cleared with the fresh
+		// row (after a rejoin the client resends joinGroupCallPresentation, so the old screen registration must be discarded).
 		VideoJSON: append([]byte(nil), req.VideoJSON...),
 		PublicKey: append([]byte(nil), req.PublicKey...),
 		JoinBlock: append([]byte(nil), req.JoinBlock...),
 	}
 	if rejoining && wasActive {
-		// 同设备换 ssrc 的 rejoin 保留原 join_date（列表排序稳定）。
+		// A rejoin from the same device with a new ssrc keeps the original join_date (stable list ordering).
 		p.JoinDate = existing.JoinDate
 	}
-	// join_muted 策略：普通成员入会即静音且不可自行开麦（muted_by_admin）。
+	// join_muted policy: ordinary members are muted on join and cannot unmute themselves (muted_by_admin).
 	if call.JoinMuted && !req.IsAdmin {
 		p.Muted = true
 		p.MutedByAdmin = true

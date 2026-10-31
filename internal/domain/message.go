@@ -1,6 +1,6 @@
 package domain
 
-// MessageEntityType 标识消息实体类型。
+// MessageEntityType identifies a message entity type.
 type MessageEntityType string
 
 const (
@@ -38,20 +38,20 @@ const (
 	MaxMessageReplyQuoteOffset = 2 * MaxMessageTextLength // UTF-16 units, including surrogate pairs.
 	// MaxMessageEntityCount limits styled text entity vectors in message text and quotes.
 	MaxMessageEntityCount = 256
-	// MaxMessageBoxID 是 TL int / PostgreSQL int4 可安全表达的最大 message id。
+	// MaxMessageBoxID is the largest message id safely expressible by a TL int / PostgreSQL int4.
 	MaxMessageBoxID = 1<<31 - 1
-	// MaxDeleteMessageIDs 限制单次 deleteMessages/updateDeleteMessages 的 owner 视角 id 数量。
-	// 大批量历史清理走 deleteHistory 分批推进，避免单个 RPC 构造超大数组或 durable payload。
+	// MaxDeleteMessageIDs limits the owner-perspective id count of a single deleteMessages/updateDeleteMessages.
+	// Large history cleanup goes through deleteHistory in batches, so a single RPC cannot build a huge array or durable payload.
 	MaxDeleteMessageIDs = 1000
-	// MaxGetMessageIDs 限制 getMessages / channels.getMessages 精确 ID 批量。
+	// MaxGetMessageIDs limits the exact-ID batch of getMessages / channels.getMessages.
 	MaxGetMessageIDs = 100
-	// MaxDeleteHistoryBatch 限制单次 deleteHistory 实际清理的 message box 数量。
-	// affectedHistory.Offset > 0 时客户端可继续调用，服务端不一次性 RETURNING 全历史。
+	// MaxDeleteHistoryBatch limits the number of message boxes a single deleteHistory actually cleans.
+	// affectedHistory.Offset > 0 lets the client keep calling, and the server does not RETURN the whole history at once.
 	MaxDeleteHistoryBatch = 1000
-	// MaxForwardMessageIDs 限制单次 forwardMessages 的 owner 视角 id 数量。
+	// MaxForwardMessageIDs limits the owner-perspective id count of a single forwardMessages.
 	MaxForwardMessageIDs = 100
-	// MaxMessageHistoryAddOffset 限制 history/search 的 add_offset 绝对值。
-	// TDesktop 正常只使用小窗口偏移；服务端必须拒绝把客户端传入的超大值变成 SQL OFFSET 或 slice capacity。
+	// MaxMessageHistoryAddOffset limits the absolute value of history/search add_offset.
+	// TDesktop normally uses only small window offsets; the server must refuse to turn an oversized client value into a SQL OFFSET or slice capacity.
 	MaxMessageHistoryAddOffset = 100
 )
 
@@ -80,7 +80,7 @@ func ValidateMessageReplyBounds(reply *MessageReply) error {
 	if reply.StoryID < 0 || reply.StoryID > MaxStoryID {
 		return ErrReplyMessageIDInvalid
 	}
-	// story 回复（StoryID>0）不携带 MessageID/TopMessageID；普通回复至少有其一。
+	// A story reply (StoryID>0) carries no MessageID/TopMessageID; a normal reply has at least one.
 	if reply.MessageID == 0 && reply.TopMessageID == 0 && reply.StoryID == 0 && reply.External == nil {
 		return ErrReplyMessageIDInvalid
 	}
@@ -90,23 +90,23 @@ func ValidateMessageReplyBounds(reply *MessageReply) error {
 	return nil
 }
 
-// MessageEntity 是业务层消息实体，不依赖 TL 类型。
+// MessageEntity is a business-layer message entity, independent of TL types.
 type MessageEntity struct {
 	Type   MessageEntityType
 	Offset int
 	Length int
-	// URL 仅 text_url 使用。
+	// URL is used only by text_url.
 	URL string
-	// UserID 仅 mention_name 使用。
+	// UserID is used only by mention_name.
 	UserID int64
-	// Language 仅 pre 使用。
+	// Language is used only by pre.
 	Language string
-	// DocumentID 仅 custom_emoji 使用。
+	// DocumentID is used only by custom_emoji.
 	DocumentID int64
-	// Collapsed 仅 blockquote 使用。
+	// Collapsed is used only by blockquote.
 	Collapsed bool
 	// Date / Relative / ShortTime / LongTime / ShortDate / LongDate / DayOfWeek
-	// 仅 formatted_date 使用。
+	// are used only by formatted_date.
 	Date      int
 	Relative  bool
 	ShortTime bool
@@ -114,14 +114,14 @@ type MessageEntity struct {
 	ShortDate bool
 	LongDate  bool
 	DayOfWeek bool
-	// OldText 仅 AI compose diff_replace 使用；普通消息输入不会接受该实体。
+	// OldText is used only by AI compose diff_replace; ordinary message input does not accept this entity.
 	OldText string
 }
 
-// Message 是账号视角下的一条私聊消息。
+// Message is one private chat message from an account's perspective.
 type Message struct {
-	ID             int   // 当前 owner 视角下的 message box id，暴露给 Telegram 客户端。
-	UID            int64 // 共享私聊消息主体 id，不暴露给客户端。
+	ID             int   // message box id from the current owner's perspective, exposed to Telegram clients
+	UID            int64 // shared private-message body id, not exposed to clients
 	RandomID       int64
 	OwnerUserID    int64
 	Peer           Peer
@@ -144,34 +144,34 @@ type Message struct {
 	MediaUnread    bool
 	ReactionUnread bool
 	ViaBotID       int64
-	// GroupedID 是相册分组 id：同一次 sendMultiMedia 的各条消息共享同一非零值，
-	// 客户端据此把它们渲染成一个相册组。非相册消息恒 0。双盒持同一值。
+	// GroupedID is the album grouping id: the messages of one sendMultiMedia share the same non-zero value,
+	// and the client renders them as a single album group. Non-album messages are always 0. Both boxes hold the same value.
 	GroupedID int64
-	// Effect 是消息特效 id（message.effect，flags2.2?long）：私聊 1-1 专属动画特效
-	// （🎉/👍 等），发送方与接收方双盒持同一非零值并各自播放一次；非特效消息恒 0。
-	// 转发不携带特效（新消息恒 0）。仅私聊；群/频道不渲染。
+	// Effect is the message effect id (message.effect, flags2.2?long): the animation effect exclusive to a 1-1 private chat
+	// (🎉/👍 etc.); both the sender and recipient boxes hold the same non-zero value and each plays it once; non-effect messages are always 0.
+	// A forward carries no effect (the new message is always 0). Private chats only; groups/channels do not render it.
 	Effect int64
-	// ReplyMarkup 是 bot 消息携带的 reply/inline keyboard 快照。仅 bot 出站消息可
-	// 非空；普通用户消息恒 nil（发送侧 is_bot 闸门）。双盒持同一快照（无 per-viewer 差异）。
+	// ReplyMarkup is the reply/inline keyboard snapshot carried by a bot message. Only a bot outbound message may be
+	// non-nil; an ordinary user message is always nil (the send-side is_bot gate). Both boxes hold the same snapshot (no per-viewer difference).
 	ReplyMarkup *MessageReplyMarkup
-	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage is the Layer 228 rich text message (richMessage) snapshot, optional; an ordinary message is always nil.
 	RichMessage *MessageRichMessage
-	// Pinned 是 owner 视角的置顶标志（官方私聊多置顶语义：双方各自
-	// 的 box 行独立持有，非 pm_oneside 操作两侧同步翻转）。
+	// Pinned is the owner-perspective pin flag (official private-chat multi-pin semantics: each side's
+	// box row holds it independently, and a non-pm_oneside operation flips both sides together).
 	Pinned bool
-	// Deleted 是 owner 视角的软删除可见性标记。它只用于更新重放/差分恢复
-	// 判断是否还能下发消息快照；普通历史查询应在 store 层直接过滤 deleted box。
+	// Deleted is the owner-perspective soft-delete visibility marker. It is used only by update replay/difference recovery
+	// to decide whether a message snapshot can still be sent; an ordinary history query should filter deleted boxes directly at the store layer.
 	Deleted bool
-	// SavedPeer 是 Saved Messages 分会话分组键（message.saved_peer_id）。
-	// 仅 self-chat box 行非零：直发笔记 = self；转发进收藏夹 = 源会话 peer；
-	// 存量回填兜底 hidden author 占位 user 2666000。非 self-chat 行恒零值。
+	// SavedPeer is the Saved Messages sub-chat grouping key (message.saved_peer_id).
+	// Only a self-chat box row is non-zero: a directly written note = self; a forward into saved messages = the source chat peer;
+	// a backfill fallback uses the hidden-author placeholder user 2666000. A non-self-chat row is always the zero value.
 	SavedPeer Peer
 	PaidStars int64
 }
 
-// NewHistoryClearMessage 把一个 owner 视角的现有 box 原位投影为
-// messageActionHistoryClear 服务消息。调用方只传递仍需保留的身份字段；
-// 其余正文、媒体、reply、reaction、TTL、pin 等载荷全部按不变量清空。
+// NewHistoryClearMessage projects an existing owner-perspective box in place into a
+// messageActionHistoryClear service message. The caller passes only the identity fields that must be kept;
+// the remaining body, media, reply, reaction, TTL, pin and other payloads are all cleared per the invariant.
 func NewHistoryClearMessage(ownerUserID int64, peer Peer, boxID int, uid int64, date, pts int) Message {
 	self := Peer{Type: PeerTypeUser, ID: ownerUserID}
 	return Message{
@@ -192,7 +192,7 @@ func NewHistoryClearMessage(ownerUserID int64, peer Peer, boxID int, uid int64, 
 	}
 }
 
-// IsHistoryClearServiceMessage 报告该 box 是否已经是清空历史锚点。
+// IsHistoryClearServiceMessage reports whether the box is already a history-clear anchor.
 func IsHistoryClearServiceMessage(msg Message) bool {
 	return msg.Media != nil &&
 		msg.Media.Kind == MessageMediaKindService &&
@@ -202,18 +202,18 @@ func IsHistoryClearServiceMessage(msg Message) bool {
 
 const MessageRichBlocksLegacyLayer = 228
 
-// MessageRichMessage 是富文本消息（richMessage）的协议中立快照：一组 IV
-// PageBlock（Blocks）+ 内嵌已解析的 Photos/Documents。
+// MessageRichMessage is the protocol-neutral snapshot of a rich text message (richMessage): a set of IV
+// PageBlocks (Blocks) + embedded resolved Photos/Documents.
 //
-// Blocks 存 gotd TL 序列化后的 []tg.PageBlockClass 不透明字节——PageBlock 体系庞大且
-// input(inputRichMessage.blocks) 与 output(richMessage.blocks) 同构、原样透传，故不在
-// domain 逐类型建模；rpc 层负责 tg.PageBlock 向量 ↔ bytes 的序列化（domain 不依赖 tg）。
-// 与 message media 同理，Photos/Documents 存已解析快照（含 viewer 无关的 access_hash），
-// 投影复用 tgPhoto/tgDocument。HTML/Markdown 输入也会在 RPC 边界归一为同一组 Blocks。
+// Blocks stores the opaque bytes of the gotd TL-serialized []tg.PageBlockClass — the PageBlock system is huge and
+// input (inputRichMessage.blocks) and output (richMessage.blocks) are isomorphic and passed through verbatim, so it is not modeled per type
+// in domain; the rpc layer serializes the tg.PageBlock vector ↔ bytes (domain does not depend on tg).
+// As with message media, Photos/Documents store resolved snapshots (including the viewer-independent access_hash),
+// and projection reuses tgPhoto/tgDocument. HTML/Markdown input is also normalized to the same set of Blocks at the RPC boundary.
 //
-// BlocksLayer 是这份持久化字节的 exact TL profile，而不是发送客户端的 Layer。历史记录
-// 没有该字段；0 是正式的 storage-v1 标记，固定解释为 Layer 228。新写入必须显式保存
-// 编码时的 profile，读取不得靠 constructor 试解或失败后回退。
+// BlocksLayer is the exact TL profile of these persisted bytes, not the sending client's Layer. Historical records
+// lack this field; 0 is the formal storage-v1 marker, always interpreted as Layer 228. New writes must explicitly store
+// the profile used at encoding time, and reads must not rely on trial-decoding constructors or falling back on failure.
 type MessageRichMessage struct {
 	Rtl         bool       `json:"rtl,omitempty"`
 	Part        bool       `json:"part,omitempty"`
@@ -221,9 +221,9 @@ type MessageRichMessage struct {
 	Blocks      []byte     `json:"blocks,omitempty"`
 	Photos      []Photo    `json:"photos,omitempty"`
 	Documents   []Document `json:"documents,omitempty"`
-	// BotAPIProjection 是由 RPC 边界从同一组已校验 PageBlock 派生出的
-	// Bot API RichMessage JSON。它不是第二事实源：写入边界只允许从 Blocks
-	// 生成，HTTP Bot API 投影只读，避免 botapi 包反向依赖 tg 类型。
+	// BotAPIProjection is the Bot API RichMessage JSON derived by the RPC boundary from the same
+	// set of validated PageBlocks. It is not a second source of truth: the write boundary may only
+	// generate it from Blocks, and the HTTP Bot API projection is read-only, avoiding a reverse dependency of the botapi package on tg types.
 	BotAPIProjection []byte `json:"bot_api_projection,omitempty"`
 }
 
@@ -237,7 +237,7 @@ func (m *MessageRichMessage) EffectiveBlocksLayer() int {
 	return m.BlocksLayer
 }
 
-// IsZero 表示无富文本载荷（落库时跳过空快照、投影时不下发 rich_message）。
+// IsZero means no rich text payload (skip an empty snapshot on persist, do not send rich_message on projection).
 func (m *MessageRichMessage) IsZero() bool {
 	return m == nil || (len(m.Blocks) == 0 && len(m.Photos) == 0 && len(m.Documents) == 0)
 }
@@ -254,12 +254,12 @@ type MessageReply struct {
 	// External is an immutable source snapshot resolved by the owning store.
 	// It is not client input and does not authorize a source message lookup.
 	External *MessageReplyExternal `json:",omitempty"`
-	// StoryID > 0 表示这是一条对 story 的回复（评论）：MessageID 为 0，Peer 为 story 作者，
-	// 投影为 messageReplyStoryHeader 而非普通 messageReplyHeader。
+	// StoryID > 0 means this is a reply (comment) to a story: MessageID is 0, Peer is the story author,
+	// and it projects as messageReplyStoryHeader rather than an ordinary messageReplyHeader.
 	StoryID int
 }
 
-// MessageForward 描述一条转发消息的原始作者信息。
+// MessageForward describes the original author information of a forwarded message.
 type MessageForward struct {
 	From           Peer
 	FromName       string
@@ -269,7 +269,7 @@ type MessageForward struct {
 	SavedFromMsgID int
 }
 
-// MessageList 是账号视角下的消息查询结果。
+// MessageList is a message query result from an account's perspective.
 type MessageList struct {
 	Messages []Message
 	Users    []User
@@ -277,7 +277,7 @@ type MessageList struct {
 	Hash     int64
 }
 
-// MessageFilter 描述历史/搜索查询条件。
+// MessageFilter describes history/search query conditions.
 type MessageFilter struct {
 	HasPeer    bool
 	Peer       Peer
@@ -296,8 +296,8 @@ type MessageFilter struct {
 	// CountOnly ignores pagination and returns the exact filtered total without
 	// loading message payloads or users. History's default limit is separate.
 	CountOnly bool
-	// PinnedOnly 仅返回置顶消息（messages.search filterPinned 与
-	// userFull.pinned_msg_id 的查询路径）。
+	// PinnedOnly returns only pinned messages (the query path of messages.search filterPinned and
+	// userFull.pinned_msg_id).
 	PinnedOnly     bool
 	MusicOnly      bool
 	PhoneCallsOnly bool
@@ -305,11 +305,11 @@ type MessageFilter struct {
 	// with the protocol-level "missed" reason.
 	MissedPhoneCallsOnly bool
 	NeedTotalCount       bool
-	// SavedPeer 非零时仅返回 self-chat 中该 saved 子会话的消息
-	// （messages.getSavedHistory）；Peer 必须同时是 self。
+	// When SavedPeer is non-zero, return only the messages of that saved sub-chat in the self-chat
+	// (messages.getSavedHistory); Peer must also be self.
 	SavedPeer Peer
-	// SavedReactions 非空时仅返回至少带其中一个 tag 的 Saved Messages。
-	// 仅 messages.search(peer=self) 使用；普通私聊 reaction 不参与匹配。
+	// When SavedReactions is non-empty, return only Saved Messages carrying at least one of the tags.
+	// Used only by messages.search(peer=self); an ordinary private-chat reaction does not participate in matching.
 	SavedReactions []MessageReaction
 	// PeerIDs restricts a global private search to these user peers. Empty is a
 	// valid restricted set, so RestrictPeerIDs carries presence separately.
@@ -317,7 +317,7 @@ type MessageFilter struct {
 	RestrictPeerIDs bool
 }
 
-// SendPrivateTextRequest 是私聊文本/媒体发送命令。
+// SendPrivateTextRequest is the private text/media send command.
 type SendPrivateTextRequest struct {
 	SenderUserID    int64
 	RecipientUserID int64
@@ -341,10 +341,10 @@ type SendPrivateTextRequest struct {
 	// send path where the sender is the initiator.
 	OriginUserID     int64
 	RecipientBlocked bool
-	// IdempotencyFingerprint 是调用边界对原始、不可变发送请求计算的 SHA-256。
-	// RPC 层应优先填入原始 TL 请求指纹，避免链接预览、骰子结果、上传媒体
-	// 等服务端派生字段让合法重放看起来不同；内部调用留空时 store 会基于
-	// domain command 的不可变字段生成等价指纹。
+	// IdempotencyFingerprint is the SHA-256 computed by the call boundary over the original, immutable send request.
+	// The RPC layer should prefer the original TL request fingerprint, so server-derived fields such as link previews, dice results and
+	// uploaded media do not make a legitimate replay look different; when an internal call leaves it empty, the store generates an equivalent
+	// fingerprint from the domain command's immutable fields.
 	IdempotencyFingerprint []byte
 	// IdempotencyPreflighted is internal execution metadata.  A trusted caller sets it only
 	// after a read-only replay lookup returned absent, allowing the app/store layers to avoid
@@ -353,16 +353,16 @@ type SendPrivateTextRequest struct {
 	IdempotencyPreflighted bool
 	TTLPeriod              int
 	ViaBotID               int64
-	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
+	// GroupedID is the album grouping id (the same sendMultiMedia group shares a non-zero value; non-album is always 0).
 	GroupedID int64
-	// Effect 消息特效 id（私聊专属，0 表无特效；调用方已对 catalog 校验过合法性）。
+	// Effect is the message effect id (private-chat only, 0 means no effect; the caller has validated legality against the catalog).
 	Effect int64
 	// BusinessAutomationKind is internal app-layer metadata used to suppress
 	// recursive greeting/away automation for server-generated replies.
 	BusinessAutomationKind BusinessAutomationKind
-	// ReplyMarkup 是 bot 出站消息的 reply/inline keyboard 快照；普通用户发送恒 nil。
+	// ReplyMarkup is the reply/inline keyboard snapshot of a bot outbound message; an ordinary user send is always nil.
 	ReplyMarkup *MessageReplyMarkup
-	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage is the Layer 228 rich text message (richMessage) snapshot, optional; an ordinary message is always nil.
 	RichMessage *MessageRichMessage
 	PaidStars   int64
 }
@@ -384,7 +384,7 @@ type PrivateSendReplayRequest struct {
 	IdempotencyFingerprint []byte
 }
 
-// SendPrivateTextResult 描述一次私聊文本发送的双端结果。
+// SendPrivateTextResult describes the two-sided result of one private text send.
 type PaidStarsCharge struct {
 	Amount           int64
 	SenderBalance    int64
@@ -433,8 +433,8 @@ type SetPrivateMessageReactionsRequest struct {
 	Big         bool
 	AddToRecent bool
 	Date        int
-	// ReactionsPerUserMax 是 viewer 的每用户上限档位（premium 双档）；
-	// 0 表示未填，store 侧按默认档裁剪。
+	// ReactionsPerUserMax is the viewer's per-user limit tier (Premium dual tier);
+	// 0 means unfilled, and the store trims to the default tier.
 	ReactionsPerUserMax int
 }
 
@@ -451,7 +451,7 @@ type PrivateMessageReactionsResult struct {
 	Reactions ChannelMessageReactions
 }
 
-// ForwardPrivateMessagesRequest 是私聊文本消息转发命令。
+// ForwardPrivateMessagesRequest is the private text message forward command.
 type ForwardPrivateMessagesRequest struct {
 	OwnerUserID      int64
 	FromPeer         Peer
@@ -469,7 +469,7 @@ type ForwardPrivateMessagesRequest struct {
 	TTLPeriod        int
 }
 
-// ForwardPrivateMessagesResult 描述一次私聊转发的 owner 维度结果。
+// ForwardPrivateMessagesResult describes the owner-dimension result of one private forward.
 type ForwardPrivateMessagesResult struct {
 	OwnerUserID        int64
 	SenderMessages     []Message
@@ -482,8 +482,8 @@ type ForwardPrivateMessagesResult struct {
 
 const PrivateNoForwardsRequestExpirePeriod = 24 * 60 * 60
 
-// PrivateNoForwardsState 是一对普通用户唯一的内容保护权威。
-// EnabledByUserID 为 0 或参与者之一；非零时双方共享的会话均受保护。
+// PrivateNoForwardsState is the single content-protection authority for a pair of ordinary users.
+// EnabledByUserID is 0 or one of the participants; when non-zero, chats shared by both sides are protected.
 type PrivateNoForwardsState struct {
 	UserLowID       int64
 	UserHighID      int64
@@ -501,7 +501,7 @@ func (s PrivateNoForwardsState) ForViewer(viewerUserID int64) (myEnabled, peerEn
 	return s.EnabledByUserID == viewerUserID, s.EnabledByUserID != viewerUserID
 }
 
-// TogglePrivateNoForwardsRequest 是私聊内容保护的原子状态+服务消息命令。
+// TogglePrivateNoForwardsRequest is the atomic state + service message command for private content protection.
 type TogglePrivateNoForwardsRequest struct {
 	ActorUserID     int64
 	PeerUserID      int64
@@ -513,15 +513,15 @@ type TogglePrivateNoForwardsRequest struct {
 	OriginSessionID int64
 }
 
-// TogglePrivateNoForwardsResult 同时返回提交后的权威状态与本次真实服务消息。
-// Changed=false 且 Send 为空表示官方定义的 no-op。
+// TogglePrivateNoForwardsResult returns both the committed authoritative state and this call's real service message.
+// Changed=false with an empty Send means the officially defined no-op.
 type TogglePrivateNoForwardsResult struct {
 	State   PrivateNoForwardsState
 	Changed bool
 	Send    SendPrivateTextResult
 }
 
-// ReadHistoryRequest 是账号视角的 messages.readHistory 命令。
+// ReadHistoryRequest is the messages.readHistory command from an account's perspective.
 type ReadHistoryRequest struct {
 	OwnerUserID     int64
 	Peer            Peer
@@ -531,7 +531,7 @@ type ReadHistoryRequest struct {
 	OriginSessionID int64
 }
 
-// ReadHistoryResult 描述一次会话已读操作的业务结果。
+// ReadHistoryResult describes the business result of one chat read operation.
 type ReadHistoryResult struct {
 	OwnerUserID      int64
 	Peer             Peer
@@ -559,22 +559,22 @@ type ReadMessageContentsResult struct {
 	OwnerUserID int64
 	MessageIDs  []int
 	Event       UpdateEvent
-	// SenderEvents 是对端发送者的内容已读回执：reader 听完 voice/round 后，
-	// 每个原 sender 收到一条 updateReadMessagesContents，messages 用 sender
-	// 自己视角的 box id。
+	// SenderEvents are the content read receipts for the peer senders: after the reader finishes a voice/round,
+	// each original sender receives an updateReadMessagesContents, where messages uses the sender's
+	// own-perspective box id.
 	SenderEvents []UpdateEvent
 }
 
-// OutboxReadDateRequest 是 messages.getOutboxReadDate 查询。
+// OutboxReadDateRequest is the messages.getOutboxReadDate query.
 type OutboxReadDateRequest struct {
 	OwnerUserID int64
 	Peer        Peer
 	ID          int
 }
 
-// EditMessageRequest 是账号视角下编辑一条已发送私聊消息的命令。
-// Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止，
-// rpc 层负责限定媒体种类）；nil 表示纯文本编辑。
+// EditMessageRequest is the command to edit a sent private message from an account's perspective.
+// A non-nil Media replaces the message media snapshot wholesale (the only current caller is live location update/stop,
+// and the rpc layer limits the media kind); nil means a text-only edit.
 type EditMessageRequest struct {
 	OwnerUserID     int64
 	Peer            Peer
@@ -586,42 +586,42 @@ type EditMessageRequest struct {
 	HideEdited      bool
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
-	// SetReplyMarkup 置位时替换 reply_markup（ReplyMarkup 为 nil/空 = 清空键盘）；
-	// 未置位则保留原 markup。仅 bot 编辑自己消息时由 RPC 层置位（P3）。
+	// When SetReplyMarkup is set, replace reply_markup (a nil/empty ReplyMarkup = clear the keyboard);
+	// when unset, the original markup is preserved. The RPC layer sets it only when a bot edits its own message (P3).
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
-	// SetRichMessage 置位时替换 rich_message（RichMessage nil/空 = 清空富文本）。
-	// TDesktop EditRichMessage 只带 f_rich_message，不带 f_message；store 不能把它误判为空编辑。
+	// When SetRichMessage is set, replace rich_message (a nil/empty RichMessage = clear the rich text).
+	// TDesktop EditRichMessage carries only f_rich_message, not f_message; the store must not mistake it for an empty edit.
 	SetRichMessage bool
 	RichMessage    *MessageRichMessage
-	// ViaBotEditBotID 非零时允许对应 bot 编辑经由它发送的 inline 私聊消息。
+	// A non-zero ViaBotEditBotID allows the corresponding bot to edit inline private messages sent through it.
 	ViaBotEditBotID int64
-	// AllowTodoParticipantMutation 允许 checklist 参与者在 others_can_* 授权下通过
-	// edit 事件替换 todo 媒体快照。仅 RPC todo handler 设置；store 仍会限制为
-	// todo->todo 且正文/entities/markup 不变，避免普通消息越权编辑。
+	// AllowTodoParticipantMutation lets a checklist participant replace the todo media snapshot through an
+	// edit event under the others_can_* grant. Only the RPC todo handler sets it; the store still restricts it to
+	// todo->todo with an unchanged body/entities/markup, preventing an ordinary message from being edited without permission.
 	AllowTodoParticipantMutation bool
-	// WebPageResolve 置位时为服务端内部「链接预览就地替换」：仅替换 media（不碰 body/
-	// entities/edit_date，故不标记「已编辑」），生成 UpdateEventWebPage 而非 edit_message。
-	// 幂等守卫：仅当目标当前 media 仍是 ID==ExpectedWebPageID 的 pending 链接预览才替换，
-	// 否则返回 ErrMessageNotModified（消息已删/已改/已解析）。
+	// When WebPageResolve is set it is a server-internal "replace link preview in place": only the media is replaced (body/
+	// entities/edit_date untouched, so it is not marked "edited") and UpdateEventWebPage is generated rather than edit_message.
+	// Idempotency guard: replace only when the target's current media is still a pending link preview with ID==ExpectedWebPageID,
+	// otherwise return ErrMessageNotModified (the message was deleted/changed/resolved).
 	WebPageResolve    bool
 	ExpectedWebPageID int64
 }
 
-// EditedMessageForUser 描述一次编辑对某个 owner 视角造成的影响。
+// EditedMessageForUser describes the effect of one edit on a given owner's perspective.
 type EditedMessageForUser struct {
 	UserID  int64
 	Message Message
 	Event   UpdateEvent
 }
 
-// EditMessageResult 描述消息编辑后的 owner 维度结果。
+// EditMessageResult describes the owner-dimension result after a message edit.
 type EditMessageResult struct {
 	OwnerUserID int64
 	Edited      []EditedMessageForUser
 }
 
-// Self 返回当前请求账号的编辑结果。
+// Self returns the edit result for the current requesting account.
 func (r EditMessageResult) Self() EditedMessageForUser {
 	for _, item := range r.Edited {
 		if item.UserID == r.OwnerUserID {
@@ -631,12 +631,12 @@ func (r EditMessageResult) Self() EditedMessageForUser {
 	return EditedMessageForUser{UserID: r.OwnerUserID}
 }
 
-// Changed 表示本次编辑是否实际影响了任何 owner 视角。
+// Changed reports whether this edit actually affected any owner's perspective.
 func (r EditMessageResult) Changed() bool {
 	return len(r.Edited) > 0
 }
 
-// DeleteMessagesRequest 是账号视角下按消息 ID 删除消息的命令。
+// DeleteMessagesRequest is the command to delete messages by id from an account's perspective.
 type DeleteMessagesRequest struct {
 	OwnerUserID     int64
 	IDs             []int
@@ -646,13 +646,13 @@ type DeleteMessagesRequest struct {
 	OriginSessionID int64
 }
 
-// DeleteHistoryRequest 是账号视角下清空某个 peer 历史的命令。
+// DeleteHistoryRequest is the command to clear a peer's history from an account's perspective.
 type DeleteHistoryRequest struct {
 	OwnerUserID int64
 	Peer        Peer
 	MaxID       int
-	// MinDate/MaxDate 是"按日期删除"的闭区间（unix 秒，0 表示不限）；
-	// 客户端先本地销毁再发请求，服务端静默忽略会造成删除复活。
+	// MinDate/MaxDate are the closed interval of a "delete by date" (unix seconds, 0 means unbounded);
+	// the client destroys locally before sending the request, so a server that silently ignores it would resurrect the deletions.
 	MinDate         int
 	MaxDate         int
 	JustClear       bool
@@ -662,22 +662,22 @@ type DeleteHistoryRequest struct {
 	OriginSessionID int64
 }
 
-// DeletedMessagesForUser 描述一次删除对某个 owner 视角造成的影响。
+// DeletedMessagesForUser describes the effect of one deletion on a given owner's perspective.
 type DeletedMessagesForUser struct {
 	UserID     int64
 	MessageIDs []int
-	// Event 保留单一 delete_messages 事件，供普通 deleteMessages 路径与
-	// replay receipt 使用；just_clear 还会在 Events 中携带 read/edit 事件。
+	// Event keeps a single delete_messages event for the ordinary deleteMessages path and
+	// the replay receipt; just_clear additionally carries read/edit events in Events.
 	Event  UpdateEvent
 	Events []UpdateEvent
-	// Pts/PtsCount 是本次 method 对该 owner 的 affected watermark 汇总。
-	// 普通删除等于 Event；just_clear 等于最后一条真实 update 的 pts 与
-	// delete/read/edit 三段 pts_count 之和。
+	// Pts/PtsCount is the affected watermark summary of this method for that owner.
+	// For an ordinary delete it equals Event; for just_clear it equals the pts of the last real update and
+	// the sum of the delete/read/edit three-segment pts_count.
 	Pts      int
 	PtsCount int
 }
 
-// AffectedPts 返回 messages.Affected* 应使用的最终 PTS 与本次总增量。
+// AffectedPts returns the final PTS and this call's total increment that messages.Affected* should use.
 func (d DeletedMessagesForUser) AffectedPts() (int, int) {
 	if d.Pts != 0 {
 		return d.Pts, d.PtsCount
@@ -685,14 +685,14 @@ func (d DeletedMessagesForUser) AffectedPts() (int, int) {
 	return d.Event.Pts, d.Event.PtsCount
 }
 
-// DeleteMessagesResult 描述消息删除后的 owner 维度结果。
+// DeleteMessagesResult describes the owner-dimension result after message deletion.
 type DeleteMessagesResult struct {
 	OwnerUserID int64
 	Deleted     []DeletedMessagesForUser
 	Offset      int
 }
 
-// Self 返回当前请求账号的删除结果。
+// Self returns the deletion result for the current requesting account.
 func (r DeleteMessagesResult) Self() DeletedMessagesForUser {
 	for _, item := range r.Deleted {
 		if item.UserID == r.OwnerUserID {
@@ -702,7 +702,7 @@ func (r DeleteMessagesResult) Self() DeletedMessagesForUser {
 	return DeletedMessagesForUser{UserID: r.OwnerUserID}
 }
 
-// Changed 表示本次删除是否实际影响了任何 owner 视角。
+// Changed reports whether this deletion actually affected any owner's perspective.
 func (r DeleteMessagesResult) Changed() bool {
 	for _, item := range r.Deleted {
 		pts, _ := item.AffectedPts()
@@ -713,15 +713,15 @@ func (r DeleteMessagesResult) Changed() bool {
 	return false
 }
 
-// PinPrivateMessageRequest 是 messages.updatePinnedMessage 的私聊命令
-// （含 Saved Messages = self peer）。
+// PinPrivateMessageRequest is the private-chat command of messages.updatePinnedMessage
+// (including Saved Messages = self peer).
 type PinPrivateMessageRequest struct {
 	OwnerUserID int64
 	Peer        Peer
 	MessageID   int
 	Pinned      bool
-	// PmOneside 仅置顶在本侧（官方私聊置顶框"同时为对方置顶"未勾选时），
-	// 不向对端翻转、不生成服务消息。unpin 无此语义，恒双侧清除。
+	// PmOneside pins only on this side (when the official private-chat pin box's "pin for the other side too" is unchecked);
+	// it does not flip the peer and generates no service message. unpin has no such semantics and always clears both sides.
 	PmOneside bool
 	Silent    bool
 	// RecipientBlocked applies the normal private-service delivery policy.
@@ -731,7 +731,7 @@ type PinPrivateMessageRequest struct {
 	OriginSessionID  int64
 }
 
-// PinnedMessagesForUser 描述置顶状态变化对某个 owner 视角的影响。
+// PinnedMessagesForUser describes the effect of a pin state change on a given owner's perspective.
 type PinnedMessagesForUser struct {
 	UserID     int64
 	Peer       Peer
@@ -740,23 +740,23 @@ type PinnedMessagesForUser struct {
 	Event      UpdateEvent
 }
 
-// MaxUnpinAllBatch 限制单次 unpinAllMessages 实际清除的置顶数量；
-// 超出部分由客户端按 affectedHistory.Offset>0 续发清除，单条
-// updatePinnedMessages 的 messages 向量随之有界。
+// MaxUnpinAllBatch limits the pin count a single unpinAllMessages actually clears;
+// the rest is cleared by the client continuing per affectedHistory.Offset>0, keeping a single
+// updatePinnedMessages messages vector bounded.
 const MaxUnpinAllBatch = 1000
 
-// PinPrivateMessageResult 描述私聊置顶/取消置顶的 owner 维度结果。
-// Updated 为空表示状态未变化（幂等 no-op，不烧 pts）。
+// PinPrivateMessageResult describes the owner-dimension result of a private pin/unpin.
+// An empty Updated means the state did not change (an idempotent no-op that burns no pts).
 type PinPrivateMessageResult struct {
 	OwnerUserID int64
 	Updated     []PinnedMessagesForUser
 	// ServiceMessage is committed atomically with a changed shared private pin.
 	ServiceMessage SendPrivateTextResult
-	// Offset 非 0 表示 unpinAll 还有剩余批次待清。
+	// A non-zero Offset means unpinAll still has remaining batches to clear.
 	Offset int
 }
 
-// Self 返回当前请求账号的置顶结果。
+// Self returns the pin result for the current requesting account.
 func (r PinPrivateMessageResult) Self() PinnedMessagesForUser {
 	for _, item := range r.Updated {
 		if item.UserID == r.OwnerUserID {
@@ -766,7 +766,7 @@ func (r PinPrivateMessageResult) Self() PinnedMessagesForUser {
 	return PinnedMessagesForUser{UserID: r.OwnerUserID}
 }
 
-// Changed 表示本次操作是否实际翻转了任何 owner 视角的置顶状态。
+// Changed reports whether this operation actually flipped the pin state for any owner's perspective.
 func (r PinPrivateMessageResult) Changed() bool {
 	for _, item := range r.Updated {
 		if len(item.MessageIDs) > 0 {
@@ -776,7 +776,7 @@ func (r PinPrivateMessageResult) Changed() bool {
 	return false
 }
 
-// UnpinAllPrivateMessagesRequest 是 messages.unpinAllMessages 的私聊命令。
+// UnpinAllPrivateMessagesRequest is the private-chat command of messages.unpinAllMessages.
 type UnpinAllPrivateMessagesRequest struct {
 	OwnerUserID     int64
 	Peer            Peer

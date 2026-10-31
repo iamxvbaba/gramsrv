@@ -6,9 +6,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// ThemeStore 持久化自定义云主题(account.createTheme 等)与每用户已安装/已存主题列表。
-// 读未命中返回 (zero,false,nil);更新/安装不存在的主题返回 domain.ErrThemeNotFound;
-// slug 冲突返回 domain.ErrThemeSlugTaken。memory 与 postgres 实现必须行为一致。
+// ThemeStore persists custom cloud themes (account.createTheme etc.) and each user's
+// installed/saved theme list. A read miss returns (zero,false,nil); updating/installing a
+// nonexistent theme returns domain.ErrThemeNotFound; a slug conflict returns
+// domain.ErrThemeSlugTaken. The memory and postgres implementations must behave identically.
 type ThemeStore interface {
 	CreateTheme(ctx context.Context, t domain.Theme) error
 	GetThemeByID(ctx context.Context, id int64) (domain.Theme, bool, error)
@@ -16,12 +17,13 @@ type ThemeStore interface {
 	SlugExists(ctx context.Context, slug string) (bool, error)
 	UpdateTheme(ctx context.Context, t domain.Theme) error
 	IncrementInstalls(ctx context.Context, id int64) error
-	// SetInstalled 把 themeID 加入 userID 的已安装/已存列表(upsert,更新 dark)。
+	// SetInstalled adds themeID to userID's installed/saved list (upsert, updating dark).
 	SetInstalled(ctx context.Context, userID, themeID int64, dark bool) error
-	// RemoveInstalled 从列表移除(saveTheme unsave)。不存在不报错。
+	// RemoveInstalled removes from the list (saveTheme unsave). Absent does not error.
 	RemoveInstalled(ctx context.Context, userID, themeID int64) error
 	ListInstalledByUser(ctx context.Context, userID int64) ([]domain.Theme, error)
-	// ListThemesForUser 返回用户「创建 ∪ 安装」的全部主题(去重),供 getThemes 跨设备同步。
-	// 按 created_at,id 升序(memory 与 postgres 必须一致)。
+	// ListThemesForUser returns all of the user's themes as "created union installed"
+	// (deduplicated), for getThemes cross-device sync. Ordered by ascending created_at,id
+	// (memory and postgres must match).
 	ListThemesForUser(ctx context.Context, userID int64) ([]domain.Theme, error)
 }

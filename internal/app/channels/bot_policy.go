@@ -275,12 +275,15 @@ func (s *Service) filterBotChannelEvent(ctx context.Context, botUserID int64, ev
 		}
 		return event, true
 	case domain.ChannelUpdateDeleteMessages:
-		// 删除事件只携带消息 id、不含任何内容,且在线推送路径(channels_updates 的
-		// channelDeleteMessagesUpdates→enqueueChannelFanout)本就对全体成员无差别投递删除。
-		// 若在此按可见性过滤,会因被删消息无法重取(GetChannelMessages 带 AND NOT deleted
-		// 恒返空)而把整条 delete 事件丢弃——privacy bot 经 getChannelDifference 补差时将
-		// 对所有删除失明(连它本可见消息的删除也收不到),客户端缓存残留"未删"态。故直接放行,
-		// 与在线推送行为一致(删除 id 不泄漏内容)。
+		// Delete events carry only message IDs and no content, and the online push path
+		// (channelDeleteMessagesUpdates→enqueueChannelFanout in channels_updates) already
+		// delivers deletions to all members without distinction. If visibility filtering were
+		// applied here, the deleted message could not be re-fetched (GetChannelMessages with
+		// AND NOT deleted always returns empty), so the whole delete event would be dropped —
+		// a privacy bot catching up via getChannelDifference would be blind to all deletions
+		// (not even deletions of messages it can see), leaving the client cache in a stale
+		// "not deleted" state. So pass it through, consistent with the online push behavior
+		// (a deleted id leaks no content).
 		return event, true
 	case domain.ChannelUpdatePinnedMessages:
 		if len(event.MessageIDs) == 0 {

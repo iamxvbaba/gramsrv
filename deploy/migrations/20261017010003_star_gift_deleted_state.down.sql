@@ -1,5 +1,6 @@
--- 回滚：把已删除的礼物恢复成 active 是不可能的（没有历史快照），因此只收紧约束，
--- 已删除行会阻止回滚，需要先人工清理 lifecycle_status='deleted' 的行。
+-- Rollback: restoring a deleted gift to active is impossible (no historical
+-- snapshot), so this only tightens the constraint; deleted rows will block the
+-- rollback and must be cleaned up manually first (lifecycle_status='deleted').
 
 ALTER TABLE public.peer_star_gifts
     DROP CONSTRAINT IF EXISTS peer_star_gifts_lifecycle_check,

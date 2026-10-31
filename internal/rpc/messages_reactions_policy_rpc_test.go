@@ -147,7 +147,7 @@ func TestSendReactionRespectsChannelReactionPolicy(t *testing.T) {
 	if _, err := f.sendReaction(t, f.ownerID, "\U0001f44d"); err == nil || !strings.Contains(err.Error(), "REACTION_INVALID") {
 		t.Fatalf("reaction under none policy err = %v, want REACTION_INVALID", err)
 	}
-	// 策略收紧后撤销存量 reaction 必须仍然可行。
+	// Retracting an existing reaction must still work after the policy tightens.
 	if _, err := f.sendReaction(t, f.memberID); err != nil {
 		t.Fatalf("retract reaction under none policy: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestSendReactionEnforcesUniqueReactionsLimit(t *testing.T) {
 	f := newReactionPolicyFixture(t, false)
 	ctx := context.Background()
 
-	// reactions_limit 是 appConfig reactions_uniq_max 的 per-chat 覆盖，用 1 触发上限。
+	// reactions_limit is the per-chat override of appConfig reactions_uniq_max; use 1 to trigger the limit.
 	if _, err := f.channelSvc.SetAvailableReactions(ctx, f.ownerID, f.channel.ID, domain.ChannelReactionPolicy{
 		Type:  domain.ChannelReactionPolicyAll,
 		Limit: 1,
@@ -452,7 +452,7 @@ func TestSendReactionEnforcesUniqueReactionsLimit(t *testing.T) {
 	if _, err := f.sendReaction(t, f.memberID, "❤"); err == nil || !strings.Contains(err.Error(), "REACTIONS_TOO_MANY") {
 		t.Fatalf("new unique emoji past limit err = %v, want REACTIONS_TOO_MANY", err)
 	}
-	// 追加已存在的种类不受 uniq 上限约束。
+	// Appending an existing kind is not constrained by the uniq limit.
 	updates, err := f.sendReaction(t, f.memberID, "\U0001f44d")
 	if err != nil {
 		t.Fatalf("existing emoji reaction: %v", err)
@@ -467,8 +467,9 @@ func TestSendReactionOverLimitMessageStillAllowsExistingKinds(t *testing.T) {
 	f := newReactionPolicyFixture(t, false)
 	ctx := context.Background()
 
-	// 默认策略下先造出 {👍, ❤} 两个去重种类，再把 reactions_limit 调低到 1，
-	// 模拟「存量已超限」（管理员事后调低 / 部署前无 uniq 闸门的旧数据）。
+	// Under the default policy, first create two deduplicated kinds {👍, ❤}, then
+	// lower reactions_limit to 1, simulating "existing state already over the
+	// limit" (an admin lowering it afterwards / legacy data predating the uniq gate).
 	if _, err := f.sendReaction(t, f.ownerID, "\U0001f44d"); err != nil {
 		t.Fatalf("seed owner reaction: %v", err)
 	}
@@ -482,18 +483,18 @@ func TestSendReactionOverLimitMessageStillAllowsExistingKinds(t *testing.T) {
 		t.Fatalf("lower uniq limit: %v", err)
 	}
 
-	// 重发自己已有的 reaction（no-op）必须放行。
+	// Re-sending your own existing reaction (no-op) must be allowed.
 	if _, err := f.sendReaction(t, f.ownerID, "\U0001f44d"); err != nil {
 		t.Fatalf("owner re-send own reaction on over-limit message: %v", err)
 	}
 	if _, err := f.sendReaction(t, f.memberID, "❤"); err != nil {
 		t.Fatalf("member re-send own reaction on over-limit message: %v", err)
 	}
-	// 第三人给已有种类投票必须放行（不引入新种类）。
+	// A third user piling onto an existing kind must be allowed (no new kind introduced).
 	if _, err := f.sendReaction(t, f.member2ID, "\U0001f44d"); err != nil {
 		t.Fatalf("third user piles onto existing kind on over-limit message: %v", err)
 	}
-	// 引入新种类仍然 REACTIONS_TOO_MANY。
+	// Introducing a new kind still yields REACTIONS_TOO_MANY.
 	if _, err := f.sendReaction(t, f.member2ID, "\U0001f525"); err == nil || !strings.Contains(err.Error(), "REACTIONS_TOO_MANY") {
 		t.Fatalf("new kind on over-limit message err = %v, want REACTIONS_TOO_MANY", err)
 	}
@@ -502,7 +503,7 @@ func TestSendReactionOverLimitMessageStillAllowsExistingKinds(t *testing.T) {
 func TestSendReactionTrimsVectorToPerUserMax(t *testing.T) {
 	f := newReactionPolicyFixture(t, false)
 
-	// 超出 reactions_user_max_default 的向量保留尾部最新项，不报错。
+	// A vector exceeding reactions_user_max_default keeps the newest tail items without erroring.
 	updates, err := f.sendReaction(t, f.memberID, "\U0001f44d", "❤")
 	if err != nil {
 		t.Fatalf("send oversized reaction vector: %v", err)

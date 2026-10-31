@@ -12,12 +12,12 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// StarGiftStore 用 PostgreSQL 实现 store.StarGiftStore（peer 收到的 Star 礼物实例）。
+// StarGiftStore implements store.StarGiftStore with PostgreSQL (Star gift instances received by a peer).
 type StarGiftStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewStarGiftStore 基于 pgx 连接池（或事务）创建 StarGiftStore。
+// NewStarGiftStore creates a StarGiftStore on top of a pgx pool (or transaction).
 func NewStarGiftStore(db sqlcgen.DBTX) *StarGiftStore {
 	return &StarGiftStore{db: db}
 }
@@ -586,9 +586,10 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
 	}
 	page := domain.SavedStarGiftPage{Count: total}
 
-	// sort_by_value 的“价格”统一以 Telegram Stars 计价：优先在售挂牌价，
-	// 其次已记录的 XTR 价值，最后回落到目录定价。TON 计价的挂牌没有官方
-	// 汇率可换算，因此按目录价参与排序而不是伪造换算结果。
+	// The "price" for sort_by_value is uniformly denominated in Telegram Stars: first the asking
+	// price of an active listing, then the recorded XTR value, and finally falling back to the
+	// catalog price. TON-denominated listings have no official exchange rate to convert with, so
+	// they participate in sorting at the catalog price rather than faking a conversion.
 	priceExpr := `COALESCE(
   (SELECT MAX(l.amount) FROM star_gift_listings l
     WHERE l.unique_gift_id = p.unique_gift_id AND l.currency = 'XTR'),
@@ -693,7 +694,7 @@ LIMIT $`+fmt.Sprint(limitPlaceholder), args...)
 	return page, nil
 }
 
-// savedStarGiftPrice 取单个实例的排序价格，供 sort_by_value 生成 keyset 游标。
+// savedStarGiftPrice fetches a single instance's sort price, used by sort_by_value to build the keyset cursor.
 func (s *StarGiftStore) savedStarGiftPrice(ctx context.Context, id int64) (int64, error) {
 	var price int64
 	err := s.db.QueryRow(ctx, `SELECT COALESCE(

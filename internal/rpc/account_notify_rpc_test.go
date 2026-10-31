@@ -24,9 +24,10 @@ func notifyRouter(t *testing.T) (*Router, *captureSessions) {
 	return r, sessions
 }
 
-// TestNotifySettingsRoundTripAndDialogProjection 回归：get/update/reset NotifySettings
-// 此前是回显 stub（不持久化），mute 重启即丢、dialog 列表不反映静音。本测试验证
-// per-peer 持久化往返 + dialog 列表投影出 mute + updateNotifySettings 推送 + reset。
+// TestNotifySettingsRoundTripAndDialogProjection regression: get/update/reset NotifySettings
+// used to be an echo stub (not persisted), so mute was lost on restart and the dialog list did
+// not reflect muting. This test verifies the per-peer persistence round-trip + mute projected
+// into the dialog list + updateNotifySettings push + reset.
 func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 	r, sessions := notifyRouter(t)
 	const viewer = int64(1000000001)
@@ -34,7 +35,7 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 	ctx := WithUserID(context.Background(), viewer)
 	peerInput := &tg.InputNotifyPeer{Peer: &tg.InputPeerUser{UserID: peerID}}
 
-	// 默认：未配置 → mute_until=0（不静音）。
+	// Default: not configured -> mute_until=0 (not muted).
 	def, err := r.onAccountGetNotifySettings(ctx, peerInput)
 	if err != nil {
 		t.Fatalf("get default: %v", err)
@@ -43,7 +44,7 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 		t.Fatalf("default mute_until = %d, want 0", mu)
 	}
 
-	// mute 该 peer。
+	// Mute this peer.
 	in := tg.InputPeerNotifySettings{}
 	in.SetMuteUntil(2000000000)
 	in.SetSilent(true)
@@ -51,7 +52,7 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 		t.Fatalf("update notify = ok %v err %v", ok, err)
 	}
 
-	// 推送 updateNotifySettings。
+	// Push updateNotifySettings.
 	snap := sessions.snapshot()
 	updates, ok := snap.message.(*tg.Updates)
 	if !ok || len(updates.Updates) == 0 {
@@ -67,7 +68,7 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 		t.Fatalf("pushed notify peer = %#v, want user %d", np.Peer, peerID)
 	}
 
-	// get 读回 mute。
+	// get reads the mute back.
 	got, err := r.onAccountGetNotifySettings(ctx, peerInput)
 	if err != nil {
 		t.Fatalf("get after mute: %v", err)
@@ -79,10 +80,10 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 		t.Fatalf("silent after mute = %v ok %v, want true", silent, ok)
 	}
 
-	// dialog 列表投影出 mute（跨重启恢复的关键）。
+	// The dialog list projects the mute (key to recovery across restarts).
 	list := domain.DialogList{Dialogs: []domain.Dialog{
 		{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peerID}, TopMessage: 1},
-		{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 999}, TopMessage: 1}, // 未静音对照
+		{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 999}, TopMessage: 1}, // unmuted control
 	}}
 	out, ok := r.tgMessagesDialogs(ctx, viewer, list).(*tg.MessagesDialogs)
 	if !ok {
@@ -90,14 +91,14 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 	}
 	muted := dialogByPeerUser(t, out.Dialogs, peerID)
 	if mu, _ := muted.NotifySettings.GetMuteUntil(); mu != 2000000000 {
-		t.Fatalf("dialog mute_until = %d, want 2000000000（列表未反映静音）", mu)
+		t.Fatalf("dialog mute_until = %d, want 2000000000 (list did not reflect the mute)", mu)
 	}
 	unmuted := dialogByPeerUser(t, out.Dialogs, 999)
 	if mu, _ := unmuted.NotifySettings.GetMuteUntil(); mu != 0 {
 		t.Fatalf("unmuted dialog mute_until = %d, want 0", mu)
 	}
 
-	// reset → 回默认。
+	// reset -> back to default.
 	if ok, err := r.onAccountResetNotifySettings(ctx); err != nil || !ok {
 		t.Fatalf("reset = ok %v err %v", ok, err)
 	}
@@ -110,7 +111,7 @@ func TestNotifySettingsRoundTripAndDialogProjection(t *testing.T) {
 	}
 }
 
-// TestNotifySettingsCategoryDefaultScope 验证 inputNotifyUsers 等类别默认作用域独立持久化。
+// TestNotifySettingsCategoryDefaultScope verifies that category default scopes such as inputNotifyUsers persist independently.
 func TestNotifySettingsCategoryDefaultScope(t *testing.T) {
 	r, _ := notifyRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -120,7 +121,7 @@ func TestNotifySettingsCategoryDefaultScope(t *testing.T) {
 	if ok, err := r.onAccountUpdateNotifySettings(ctx, &tg.AccountUpdateNotifySettingsRequest{Peer: &tg.InputNotifyUsers{}, Settings: in}); err != nil || !ok {
 		t.Fatalf("update users-default = ok %v err %v", ok, err)
 	}
-	// users 默认有值，chats 默认仍为默认（作用域隔离）。
+	// users default has a value, chats default is still the default (scope isolation).
 	usersGot, err := r.onAccountGetNotifySettings(ctx, &tg.InputNotifyUsers{})
 	if err != nil {
 		t.Fatalf("get users-default: %v", err)
@@ -133,12 +134,13 @@ func TestNotifySettingsCategoryDefaultScope(t *testing.T) {
 		t.Fatalf("get chats-default: %v", err)
 	}
 	if mu, _ := chatsGot.GetMuteUntil(); mu != 0 {
-		t.Fatalf("chats-default mute_until = %d, want 0（作用域应隔离）", mu)
+		t.Fatalf("chats-default mute_until = %d, want 0 (scopes must be isolated)", mu)
 	}
 }
 
-// TestGetNotifyExceptions 验证 getNotifyExceptions 列出 per-peer 非默认设置：
-// mute 多个 peer → 出现在异常列表；unmute → 退出；compare_stories 过滤 story-only。
+// TestGetNotifyExceptions verifies getNotifyExceptions lists per-peer non-default settings:
+// muting several peers -> they appear in the exceptions list; unmute -> they leave;
+// compare_stories filters story-only.
 func TestGetNotifyExceptions(t *testing.T) {
 	r, _ := notifyRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -150,7 +152,7 @@ func TestGetNotifyExceptions(t *testing.T) {
 		}
 	}
 
-	// mute 一个 user + 一个 channel。
+	// Mute one user + one channel.
 	mute(&tg.InputPeerUser{UserID: 555}, func(in *tg.InputPeerNotifySettings) { in.SetMuteUntil(2000000000) })
 	mute(&tg.InputPeerChannel{ChannelID: 777}, func(in *tg.InputPeerNotifySettings) { in.SetSilent(true) })
 
@@ -162,14 +164,14 @@ func TestGetNotifyExceptions(t *testing.T) {
 		t.Fatalf("exceptions missing expected peers: %#v", ex)
 	}
 
-	// unmute user 555（发空设置→清空）→ 退出异常列表。
+	// Unmute user 555 (send empty settings -> clear) -> leaves the exceptions list.
 	mute(&tg.InputPeerUser{UserID: 555}, func(in *tg.InputPeerNotifySettings) {})
 	ex = notifyExceptions(t, r, ctx, &tg.AccountGetNotifyExceptionsRequest{})
 	if len(ex) != 1 || !exceptionsHaveChannel(ex, 777) {
 		t.Fatalf("after unmute exceptions = %#v, want only channel 777", ex)
 	}
 
-	// story-only 异常：默认不计入，compare_stories 计入。
+	// story-only exception: excluded by default, included with compare_stories.
 	mute(&tg.InputPeerUser{UserID: 888}, func(in *tg.InputPeerNotifySettings) { in.SetStoriesMuted(true) })
 	if got := notifyExceptions(t, r, ctx, &tg.AccountGetNotifyExceptionsRequest{}); len(got) != 1 {
 		t.Fatalf("default exceptions = %d, want 1 (story-only excluded)", len(got))
@@ -222,8 +224,8 @@ func exceptionsHaveChannel(ex []*tg.UpdateNotifySettings, channelID int64) bool 
 	return false
 }
 
-// countingNotifyService 包 *appaccount.Service 计数 AllPeerNotifySettings 调用，
-// 验证 per-user notify 缓存短路了热路径查询。
+// countingNotifyService wraps *appaccount.Service and counts AllPeerNotifySettings calls,
+// verifying the per-user notify cache short-circuits hot-path queries.
 type countingNotifyService struct {
 	*appaccount.Service
 	allCalls int
@@ -234,8 +236,9 @@ func (s *countingNotifyService) AllPeerNotifySettings(ctx context.Context, userI
 	return s.Service.AllPeerNotifySettings(ctx, userID)
 }
 
-// TestNotifySettingsDialogProjectionCached 回归 P2-1：dialog 投影从 per-user notify
-// 缓存读取——重复 getDialogs 只加载一次（命中 0 PG），update/reset 失效后重载。
+// TestNotifySettingsDialogProjectionCached regression P2-1: dialog projection reads from the
+// per-user notify cache -- repeated getDialogs loads it only once (a hit costs 0 PG), and it is
+// reloaded after update/reset invalidation.
 func TestNotifySettingsDialogProjectionCached(t *testing.T) {
 	passwordStore := memory.NewPasswordStore()
 	svc := &countingNotifyService{Service: appaccount.NewService(passwordStore, appaccount.WithNotifySettings(passwordStore))}
@@ -258,10 +261,10 @@ func TestNotifySettingsDialogProjectionCached(t *testing.T) {
 		}
 	}
 	if svc.allCalls != 1 {
-		t.Fatalf("AllPeerNotifySettings calls = %d, want 1 (后两次 getDialogs 应命中缓存)", svc.allCalls)
+		t.Fatalf("AllPeerNotifySettings calls = %d, want 1 (the last two getDialogs should hit the cache)", svc.allCalls)
 	}
 
-	// update 失效缓存 → 下次 getDialogs 重载。
+	// update invalidates the cache -> the next getDialogs reloads.
 	in2 := tg.InputPeerNotifySettings{}
 	in2.SetMuteUntil(2100000000)
 	if _, err := r.onAccountUpdateNotifySettings(ctx, &tg.AccountUpdateNotifySettingsRequest{Peer: &tg.InputNotifyPeer{Peer: &tg.InputPeerUser{UserID: 555}}, Settings: in2}); err != nil {
@@ -269,7 +272,7 @@ func TestNotifySettingsDialogProjectionCached(t *testing.T) {
 	}
 	r.tgMessagesDialogs(ctx, viewer, list)
 	if svc.allCalls != 2 {
-		t.Fatalf("after invalidation calls = %d, want 2 (缓存失效应重载)", svc.allCalls)
+		t.Fatalf("after invalidation calls = %d, want 2 (a cache invalidation should reload)", svc.allCalls)
 	}
 }
 

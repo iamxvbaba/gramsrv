@@ -115,8 +115,10 @@ func TestMessagesPrivateBlockPreventsRecipientInboxAndRevokeRPC(t *testing.T) {
 	if len(aliceHistory.Messages) != 2 {
 		t.Fatalf("alice history len = %d, want delivered + sender-only blocked message", len(aliceHistory.Messages))
 	}
-	// 官方对私聊 revoke 不做 block 限制：被拉黑后撤回自己的消息仍双向
-	// 生效（客户端本地已先删，服务端报错只会造成消息复活错乱）。
+	// The official server applies no block restriction to private-chat revokes:
+	// revoking your own message still takes effect on both sides after being
+	// blocked (the client deletes locally first, so a server error only causes
+	// message resurrection confusion).
 	deleteReq := &tg.MessagesDeleteMessagesRequest{ID: []int{deliveredMsg.ID}}
 	deleteReq.SetRevoke(true)
 	if _, err := r.onMessagesDeleteMessages(WithUserID(ctx, alice.ID), deleteReq); err != nil {

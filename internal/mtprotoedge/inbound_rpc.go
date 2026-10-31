@@ -12,16 +12,20 @@ import (
 	"telesrv/internal/transport"
 )
 
-// ErrInboundRPCQueueFull 表示 inbound RPC 已触达单连接或进程级预算。
+// ErrInboundRPCQueueFull means inbound RPC has reached the per-connection or process-level budget.
 var ErrInboundRPCQueueFull = errors.New("inbound rpc queue full")
 
-// maxInflightRPCBytes 是单连接所有已预留、排队和执行中 RPC 的内存 charge 上限。
-// legacy 路径的 charge 等于 copied body；exact 路径在 typed decode 前按 wire 大小、
-// 生成对象/向量/interface/string/bytes 放大保守计费。它不是可接收 wire bytes 上限。
-// 进程级预算先兜底；这里再隔离单个连接，避免一个客户端独占全局内存。
+// maxInflightRPCBytes is the memory charge cap for all reserved, queued and
+// executing RPCs on a single connection. The legacy path charges the copied body;
+// the exact path charges conservatively based on wire size and the inflation of
+// generated objects/vectors/interfaces/strings/bytes before typed decode. It is
+// not a cap on acceptable wire bytes. The process-level budget applies first as a
+// fallback; this additionally isolates a single connection, preventing one client
+// from monopolizing global memory.
 const maxInflightRPCBytes = 32 << 20 // 32 MiB
 
-// rpcCloseWaitTimeout 是连接/Server 关闭时等待在途 RPC 或共享 worker 退出的上限。
+// rpcCloseWaitTimeout is the cap for waiting on in-flight RPCs or shared workers
+// to exit when a connection/Server closes.
 const rpcCloseWaitTimeout = 5 * time.Second
 
 type inboundRPC struct {
@@ -89,9 +93,12 @@ type inboundRPCTicket struct {
 	onTimeout func()
 }
 
-// inboundRPCScheduler 是 Server 级共享调度器。ready 中每个 Conn 最多只有一个有效令牌；
-// worker 每次只从该连接取一条，再把仍可运行的连接放回队尾，因此单个热点连接不能长期
-// 占住共享池。worker 在首条任务到达后才创建，空闲 Server 不预起 256 个 goroutine。
+// inboundRPCScheduler is the Server-level shared scheduler. Each Conn in ready
+// has at most one valid token; a worker takes only one item from that connection
+// at a time, then puts the still-runnable connection back at the tail of the
+// queue, so a single hot connection cannot occupy the shared pool for long.
+// Workers are created only after the first task arrives; an idle Server does not
+// pre-start 256 goroutines.
 type inboundRPCScheduler struct {
 	workers  int
 	maxTasks int
@@ -123,9 +130,11 @@ type inboundRPCGlobalReservation struct {
 	released  atomic.Bool
 }
 
-// inboundRPCSpec 是 container preflight 与 RPC scheduler 之间的有界 admission 描述。
-// method 仅用于 metrics；size 是 materialization charge。legacy 路径等于 Copy 前
-// request body 字节数，exact 路径是 typed decode 前计算的保守内存上界。
+// inboundRPCSpec is the bounded admission descriptor between container preflight
+// and the RPC scheduler. method is only used for metrics; size is the
+// materialization charge. The legacy path equals the request body byte count
+// before Copy; the exact path is the conservative memory bound computed before
+// typed decode.
 type inboundRPCSpec struct {
 	method string
 	size   int
@@ -137,9 +146,11 @@ type inboundRPCBatchEntry struct {
 	size   int
 }
 
-// inboundRPCBatchReservation 把一个 container 内的 RPC 视为一个 admission 单元。
-// reserve 一次预留整批的全局/单连接条数和字节预算；commit 一次 append
-// 全部任务；abort 一次归还全部预算。这防止 container 只执行前半批。
+// inboundRPCBatchReservation treats the RPCs within one container as a single
+// admission unit. reserve reserves the whole batch's global/per-connection count
+// and byte budgets at once; commit appends all tasks at once; abort returns the
+// whole budget at once. This prevents a container from executing only the first
+// half of its batch.
 type inboundRPCBatchReservation struct {
 	conn      *Conn
 	ctx       context.Context
@@ -172,8 +183,9 @@ func newInboundRPCScheduler(workers, maxTasks int, maxBytes int64) *inboundRPCSc
 	}
 }
 
-// start 允许共享池开始消费。已在 start 前进入 ready 的任务会保留顺序，便于启动突发，
-// 也使测试能够确定性验证轮转公平性。
+// start lets the shared pool begin consuming. Tasks that entered ready before
+// start keep their order, which smooths startup bursts and lets tests verify
+// round-robin fairness deterministically.
 func (s *inboundRPCScheduler) start() {
 	s.lifecycleMu.Lock()
 	if s.stopped {
@@ -206,8 +218,9 @@ func (s *inboundRPCScheduler) stop(timeout time.Duration) {
 	if !s.stopped {
 		s.stopped = true
 		s.budgetMu.Lock()
-		// 与 reserveGlobal 在同一把锁下切断新任务；已持有 reservation 的任务仍由
-		// 对应 Conn 的 commit/abort/close 路径精确归还。
+		// Cut off new tasks under the same lock as reserveGlobal; tasks already
+		// holding a reservation are still returned precisely by the corresponding
+		// Conn's commit/abort/close path.
 		close(s.stopCh)
 		s.budgetMu.Unlock()
 	}
@@ -230,9 +243,10 @@ func (s *inboundRPCScheduler) stop(timeout time.Duration) {
 	}
 }
 
-// reserveGlobalBatch 在一次 budgetMu 临界区内检查并预留整批条数/字节。
-// 返回的每个 reservation 仍由对应 task 单独归还，避免一个慢 RPC 持有
-// 整个 container 已完成任务的预算。
+// reserveGlobalBatch checks and reserves the whole batch's count/bytes within one
+// budgetMu critical section. Each returned reservation is still returned
+// individually by its task, so a slow RPC does not hold the budget for the whole
+// container's completed tasks.
 func (s *inboundRPCScheduler) reserveGlobalBatch(sizes []int) ([]*inboundRPCGlobalReservation, string, error) {
 	reservations := make([]*inboundRPCGlobalReservation, len(sizes))
 	s.budgetMu.Lock()
@@ -246,7 +260,7 @@ func (s *inboundRPCScheduler) reserveGlobalBatch(sizes []int) ([]*inboundRPCGlob
 	if len(sizes) > s.maxTasks-s.tasks {
 		return nil, "global_task_budget", ErrInboundRPCQueueFull
 	}
-	// 逐项从剩余预算中减，避免 total 和 s.bytes+total 溢出。
+	// Subtract item by item from the remaining budget, avoiding overflow of total and s.bytes+total.
 	remaining := s.maxBytes - s.bytes
 	var total int64
 	for i, size := range sizes {
@@ -279,8 +293,9 @@ func (r *inboundRPCGlobalReservation) release() {
 	s.budgetMu.Unlock()
 }
 
-// releaseInboundRPCGlobalBatch 使 batch abort/commit-failure 在一次全局锁内
-// 归还它仍持有的全部预算。每张 ticket 的 CAS 保证与任何并发释放幂等。
+// releaseInboundRPCGlobalBatch lets a batch abort/commit-failure return all the
+// budget it still holds within one global lock. Each ticket's CAS guarantees
+// idempotency with any concurrent release.
 func releaseInboundRPCGlobalBatch(reservations []*inboundRPCGlobalReservation) {
 	var (
 		scheduler *inboundRPCScheduler
@@ -294,8 +309,9 @@ func releaseInboundRPCGlobalBatch(reservations []*inboundRPCGlobalReservation) {
 		if scheduler == nil {
 			scheduler = reservation.scheduler
 		}
-		// 一个 batch 只能由同一 scheduler 创建。若未来出现混合调用，
-		// 仍通过单张 release 正确归还，而不会扣错 scheduler。
+		// A batch can only be created by the same scheduler. If a mixed call ever
+		// appears, it is still returned correctly through a single release without
+		// debiting the wrong scheduler.
 		if reservation.scheduler != scheduler {
 			reservation.scheduler.budgetMu.Lock()
 			reservation.scheduler.tasks--
@@ -448,12 +464,14 @@ func (c *Conn) startInboundRPCScheduler(scheduler *inboundRPCScheduler, maxInfli
 	c.rpcRootCtx = rootCtx
 	c.rpcMaxInflight = maxInflight
 	c.rpcQueueSize = queueSize
-	// rpcQueue 保持 nil；首个成功 commit 才由 append 分配，静默连接零队列内存。
+	// rpcQueue stays nil; only the first successful commit allocates it via append,
+	// so a silent connection uses zero queue memory.
 }
 
-// reserveInboundRPCBatch 必须在 container 内任何 request body Copy 前调用。
-// 全局预算只锁一次，单连接预算也只锁一次；任一限制不满足时
-// 整批失败，不会留下部分 task/字节 reservation。
+// reserveInboundRPCBatch must be called before any request body Copy within the
+// container. The global budget is locked once and the per-connection budget is
+// locked once; if either limit is not satisfied the whole batch fails, leaving no
+// partial task/byte reservation.
 func (c *Conn) reserveInboundRPCBatch(ctx context.Context, specs []inboundRPCSpec) (*inboundRPCBatchReservation, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -512,7 +530,7 @@ func (c *Conn) reserveInboundRPCBatch(ctx context.Context, specs []inboundRPCSpe
 		c.dropInboundRPCSpecs(normalized, "scheduler_closed")
 		return nil, ErrConnClosed
 	}
-	// 用减法比较，避免对抗性 batch 的 len 加法溢出。
+	// Compare by subtraction to avoid overflow when adding len for an adversarial batch.
 	availableSlots := c.rpcQueueSize - c.rpcReserved - len(c.rpcQueue)
 	if len(entries) > availableSlots {
 		c.rpcMu.Unlock()
@@ -528,8 +546,9 @@ func (c *Conn) reserveInboundRPCBatch(ctx context.Context, specs []inboundRPCSpe
 	}
 	c.rpcReserved += len(entries)
 	c.inflightRPCBytes.Add(totalSize)
-	// Add 与 close 的 Wait 由 rpcMu 排序：close 置 rpcClosed 后不会再发生 Add。
-	// 整批 reservation 只需一个 waiter；commit/abort 也只会完成一次。
+	// Add and close's Wait are ordered by rpcMu: once close sets rpcClosed, no
+	// further Add can occur. The whole batch reservation needs only one waiter;
+	// commit/abort also complete only once.
 	c.rpcReservationWG.Add(1)
 	c.rpcMu.Unlock()
 
@@ -671,9 +690,11 @@ func (r *inboundRPCBatchReservation) retain(indices []int, specs []inboundRPCSpe
 	return nil
 }
 
-// commit 在一次 rpcMu 临界区内把整批 task append 到队列并立即发布 ready token。
-// 协议 barrier 必须在调用 commit 前完成；延迟发布 token 无法阻止已有 worker
-// 从同一连接队列取走新任务，因此不提供虚假的 deferred-schedule 模式。
+// commit appends the whole batch of tasks to the queue within one rpcMu critical
+// section and immediately publishes the ready token. The protocol barrier must be
+// completed before calling commit; delaying token publication cannot stop an
+// existing worker from taking new tasks off the same connection's queue, so no
+// fake deferred-schedule mode is provided.
 func (r *inboundRPCBatchReservation) commit(tasks []inboundRPC) (result error) {
 	if r == nil {
 		return ErrConnClosed
@@ -799,8 +820,9 @@ func (r *inboundRPCBatchReservation) abort() {
 func (c *Conn) takeInboundRPC() (task inboundRPC, ok, reschedule bool) {
 	c.rpcMu.Lock()
 	defer c.rpcMu.Unlock()
-	// ready token 是可替代的：收到一个 token 就消费当前“已调度”状态。关闭后或
-	// 已被另一 token 抢先处理时，这只是一个无害 stale token。
+	// The ready token is fungible: receiving one token consumes the current
+	// "scheduled" state. After close, or when another token has already handled it
+	// first, this is just a harmless stale token.
 	if !c.rpcReady {
 		return inboundRPC{}, false, false
 	}
@@ -942,8 +964,10 @@ func (c *Conn) runInboundRPC(task inboundRPC) {
 
 	c.metrics.InboundRPCStarted(task.method, now.Sub(task.enqueuedAt))
 	ctx := task.ctx
-	// 把连接对端 IP 作为中立传输元数据注入，绑定设备授权时写 authorizations.ip。
-	// Edge 只产生传输事实；由 RPC 层的 transport.ClientIPFrom 消费，避免反向依赖。
+	// Inject the connection's peer IP as neutral transport metadata, written to
+	// authorizations.ip when binding a device authorization. The edge only produces
+	// transport facts; they are consumed by the RPC layer's transport.ClientIPFrom
+	// to avoid a reverse dependency.
 	if ip := c.clientIP(); ip != "" {
 		ctx = transport.WithClientIP(ctx, ip)
 	}
@@ -1104,9 +1128,11 @@ func (c *Conn) beginCloseInboundRPCScheduler() {
 	})
 }
 
-// waitInboundShutdown 等 Copy 前 reservation 完成 commit/abort，以及本连接已经出队的 RPC
-// 完成，二者共用一个 timeout。超时后 reservation/共享 worker 会在底层调用最终返回时自行
-// 收敛；连接 root context 已取消。
+// waitInboundShutdown waits for the pre-Copy reservation to complete its
+// commit/abort, and for RPCs already dequeued on this connection to finish, both
+// sharing one timeout. After the timeout the reservation/shared worker converge
+// on their own when the underlying call finally returns; the connection root
+// context has already been canceled.
 func (c *Conn) waitInboundShutdown(timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {

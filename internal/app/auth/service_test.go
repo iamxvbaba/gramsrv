@@ -896,7 +896,7 @@ func TestSendCodeLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) 
 	// Official history after the second SendCode: login code (1), welcome (2),
 	// new login code (3).
 	second := latestLoginMessage(3)
-	// 核心时序：SendCode 返回时 message/dialog/unread 已提交，尚未 SignIn。
+	// Core sequencing: when SendCode returns, message/dialog/unread are already committed and SignIn has not happened yet.
 	assertOfficialDialog(second.ID, 2, 1)
 	_, signInMessage, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
 	if err != nil || needSignUp {
@@ -967,17 +967,17 @@ func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {
 	if signInMessage.ID != 0 {
 		t.Fatalf("2FA SignIn returned a late login message %+v", signInMessage)
 	}
-	// 两步验证未完成：业务鉴权（UserID）必须视为未登录，避免绕过 2FA。
+	// Two-step verification incomplete: business authorization (UserID) must be treated as not logged in, to avoid bypassing 2FA.
 	bound, found, err := svc.UserID(ctx, key)
 	if err != nil || found || bound != 0 {
 		t.Fatalf("UserID after password-needed = %d found=%v err=%v, want not-found", bound, found, err)
 	}
-	// 但仍可定位待验证用户，供 auth.checkPassword 继续。
+	// But the user awaiting verification can still be located, for auth.checkPassword to continue.
 	pendingUID, pending, err := svc.PendingPasswordUserID(ctx, key)
 	if err != nil || !pending || pendingUID != u.ID {
 		t.Fatalf("PendingPasswordUserID = %d pending=%v err=%v, want %d", pendingUID, pending, err, u.ID)
 	}
-	// 两步验证通过后转为完全授权。
+	// After two-step verification passes, it becomes fully authorized.
 	if err := svc.CompletePasswordSignIn(ctx, key, 0); !errors.Is(err, store.ErrAuthorizationStateChanged) {
 		t.Fatalf("CompletePasswordSignIn without expected user err=%v, want authorization state changed", err)
 	}

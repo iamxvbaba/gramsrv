@@ -310,8 +310,9 @@ func TestChannelSendHistoryAndDifferenceRPC(t *testing.T) {
 	if !ok || fullDiff.Pts != deleted.Pts || len(fullDiff.NewMessages) != 1 || len(fullDiff.OtherUpdates) != 3 {
 		t.Fatalf("diff after edit/delete = %T %+v, want forward message id mapping plus edit/delete updates", diff, diff)
 	}
-	// 差量首条 other update 是请求者自己消息的 updateMessageID：断线后
-	// 经差量对账本地 pending，避免重复气泡。
+	// The first other update in the difference is the updateMessageID of the
+	// requester's own message: after a reconnect, reconcile the local pending via the
+	// difference, avoiding a duplicate bubble.
 	if mapping, ok := fullDiff.OtherUpdates[0].(*tg.UpdateMessageID); !ok || mapping.RandomID == 0 || mapping.ID == 0 {
 		t.Fatalf("diff other[0] = %#v, want updateMessageID for own forwarded message", fullDiff.OtherUpdates[0])
 	}

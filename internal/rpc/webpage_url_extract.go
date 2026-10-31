@@ -15,17 +15,21 @@ import (
 	"telesrv/internal/links"
 )
 
-// urlInTextRe 匹配原始文本里的带 scheme 链接（取到首个空白或尖括号/引号为止）。
-// 是否接纳由 detectURLEntities 再按 http(s) 或当前 app-link 配置收口，不能把任意
-// foo:// 都提升为服务端认证的可点击实体。
+// urlInTextRe matches a schemed link in raw text (up to the first whitespace or
+// angle/quote bracket). Whether it is accepted is decided later by detectURLEntities
+// based on http(s) or the current app-link config; an arbitrary foo:// must not be
+// promoted to a server-authenticated clickable entity.
 var urlInTextRe = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^\s<>"'）】]+`)
 
-// bareURLInTextRe 匹配官方客户端会本地识别的裸域名 URL（例如 github.com/@alice）。
-// 前导边界排除 email、已有 scheme URL 内部和域名中间；候选命中后仍由 publicsuffix
-// 校验 TLD，避免把普通带点文本误升为链接。
+// bareURLInTextRe matches the bare-domain URLs that official clients recognize locally
+// (e.g. github.com/@alice). The leading boundary excludes emails, the interior of an
+// already-schemed URL and the middle of a domain; after a candidate match, the TLD is
+// still validated by publicsuffix, so ordinary dotted text is not mistakenly promoted
+// to a link.
 var bareURLInTextRe = regexp.MustCompile(`(?i)(^|[^a-z0-9_@./:+-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})(?::[0-9]{1,5})?(?:[/?#][^\s<>"'）】]*)?)`)
 
-// urlTrailingPunct 是不属于 URL 的句末标点（'/' 是合法路径末尾，保留）。
+// urlTrailingPunct is sentence-ending punctuation that does not belong to a URL ('/' is
+// a valid path ending and is kept).
 const urlTrailingPunct = ".,;:!?)]}'\"。，、！？"
 
 type byteSpan struct {
@@ -91,10 +95,12 @@ func overlapsByteSpan(spans []byteSpan, start, end int) bool {
 	return false
 }
 
-// detectURLEntities 服务端扫描消息文本生成 url 高亮实体（MessageEntityURL）。裸域名
-// URL（github.com/@alice）按官方客户端行为接纳；带 scheme URL 除 http(s) 外，仅接受当前
-// Router 配置允许的 app-link scheme/host。偏移/长度按 UTF-16 码元（Telegram 实体口径）。
-// 自定义 scheme 只参与 entity，不改变网页预览的 http(s) 边界。
+// detectURLEntities scans the message text server-side to produce url highlight entities
+// (MessageEntityURL). A bare-domain URL (github.com/@alice) is accepted following
+// official client behavior; for a schemed URL, besides http(s) only the app-link
+// scheme/host allowed by the current Router config is accepted. Offset/length are in
+// UTF-16 code units (Telegram's entity convention). A custom scheme only participates
+// in the entity and does not change the http(s) boundary of the web preview.
 func detectURLEntities(message string, appLinks links.AppLinkBuilder) []tg.MessageEntityClass {
 	spans := rawURLByteSpans(message)
 	if len(spans) == 0 {
@@ -177,22 +183,27 @@ func bareDomainTLDValid(host string) bool {
 	return icann && suffix == tld
 }
 
-// firstPreviewableURL 从消息文本+实体中提取首个可预览链接，用于链接预览；裸域名会按
-// https:// 规范化：
-//   - MessageEntityTextURL：URL 直接在实体里（markdown 风格 [text](url)）。
-//   - MessageEntityURL：URL 是文本里 [offset,offset+length) 的子串（Telegram 实体偏移以
-//     UTF-16 码元计，需按 UTF-16 切片，不能按 rune/byte）。
-//   - 回退：实体里没有 URL 时扫描原始文本。DrKLO 发送时带 url 实体，但 TDesktop 等客户端
-//     不带、依赖服务端检测原始文本里的链接（与官方服务端行为一致），故必须扫文本兜底。
+// firstPreviewableURL extracts the first previewable link from the message text +
+// entities, for the link preview; a bare domain is normalized with https://:
+//   - MessageEntityTextURL: the URL is directly in the entity (markdown-style
+//     [text](url)).
+//   - MessageEntityURL: the URL is a substring of the text at [offset,offset+length)
+//     (Telegram entity offsets are counted in UTF-16 code units, so it must be sliced
+//     by UTF-16, not by rune/byte).
+//   - Fallback: when there is no URL in the entities, scan the raw text. DrKLO sends
+//     with url entities, but clients such as TDesktop do not and rely on the server
+//     detecting links in the raw text (consistent with official server behavior), so a
+//     text scan fallback is required.
 //
-// 取出现顺序的第一个合法链接（与官方"预览第一条链接"一致）。无可预览链接返回 ok=false。
+// Takes the first valid link in appearance order (consistent with the official "preview
+// the first link"). Returns ok=false when there is no previewable link.
 func firstPreviewableURL(message string, entities []tg.MessageEntityClass) (string, bool) {
-	var units []uint16 // 惰性：仅遇到 MessageEntityURL（需按 UTF-16 偏移切片）时才编码全文。
+	var units []uint16 // lazy: encode the whole text only when a MessageEntityURL is hit (needs UTF-16 offset slicing).
 	for _, entity := range entities {
 		var candidate string
 		switch e := entity.(type) {
 		case *tg.MessageEntityTextURL:
-			candidate = e.URL // URL 内联，无需切文本。
+			candidate = e.URL // URL is inline, no text slicing needed.
 		case *tg.MessageEntityURL:
 			if units == nil {
 				units = utf16.Encode([]rune(message))
@@ -205,8 +216,10 @@ func firstPreviewableURL(message string, entities []tg.MessageEntityClass) (stri
 			return normalized, true
 		}
 	}
-	// 回退扫原始文本：绝大多数消息无链接，无 URL 触发字符则直接跳过正则与分配。
-	// firstURLInText 会继续限定为 http(s)/裸域名，自定义 app-link 永不进入网页预览。
+	// Fallback scan of the raw text: the vast majority of messages have no link, so when
+	// there is no URL trigger character the regex and allocations are skipped outright.
+	// firstURLInText further restricts to http(s)/bare domain; a custom app-link never
+	// enters the web preview.
 	if !strings.Contains(message, "://") && !strings.Contains(message, ".") {
 		return "", false
 	}
@@ -227,7 +240,8 @@ func normalizePreviewURLCandidate(candidate string) (string, bool) {
 	return domain.NormalizeWebPageURL("https://" + candidate)
 }
 
-// firstURLInText 扫描原始文本里的首个可预览 http(s)/裸域名链接，剥掉句末标点。
+// firstURLInText scans the raw text for the first previewable http(s)/bare-domain link,
+// stripping trailing punctuation.
 func firstURLInText(message string) (string, bool) {
 	for _, span := range rawURLByteSpans(message) {
 		raw := message[span.start:span.end]
@@ -238,7 +252,8 @@ func firstURLInText(message string) (string, bool) {
 	return "", false
 }
 
-// sliceUTF16 按 UTF-16 码元偏移/长度从已编码序列取子串；越界返回空串。
+// sliceUTF16 takes a substring from an encoded sequence by UTF-16 code-unit
+// offset/length; out of range returns an empty string.
 func sliceUTF16(units []uint16, offset, length int) string {
 	if offset < 0 || length <= 0 || offset > len(units) || length > len(units)-offset {
 		return ""
@@ -246,13 +261,17 @@ func sliceUTF16(units []uint16, offset, length int) string {
 	return strings.TrimSpace(string(utf16.Decode(units[offset : offset+length])))
 }
 
-// webPagePendingOrCachedMedia 为发送构造链接预览媒体：
-//   - 若该 URL 已解析缓存（典型：客户端输入时 getWebPagePreview 已触发解析），直接挂 done
-//     卡片——发送 echo 即带卡，不依赖异步 updateWebPage 换卡（官方行为；TDesktop 对自己
-//     发出的消息不应用该换卡，故必须在 echo 直接带 done）。
-//   - 否则挂 pending 占位，由异步 resolver 解析后经 updateWebPage 换卡。
+// webPagePendingOrCachedMedia constructs the link-preview media for a send:
+//   - If the URL is already resolved in cache (typically the client's
+//     getWebPagePreview on input already triggered resolution), attach a done card
+//     directly - the send echo then carries the card without relying on an async
+//     updateWebPage swap (official behavior; TDesktop does not apply that swap to
+//     messages it sent, so the echo must carry done directly).
+//   - Otherwise attach a pending placeholder, swapped in by the async resolver via
+//     updateWebPage once resolved.
 //
-// 未启用预览或 URL 不可规范化返回 nil（发送降级为无预览，不报错）。
+// Returns nil when previews are disabled or the URL cannot be normalized (the send
+// degrades to no preview, without an error).
 func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string, invertMedia, forceLarge, forceSmall bool) *domain.MessageMedia {
 	if page, ok := r.resolveInternalWebPage(ctx, rawURL); ok {
 		page.ForceLargeMedia = forceLarge
@@ -283,9 +302,10 @@ func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string,
 			State: domain.MessageWebPageStatePending,
 			ID:    domain.WebPageURLHash(normalized),
 			URL:   normalized,
-			// date 是客户端重新拉取 pending 消息的绝对截止时间。TDesktop/DrKLO 在
-			// date<=now 时立即重取；若 resolver 此时仍运行，TDesktop 会把占位记成 sticky
-			// failed，后到的 done update 也不会重新显示卡片。
+			// date is the absolute deadline for the client to re-fetch the pending
+			// message. TDesktop/DrKLO immediately re-fetch when date<=now; if the
+			// resolver is still running at that point, TDesktop marks the placeholder as
+			// sticky failed, and a later done update will not re-display the card either.
 			Date:            int(r.clock.Now().Add(webPagePendingLifetime).Unix()),
 			ForceLargeMedia: forceLarge,
 			ForceSmallMedia: forceSmall,
@@ -293,7 +313,8 @@ func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string,
 	}
 }
 
-// webPageMediaFromText 为文本发送构造链接预览媒体：no_webpage 抑制；否则取首个可预览 URL。
+// webPageMediaFromText constructs the link-preview media for a text send: no_webpage
+// suppresses it; otherwise it takes the first previewable URL.
 func (r *Router) webPageMediaFromText(ctx context.Context, message string, entities []tg.MessageEntityClass, noWebpage, invertMedia bool) *domain.MessageMedia {
 	if noWebpage {
 		return nil

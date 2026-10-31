@@ -26,30 +26,33 @@ func (r *Router) BotAPIAvailableGifts(ctx context.Context) ([]domain.StarGift, e
 	return r.deps.Gifts.Catalog(ctx)
 }
 
-// starGiftPurchaseFormTTLSeconds 固定表单有效期。StarGiftPurchaseForm 的校验要求
-// ExpiresAt 恰为 IssuedAt+600（PostgreSQL 商店和内存适配器都强制这一点），所以这里
-// 用同一个常量而不是散落的字面量 600。
+// starGiftPurchaseFormTTLSeconds is the fixed form validity period. StarGiftPurchaseForm's
+// validation requires ExpiresAt to be exactly IssuedAt+600 (both the PostgreSQL store and the
+// in-memory adapter enforce this), so the same constant is used here instead of scattered
+// literals of 600.
 const starGiftPurchaseFormTTLSeconds = 600
 
-// botAPIStarGiftCommandKey 把 Bot API 的 Idempotency-Key/request_id 映射成星礼物付款
-// 命令表的 command_key。前缀带 botID，因此两个 bot 使用同一个用户提供的键也不会互相
-// 冲突；键只接受 Bot API 已校验过的字符集，长度上限 256 在 PurchaseStarGift 里再次
-// 校验。
+// botAPIStarGiftCommandKey maps the Bot API's Idempotency-Key/request_id to the star-gift
+// payment table's command_key. The prefix includes botID, so two bots using the same
+// user-provided key do not conflict; the key only accepts the character set the Bot API has
+// already validated, and the 256 length cap is validated again in PurchaseStarGift.
 func botAPIStarGiftCommandKey(botID int64, requestID string) string {
 	return fmt.Sprintf("botapi-stargift:%d:%s", botID, strings.TrimSpace(requestID))
 }
 
-// BotAPISendStarGift 实现 HTTP Bot API 的 sendGift：机器人用自身 Stars 余额购买并送出
-// 星礼物，走的是和 MTProto payments.sendStarsForm 完全相同的目录校验、支付表单、
-// 星礼物账本与权益事务。
+// BotAPISendStarGift implements the HTTP Bot API sendGift: a bot buys and sends a star gift with
+// its own Stars balance, following exactly the same catalog validation, payment form, star-gift
+// ledger and entitlement transaction as MTProto payments.sendStarsForm.
 //
-// userID 与 chatID 是官方那对互斥的收礼人选择器，chat_id 的编码复用全站唯一的
-// botAPIPeerFromChatID，避免 Bot API 层自己再抄一份 -100 偏移规则。
+// userID and chatID are the official mutually-exclusive recipient selectors; the chat_id encoding
+// reuses the single site-wide botAPIPeerFromChatID, avoiding the Bot API layer copying its own
+// -100 offset rule.
 //
-// 幂等语义与 giftPremiumSubscription 一致：同一个 request_id 重试同一个请求返回 true
-// 且不再扣款；同一个键配不同的收礼人/礼物/升级/文本则报 IDEMPOTENCY_KEY_INVALID。
-// 无键时处理器会生成随机键，所以每次调用都重新扣款——这与官方「无幂等」行为一致，
-// 也不会把两个不同的请求误判为重放。
+// Idempotency semantics match giftPremiumSubscription: retrying the same request with the same
+// request_id returns true and does not charge again; the same key with a different
+// recipient/gift/upgrade/text reports IDEMPOTENCY_KEY_INVALID. With no key the handler generates
+// a random key, so every call charges again -- consistent with the official "no idempotency"
+// behavior, and it will not mistake two different requests for a replay.
 func (r *Router) BotAPISendStarGift(
 	ctx context.Context,
 	botID int64,
@@ -70,8 +73,9 @@ func (r *Router) BotAPISendStarGift(
 	if !found || !bot.Bot {
 		return false, r.botAPIStarGiftErr(botID, "BOT_INVALID", nil)
 	}
-	// user_id 与 chat_id 必须恰好给一个（Bot API 层已校验，这里再兜一次底线）：
-	// 两个都空就没有收礼人，两个都满就会把 chat_id 悄悄解释成收礼对象。
+	// Exactly one of user_id and chat_id must be given (the Bot API layer has already validated
+	// this; this is a second backstop): both empty means no recipient, and both filled would
+	// quietly interpret chat_id as the recipient.
 	to, valid := botAPIStarGiftPeer(userID, chatID)
 	if !valid {
 		return false, r.botAPIStarGiftErr(botID, "CHAT_ID_INVALID", nil)
@@ -93,16 +97,17 @@ func (r *Router) BotAPISendStarGift(
 	switch {
 	case gift.SoldOut, gift.Limited && gift.AvailabilityRemains <= 0,
 		gift.LockedUntilDate > now, gift.Auction:
-		// 这四种情况在 MTProto 侧走 payments.checkCanSendGift 的 fail 分支；这里
-		// 统一成同一个错误，避免向机器人泄露「已售罄」与「尚未发布」的区别。
+		// These four cases go through payments.checkCanSendGift's fail branch on the MTProto side;
+		// here they are unified into a single error to avoid leaking the distinction between
+		// "sold out" and "not yet released" to the bot.
 		return false, r.botAPIStarGiftErr(botID, "GIFT_NOT_AVAILABLE", nil)
 	case gift.SupportOnly && !r.viewerSupport(ctx, bot.ID):
 		return false, r.botAPIStarGiftErr(botID, "GIFT_NOT_AVAILABLE", nil)
 	}
-	// 机器人自己没有 Telegram Premium，所以 RequirePremium 礼物对 bot 基本不可用。
-	// 这里传真实的会员状态，而不是硬编码 true 来绕过 prepareStarGiftPurchase 的
-	// 同一道校验：PremiumGiftMessage 路径（giftPremiumSubscription）才是官方给
-	// 机器人的开通方式。
+	// The bot itself has no Telegram Premium, so RequirePremium gifts are essentially unavailable
+	// to a bot. Pass the real membership status here rather than hard-coding true to bypass the
+	// same check in prepareStarGiftPurchase: the PremiumGiftMessage path
+	// (giftPremiumSubscription) is the official way to grant it to a bot.
 	buyerPremium := r.viewerPremium(ctx, bot.ID)
 	if gift.RequirePremium && !buyerPremium {
 		return false, r.botAPIStarGiftErr(botID, "PREMIUM_ACCOUNT_REQUIRED", nil)
@@ -117,9 +122,10 @@ func (r *Router) BotAPISendStarGift(
 	purchase := domain.StarGiftPurchaseRequest{
 		BuyerUserID:  bot.ID,
 		BuyerPremium: buyerPremium,
-		// 机器人的 Stars 是它结算发票赚来的钱包余额（bot_stars_balances），不是它的
-		// 个人余额：机器人这个用户身份在 stars_balances 里根本没有行。不标记的话，
-		// 扣款会走个人账本并永远返回余额不足，钱包里的收入看起来像不存在。
+		// The bot's Stars are the wallet balance it earned settling invoices (bot_stars_balances),
+		// not its personal balance: the bot's user identity has no row in stars_balances at all.
+		// Without this flag the charge would go through the personal ledger and always return
+		// insufficient balance, making the wallet income look nonexistent.
 		BuyerIsBot:      true,
 		To:              to,
 		GiftID:          gift.ID,
@@ -130,14 +136,17 @@ func (r *Router) BotAPISendStarGift(
 		ChargeStars:     gift.Stars + upgradeStars,
 		CommandKey:      botAPIStarGiftCommandKey(bot.ID, requestID),
 		Date:            now,
-		// OriginAuthKeyID 让账本把这笔钱记成 Bot API 来源，而不是某个 MTProto
-		// 会话：机器人的 Stars 支出不应被算进任何用户的会话统计。
-		// 这里不设 OriginAuthKeyID/OriginSessionID：这两个字段是 MTProto 会话身份，
-		// 用来把 dispatch 排除对精确的发起会话（避免回声）。Bot API 没有 MTProto 会话，
-		// 只填 auth key 而留 session 为 0 会构成「半对」，enqueueDispatch 直接以
-		// errInvalidDispatchOutboxExclusionPair 拒绝整笔事务——sendGift 因此恒定 500。
-		// 机器人的消息投递走 Bot API 队列，本来也不需要排除任何 MTProto 会话。
-		// Bot API 来源的记账由 BuyerIsBot（钱包路由）承担，与这两个字段无关。
+		// OriginAuthKeyID makes the ledger record this money as a Bot API origin rather than some
+		// MTProto session: the bot's Stars spending should not be counted into any user's session
+		// statistics.
+		// OriginAuthKeyID/OriginSessionID are not set here: these two fields are MTProto session
+		// identity, used to exclude the exact originating session from dispatch (to avoid echo).
+		// Bot API has no MTProto session; filling only the auth key while leaving session 0 forms a
+		// "half pair", and enqueueDispatch rejects the whole transaction with
+		// errInvalidDispatchOutboxExclusionPair -- so sendGift would be a constant 500. The bot's
+		// message delivery goes through the Bot API queue and does not need to exclude any MTProto
+		// session anyway. Bot API-origin accounting is handled by BuyerIsBot (wallet routing) and
+		// has nothing to do with these two fields.
 	}
 	if to.Type == domain.PeerTypeUser {
 		purchase.RecipientBlocked, err = r.peerBlocksUser(ctx, bot.ID, to.ID)
@@ -149,9 +158,10 @@ func (r *Router) BotAPISendStarGift(
 			return false, err
 		}
 	}
-	// 重放检查必须在签发表单之前：Bot API 的重试每次都会拿到一张新的 form_id，
-	// 而 PurchaseStarGift 内部的重放比对要求 form_id 相同，所以在签发之后才查，
-	// 重试会被当成 amount/command 不匹配而报错。
+	// The replay check must happen before issuing the form: every Bot API retry gets a new
+	// form_id, while the replay comparison inside PurchaseStarGift requires the form_id to match,
+	// so if the check came after issuance a retry would be treated as an amount/command mismatch
+	// and error out.
 	if settled, found, err := r.deps.Gifts.SettledStarGiftPurchase(ctx, purchase); err != nil {
 		if errors.Is(err, domain.ErrStarGiftIdempotencyConflict) {
 			return false, r.botAPIStarGiftErr(botID, "IDEMPOTENCY_KEY_INVALID", nil)
@@ -183,9 +193,10 @@ func (r *Router) BotAPISendStarGift(
 		if errors.Is(err, domain.ErrStarGiftIdempotencyConflict) {
 			return false, r.botAPIStarGiftErr(botID, "IDEMPOTENCY_KEY_INVALID", nil)
 		}
-		// 并发同键重试时，两个事务里只有一个能拿到 command_key；输的那个会先撞上
-		// form_id 比对失败。此时付款其实已经成功，重新读一次命令表，把已经完成的
-		// 发送如实报告成成功，而不是让机器人以为钱白花了。
+		// On a concurrent same-key retry, only one of the two transactions gets the command_key;
+		// the loser first hits a form_id comparison failure. At that point the payment has actually
+		// succeeded, so re-read the command table and report the completed send as success rather
+		// than letting the bot think it wasted its money.
 		if _, found, replayErr := r.deps.Gifts.SettledStarGiftPurchase(ctx, purchase); replayErr == nil && found {
 			r.invalidateStarGiftOwner(to)
 			return true, nil
@@ -196,7 +207,7 @@ func (r *Router) BotAPISendStarGift(
 	return true, nil
 }
 
-// botAPIStarGiftPeer 把官方那对互斥的 user_id/chat_id 解析成收礼 peer。
+// botAPIStarGiftPeer resolves the official mutually-exclusive user_id/chat_id pair into a recipient peer.
 func botAPIStarGiftPeer(userID, chatID int64) (domain.Peer, bool) {
 	if userID != 0 {
 		return domain.Peer{Type: domain.PeerTypeUser, ID: userID}, true
@@ -207,8 +218,9 @@ func botAPIStarGiftPeer(userID, chatID int64) (domain.Peer, bool) {
 	return botAPIPeerFromChatID(chatID)
 }
 
-// botAPIStarGiftRecipient 校验收礼目标。给用户送礼要排除机器人自己、其他机器人、
-// 冻结（Deleted）账号和系统账号；给频道送礼必须显式校验机器人确实有该频道的访问权。
+// botAPIStarGiftRecipient validates the gift recipient. Gifting a user must exclude the bot
+// itself, other bots, frozen (Deleted) accounts and system accounts; gifting a channel must
+// explicitly verify the bot really has access to that channel.
 func (r *Router) botAPIStarGiftRecipient(ctx context.Context, botID int64, to domain.Peer) error {
 	switch to.Type {
 	case domain.PeerTypeUser:
@@ -227,9 +239,10 @@ func (r *Router) botAPIStarGiftRecipient(ctx context.Context, botID int64, to do
 		if to.ID <= 0 || r.deps.Channels == nil {
 			return r.botAPIStarGiftErr(botID, "CHAT_ID_INVALID", nil)
 		}
-		// 频道礼物走的是 appendStarGiftAdminLogTx + 通知，不经过普通发消息的权限
-		// 校验，因此这里必须自己确认机器人能访问该频道；否则任何 bot 只要知道
-		// channel_id 就能往陌生频道里刷礼物并扣自己的 Stars。
+		// Channel gifts go through appendStarGiftAdminLogTx + notification and do not pass the
+		// normal send-message permission check, so the bot's access to the channel must be verified
+		// here; otherwise any bot that knows a channel_id could spam gifts into an unfamiliar
+		// channel and drain its own Stars.
 		if _, err := r.deps.Channels.ResolveChannel(ctx, botID, to.ID); err != nil {
 			return r.botAPIStarGiftErr(botID, "CHAT_ID_INVALID", err)
 		}
@@ -239,7 +252,7 @@ func (r *Router) botAPIStarGiftRecipient(ctx context.Context, botID int64, to do
 	}
 }
 
-// botAPIStarGiftPurchaseErr 把事务层的拒绝翻译成 Bot API 错误码。
+// botAPIStarGiftPurchaseErr translates a transaction-layer rejection into a Bot API error code.
 func (r *Router) botAPIStarGiftPurchaseErr(botID int64, err error) error {
 	switch {
 	case errors.Is(err, domain.ErrStarsInsufficient):
@@ -250,7 +263,7 @@ func (r *Router) botAPIStarGiftPurchaseErr(botID int64, err error) error {
 		errors.Is(err, domain.ErrStarGiftCollectibleSoldOut):
 		return r.botAPIStarGiftErr(botID, "GIFT_UPGRADE_UNAVAILABLE", nil)
 	case errors.Is(err, domain.ErrStarGiftRecipientUnavailable):
-		// 冻结账号无法接收任何礼物。官方没有对应错误码，用限制类错误最贴近语义。
+		// A frozen account cannot receive any gift. The official API has no matching error code, so a restriction-class error is the closest fit.
 		return r.botAPIStarGiftErr(botID, "USER_PRIVACY_RESTRICTED", nil)
 	case errors.Is(err, domain.ErrStarGiftInvalid),
 		errors.Is(err, domain.ErrStarGiftUnavailable),
@@ -269,8 +282,9 @@ func (r *Router) botAPIStarGiftPurchaseErr(botID int64, err error) error {
 	}
 }
 
-// botAPIStarGiftErr 组装一个会被 apiErrorDescription 还原成 Bot API 错误码的错误。
-// cause 非空时同时记日志：Bot API 只会把错误码回给机器人，内部原因会在这里丢掉。
+// botAPIStarGiftErr assembles an error that apiErrorDescription turns back into a Bot API error
+// code. When cause is non-nil it is also logged: the Bot API only returns the code to the bot, so
+// the internal reason would be lost here.
 func (r *Router) botAPIStarGiftErr(botID int64, code string, cause error) error {
 	if cause != nil && r != nil && r.log != nil {
 		r.log.Warn("bot api star gift request failed", zap.Int64("bot_user_id", botID),

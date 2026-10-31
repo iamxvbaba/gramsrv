@@ -10,11 +10,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 通话信令推送全部走无 pts 直推（pushUserMessage）：信令有效期秒级，离线设备
-// 重连后经 getDifference 补收一条早已失效的来电毫无意义甚至有害。唯一带 pts 的
-// 产物是结束后的 messageActionPhoneCall 服务消息（P2，走 outbox 补偿离线设备）。
+// All call signaling pushes go through pts-less direct push (pushUserMessage): signaling is valid
+// for seconds, so catching up via getDifference on an offline device's reconnect to a long-expired
+// incoming call is meaningless and even harmful. The only pts-bearing product is the post-call
+// messageActionPhoneCall service message (P2, goes through the outbox to compensate offline
+// devices).
 
-// phoneCallUpdates 把 viewer 视角的 phoneCall 状态包成可直推的 Updates 容器。
+// phoneCallUpdates wraps viewer-perspective phoneCall state into a directly pushable Updates
+// container.
 func (r *Router) phoneCallUpdates(ctx context.Context, call domain.PhoneCall, viewerID int64) *tg.Updates {
 	return r.phoneCallUpdatesWith(ctx, tgPhoneCallForViewer(call, viewerID), call, viewerID)
 }
@@ -29,17 +32,20 @@ func (r *Router) phoneCallUpdatesWith(ctx context.Context, view tg.PhoneCallClas
 	}
 }
 
-// pushPhoneCall 把 call 当前状态按 targetUserID 视角推给其全部在线设备
-// （ctx 携带的发起设备会被 pushUserMessage 的 except 语义排除）。
+// pushPhoneCall pushes the call's current state to all of targetUserID's online devices from their
+// perspective (the initiating device carried in ctx is excluded by pushUserMessage's except
+// semantics).
 func (r *Router) pushPhoneCall(ctx context.Context, targetUserID int64, call domain.PhoneCall, logMessage string) int {
 	return r.pushUserMessage(ctx, targetUserID, logMessage, r.phoneCallUpdates(ctx, call, targetUserID))
 }
 
-// pushPhoneCallToDevice 只把 phoneCall 状态推给一台精确的物理 session。
+// pushPhoneCallToDevice pushes phoneCall state to exactly one physical session.
 //
-// 这是 fail-closed 路径：目标锚点缺失、session 已断开或编码/发送失败时都不得
-// 回退为 user 级广播。呼出通话的 ringing 更新只属于 requestCall 来源设备；
-// 扩大投递范围会在 DrKLO 多账号同机时污染另一账号的全局 pending 来电对象。
+// This is a fail-closed path: when the target anchor is missing, the session is disconnected, or
+// encoding/sending fails, it must never fall back to a user-level broadcast. The ringing update for
+// an outgoing call belongs only to requestCall's origin device; widening the delivery scope would,
+// when multiple DrKLO accounts share a device, pollute another account's global pending
+// incoming-call object.
 func (r *Router) pushPhoneCallToDevice(ctx context.Context, targetUserID int64, device domain.SessionRef, call domain.PhoneCall, logMessage string) {
 	if targetUserID == 0 || device.RawAuthKeyID == ([8]byte{}) || device.SessionID == 0 || r.deps.Sessions == nil {
 		if r.log != nil {
@@ -64,24 +70,26 @@ func (r *Router) pushPhoneCallToDevice(ctx context.Context, targetUserID int64, 
 	}
 }
 
-// pushPhoneCallStopRinging 向被叫其它设备推合成 phoneCallDiscarded 停振铃（P0-1 修正）。
-// ctx 必须是接听设备的请求上下文：except 语义恰好把赢家排除在外。
+// pushPhoneCallStopRinging pushes a synthetic phoneCallDiscarded to the callee's other devices to
+// stop ringing (P0-1 fix). ctx must be the answering device's request context: the except semantics
+// exactly exclude the winner.
 func (r *Router) pushPhoneCallStopRinging(ctx context.Context, call domain.PhoneCall) int {
 	upd := r.phoneCallUpdatesWith(ctx, tgPhoneCallStopRinging(call), call, call.ParticipantID)
 	return r.pushUserMessage(ctx, call.ParticipantID, "phone call stop ringing", upd)
 }
 
-// pushPhoneCallDiscardedBoth 把终态推给双方全部设备（发起设备由 ctx except 排除，
-// 其结果从 RPC 响应获得）。
+// pushPhoneCallDiscardedBoth pushes the terminal state to all devices on both sides (the initiating
+// device is excluded by ctx except; its result comes from the RPC response).
 func (r *Router) pushPhoneCallDiscardedBoth(ctx context.Context, call domain.PhoneCall) {
 	r.pushPhoneCall(ctx, call.AdminID, call, "phone call discarded")
 	r.pushPhoneCall(ctx, call.ParticipantID, call, "phone call discarded")
 }
 
-// pushPhoneSignalingData 把信令字节透传给对端。优先走设备锚点定向推送
-// （requestCall/acceptCall 受理设备），锚点失效（设备重连换 session）则回退
-// user 级扇出——非参与设备按 phone_call_id 不匹配静默丢弃（TDesktop
-// handleSignalingData 行为），扇出无害。
+// pushPhoneSignalingData passes signaling bytes through to the peer. It prefers directed push to the
+// device anchor (the device that handled requestCall/acceptCall); if the anchor is stale (the device
+// reconnected with a new session) it falls back to user-level fan-out — non-participant devices
+// silently drop it on a phone_call_id mismatch (TDesktop's handleSignalingData behavior), so the
+// fan-out is harmless.
 func (r *Router) pushPhoneSignalingData(ctx context.Context, targetUserID int64, device domain.SessionRef, callID int64, data []byte) {
 	upd := &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdatePhoneCallSignalingData{

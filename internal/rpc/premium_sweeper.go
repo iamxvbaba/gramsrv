@@ -10,13 +10,16 @@ import (
 	"telesrv/internal/domain"
 )
 
-// RunPremiumSweeper 周期清理到期会员并通知本人在线 session。
+// RunPremiumSweeper periodically clears expired Premium and notifies the user's
+// own online sessions about it.
 //
-// premium 下发正确性由 hydration 即时派生（premium_expires_at > now）保证，
-// 不依赖本 sweeper；这里只负责两件收尾事：把过期行清 NULL（保持索引/语义
-// 干净），以及向该用户全部在线 session 推 updateUser + 最新 self user，让在线
-// 客户端立即降级 UI（updateUser 无 pts，不进 update_events；离线设备重连后由
-// 任意带 self user 的响应自愈）。
+// The correctness of Premium delivery is guaranteed by hydration deriving it on
+// the fly (premium_expires_at > now) and does not depend on this sweeper; the
+// sweeper only handles two cleanup duties: nulling out expired rows (keeping the
+// index/semantics clean), and pushing updateUser + the latest self user to all of
+// that user's online sessions so online clients immediately downgrade their UI
+// (updateUser has no pts and does not enter update_events; offline devices heal
+// themselves on reconnect through any response that carries the self user).
 func (r *Router) RunPremiumSweeper(ctx context.Context, interval time.Duration, batch int) {
 	if interval <= 0 {
 		interval = time.Minute
@@ -61,22 +64,27 @@ func (r *Router) sweepExpiredPremium(ctx context.Context, batch int) {
 			r.invalidateRPCProjectionForUser(u.ID)
 		}
 		r.pushPremiumStatusUpdates(ctx, users)
-		// 不满一批说明已扫完当前积压；满批则继续，避免长停机后积压跨多个周期。
+		// A batch that is not full means the current backlog is drained; a full
+		// batch means keep going, so a long outage does not leave the backlog
+		// spanning multiple periods.
 		if len(users) == 0 {
 			return
 		}
 	}
 }
 
-// viewerPremium 报告 viewer 当前是否有效会员（限额双档判断用，best-effort：
-// 服务未接通时按非会员档处理）。
+// viewerPremium reports whether the viewer currently has active Premium (used for
+// the two-tier limit decision, best-effort: when the service is not wired, it is
+// treated as the non-Premium tier).
 func (r *Router) viewerPremium(ctx context.Context, userID int64) bool {
 	svc, ok := r.deps.Users.(UserPremiumStatusService)
 	return ok && svc.PremiumActive(ctx, userID)
 }
 
-// viewerSupport 报告 viewer 是否持有官方 support 账号标记（support 专属礼物
-// 的购买门槛用，best-effort：用户服务未接通时不放行，绝不向普通买家泄漏）。
+// viewerSupport reports whether the viewer holds the official support account flag
+// (used for the purchase threshold of support-exclusive gifts, best-effort: when
+// the user service is not wired it does not allow through, never leaking to
+// ordinary buyers).
 func (r *Router) viewerSupport(ctx context.Context, userID int64) bool {
 	if r == nil || r.deps.Users == nil {
 		return false
@@ -85,9 +93,10 @@ func (r *Router) viewerSupport(ctx context.Context, userID int64) bool {
 	return err == nil && self.Support
 }
 
-// NotifyUserChanged 是 Admin 用例层可调用的 domain-only hook：账号基础事实
-// 变更后失效 RPC 投影缓存，并向本人在线 session 推 updateUser。它不把 tg.*
-// 泄漏给 admin/domain/app，协议对象只在 rpc 边界内构造。
+// NotifyUserChanged is a domain-only hook callable from the Admin use-case layer:
+// after a change to base account facts it invalidates the RPC projection cache and
+// pushes updateUser to the user's own online sessions. It does not leak tg.* into
+// admin/domain/app; protocol objects are constructed only inside the rpc boundary.
 func (r *Router) NotifyUserChanged(ctx context.Context, u domain.User) error {
 	if r == nil || u.ID == 0 {
 		return nil
@@ -206,9 +215,10 @@ func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.
 	return nil
 }
 
-// pushPremiumStatusUpdate 向用户本人的全部在线 session 推送会员状态变化。
-// 授予、到期与 admin 认证变更共用：updateUser 触发客户端用随附的 self user
-// 对象刷新 premium/verified 等基础 flag（TDesktop processUser 按 flag 翻转）。
+// pushPremiumStatusUpdate pushes the Premium status change to all of the user's
+// own online sessions. Shared by grant, expiry and admin verification changes:
+// updateUser makes the client refresh base flags such as premium/verified from the
+// attached self user object (TDesktop processUser flips by flag).
 func (r *Router) pushPremiumStatusUpdate(ctx context.Context, u domain.User) {
 	r.pushPremiumStatusUpdates(ctx, []domain.User{u})
 }

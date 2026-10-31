@@ -10,11 +10,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 私聊 1:1 通话 RPC handler。状态机与密钥材料归 app/phone；本文件只做
-// 鉴权、入参校验、隐私/拉黑闸门、推送编排与 TL 转换。
-// 推送策略总表与硬契约见设计文档；标 ⚠ 的注释是对抗评审定下的修正，勿改回。
+// Private 1:1 call RPC handlers. The state machine and key material live in app/phone; this file
+// only does authentication, input validation, privacy/block gates, push orchestration, and TL
+// conversion. See the design doc for the push-strategy summary and hard contracts; comments marked
+// with ⚠ are fixes agreed during adversarial review — do not revert them.
 
-// phoneCallErr 把 app/phone 业务错误映射为 RPC_ERROR。
+// phoneCallErr maps app/phone business errors to RPC_ERROR.
 func phoneCallErr(err error) error {
 	switch {
 	case errors.Is(err, appphone.ErrPeerInvalid):
@@ -36,7 +37,7 @@ func phoneCallErr(err error) error {
 	}
 }
 
-// phoneRequireUser 是 phone.* 的统一登录闸门。
+// phoneRequireUser is the unified login gate for phone.*.
 func (r *Router) phoneRequireUser(ctx context.Context) (int64, error) {
 	userID, ok, err := r.currentUserID(ctx)
 	if err != nil {
@@ -74,7 +75,7 @@ func (r *Router) onPhoneRequestCall(ctx context.Context, req *tg.PhoneRequestCal
 	if err != nil {
 		return nil, internalErr()
 	}
-	// 自呼 / bot / 不存在统一 USER_ID_INVALID。
+	// Self-call / bot / non-existent all map to USER_ID_INVALID.
 	if !found || callee.ID == 0 || callee.ID == callerID || callee.Bot {
 		return nil, userIDInvalidErr()
 	}
@@ -105,8 +106,9 @@ func (r *Router) onPhoneRequestCall(ctx context.Context, req *tg.PhoneRequestCal
 	if err != nil {
 		return nil, phoneCallErr(err)
 	}
-	// 推被叫全部在线设备。sent==0（被叫全离线）不报错：主叫客户端按
-	// callReceiveTimeoutMs(20s) 自行超时 discard(missed)，服务端兜底超时收尾。
+	// Push to all the callee's online devices. sent==0 (callee fully offline) is not an error: the
+	// caller's client times out on its own at callReceiveTimeoutMs(20s) and discards (missed), and
+	// the server-side fallback timeout wraps it up.
 	r.pushPhoneCall(ctx, call.ParticipantID, call, "phone call requested")
 	return &tg.PhonePhoneCall{
 		PhoneCall: tgPhoneCallForViewer(call, callerID),
@@ -124,7 +126,8 @@ func (r *Router) onPhoneReceivedCall(ctx context.Context, peer tg.InputPhoneCall
 	}
 	call, transitioned, err := r.deps.Phone.ReceivedCall(ctx, userID, peer.ID, peer.AccessHash)
 	if err != nil {
-		// 终态晚到的 receivedCall 无害：宽容返回 true（多设备竞态常见）。
+		// A late receivedCall after the terminal state is harmless: return true leniently (a
+		// multi-device race is common).
 		if errors.Is(err, appphone.ErrPeerInvalid) {
 			if _, found := r.deps.Phone.Lookup(ctx, peer.ID, peer.AccessHash); found {
 				return true, nil
@@ -133,11 +136,12 @@ func (r *Router) onPhoneReceivedCall(ctx context.Context, peer tg.InputPhoneCall
 		return false, phoneCallErr(err)
 	}
 	if transitioned {
-		// ⚠ P1-2：receiveDate 推送必须在 P1 就位。主叫只有收到带 receive_date 的
-		// phoneCallWaiting 才会把 20s receive 定时器换成 90s ring 定时器。
-		// 这条主叫视角更新只属于 requestCall 的来源设备；账号级广播会在 DrKLO
-		// 多账号同机时按相同 call_id 覆盖被叫的 pending phoneCallRequested，丢失
-		// g_a_hash 并在接听时触发 Ga hash mismatch。
+		// ⚠ P1-2: the receiveDate push must be in place at P1. Only after receiving a
+		// phoneCallWaiting with receive_date does the caller swap its 20s receive timer for the 90s
+		// ring timer. This caller-perspective update belongs only to requestCall's origin device; an
+		// account-level broadcast would, when multiple DrKLO accounts share a device, overwrite the
+		// callee's pending phoneCallRequested with the same call_id, losing g_a_hash and triggering a
+		// Ga hash mismatch on answer.
 		r.pushPhoneCallToDevice(ctx, call.AdminID, call.CallerDevice, call, "phone call ringing")
 	}
 	return true, nil
@@ -159,14 +163,16 @@ func (r *Router) onPhoneAcceptCall(ctx context.Context, req *tg.PhoneAcceptCallR
 	if err != nil {
 		return nil, phoneCallErr(err)
 	}
-	// 推主叫全部设备：phoneCallAccepted{g_b, 协商 protocol}，主叫据此算 AuthKey 并 confirm。
+	// Push to all the caller's devices: phoneCallAccepted{g_b, negotiated protocol}, from which the
+	// caller computes the AuthKey and confirms.
 	r.pushPhoneCall(ctx, call.AdminID, call, "phone call accepted")
-	// ⚠ P0-1：被叫其它设备推合成 phoneCallDiscarded 停振铃（ctx except 排除接听设备）。
-	// 绝不能推 phoneCallAccepted——incoming 侧收到 accepted 会 finish(Failed) 回发
-	// discardCall（TDesktop）/按主叫流程发 confirmCall（DrKLO），杀死刚建立的通话。
+	// ⚠ P0-1: push a synthetic phoneCallDiscarded to the callee's other devices to stop ringing
+	// (ctx except excludes the answering device). Never push phoneCallAccepted — an incoming side
+	// that receives accepted either finishes(Failed) and sends discardCall (TDesktop) or follows the
+	// caller flow and sends confirmCall (DrKLO), killing the just-established call.
 	r.pushPhoneCallStopRinging(ctx, call)
 	return &tg.PhonePhoneCall{
-		PhoneCall: tgPhoneCallForViewer(call, userID), // 被叫视角：phoneCallWaiting，等 confirm
+		PhoneCall: tgPhoneCallForViewer(call, userID), // callee perspective: phoneCallWaiting, awaiting confirm
 		Users:     r.tgUsersForIDs(ctx, userID, []int64{call.AdminID, call.ParticipantID}),
 	}, nil
 }
@@ -186,17 +192,18 @@ func (r *Router) onPhoneConfirmCall(ctx context.Context, req *tg.PhoneConfirmCal
 		req.GA, req.KeyFingerprint, phoneCallProtocolFromTL(req.Protocol))
 	if err != nil {
 		if forcedDiscard {
-			// g_a 揭示与承诺不符：通话已被强制终结，推送双方防状态机卡死。
+			// The revealed g_a does not match the commitment: the call has been force-terminated;
+			// push both sides to prevent the state machine from hanging.
 			r.pushPhoneCallDiscardedBoth(ctx, call)
 			return nil, callPeerInvalidErr()
 		}
 		return nil, phoneCallErr(err)
 	}
-	// 推被叫全部设备：phoneCall{g_a_or_b=GA}。实际只有接听设备持有本 call，
-	// 其余设备按 call_id 不识别而静默忽略。
+	// Push to all the callee's devices: phoneCall{g_a_or_b=GA}. In practice only the answering
+	// device holds this call; the rest do not recognize it by call_id and silently ignore it.
 	r.pushPhoneCall(ctx, call.ParticipantID, call, "phone call confirmed")
 	return &tg.PhonePhoneCall{
-		PhoneCall: tgPhoneCallForViewer(call, userID), // 主叫视角：g_a_or_b = g_b
+		PhoneCall: tgPhoneCallForViewer(call, userID), // caller perspective: g_a_or_b = g_b
 		Users:     r.tgUsersForIDs(ctx, userID, []int64{call.AdminID, call.ParticipantID}),
 	}, nil
 }
@@ -229,14 +236,17 @@ func (r *Router) onPhoneDiscardCall(ctx context.Context, req *tg.PhoneDiscardCal
 		return nil, phoneCallErr(err)
 	}
 	if !already {
-		// 对端全部设备 + 发起者其它设备（ctx except 排除发起设备，其结果在 RPC 响应里）。
+		// All of the peer's devices + the initiator's other devices (ctx except excludes the
+		// initiator device, whose result is in the RPC response).
 		r.pushPhoneCallDiscardedBoth(ctx, call)
 		if reason != domain.PhoneCallDiscardReasonMigrateConference {
-			// 落 messageActionPhoneCall 历史（带 pts 走 outbox，双方全部设备可靠收到）。
+			// Record messageActionPhoneCall history (goes through the outbox with pts, so all
+			// devices on both sides receive it reliably).
 			r.sendPhoneCallServiceMessage(ctx, call)
 		}
 	}
-	// 双方同时挂断的竞态：先到者定 reason，后到者拿终态快照（幂等成功）。
+	// Race when both sides hang up simultaneously: the first to arrive sets the reason, the later
+	// one gets the terminal snapshot (idempotent success).
 	return r.phoneCallUpdates(ctx, call, userID), nil
 }
 
@@ -254,10 +264,11 @@ func (r *Router) onPhoneSendSignalingData(ctx context.Context, req *tg.PhoneSend
 	if max := r.cfg.CallSignalingMaxBytes; max > 0 && len(req.Data) > max {
 		return false, signalingDataInvalidErr()
 	}
-	// forward 在该通话的信令顺序锁内执行（连接层对同 session 的 RPC 是多 worker
-	// 并发分发，无此锁则转发顺序可能与受理顺序不一致）；drop=true 的两种情况
-	//（tombstone 尾包、超速率）都按契约静默返回 true——返回错误会让 TDesktop
-	// 把正常挂断渲染成「通话失败」。
+	// forward runs inside this call's signaling order lock (the connection layer dispatches RPCs
+	// for the same session concurrently across multiple workers; without this lock the forward order
+	// could differ from the accept order); both drop=true cases (tombstone tail packet, over-rate)
+	// silently return true per contract — returning an error would make TDesktop render a normal
+	// hang-up as "call failed".
 	drop, err := r.deps.Phone.Signal(ctx, userID, req.Peer.ID, req.Peer.AccessHash, func(peerUserID int64, peerDevice domain.SessionRef) {
 		r.pushPhoneSignalingData(ctx, peerUserID, peerDevice, req.Peer.ID, req.Data)
 	})
@@ -275,7 +286,8 @@ func (r *Router) onPhoneSetCallRating(ctx context.Context, req *tg.PhoneSetCallR
 	if _, err := r.phoneRequireUser(ctx); err != nil {
 		return nil, err
 	}
-	// 宽容校验：评分常在通话回收后才提交，miss 也成功。不推送任何人。
+	// Lenient validation: ratings are often submitted only after the call is reclaimed, so a miss
+	// also succeeds. Push to nobody.
 	return tgEmptyUpdates(int(r.clock.Now().Unix())), nil
 }
 
@@ -286,6 +298,7 @@ func (r *Router) onPhoneSaveCallDebug(ctx context.Context, req *tg.PhoneSaveCall
 	if _, err := r.phoneRequireUser(ctx); err != nil {
 		return false, err
 	}
-	// 丢弃 debug JSON；phoneCallDiscarded 恒不置 need_debug，正常客户端不会主动上报。
+	// Discard the debug JSON; phoneCallDiscarded never sets need_debug, and a normal client never
+	// reports it on its own.
 	return true, nil
 }

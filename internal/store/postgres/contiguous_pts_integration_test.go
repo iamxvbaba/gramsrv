@@ -90,7 +90,7 @@ func TestAppendAllocatedFirstPtsRangeAndRollback(t *testing.T) {
 	}
 }
 
-// TestAppendRejectsPtsHole 用真实 PG 验证显式 pts 写入不能制造空洞。
+// TestAppendRejectsPtsHole verifies against real PG that an explicit pts write cannot create a hole.
 func TestAppendRejectsPtsHole(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

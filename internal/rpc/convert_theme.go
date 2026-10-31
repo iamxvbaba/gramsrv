@@ -14,8 +14,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// themesListHash 计算一组主题完整 wire 内容的稳定哈希。编码后排序使返回顺序不影响
-// 哈希；标题、document、settings 或颜色等任一可见内容变化都会驱动客户端重取。
+// themesListHash computes a stable hash of a set of themes' full wire content.
+// Sorting after encoding makes the return order irrelevant to the hash; any visible
+// change to title, document, settings or colors drives the client to refetch.
 func themesListHash(themes []tg.Theme) (int64, error) {
 	encoded := make([][]byte, 0, len(themes))
 	for i := range themes {
@@ -52,7 +53,7 @@ func themesListHash(themes []tg.Theme) (int64, error) {
 	return value, nil
 }
 
-// themeRefFromInput 把 tg.InputThemeClass(inputTheme / inputThemeSlug)转成 domain.ThemeRef。
+// themeRefFromInput converts tg.InputThemeClass (inputTheme / inputThemeSlug) into domain.ThemeRef.
 func themeRefFromInput(in tg.InputThemeClass) (domain.ThemeRef, bool) {
 	switch v := in.(type) {
 	case *tg.InputTheme:
@@ -102,7 +103,7 @@ func tgBaseTheme(kind domain.ThemeBaseKind) tg.BaseThemeClass {
 	}
 }
 
-// domainThemeSettingsFromInput 解析 createTheme/updateTheme 传入的 settings 向量。
+// domainThemeSettingsFromInput parses the settings vector passed to createTheme/updateTheme.
 func domainThemeSettingsFromInput(in []tg.InputThemeSettings) []domain.ThemeSettingsSpec {
 	if len(in) == 0 {
 		return nil
@@ -121,7 +122,7 @@ func domainThemeSettingsFromInput(in []tg.InputThemeSettings) []domain.ThemeSett
 		if v, ok := s.GetMessageColors(); ok {
 			spec.MessageColors = append([]int(nil), v...)
 		}
-		// flag bit1 同时门控 wallpaper 与 wallpaper_settings;渐变色在 wallpaper_settings 里。
+		// flag bit1 gates both wallpaper and wallpaper_settings; the gradient lives in wallpaper_settings.
 		if wp, ok := s.GetWallpaperSettings(); ok {
 			spec.Wallpaper = domainThemeWallpaperFromInput(wp)
 		}
@@ -160,8 +161,9 @@ func domainThemeWallpaperFromInput(wp tg.WallPaperSettings) *domain.ThemeWallpap
 	return out
 }
 
-// tgTheme 把 domain.Theme 投影为 tg.Theme。viewerUserID 决定 creator 标志(决定客户端
-// 下次上传走 update 而非 create)。完整自定义主题靠 DocumentID 解析出可下载 Document。
+// tgTheme projects domain.Theme into tg.Theme. viewerUserID decides the creator
+// flag (which decides whether the client's next upload goes through update instead
+// of create). A fully custom theme resolves a downloadable Document from DocumentID.
 func (r *Router) tgTheme(ctx context.Context, t domain.Theme, viewerUserID int64) *tg.Theme {
 	out := &tg.Theme{
 		ID:         t.ID,

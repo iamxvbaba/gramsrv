@@ -366,10 +366,12 @@ func (r *Router) onMessagesSetBotShippingResults(ctx context.Context, req *tg.Me
 	return false, queryIDInvalidErr()
 }
 
-// onMessagesSetBotPrecheckoutResults 是 bot 对 pre-checkout 的应答，也是付款闸门的
-// 唯一开锁方式：付款方挂在 sendStarsForm/sendPaymentForm 里等这个回答。
+// onMessagesSetBotPrecheckoutResults is the bot's reply to pre-checkout and the
+// only way to unlock the payment gate: the payer is parked in
+// sendStarsForm/sendPaymentForm waiting for this answer.
 //
-// resolve 只接受该询问的属主 bot，所以别的 bot 即使拿到 query_id 也无法代答。
+// resolve only accepts the owning bot of that inquiry, so another bot cannot
+// answer on its behalf even if it obtains the query_id.
 func (r *Router) onMessagesSetBotPrecheckoutResults(ctx context.Context, req *tg.MessagesSetBotPrecheckoutResultsRequest) (bool, error) {
 	botID, err := r.callerBotID(ctx)
 	if err != nil {
@@ -384,8 +386,9 @@ func (r *Router) onMessagesSetBotPrecheckoutResults(ctx context.Context, req *tg
 		return false, tgerr.New(400, "MESSAGE_TOO_LONG")
 	}
 	if !r.preCheckouts.resolve(botID, req.QueryID, domain.BotPreCheckoutAnswer{OK: success, Error: errorMessage}) {
-		// 询问不存在、已超时或不属于该 bot：Bot API 对此回 QUERY_ID_INVALID，
-		// 而不是静默丢弃，否则 bot 会以为自己批准了付款。
+		// The inquiry does not exist, has timed out, or belongs to a different
+		// bot: Bot API returns QUERY_ID_INVALID rather than silently dropping it,
+		// otherwise the bot would think it approved the payment.
 		return false, queryIDInvalidErr()
 	}
 	return true, nil

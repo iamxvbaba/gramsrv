@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessageStoreResolveWebPageSwapsMediaOnly 验证 WebPageResolve 模式只换 media、不碰
-// body/entities/edit_date（不标记「已编辑」），双盒一致，事件为 web_page，且幂等。
+// TestMessageStoreResolveWebPageSwapsMediaOnly verifies that WebPageResolve mode swaps only
+// media and does not touch body/entities/edit_date (it does not mark "edited"), that both boxes
+// stay consistent, that the event is web_page, and that it is idempotent.
 func TestMessageStoreResolveWebPageSwapsMediaOnly(t *testing.T) {
 	ctx := context.Background()
 	dialogs := NewDialogStore()
@@ -65,7 +66,7 @@ func TestMessageStoreResolveWebPageSwapsMediaOnly(t *testing.T) {
 		t.Fatalf("edit_date = %d, want 0 (no 'edited' marker)", self.Message.EditDate)
 	}
 
-	// 接收方盒子也被替换为 done。
+	// The recipient's box is also replaced with done.
 	rh, err := messages.ListByUser(ctx, recipientID, domain.MessageFilter{HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: senderID}, Limit: 10})
 	if err != nil {
 		t.Fatalf("recipient history: %v", err)
@@ -74,13 +75,13 @@ func TestMessageStoreResolveWebPageSwapsMediaOnly(t *testing.T) {
 		t.Fatalf("recipient media not resolved: %+v", rh.Messages)
 	}
 
-	// 幂等：已解析后再次解析 → ErrMessageNotModified。
+	// Idempotent: resolving again after it is already resolved → ErrMessageNotModified.
 	if _, err := messages.EditMessage(ctx, resolveReq); !errors.Is(err, domain.ErrMessageNotModified) {
 		t.Fatalf("re-resolve err = %v, want ErrMessageNotModified", err)
 	}
 }
 
-// TestMessageStoreResolveWebPageWrongIDNoop 验证 expectedID 不匹配时不替换。
+// TestMessageStoreResolveWebPageWrongIDNoop verifies that nothing is replaced when expectedID does not match.
 func TestMessageStoreResolveWebPageWrongIDNoop(t *testing.T) {
 	ctx := context.Background()
 	dialogs := NewDialogStore()
@@ -103,7 +104,7 @@ func TestMessageStoreResolveWebPageWrongIDNoop(t *testing.T) {
 		ID:                sent.SenderMessage.ID,
 		Media:             &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, WebPage: &domain.MessageWebPage{State: domain.MessageWebPageStateDone, ID: 999, URL: url}},
 		WebPageResolve:    true,
-		ExpectedWebPageID: 999, // 与占位 id 不符
+		ExpectedWebPageID: 999, // does not match the placeholder id
 	})
 	if !errors.Is(err, domain.ErrMessageNotModified) {
 		t.Fatalf("wrong-id resolve err = %v, want ErrMessageNotModified", err)

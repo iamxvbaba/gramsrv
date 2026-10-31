@@ -105,8 +105,9 @@ updated_dialog AS (
 SELECT EXISTS (SELECT 1 FROM updated_dialog)::boolean`, userID, channelID, enabled).Scan(&changed); err != nil {
 		return false, fmt.Errorf("set channel view forum as messages: %w", err)
 	}
-	// 连接池写后同步失效本进程 dialog 缓存，保证同实例 read-your-write；
-	// 跨实例由 dialog_light NOTIFY 异步兜底。
+	// After the pool write, synchronously invalidate this process's dialog cache, guaranteeing
+	// same-instance read-your-write; cross-instance is eventually covered asynchronously by
+	// dialog_light NOTIFY.
 	if changed && s.dialogCacheActive(s.db) {
 		s.dialogCache.delete(userID, channelID)
 	}
@@ -762,8 +763,10 @@ GROUP BY reply_to_top_id`, channelID, roots)
 		if err != nil {
 			return fmt.Errorf("load channel reply stats: %w", err)
 		}
-		// 只为「确有回复」的 root 再查最近回复者:普通频道/群历史页里绝大多数消息没有 thread
-		// 回复,rootsWithReplies 为空则跳过第二条查询,热读路径(getHistory/getDialogs)零额外往返。
+		// Only query recent repliers for roots that actually have replies: in ordinary channel/
+		// group history pages the vast majority of messages have no thread replies, so an empty
+		// rootsWithReplies skips the second query, giving the hot read paths (getHistory/
+		// getDialogs) zero extra round trips.
 		var rootsWithReplies []int32
 		for rows.Next() {
 			var rootID, count, maxID, repliesPts int
@@ -791,8 +794,9 @@ GROUP BY reply_to_top_id`, channelID, roots)
 		}
 		rows.Close()
 
-		// 与 memory store 的 channelMessageRepliesLocked 对齐:补齐每个 root 的最近回复者。
-		// 此前只算了 count/max/pts,RecentRepliers 恒为 nil,导致频道帖评论入口不显示最近回复者头像。
+		// Align with the memory store's channelMessageRepliesLocked: fill in each root's recent
+		// repliers. Previously only count/max/pts were computed and RecentRepliers was always nil,
+		// so the channel post comment entry did not show recent replier avatars.
 		repliers, err := s.channelRecentRepliers(ctx, db, channelID, rootsWithReplies)
 		if err != nil {
 			return err
@@ -811,9 +815,10 @@ GROUP BY reply_to_top_id`, channelID, roots)
 	return nil
 }
 
-// channelRecentRepliers 返回每个 root 最近 3 个去重回复者(newest-first),与 memory store 的
-// channelMessageRepliesLocked 一致:发送者优先取 from_peer(send-as/匿名管理员),为空时回退
-// sender_user_id;按各回复者最新一条回复的 id 倒序取前 3 个。
+// channelRecentRepliers returns each root's 3 most recent distinct repliers (newest-first),
+// consistent with the memory store's channelMessageRepliesLocked: the sender is taken from
+// from_peer (send-as/anonymous admin) when present, otherwise falling back to sender_user_id;
+// the top 3 are taken by each replier's latest reply id, descending.
 func (s *ChannelStore) channelRecentRepliers(ctx context.Context, db sqlcgen.DBTX, channelID int64, roots []int32) (map[int][]domain.Peer, error) {
 	if len(roots) == 0 {
 		return nil, nil

@@ -161,11 +161,13 @@ func (s *Service) CanSee(ctx context.Context, ownerUserID, viewerUserID int64, k
 	return Evaluate(rules, evalCtx), nil
 }
 
-// P2PAllowedBetween 决定私聊通话是否允许 P2P 直连。安全默认：除了双方
-// phone_p2p 隐私规则的双向 AND（等价于逐侧 CanSee），还硬性要求主叫与被叫
-// 互为联系人——即使某侧隐私规则显式 AllowAll，非联系人也不可能拿到对方真实 IP，
-// 通话一律回落 TURN 中继。联系人关系或联系人存储不可确证时按拒绝处理（fail
-// closed），这是 rpc 层 P2P 门槛的服务端依据。
+// P2PAllowedBetween decides whether a private call may use direct P2P. Safe default:
+// besides the bidirectional AND of both sides' phone_p2p privacy rules (equivalent to
+// per-side CanSee), it also hard-requires the caller and callee to be each other's
+// contacts — even if one side's privacy rule explicitly allows all, a non-contact can
+// never obtain the peer's real IP and the call always falls back to the TURN relay.
+// When the contact relationship or contact store cannot be confirmed, it denies (fail
+// closed); this is the server-side basis for the rpc layer's P2P gate.
 func (s *Service) P2PAllowedBetween(ctx context.Context, callerID, calleeID int64) (bool, error) {
 	if callerID == 0 || calleeID == 0 || callerID == calleeID {
 		return false, nil
@@ -218,10 +220,11 @@ func (s *Service) CanSeeAnonymous(ctx context.Context, ownerUserID int64, key do
 	return Evaluate(rules, domain.PrivacyContext{OwnerUserID: ownerUserID}), nil
 }
 
-// CanSeeBatch 批量评估多个 owner 对同一 viewer 在多个 key 上的可见性，结果等价于对每个
-// (owner,key) 调一次 CanSee，但只用一次 ListPrivacyRules + 一次 GetReverseContacts + 内存
-// Evaluate（消除 projectBatch / fan-out 投影里 per-user 3×CanSee×2行 的 N+1）。返回
-// map[ownerUserID]map[key]bool；owner==viewer 恒 true（与 CanSee 一致）。
+// CanSeeBatch batch-evaluates multiple owners' visibility for the same viewer across
+// multiple keys; the result is equivalent to calling CanSee once per (owner,key), but uses
+// only one ListPrivacyRules + one GetReverseContacts + in-memory Evaluate (removing the
+// per-user 3×CanSee×2-row N+1 in projectBatch / fan-out projection). Returns
+// map[ownerUserID]map[key]bool; owner==viewer is always true (consistent with CanSee).
 func (s *Service) CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64, keys []domain.PrivacyKey) (map[int64]map[domain.PrivacyKey]bool, error) {
 	out := make(map[int64]map[domain.PrivacyKey]bool, len(ownerUserIDs))
 	if viewerUserID == 0 || len(ownerUserIDs) == 0 || len(keys) == 0 {
@@ -243,7 +246,7 @@ func (s *Service) CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerU
 		}
 		seen[id] = struct{}{}
 		if id == viewerUserID {
-			// 自己恒可见全部 key（与 CanSee 的 ownerUserID==viewerUserID 分支一致）。
+			// Self is always visible for all keys (consistent with CanSee's ownerUserID==viewerUserID branch).
 			m := make(map[domain.PrivacyKey]bool, len(keys))
 			for _, k := range keys {
 				m[k] = true
@@ -256,7 +259,7 @@ func (s *Service) CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerU
 	if len(owners) == 0 {
 		return out, nil
 	}
-	// 批量取 rules：存在的行进 map，缺失的 (owner,key) 用 defaultRules（复刻 GetRules 兜底）。
+	// Batch-fetch rules: existing rows go into the map; missing (owner,key) use defaultRules (replicating GetRules' fallback).
 	rulesByOwner := make(map[int64]map[domain.PrivacyKey]domain.PrivacyRules, len(owners))
 	if s != nil && s.rules != nil {
 		list, err := s.rules.ListPrivacyRules(ctx, owners, keys)
@@ -286,8 +289,8 @@ func (s *Service) CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerU
 			mergeNeeds(&needs, needsForRules(rules))
 		}
 	}
-	// 批量取「viewer 是否在 owner 的联系人里」（owner→viewer 方向，对应 CanSee 的
-	// contacts.Get(owner, viewer)）。
+	// Batch-fetch "is the viewer among the owner's contacts" (owner→viewer direction,
+	// corresponding to CanSee's contacts.Get(owner, viewer)).
 	var reverse map[int64]domain.Contact
 	if s != nil && s.contacts != nil {
 		var err error
@@ -387,9 +390,11 @@ func (s *Service) ViewerIsPremium(ctx context.Context, viewerUserID int64) (bool
 	return fact.Found && !fact.Bot && fact.PremiumUntil > s.now().Unix(), nil
 }
 
-// CanSeeMatrix 批量评估 owners × viewers × keys 的可见性矩阵，结果等价于逐 (owner,viewer,key)
-// 调 CanSee。生产 contact store 通过一次 exact owner->viewer pair batch 读取联系人关系；仅不支持
-// sparse projection 的测试/替代实现按 owner 回退 GetMany。返回 map[owner]map[viewer]map[key]bool。
+// CanSeeMatrix batch-evaluates the owners × viewers × keys visibility matrix; the result is
+// equivalent to calling CanSee per (owner,viewer,key). The production contact store reads
+// contact relationships via a single exact owner->viewer pair batch; test/alternative
+// implementations that do not support sparse projection fall back to GetMany per owner.
+// Returns map[owner]map[viewer]map[key]bool.
 func (s *Service) CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs []int64, keys []domain.PrivacyKey) (map[int64]map[int64]map[domain.PrivacyKey]bool, error) {
 	out := make(map[int64]map[int64]map[domain.PrivacyKey]bool, len(ownerUserIDs))
 	if len(ownerUserIDs) == 0 || len(viewerUserIDs) == 0 || len(keys) == 0 {
@@ -468,7 +473,7 @@ func (s *Service) CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs 
 	}
 	now := s.now().Unix()
 	for _, owner := range owners {
-		// owner 的联系人中哪些是本批 viewer（= privacy 的 ViewerIsContact，对应 contacts.Get(owner,viewer)）。
+		// Which of the owner's contacts are viewers of this batch (= privacy's ViewerIsContact, corresponding to contacts.Get(owner,viewer)).
 		var ownerContacts map[int64]domain.Contact
 		if useSparseContacts {
 			ownerContacts = contactsByOwner[owner]

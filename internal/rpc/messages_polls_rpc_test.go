@@ -8,7 +8,7 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 )
 
-// sendTestPoll 用 sendMedia 发一个 poll，返回消息与 poll id。
+// sendTestPoll sends a poll via sendMedia and returns the message with the poll id.
 func sendTestPoll(t *testing.T, r *Router, fromID int64, peer tg.InputPeerClass, randomID int64, mutate func(*tg.InputMediaPoll)) *tg.Message {
 	t.Helper()
 	media := &tg.InputMediaPoll{
@@ -93,7 +93,7 @@ func TestSendVotePrivateChooseChangeRetract(t *testing.T) {
 	msg := sendTestPoll(t, r, owner.ID, &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash}, 4002, nil)
 	pollID := msg.Media.(*tg.MessageMediaPoll).Poll.ID
 
-	// friend 的 box id 与 owner 的相同（同一会话双方各自 box 计数都从 1 开始且只有这一条）。
+	// friend's box id equals owner's (in one chat, both sides' box counters start at 1 and this is the only message).
 	friendCtx := WithUserID(ctx, friend.ID)
 	updates, err := r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    peerForFriend,
@@ -118,7 +118,7 @@ func TestSendVotePrivateChooseChangeRetract(t *testing.T) {
 		t.Fatalf("option 0 = %+v, want not chosen 0 voters", v)
 	}
 
-	// 改票：单选 poll 重投另一项。
+	// Change vote: for a single-choice poll, vote for another option.
 	updates, err = r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    peerForFriend,
 		MsgID:   msg.ID,
@@ -136,7 +136,7 @@ func TestSendVotePrivateChooseChangeRetract(t *testing.T) {
 		t.Fatalf("after change option 1 = %+v, want cleared", v)
 	}
 
-	// 撤票：空 options。
+	// Retract vote: empty options.
 	updates, err = r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:  peerForFriend,
 		MsgID: msg.ID,
@@ -149,7 +149,7 @@ func TestSendVotePrivateChooseChangeRetract(t *testing.T) {
 		t.Fatalf("total after retract = %d, want 0", total)
 	}
 
-	// 非法选项。
+	// Invalid option.
 	if _, err := r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    peerForFriend,
 		MsgID:   msg.ID,
@@ -157,7 +157,7 @@ func TestSendVotePrivateChooseChangeRetract(t *testing.T) {
 	}); err == nil || !tgerr.Is(err, "OPTION_INVALID") {
 		t.Fatalf("invalid option err = %v, want OPTION_INVALID", err)
 	}
-	// 单选投两项。
+	// Two options on a single-choice poll.
 	if _, err := r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    peerForFriend,
 		MsgID:   msg.ID,
@@ -186,7 +186,7 @@ func TestSendVoteQuizRevealsAndLocks(t *testing.T) {
 	})
 	friendCtx := WithUserID(ctx, friend.ID)
 
-	// 投票前（owner 自己查结果）不得泄漏 correct/solution。
+	// Before voting (the owner checking results itself), correct/solution must not leak.
 	ownerCtx := WithUserID(ctx, owner.ID)
 	preUpdates, err := r.onMessagesGetPollResults(ownerCtx, &tg.MessagesGetPollResultsRequest{
 		Peer:  &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
@@ -205,7 +205,7 @@ func TestSendVoteQuizRevealsAndLocks(t *testing.T) {
 		}
 	}
 
-	// friend 答错：correct 标在正确选项上，solution 揭示。
+	// friend answers wrong: correct is marked on the right option and solution is revealed.
 	updates, err := r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    peerForFriend,
 		MsgID:   msg.ID,
@@ -226,7 +226,7 @@ func TestSendVoteQuizRevealsAndLocks(t *testing.T) {
 		t.Fatalf("solution = %q (%v), want revealed after voting", solution, has)
 	}
 
-	// quiz 不可改票/撤票。
+	// A quiz cannot be re-voted or retracted.
 	if _, err := r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    peerForFriend,
 		MsgID:   msg.ID,
@@ -260,7 +260,7 @@ func TestEditMessageClosePoll(t *testing.T) {
 		return req
 	}
 
-	// 非创建者不能关闭。
+	// A non-creator cannot close it.
 	friendClose := &tg.MessagesEditMessageRequest{Peer: friendPeer, ID: msg.ID}
 	friendClose.SetMedia(&tg.InputMediaPoll{Poll: tg.Poll{ID: pollID, Closed: true}})
 	if _, err := r.onMessagesEditMessage(friendCtx, friendClose); err == nil || !tgerr.Is(err, "MESSAGE_AUTHOR_REQUIRED") {
@@ -276,7 +276,7 @@ func TestEditMessageClosePoll(t *testing.T) {
 		t.Fatal("poll should be closed after edit")
 	}
 
-	// 关闭后投票必须被拒。
+	// Voting must be rejected after closing.
 	if _, err := r.onMessagesSendVote(friendCtx, &tg.MessagesSendVoteRequest{
 		Peer:    friendPeer,
 		MsgID:   msg.ID,
@@ -285,7 +285,7 @@ func TestEditMessageClosePoll(t *testing.T) {
 		t.Fatalf("vote on closed poll err = %v, want MESSAGE_POLL_CLOSED", err)
 	}
 
-	// 对端视角读取也必须看到 closed（权威覆盖快照）。
+	// The peer's view must also see closed (authoritative state overrides the snapshot).
 	res, err := r.onMessagesGetPollResults(friendCtx, &tg.MessagesGetPollResultsRequest{Peer: friendPeer, MsgID: msg.ID})
 	if err != nil {
 		t.Fatalf("getPollResults after close: %v", err)
@@ -304,7 +304,7 @@ func TestGetPollVotesPublicOnly(t *testing.T) {
 	ownerCtx := WithUserID(ctx, owner.ID)
 	friendCtx := WithUserID(ctx, friend.ID)
 
-	// 非公开 poll：getPollVotes 拒绝。
+	// Non-public poll: getPollVotes rejects.
 	anonymous := sendTestPoll(t, r, owner.ID, ownerPeer, 4005, nil)
 	if _, err := r.onMessagesGetPollVotes(ownerCtx, &tg.MessagesGetPollVotesRequest{
 		Peer: ownerPeer, ID: anonymous.ID, Limit: 10,

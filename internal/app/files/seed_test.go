@@ -20,7 +20,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// fakeMediaStore 是 store.MediaStore 的内存替身，用于在无 PG 时验证 seed 导入器。
+// fakeMediaStore is an in-memory stand-in for store.MediaStore, used to verify the seed importer without PG.
 type fakeMediaStore struct {
 	mu        sync.Mutex
 	blobs     map[string]domain.FileBlob
@@ -32,7 +32,7 @@ type fakeMediaStore struct {
 	webPages  map[int64]domain.MessageWebPage
 	seedState map[string]string
 	receipts  map[string]domain.UploadedMediaReceipt
-	// profilePhotos[ownerID|kind] 保存某 owner 当前 profile/fallback 照片引用。
+	// profilePhotos[ownerID|kind] holds an owner's current profile/fallback photo reference.
 	profilePhotos map[string]domain.ProfilePhotoRef
 }
 
@@ -812,7 +812,7 @@ func TestSeedEffectsInvalidatesHashWhenCachedThumbnailGrows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// PhotoCachedSize 没有显式 size；RPC 下发的大小取自 len(Bytes)。
+	// PhotoCachedSize has no explicit size; the size delivered by RPC comes from len(Bytes).
 	after := bytes.Replace(before, []byte(`"bytes":"ffd8ff01"`), []byte(`"bytes":"ffd8ff01020304"`), 1)
 	if err := os.WriteFile(path, after, 0o600); err != nil {
 		t.Fatal(err)
@@ -936,7 +936,7 @@ func TestSeedMediaFromRealExport(t *testing.T) {
 		t.Error("expected blobs imported")
 	}
 
-	// reaction 引用的文档应能被解析回真实 document（带 sticker 属性 + 主体 blob）。
+	// A document referenced by a reaction should resolve back to a real document (with a sticker attribute + main blob).
 	reactions, _ := media.ListAvailableReactions(context.Background())
 	if len(reactions) == 0 {
 		t.Fatal("no reactions stored")
@@ -959,7 +959,7 @@ func TestSeedMediaFromRealExport(t *testing.T) {
 		}
 	}
 
-	// 一个常规贴纸集应有 documents 且能按 short_name 解析。
+	// A regular sticker set should have documents and resolve by short_name.
 	for _, s := range media.sets {
 		for _, thumb := range s.Thumbs {
 			if thumb.Downloadable() {
@@ -1421,8 +1421,9 @@ func TestSeedMediaSkipsUnchangedStickerExportTree(t *testing.T) {
 	seedDir := t.TempDir()
 	dir := filepath.Join(seedDir, "telegram_stickers_export", "TestSet_1")
 	writeInputSetTypeSeed(t, dir, "InputStickerSetShortName", "TestSet", 1, 1001, false)
-	// 同一个集出现在两个导出目录是真实情况（例如 Topics emoji 集），索引里的 id 必须去重，
-	// 否则“集仍存在”的计数永远对不上，快速路径会被一直跳过。
+	// A set appearing in two export directories is a real case (e.g. a Topics emoji set); the ids in
+	// the index must be deduplicated, otherwise the "set still exists" count never matches and the fast
+	// path is always skipped.
 	writeInputSetTypeSeed(t, filepath.Join(seedDir, "telegram_emoji_export", "TestSet_1"), "InputStickerSetShortName", "TestSet", 1, 1001, true)
 
 	media := newFakeMediaStore()
@@ -1435,7 +1436,7 @@ func TestSeedMediaSkipsUnchangedStickerExportTree(t *testing.T) {
 		t.Fatalf("seed media: %v", err)
 	}
 
-	// 同大小、同 mtime 地破坏 set_info.json：只有快速路径真的跳过解析，第二次 seed 才会成功。
+	// Corrupt set_info.json while keeping the same size and mtime: the second seed only succeeds if the fast path really skips parsing.
 	infoPath := filepath.Join(dir, "set_info.json")
 	info, err := os.Stat(infoPath)
 	if err != nil {
@@ -1551,7 +1552,7 @@ func TestSeedMediaHonorsIncreasedStickerSetLimit(t *testing.T) {
 				t.Fatalf("second set with limit=1: found=%v err=%v", found, err)
 			}
 			if tc.legacyIndex {
-				// v2 未保存上限；缺失的字段不能被当成已导入全部集合。
+				// v2 did not store the limit; a missing field must not be taken as all sets having been imported.
 				idx, found, err := svc.loadStickerSeedIndex(ctx)
 				if err != nil || !found {
 					t.Fatalf("load seed index: found=%v err=%v", found, err)
@@ -1610,7 +1611,7 @@ func TestSeedMediaDuplicateExportsKeepFinalVersion(t *testing.T) {
 		t.Fatalf("initial import: set=%+v found=%v err=%v", set, found, err)
 	}
 
-	// 新增无关集合触发重扫；两份同 id 导出仍须按顺序覆盖，不能退回第一份。
+	// Adding an unrelated set triggers a rescan; two exports with the same id must still overwrite in order, without reverting to the first.
 	writeInputSetTypeSeed(t, filepath.Join(seedDir, "telegram_stickers_export", "Unrelated"), "InputStickerSetShortName", "Unrelated", 2, 1000003, false)
 	svc := NewService(media, blobs, 2)
 	if _, err := svc.SeedMedia(ctx, seedDir, 0); err != nil {

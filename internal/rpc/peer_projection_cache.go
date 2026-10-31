@@ -52,8 +52,9 @@ func (b *userProjectionRecoveryBudget) consume(items int) error {
 	return nil
 }
 
-// viewerPeerCache 是一次 outbox/fanout 构建内的短生命周期缓存。
-// 用户资料含联系人、隐私、头像和在线状态，必须按 viewerUserID 隔离，不能跨视角复用。
+// viewerPeerCache is a short-lived cache within a single outbox/fanout build. User profiles carry
+// contacts, privacy, avatars, and online status, so they must be isolated by viewerUserID and never
+// reused across perspectives.
 type viewerPeerCache struct {
 	r *Router
 
@@ -149,8 +150,9 @@ func (c *viewerPeerCache) usersForIDBatch(ctx context.Context, viewerUserID int6
 	return append(left, right...), nil
 }
 
-// primeUsers 把跨 viewer 一次性投影（ByIDsForViewers）的结果按 viewer 预热进底层 BatchCache，
-// 使随后每 viewer 的 usersForIDs 命中缓存、不再逐 viewer 解析投影。仅 fan-out 预热路径调用。
+// primeUsers warms the underlying BatchCache per viewer with the results of a one-shot cross-viewer
+// projection (ByIDsForViewers), so subsequent per-viewer usersForIDs hits the cache and no longer
+// resolves the projection viewer by viewer. Called only by the fan-out warm-up path.
 func (c *viewerPeerCache) primeUsers(viewerUserID int64, users []domain.User) {
 	if c == nil || c.users == nil {
 		return

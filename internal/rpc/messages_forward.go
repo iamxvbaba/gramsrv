@@ -262,16 +262,20 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			if sourceUserID != 0 {
 				fanoutExtraUserIDs = append(fanoutExtraUserIDs, sourceUserID)
 			}
-			// 收件人是该频道的活跃成员集，对本次转发的每条源都相同；只取一次，
-			// 避免一次转发 ≤100 条到 N 成员大群时把 recipients 累积成 ~100×N 条目
-			// 的巨大临时切片（N=10^5 时约千万级）。
+			// The recipients are the channel's active member set, identical for
+			// every source of this forward, so fetch once: this avoids
+			// accumulating recipients into a huge temporary slice of ~100xN
+			// entries when forwarding up to 100 items to a large N-member group
+			// (tens of millions at N=10^5).
 			if len(recipients) == 0 {
 				recipients = res.Recipients
 			}
 		}
-		// echo 与 fan-out 用各自独立 cache（RPC vs worker goroutine 防竞态）。多条转发汇成
-		// 一个 fan-out job（channelMessagesUpdatesWithPeerCache 内含多条 UpdateNewChannelMessage），
-		// 由同 channel 分片 FIFO 原子投递。
+		// echo and fan-out use separate caches (RPC vs worker goroutine, to avoid
+		// races). Multiple forwards merge into one fan-out job
+		// (channelMessagesUpdatesWithPeerCache containing several
+		// UpdateNewChannelMessage), delivered atomically by the same-channel
+		// shard FIFO.
 		echoCache := newViewerPeerCache(r)
 		updates := r.channelMessagesUpdatesWithPeerCache(ctx, userID, results, req.RandomID, true, extraUserIDs, echoCache)
 		if n := len(fanoutResults); n > 0 {
@@ -770,9 +774,11 @@ func (r *Router) forwardAuthorDisplayName(ctx context.Context, viewerUserID, aut
 	return name
 }
 
-// applyForwardAuthorPrivacy 在首次生成 forward header 时按原作者的
-// forwards 隐私规则降级：不允许链接回账号时只保留展示名 from_name。
-// 已有 header 的再转发沿用原 header，不重新评估。
+// applyForwardAuthorPrivacy downgrades the forward header when it is first
+// generated according to the original author's forwards privacy rule: when
+// linking back to the account is not allowed, only the display name from_name is
+// kept. Re-forwarding an existing header reuses the original header without
+// re-evaluating.
 func (r *Router) applyForwardAuthorPrivacy(ctx context.Context, forwarderUserID int64, forward *domain.MessageForward) {
 	if forward == nil || forward.From.Type != domain.PeerTypeUser || forward.From.ID == 0 || forward.FromName != "" {
 		return

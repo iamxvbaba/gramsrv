@@ -8,9 +8,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestDifferenceNewMessageKeepsPinServiceReply 验证差分输出的 pin 服务
-// 消息保留 reply 头（reply_to_msg_id = 接收方视角被置顶消息 id）；缺失
-// 时 TDesktop 渲染 "pinned Deleted message"。
+// TestDifferenceNewMessageKeepsPinServiceReply verifies that the pin service
+// message in the difference output keeps the reply header (reply_to_msg_id = the
+// pinned message id from the recipient's viewpoint); when missing, TDesktop
+// renders "pinned Deleted message".
 func TestDifferenceNewMessageKeepsPinServiceReply(t *testing.T) {
 	const bobID = int64(1000000042)
 	const aliceID = int64(1000000041)
@@ -56,7 +57,7 @@ func TestDifferenceNewMessageKeepsPinServiceReply(t *testing.T) {
 	}
 	reply, ok := svc.GetReplyTo()
 	if !ok {
-		t.Fatalf("difference 服务消息丢失 reply 头（TDesktop 将渲染 pinned Deleted message）")
+		t.Fatalf("difference service message lost the reply header (TDesktop will render pinned Deleted message)")
 	}
 	header, ok := reply.(*tg.MessageReplyHeader)
 	if !ok || header.ReplyToMsgID != 115 {

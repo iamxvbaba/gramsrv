@@ -160,8 +160,9 @@ func TestChannelStoreReadOutboxDoesNotRegressSenderDialogUnread(t *testing.T) {
 		t.Fatalf("send member message: %v", err)
 	}
 
-	// H4a：发送不再写全员 dialog 行；sender 自己的 read_inbox 在发送事务内推进
-	// channel_members 行，读侧 GREATEST(dialog, member) 派生。
+	// H4a: a send no longer writes dialog rows for all members; the sender's own read_inbox
+	// advances the channel_members row within the send transaction, and the read side derives it via
+	// GREATEST(dialog, member).
 	memberView, err := channels.GetChannelDialogs(ctx, member.ID, []int64{channelID})
 	if err != nil {
 		t.Fatalf("get member dialogs after self send: %v", err)
@@ -841,7 +842,7 @@ func TestChannelStoreSmallMegagroupDeleteDerivesUnread(t *testing.T) {
 		t.Fatalf("send third message: %v", err)
 	}
 
-	// H4a：dialog unread 读时派生，不再依赖 channel_dialogs 缓存列刷新。
+	// H4a: dialog unread is derived at read time and no longer depends on the channel_dialogs cache column refresh.
 	beforeDelete, err := channels.ListChannelDialogs(ctx, member.ID, domain.DialogFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("list dialogs before delete: %v", err)
@@ -1220,8 +1221,8 @@ func TestChannelReadOutboxDerivesFromPublicWatermark(t *testing.T) {
 		t.Fatalf("owner read history: %v", err)
 	}
 
-	// 模拟实时 fanout 截断：抹掉 sender 的 per-member outbox 水位与 dialog
-	// 缓存，read_outbox 必须仍能从 channel 级公共水位派生出来。
+	// Simulate a realtime fanout truncation: wipe the sender's per-member outbox watermark and the
+	// dialog cache; read_outbox must still be derivable from the channel-level public watermark.
 	if _, err := pool.Exec(ctx, `UPDATE channel_members SET read_outbox_max_id = 0 WHERE channel_id = $1 AND user_id = $2`, created.Channel.ID, sender.ID); err != nil {
 		t.Fatalf("reset sender member outbox: %v", err)
 	}
@@ -1236,8 +1237,9 @@ func TestChannelReadOutboxDerivesFromPublicWatermark(t *testing.T) {
 	if view.Dialog.ReadOutboxMaxID != sent.Message.ID {
 		t.Fatalf("sender read_outbox = %d, want %d derived from public watermark even when fanout state is missing", view.Dialog.ReadOutboxMaxID, sent.Message.ID)
 	}
-	// top1 持有者（owner）自己派生用 top2：sender 未读过任何消息时回退 0，
-	// 不能把自己的已读水位当成对方的回执。
+	// The top1 holder (owner) derives from top2 for itself: when the sender has not read any
+	// messages it falls back to 0, and its own read watermark must not be taken as the peer's
+	// receipt.
 	ownerView, err := channels.GetChannel(ctx, owner.ID, created.Channel.ID)
 	if err != nil {
 		t.Fatalf("owner view: %v", err)

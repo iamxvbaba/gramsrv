@@ -9,13 +9,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestStarGiftResaleSuspendedByAccountFreezePostgres 钉住「заморозка аккаунта =
-// витрина его подарков пустеет»: строки листингов не удаляются, а помечаются
-// suspended, поэтому разморозка возвращает их с той же ценой. Проверяются все
-// читатели маркета (список, value info, resell_amount уникального подарка,
-// проекции каталога), невозможность купить и невозможность выставить/переоценить
-// подарок замороженного продавца, а также изоляция: листинг второго продавца того
-// же подарка остаётся в продаже.
+// TestStarGiftResaleSuspendedByAccountFreezePostgres pins "freezing an account empties the
+// storefront of its gifts": listing rows are not deleted but marked suspended, so unfreezing returns
+// them with the same price. It verifies all market readers (list, value info, a unique gift's
+// resell_amount, catalog projections), that a frozen seller's gift cannot be bought or
+// listed/re-priced, and isolation: the second seller's listing of the same gift stays on sale.
 func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -99,9 +97,9 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 	sellerUnique, sellerRef := upgradeUnique(gifter, seller, "seller", now)
 	peerUnique, peerRef := upgradeUnique(gifter, peerSeller, "peer", now+10)
 
-	// Второй продавец выставляет дороже, поэтому после заморозки первого пол,
-	// витрина и проекции каталога обязаны считать только листинг второго: если
-	// suspended попадёт в агрегаты, пол останется на заниженной цене первого.
+	// The second seller lists higher, so after freezing the first, the floor, storefront and catalog
+	// projections must count only the second listing: if suspended entries entered the aggregates,
+	// the floor would remain at the first seller's lower price.
 
 	if _, err := lifecycle.SetStarGiftListing(ctx, domain.StarGiftListingRequest{ActorUserID: seller.ID,
 		Ref:    sellerRef,
@@ -167,7 +165,7 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 		t.Fatalf("freeze seller = %+v err %v", frozen, err)
 	}
 
-	// Витрина теряет только листинг замороженного продавца.
+	// The storefront loses only the frozen seller's listing.
 	if ids := listedIDs(); ids[sellerUnique.ID] || !ids[peerUnique.ID] {
 		t.Fatalf("resale market while frozen = %v, want only the peer listing", ids)
 	}
@@ -184,8 +182,8 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 	if resale, floor := catalogFloor(); resale != 1 || floor != 900 {
 		t.Fatalf("catalog projections while frozen = %d/%d, want 1/900", resale, floor)
 	}
-	// Строка листинга обязана сохранить цену и время выставления: разморозка
-	// возвращает подарок на витрину, а не восстанавливает его с нуля.
+	// The listing row must preserve the price and listing time: unfreezing returns the gift to the
+	// storefront rather than restoring it from scratch.
 	var amount, listedAt, updatedAt int64
 	var suspended bool
 	if err := pool.QueryRow(ctx, `SELECT amount,listed_at,updated_at,suspended FROM star_gift_listings WHERE unique_gift_id=$1`,
@@ -197,8 +195,8 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 			amount, listedAt, updatedAt, suspended, now+2, now+2)
 	}
 
-	// Купить подарок замороженного продавца нельзя, и деньги покупателя не
-	// списываются.
+	// A frozen seller's gift cannot be bought, and the buyer's money is not
+	// debited.
 	buyerBalanceBefore, err := stars.GetBalance(ctx, buyer.ID)
 	if err != nil {
 		t.Fatalf("buyer balance before frozen purchase: %v", err)
@@ -214,22 +212,22 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 		t.Fatalf("buyer balance after rejected frozen purchase = %+v err %v, want %d",
 			buyerBalanceAfter, err, buyerBalanceBefore.Balance)
 	}
-	// Выставить или переоценить подарок замороженного аккаунта тоже нельзя.
+	// Listing or re-pricing a frozen account's gift is likewise forbidden.
 	if _, err := lifecycle.SetStarGiftListing(ctx, domain.StarGiftListingRequest{ActorUserID: seller.ID,
 		Ref:    sellerRef,
 		Amount: &domain.StarGiftAmount{Currency: domain.StarGiftCurrencyStars, Amount: 1200}, Date: now + 4,
 	}); !errors.Is(err, domain.ErrStarGiftResaleUnavailable) {
 		t.Fatalf("re-list while frozen = %v, want ErrStarGiftResaleUnavailable", err)
 	}
-	// Тот же запрет держит guard-триггер, то есть даже прямой SQL не может вернуть
-	// suspended-листинг в продажу, пока аккаунт заморожен.
+	// The same ban is upheld by the guard trigger, meaning even direct SQL cannot return a
+	// suspended listing to sale while the account is frozen.
 	if _, err := pool.Exec(ctx, `UPDATE star_gift_listings SET suspended=false,amount=1200 WHERE unique_gift_id=$1`,
 		sellerUnique.ID); err == nil {
 		t.Fatal("guard trigger must reject re-activating a listing of a frozen seller")
 	}
 
-	// Разморозка возвращает ровно те листинги, которые были выставлены до
-	// заморозки, с той же ценой, и покупка снова проходит.
+	// Unfreezing returns exactly the listings that were on sale before the freeze, with the same
+	// price, and the purchase goes through again.
 	if _, err := admin.SetAccountFreeze(ctx, domain.AccountFreeze{UserID: seller.ID, Actor: "integration",
 		CommandID: "unfreeze-resale-seller-" + suffix}); err != nil {
 		t.Fatalf("unfreeze seller: %v", err)
@@ -260,16 +258,15 @@ func TestStarGiftResaleSuspendedByAccountFreezePostgres(t *testing.T) {
 			buyerBalanceAfter, err, buyerBalanceBefore.Balance-500)
 	}
 
-	// Покупка подарка замороженного продавца не оставляет pending-предложений и
-	// не восстанавливает листинг: продажа состоялась, витрина её продавца пуста.
+	// Buying a frozen seller's gift leaves no pending offers and does not restore the listing: the
+	// sale went through, and that seller's storefront is empty.
 	if ids := listedIDs(); ids[sellerUnique.ID] || !ids[peerUnique.ID] {
 		t.Fatalf("resale market after sold = %v, want only the peer listing", ids)
 	}
 }
 
-// TestStarGiftResaleFreezeSkipsNeverFrozenSellerPostgres 覆盖最便宜的路径： у
-// продавца нет строки в account_restrictions вообще, поэтому FOR SHARE не находит
-// ничего и выставление проходит.
+// TestStarGiftResaleFreezeSkipsNeverFrozenSellerPostgres covers the cheapest path: the seller has no
+// row in account_restrictions at all, so FOR SHARE finds nothing and listing goes through.
 func TestStarGiftResaleFreezeSkipsNeverFrozenSellerPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -38,7 +38,7 @@ func TestMessageStorePinPrivateMessageSharedAndOneside(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	// 共享置顶：双侧翻转，各产生一条 pinned_messages 事件（自带账号 pts）。
+	// Shared pin: both sides flip, each producing one pinned_messages event (carrying account pts).
 	res, err := messages.PinPrivateMessage(ctx, domain.PinPrivateMessageRequest{
 		OwnerUserID: alice.ID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID},
@@ -63,7 +63,7 @@ func TestMessageStorePinPrivateMessageSharedAndOneside(t *testing.T) {
 		}
 	}
 	if len(bobSide.MessageIDs) != 1 || bobSide.MessageIDs[0] != sent.RecipientMessage.ID {
-		t.Fatalf("bob side = %+v, want bob 视角 box id %d", bobSide, sent.RecipientMessage.ID)
+		t.Fatalf("bob side = %+v, want bob's viewpoint box id %d", bobSide, sent.RecipientMessage.ID)
 	}
 	events, err := NewUpdateEventStore(pool).ListAfter(ctx, bob.ID, bobSide.Event.Pts-1, 5)
 	if err != nil || len(events) == 0 {
@@ -78,7 +78,7 @@ func TestMessageStorePinPrivateMessageSharedAndOneside(t *testing.T) {
 	if res.ServiceMessage.SenderEvent.Pts != self.Event.Pts+1 || res.ServiceMessage.RecipientEvent.Pts != bobSide.Event.Pts+1 || len(events) != 2 || events[1].Type != domain.UpdateEventNewMessage {
 		t.Fatalf("pin and service must form contiguous durable events: result=%+v events=%+v", res, events)
 	}
-	// message.pinned 回填到历史读取。
+	// message.pinned is filled back into history reads.
 	bobList, err := messages.ListByUser(ctx, bob.ID, domain.MessageFilter{
 		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}, Limit: 10,
 	})
@@ -93,7 +93,7 @@ func TestMessageStorePinPrivateMessageSharedAndOneside(t *testing.T) {
 		t.Fatalf("pinned-only list = %+v count %d err %v, want exactly the pinned message", pinnedOnly.Messages, pinnedOnly.Count, err)
 	}
 
-	// 幂等重复 pin：no-op，不烧 pts。
+	// Idempotent repeated pin: no-op, burns no pts.
 	repeat, err := messages.PinPrivateMessage(ctx, domain.PinPrivateMessageRequest{
 		OwnerUserID: alice.ID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID},
@@ -105,7 +105,7 @@ func TestMessageStorePinPrivateMessageSharedAndOneside(t *testing.T) {
 		t.Fatalf("repeat pin = %+v err %v, want no-op", repeat, err)
 	}
 
-	// unpin 双侧传播。
+	// unpin propagates to both sides.
 	unpin, err := messages.PinPrivateMessage(ctx, domain.PinPrivateMessageRequest{
 		OwnerUserID: bob.ID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID},
@@ -127,7 +127,7 @@ WHERE owner_user_id = ANY($1::bigint[]) AND pinned AND NOT deleted
 		t.Fatalf("pinned rows after unpin = %d, want 0", pinnedCount)
 	}
 
-	// pm_oneside：仅本侧置顶，对端不动。
+	// pm_oneside: only this side is pinned, the peer is untouched.
 	oneside, err := messages.PinPrivateMessage(ctx, domain.PinPrivateMessageRequest{
 		OwnerUserID: alice.ID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID},
@@ -254,7 +254,7 @@ func TestMessageStoreUnpinAllPrivateMessagesSweepsBothSides(t *testing.T) {
 		}
 	}
 	if len(bobSide.MessageIDs) != 1 || bobSide.MessageIDs[0] != first.RecipientMessage.ID {
-		t.Fatalf("bob unpinAll side = %+v, want only shared pin cleared with bob 视角 id %d", bobSide, first.RecipientMessage.ID)
+		t.Fatalf("bob unpinAll side = %+v, want only the shared pin cleared with bob's viewpoint id %d", bobSide, first.RecipientMessage.ID)
 	}
 
 	var pinnedCount int
@@ -268,7 +268,7 @@ WHERE owner_user_id = ANY($1::bigint[]) AND pinned AND NOT deleted
 		t.Fatalf("pinned rows after unpinAll = %d, want 0", pinnedCount)
 	}
 
-	// 再次 unpinAll：no-op。
+	// unpinAll again: no-op.
 	empty, err := messages.UnpinAllPrivateMessages(ctx, domain.UnpinAllPrivateMessagesRequest{
 		OwnerUserID: alice.ID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID},

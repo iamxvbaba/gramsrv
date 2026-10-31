@@ -256,9 +256,9 @@ func TestDialogUserViewUsesContactProfileAndDialogFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list pinned dialogs: %v", err)
 	}
-	// 协议契约只看返回顺序（TL dialog 不暴露 pinned_order）；内部约定为
-	// 首位持最大 pinned_order（reorder 写 cardinality-pos+1，读取 DESC，
-	// 与 SetPinned 的 MAX+1"新 pin 置顶最前"一致）。
+	// The protocol contract only looks at return order (TL dialog does not expose pinned_order);
+	// internally the first entry holds the largest pinned_order (reorder writes cardinality-pos+1
+	// and reads DESC, consistent with SetPinned's MAX+1 "a new pin goes to the very front").
 	if len(pinned.Dialogs) != 2 || pinned.Dialogs[0].Peer != otherPeer || pinned.Dialogs[0].PinnedOrder != 2 || pinned.Dialogs[1].Peer != friendPeer || pinned.Dialogs[1].PinnedOrder != 1 {
 		t.Fatalf("pinned dialogs = %+v, want other then friend with descending internal order", pinned.Dialogs)
 	}

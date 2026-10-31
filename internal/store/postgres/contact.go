@@ -14,13 +14,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// ContactStore 用 PostgreSQL 实现 store.ContactStore。
+// ContactStore implements store.ContactStore with PostgreSQL.
 type ContactStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewContactStore 基于 pgx 连接池（或事务）创建 ContactStore。
+// NewContactStore creates a ContactStore backed by a pgx pool (or transaction).
 func NewContactStore(db sqlcgen.DBTX) *ContactStore {
 	return &ContactStore{db: db, q: sqlcgen.New(db)}
 }
@@ -875,11 +875,13 @@ func contactFromUpdateNoteRow(row sqlcgen.UpdateContactNoteRow) (domain.Contact,
 	return contactFromFields(row.ID, row.AccessHash, row.Phone, row.FirstName, row.LastName, row.Username, row.CountryCode, row.Verified, row.Support, row.IsBot, int(row.BotInfoVersion), premiumUntilFromModel(row.PremiumExpiresAt), row.EmojiStatusDocumentID, int(row.EmojiStatusUntil), row.EmojiStatusCollectibleID, row.EmojiStatusCollectible, int(row.LastSeenAt), row.ContactFirstName, row.ContactLastName, row.ContactPhone, row.Note, entities, row.Mutual, row.CloseFriend), nil
 }
 
-// contactFromFields 组装 domain.Contact。getContacts 主路径（List/Get/Upsert/UpdateNote
-// 四个 sqlc 查询）传真实 is_bot/bot_info_version；ImportContacts 等手机号批量导入的
-// raw-scan 调用传 false/0——bot 无 phone 不经手机号导入，bot 加联系人走 username
-// 的单条 UpsertContact 路径（已带真实 bot 列）。premium/emoji status 列所有路径必须
-// 传真实值：TDesktop 对任何缺 emoji_status 字段的 user TL 一律清空本地状态。
+// contactFromFields assembles a domain.Contact. The getContacts main path (the List/Get/Upsert/
+// UpdateNote sqlc queries) passes real is_bot/bot_info_version; the raw-scan callers of
+// phone-number bulk imports such as ImportContacts pass false/0 — bots have no phone and do not
+// go through phone-number import, and adding a bot as a contact goes through the single-row
+// UpsertContact path by username (which already carries the real bot columns). All paths must
+// pass real values for the premium/emoji status columns: TDesktop clears local state for any user
+// TL missing the emoji_status field.
 func contactFromFields(id, accessHash int64, phone, firstName, lastName, username, countryCode string, verified, support, isBot bool, botInfoVersion, premiumUntil int, emojiStatusDocumentID int64, emojiStatusUntil int, emojiCollectibleID *int64, emojiCollectibleJSON []byte, lastSeenAt int, contactFirstName, contactLastName, contactPhone, note string, noteEntities []domain.MessageEntity, mutual, closeFriend bool) domain.Contact {
 	return domain.Contact{
 		User: domain.User{

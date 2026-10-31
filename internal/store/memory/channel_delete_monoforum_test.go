@@ -7,9 +7,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestDeleteChannelCascadesLinkedMonoforum 验证删除开启了 Direct Messages 的母广播频道时,关联的
-// monoforum 虚拟频道被一并软删并随结果返回。不级联会留下 monoforum=true 但 linked_monoforum_id 指向
-// 已删父频道的孤儿(web 客户端渲染崩 + DB 垃圾随删除累积)。
+// TestDeleteChannelCascadesLinkedMonoforum verifies that deleting a parent broadcast
+// channel with Direct Messages enabled also soft-deletes the associated monoforum
+// virtual channel and returns it with the result. Without the cascade it would leave an
+// orphan with monoforum=true but linked_monoforum_id pointing at a deleted parent
+// (web client rendering crashes + DB garbage accumulating on delete).
 func TestDeleteChannelCascadesLinkedMonoforum(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()
@@ -42,7 +44,7 @@ func TestDeleteChannelCascadesLinkedMonoforum(t *testing.T) {
 	if mono := store.channels[monoID]; !mono.Deleted {
 		t.Fatalf("monoforum %d not soft-deleted in store: %+v", monoID, mono)
 	}
-	// 删后 getDialogs 不应再返回母频道或 mono。
+	// After the delete, getDialogs must no longer return the parent channel or the mono.
 	dialogs, err := store.ListChannelDialogs(ctx, 1, domain.DialogFilter{Limit: 100})
 	if err != nil {
 		t.Fatalf("list dialogs after delete: %v", err)
@@ -54,8 +56,8 @@ func TestDeleteChannelCascadesLinkedMonoforum(t *testing.T) {
 	}
 }
 
-// TestDeleteChannelNoMonoforumNoCascade 锁定不开私信的普通频道删除不受影响:LinkedMonoforum 为 nil,
-// 不会误触级联。
+// TestDeleteChannelNoMonoforumNoCascade locks that deleting an ordinary channel without
+// DMs enabled is unaffected: LinkedMonoforum is nil and the cascade is not triggered by mistake.
 func TestDeleteChannelNoMonoforumNoCascade(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()

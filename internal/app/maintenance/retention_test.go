@@ -36,7 +36,7 @@ func TestRetentionWorkerUsesIndependentOutboxPoisonPolicyAndSignalsRelease(t *te
 	if outbox.calls != 1 || outbox.olderThan != 2*time.Minute || outbox.limit != 73 {
 		t.Fatalf("outbox poison calls/args = %d/%v/%d, want 1/2m/73", outbox.calls, outbox.olderThan, outbox.limit)
 	}
-	entries := logs.FilterMessage("terminal failed dispatch_outbox 已结束隔离并释放用户 lane").All()
+	entries := logs.FilterMessage("terminal failed dispatch_outbox isolation ended and user lane released").All()
 	if len(entries) != 1 {
 		t.Fatalf("poison release error signals = %d, want 1", len(entries))
 	}
@@ -90,7 +90,7 @@ func TestRetentionWorkerReclaimsExpiredTempKeys(t *testing.T) {
 func TestRetentionWorkerSkipsNilTempKeyStore(t *testing.T) {
 	outbox := &fakeOutboxRetention{}
 	w := NewRetentionWorker(outbox, nil, zap.NewNop(), time.Hour, time.Hour, 100)
-	w.runOnce(context.Background()) // 不应 panic
+	w.runOnce(context.Background()) // should not panic
 	if outbox.calls != 1 {
 		t.Fatalf("outbox calls = %d, want 1", outbox.calls)
 	}
@@ -388,7 +388,7 @@ func TestRetentionWorkerSkipsOrphanDeleteWhenHeartbeatFails(t *testing.T) {
 	if store.heartbeatCalls != 1 || store.calls != 0 {
 		t.Fatalf("heartbeat/delete calls = %d/%d, want 1/0", store.heartbeatCalls, store.calls)
 	}
-	entries := logs.FilterMessage("刷新 active raw auth key heartbeat 失败，本轮跳过 orphan GC").All()
+	entries := logs.FilterMessage("failed to refresh active raw auth key heartbeat, skipping orphan GC this round").All()
 	if len(entries) != 1 || entries[0].ContextMap()["signal"] != "auth_key_heartbeat_failed" {
 		t.Fatalf("heartbeat failure signals = %+v", entries)
 	}

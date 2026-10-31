@@ -227,8 +227,8 @@ const listBotsByOwner = `-- name: ListBotsByOwner :many
 SELECT bot_user_id, owner_user_id, token_secret, description, commands, bot_chat_history, bot_nochats, inline_placeholder, created_at, updated_at, menu_button_type, menu_button_text, menu_button_url, bot_inline_geo FROM bots WHERE owner_user_id = $1 AND bot_user_id <> owner_user_id ORDER BY bot_user_id
 `
 
-// 排除 self-owner 种子行（内置 BotFather 自有），与 memory 实现一致：/mybots 与
-// 创建上限只统计用户经 /newbot 创建的 bot。
+// Exclude the self-owner seed row (owned by the built-in BotFather), consistent with the memory
+// implementation: /mybots and the creation limit count only bots created by users via /newbot.
 func (q *Queries) ListBotsByOwner(ctx context.Context, ownerUserID int64) ([]Bot, error) {
 	rows, err := q.db.Query(ctx, listBotsByOwner, ownerUserID)
 	if err != nil {
@@ -407,7 +407,7 @@ type UpdateBotProfileFieldsParams struct {
 	About     *string
 }
 
-// 部分更新 bot 的 users 行（setBotInfo 的 name/about）；NULL 参数表示不动该字段。
+// Partially update a bot's users row (setBotInfo's name/about); a NULL parameter means leave that field untouched.
 func (q *Queries) UpdateBotProfileFields(ctx context.Context, arg UpdateBotProfileFieldsParams) (int32, error) {
 	row := q.db.QueryRow(ctx, updateBotProfileFields, arg.ID, arg.FirstName, arg.About)
 	var bot_info_version int32

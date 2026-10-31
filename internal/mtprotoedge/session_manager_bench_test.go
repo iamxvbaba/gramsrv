@@ -18,14 +18,18 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
-// 连接层 fan-out / churn 压测：聚焦 SessionManager 的锁争用，不走真实 socket / 加密。
+// Connection-layer fan-out / churn load test: focused on SessionManager lock
+// contention, without going through real sockets / encryption.
 //
-// 构造的 Conn 故意不 startOutbound：pushToUser 持锁快照 byUser 后，锁外对每个 conn 调 c.Send，
-// 此时 c.outbound==nil 立即返回 ErrConnClosed（见 outbound.go），因此测量集中在「持锁段 + 分发开销」，
-// 即分片要消除的全局锁热点。每条连接仅结构体内存（无 1024 容量的 outbound channel、无 goroutine），
-// 故可注册到 20 万规模。
+// The constructed Conn deliberately does not startOutbound: after pushToUser takes
+// a locked snapshot of byUser, it calls c.Send for each conn outside the lock, and
+// at that point c.outbound==nil immediately returns ErrConnClosed (see
+// outbound.go), so the measurement concentrates on "the locked section + dispatch
+// overhead", i.e. the global lock hot spot that sharding aims to eliminate. Each
+// connection uses only struct memory (no 1024-capacity outbound channel, no
+// goroutine), so it can be registered at the 200k scale.
 //
-// 用法：
+// Usage:
 //
 //	go test ./internal/mtprotoedge/ -run '^$' -bench BenchmarkSessionManager -benchmem -cpu 1,4,8
 //	go test ./internal/mtprotoedge/ -run '^$' -bench BenchmarkSessionManagerPushConcurrent -mutexprofile mu.out
@@ -37,7 +41,7 @@ func benchConn(sessionID int64, authKeyID [8]byte, userID int64) *Conn {
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 	}
-	c.receivesUpdates.Store(true) // 走 fanout 的「收集 conns→锁外 Send」分支，而非 pending 暂存
+	c.receivesUpdates.Store(true) // take fanout's "collect conns→Send outside lock" branch, not pending staging
 	return c
 }
 
@@ -49,8 +53,9 @@ func authKeyIDFromInt(v uint64) [8]byte {
 	return id
 }
 
-// seedSessions 注册 conns 个连接，每个 user 绑定 connsPerUser 个连接（模拟多设备）。
-// 返回注册的 userID 列表（去重、有序范围 [1, userCount]）。
+// seedSessions registers conns connections, binding connsPerUser connections per
+// user (simulating multiple devices). It returns the number of registered users
+// (deduplicated, ordered range [1, userCount]).
 func seedSessions(sm *SessionManager, conns, connsPerUser int) (userCount int) {
 	if connsPerUser < 1 {
 		connsPerUser = 1
@@ -62,8 +67,9 @@ func seedSessions(sm *SessionManager, conns, connsPerUser int) (userCount int) {
 	return (conns + connsPerUser - 1) / connsPerUser
 }
 
-// BenchmarkSessionManagerPushConcurrent 模拟 20 万在线下的真实热点：大量 goroutine 并发对
-// 不同 user pushToUser，全部抢同一把全局锁。-mutexprofile 会把 SessionManager.mu 顶上来。
+// BenchmarkSessionManagerPushConcurrent simulates the real hot spot at 200k online:
+// many goroutines concurrently pushToUser to different users, all contending for
+// the same global lock. -mutexprofile will surface SessionManager.mu at the top.
 func BenchmarkSessionManagerPushConcurrent(b *testing.B) {
 	const conns = 200_000
 	const connsPerUser = 2
@@ -83,8 +89,9 @@ func BenchmarkSessionManagerPushConcurrent(b *testing.B) {
 	})
 }
 
-// BenchmarkSessionManagerRegisterChurn 测连接建立/断开的锁成本：并发 Register+Unregister。
-// 20 万在线意味着持续的 connect/disconnect churn，每次都抢全局写锁。
+// BenchmarkSessionManagerRegisterChurn measures the lock cost of connection
+// setup/teardown: concurrent Register+Unregister. 200k online means continuous
+// connect/disconnect churn, each contending for the global write lock.
 func BenchmarkSessionManagerRegisterChurn(b *testing.B) {
 	sm := NewSessionManager(zap.NewNop())
 	var seq atomic.Uint64
@@ -100,8 +107,10 @@ func BenchmarkSessionManagerRegisterChurn(b *testing.B) {
 	})
 }
 
-// BenchmarkSessionManagerPushFanoutWidth 测单次 push 的 fanout 广度成本：一个 user 绑定很多连接，
-// 单次 PushToUser 要持锁遍历全部。真实私聊 user 设备数少（2-4），此为上界参考。
+// BenchmarkSessionManagerPushFanoutWidth measures the fanout breadth cost of a
+// single push: one user bound to many connections, and a single PushToUser must
+// traverse all of them while holding the lock. A real private-chat user has few
+// devices (2-4), so this is an upper-bound reference.
 func BenchmarkSessionManagerPushFanoutWidth(b *testing.B) {
 	for _, width := range []int{1, 4, 16, 64} {
 		b.Run(fmt.Sprintf("width=%d", width), func(b *testing.B) {
@@ -120,8 +129,10 @@ func BenchmarkSessionManagerPushFanoutWidth(b *testing.B) {
 	}
 }
 
-// TestSessionManagerFanoutThroughput 是数据驱动吞吐测：注册 N 连接后，P 个 goroutine 持续并发
-// push，测全局锁下的实际 push 吞吐与 p99。默认小规模冒烟；设 TELESRV_LOAD_CONNS 放大到 20 万。
+// TestSessionManagerFanoutThroughput is a data-driven throughput test: after
+// registering N connections, P goroutines continuously push concurrently, measuring
+// actual push throughput and p99 under the global lock. Small smoke scale by
+// default; set TELESRV_LOAD_CONNS to scale up to 200k.
 func TestSessionManagerFanoutThroughput(t *testing.T) {
 	conns := envIntDefault("TELESRV_LOAD_CONNS", 20_000)
 	connsPerUser := envIntDefault("TELESRV_LOAD_CONNS_PER_USER", 2)
@@ -154,7 +165,7 @@ func TestSessionManagerFanoutThroughput(t *testing.T) {
 			lat := make([]time.Duration, 0, 1<<16)
 			var n uint64
 			for time.Now().Before(deadline) {
-				// 批量 256 次再查一次时钟，降低 time.Now 占比。
+				// Check the clock once every batch of 256, reducing time.Now's share.
 				for j := 0; j < 256; j++ {
 					n++
 					userID := int64(n%uint64(userCount)) + 1

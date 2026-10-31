@@ -8,7 +8,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// AIComposeStore 是 store.AIComposeStore 的内存实现。
+// AIComposeStore is the in-memory implementation of store.AIComposeStore.
 type AIComposeStore struct {
 	mu     sync.RWMutex
 	byID   map[int64]domain.AIComposeTone

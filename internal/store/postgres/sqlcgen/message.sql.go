@@ -95,8 +95,8 @@ type CountMessagesByUserParams struct {
 	SavedReactionKeys    []string
 }
 
-// ListMessagesByUser total CTE 的独立化:相同 base 过滤(不含分页 anchor),
-// 仅 NeedTotalCount 时发,避免热路径(getHistory 恒不需 total)次次规划 count 子树。
+// Extraction of ListMessagesByUser's total CTE: the same base filter (without the pagination anchor),
+// issued only when NeedTotalCount, so the hot path (getHistory never needs total) does not plan the count subtree every time.
 func (q *Queries) CountMessagesByUser(ctx context.Context, arg CountMessagesByUserParams) (int32, error) {
 	row := q.db.QueryRow(ctx, countMessagesByUser,
 		arg.OwnerUserID,
@@ -2557,11 +2557,11 @@ type ListMessagesBackwardRow struct {
 	FromUserLastSeenAt            int64
 }
 
-// backward 热路径(add_offset>=0:初始加载/上滑翻页)的扁平静态查询。
-// 与 ListMessagesByUser 的 backward 分支逐位等价(相同 base 过滤 + 相同 anchor +
-// ORDER BY box_id DESC + OFFSET GREATEST(add_offset,0) + LIMIT),但只规划单次
-// index scan + 2 LEFT JOIN,避免大 CTE 把 4 个分支全树规划。total 走
-// 独立 CountMessagesByUser,仅 NeedTotalCount 时发。
+// Flat static query for the backward hot path (add_offset>=0: initial load / scroll-up paging).
+// Bit-for-bit equivalent to ListMessagesByUser's backward branch (same base filter + same anchor +
+// ORDER BY box_id DESC + OFFSET GREATEST(add_offset,0) + LIMIT), but it plans only a single
+// index scan + 2 LEFT JOIN, avoiding the big CTE planning all 4 branches as a whole tree. total goes
+// through a separate CountMessagesByUser, issued only when NeedTotalCount.
 func (q *Queries) ListMessagesBackward(ctx context.Context, arg ListMessagesBackwardParams) ([]ListMessagesBackwardRow, error) {
 	rows, err := q.db.Query(ctx, listMessagesBackward,
 		arg.OwnerUserID,
@@ -3667,8 +3667,8 @@ type UnpinAllMessageBoxesByPeerRow struct {
 	MessageSenderID  int64
 }
 
-// 按批清除（affectedHistory.offset 续清语义），单条 updatePinnedMessages
-// 的 messages 向量随之有界。
+// Cleared in batches (the affectedHistory.offset continuation-clearing semantics), keeping a single
+// updatePinnedMessages' messages vector bounded as a result.
 func (q *Queries) UnpinAllMessageBoxesByPeer(ctx context.Context, arg UnpinAllMessageBoxesByPeerParams) ([]UnpinAllMessageBoxesByPeerRow, error) {
 	rows, err := q.db.Query(ctx, unpinAllMessageBoxesByPeer,
 		arg.OwnerUserID,

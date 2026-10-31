@@ -117,10 +117,11 @@ func (r *Router) onMessagesTogglePaidReactionPrivacy(ctx context.Context, req *t
 	return true, nil
 }
 
-// onMessagesSendPaidReaction 为一条广播频道消息发送付费 reaction。账户扣款、频道
-// 全额入账、reaction 累计和 random_id receipt 由 channel service 原子提交。
-// 崩溃约束：必须返回合法 Updates——
-// DrKLO StarsController 对响应无 instanceof 强转 (TLRPC.Updates)。
+// onMessagesSendPaidReaction sends a paid reaction for a broadcast channel
+// message. The account debit, full channel credit, reaction accumulation and
+// random_id receipt are committed atomically by the channel service. Crash
+// constraint: it must return valid Updates -- DrKLO's StarsController casts the
+// response to TLRPC.Updates without an instanceof check.
 func (r *Router) onMessagesSendPaidReaction(ctx context.Context, req *tg.MessagesSendPaidReactionRequest) (tg.UpdatesClass, error) {
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
@@ -139,7 +140,7 @@ func (r *Router) onMessagesSendPaidReaction(ctx context.Context, req *tg.Message
 	if !ok || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	// 付费 reaction 仅用于（广播）频道帖子。
+	// Paid reactions are only for (broadcast) channel posts.
 	if peer.Type != domain.PeerTypeChannel {
 		return nil, peerIDInvalidErr()
 	}
@@ -204,7 +205,7 @@ func (r *Router) onMessagesSendPaidReaction(ctx context.Context, req *tg.Message
 }
 
 func (r *Router) paidReactionResponse(ctx context.Context, userID int64, res domain.ChannelMessagePaidReactionResult) tg.UpdatesClass {
-	// 构建并扇出 updateMessageReactions；请求者额外带 updateStarsBalance。
+	// Build and fan out updateMessageReactions; the requester additionally gets updateStarsBalance.
 	ids := []int{res.Message.ID}
 	build := func(viewerUserID int64) *tg.Updates {
 		updates := r.channelPaidReactionUpdates(ctx, userID, viewerUserID, res, ids)

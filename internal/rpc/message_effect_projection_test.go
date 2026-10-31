@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessageEffectProjection 验证私聊消息特效 effect 投影到 tg.Message：
-// 0 值不下发（flag-optional），非零下发。特效是私聊专属，不涉及频道投影。
+// TestMessageEffectProjection verifies a private-chat message effect projects to
+// tg.Message: the zero value is omitted (flag-optional) and non-zero is sent.
+// Effects are private-chat only and do not involve channel projection.
 func TestMessageEffectProjection(t *testing.T) {
 	const effect = int64(5104841169784993603)
 

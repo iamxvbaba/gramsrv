@@ -1,6 +1,7 @@
-// Package files 是文件应用服务：upload 分片累积、blob 落盘、getFile 下载，
-// 以及把上传文件组装成 Photo / Document（头像、图片/文件/贴纸消息）。
+// Package files is the files application service: upload part accumulation, blob persistence,
+// getFile download, and assembling uploaded files into Photo / Document (avatars,
+// image/file/sticker messages).
 //
-// 类型边界：本包只用 domain / store 类型，不依赖 tg.*；
-// rpc 层负责 tg.InputFileLocation / InputMedia ↔ domain 的转换。
+// Type boundary: this package uses only domain / store types and does not depend on tg.*;
+// the rpc layer handles the tg.InputFileLocation / InputMedia ↔ domain conversion.
 package files

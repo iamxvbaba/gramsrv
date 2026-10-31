@@ -25,15 +25,19 @@ import (
 	"telesrv/internal/observability/dbtrace"
 )
 
-// maxWrapperDepth 限制 invokeWithLayer/initConnection/invokeAfter 等 wrapper 的嵌套深度，防御恶意构造。
-// 合法客户端的最深包装来自 gotd 数据连接模式的握手初始化：
-// invokeWithLayer → invokeWithoutUpdates → initConnection → invokeWithoutUpdates → query（深度 5），
-// 官方服务器同样接受。取 8 留余量，仍是小常量、不削弱对无界嵌套的防御。
+// maxWrapperDepth bounds the nesting depth of wrappers such as
+// invokeWithLayer/initConnection/invokeAfter, defending against malicious
+// constructions. The deepest wrapping from a legitimate client comes from the gotd
+// data-connection handshake: invokeWithLayer -> invokeWithoutUpdates ->
+// initConnection -> invokeWithoutUpdates -> query (depth 5), which the official
+// server accepts too. 8 leaves margin and is still a small constant that does not
+// weaken the defense against unbounded nesting.
 const maxWrapperDepth = 8
 
 const maxInvokeAfterMsgIDs = 128
 
-// tempResolveResult 是 effectiveAuthKeyID 里 temp→perm 解析经 singleflight 共享的结果。
+// tempResolveResult is the result of the temp->perm resolution in
+// effectiveAuthKeyID, shared through singleflight.
 type tempResolveResult struct {
 	perm [8]byte
 	ok   bool
@@ -50,13 +54,13 @@ var (
 	tlTypeNames     map[uint32]string
 )
 
-// Config 是 Router 所需的服务端信息。
+// Config is the server-side information the Router needs.
 type Config struct {
 	DC                  int
-	DefaultCountryCode  string // help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
-	IP                  string // 对外公布的 DC IP（写入 DCOptions）
-	Port                int    // 对外公布的 DC 端口
-	InstanceID          string // 进程内唯一标识，用于跨实例 ephemeral push 去重。
+	DefaultCountryCode  string // ISO 3166-1 alpha-2 country code returned by help.getNearestDc.
+	IP                  string // publicly advertised DC IP (written into DCOptions)
+	Port                int    // publicly advertised DC port
+	InstanceID          string // process-unique identifier, used to deduplicate ephemeral pushes across instances.
 	OutboundPushTimeout time.Duration
 	SendRateLimit       int
 	SendRateWindow      time.Duration
@@ -66,10 +70,12 @@ type Config struct {
 	AuthCodePhoneRateLimit   int
 	AuthCodeAuthKeyRateLimit int
 	AuthCodeRateWindow       time.Duration
-	// CatchupRateLimit/CatchupRateWindow 限制 difference 类 catch-up RPC（getChannelDifference /
-	// getPeerDialogs）的每用户频率（设计 Phase 2 / §10.3）：nudge 被消费后客户端会触发这两类
-	// catch-up，放开大群 nudge 全速前需 FLOOD_WAIT 兜底防风暴打爆 PG。两类各自独立计数、共用同一
-	// 阈值。<=0 关闭（默认行为不变）。
+	// CatchupRateLimit/CatchupRateWindow rate limit difference-type catch-up RPCs
+	// (getChannelDifference / getPeerDialogs) per user (design Phase 2 / §10.3):
+	// after a nudge is consumed the client triggers these two kinds of catch-up, and
+	// before letting a large-group nudge run at full speed a FLOOD_WAIT fallback is
+	// needed so a storm does not overwhelm PG. The two kinds count independently and
+	// share the same threshold. <=0 disables it (default behavior unchanged).
 	CatchupRateLimit  int
 	CatchupRateWindow time.Duration
 	// SRPRateLimit bounds 2FA password verification RPCs per user (per auth key while pre-auth); <=0 disables.
@@ -84,21 +90,26 @@ type Config struct {
 	PaymentRateLimit int
 	// PaymentRateWindow is the sliding window for PaymentRateLimit.
 	PaymentRateWindow time.Duration
-	// ChannelNudgeMaxTargets 是一次 fan-out 的 >cap nudge 目标上限（设计 Phase 0b 限速兜底）；
-	// <=0 用内置默认 defaultChannelNudgeMaxTargets。
+	// ChannelNudgeMaxTargets is the upper bound on >cap nudge targets for one
+	// fan-out (design Phase 0b rate-limit fallback); <=0 uses the built-in default
+	// defaultChannelNudgeMaxTargets.
 	ChannelNudgeMaxTargets int
-	// CallSignalingMaxBytes 是 phone.sendSignalingData 单条载荷上限；<=0 不限制。
+	// CallSignalingMaxBytes is the per-payload limit for phone.sendSignalingData;
+	// <=0 means unrestricted.
 	CallSignalingMaxBytes int
-	// CallForceRelay 强制私聊通话 p2p_allowed=false（调试 TURN 中继路径）。
-	// 注意：P2P 默认即安全收紧为仅限互为联系人（phone_turn.go 互认联系人硬门槛），
-	// 此开关仅用于全量回退 TURN 的调试/兜底。
+	// CallForceRelay forces p2p_allowed=false for private calls (for debugging the
+	// TURN relay path). Note: P2P is already safely tightened by default to mutual
+	// contacts only (the mutual-contact hard gate in phone_turn.go); this switch is
+	// only for debugging/fallback when reverting everything to TURN.
 	CallForceRelay bool
-	// GroupCallMaxParticipants 是群通话单房间参与者上限；<=0 不限制。
+	// GroupCallMaxParticipants is the per-room participant limit for group calls;
+	// <=0 means unrestricted.
 	GroupCallMaxParticipants int
-	// RtmpIngestURL 是 getGroupCallStreamRtmpUrl 返回给推流端（OBS）的服务器地址，
-	// 形如 "rtmp://<host>:<port>/live"。为空时回落 "rtmp://<AdvertiseIP>:2400/live"。
+	// RtmpIngestURL is the server address getGroupCallStreamRtmpUrl returns to the
+	// streamer (OBS), shaped like "rtmp://<host>:<port>/live". When empty it falls
+	// back to "rtmp://<AdvertiseIP>:2400/live".
 	RtmpIngestURL string
-	// PublicBaseURL 是所有客户端可见 telesrv 链接的公开根 URL。
+	// PublicBaseURL is the public root URL of all client-visible telesrv links.
 	PublicBaseURL string
 	// AllowDevPayments serves the local dev/fiat checkout for Stars and Premium
 	// purchases. Denied by default; when false no dev payment form is issued and
@@ -108,16 +119,21 @@ type Config struct {
 	// UpdatePublicURL is advertised as help.getConfig.autoupdate_url_prefix.
 	// Empty keeps the native desktop updater disabled.
 	UpdatePublicURL string
-	// PublicAppScheme/PublicAppLinkBase 控制客户端 deep link；base 为空时
-	// 保持 <scheme>://<route>，非空时生成 <base>/<route>。
+	// PublicAppScheme/PublicAppLinkBase control client deep links; when base is
+	// empty it keeps <scheme>://<route>, and when non-empty it generates
+	// <base>/<route>.
 	PublicAppScheme   string
 	PublicAppLinkBase string
-	// TempKeyResolveCacheTTL 是 PFS temp→perm auth key 解析的进程内缓存有效期。>0 时同一 temp key
-	// 在 TTL 内复用上次解析、跳过每帧 ResolveAuthKey 的 PG 查询；0（默认/测试）关闭=每帧重校验。
-	// 显式撤销会删除协议 auth key、清缓存并断开活跃连接；TTL 只影响自然过期或异常路径下的
-	// 下一次重新解析。bind success replaces the exact entry with the committed mapping.
+	// TempKeyResolveCacheTTL is the in-process cache lifetime for PFS temp->perm
+	// auth key resolution. When >0 the same temp key reuses the previous resolution
+	// within the TTL, skipping the per-frame ResolveAuthKey PG query; 0
+	// (default/tests) disables it = re-validate every frame. An explicit revoke
+	// deletes the protocol auth key, clears the cache and closes active connections;
+	// the TTL only affects the next re-resolution on a natural expiry or abnormal
+	// path. bind success replaces the exact entry with the committed mapping.
 	TempKeyResolveCacheTTL time.Duration
-	// TempKeyResolveCacheMaxEntries 是 temp→perm 解析缓存容量；<=0 用内置默认。
+	// TempKeyResolveCacheMaxEntries is the temp->perm resolution cache capacity;
+	// <=0 uses the built-in default.
 	TempKeyResolveCacheMaxEntries int
 	// PeerIdentityCacheMaxEntries bounds the viewer-independent peer decoration
 	// cache (username vectors and third-party verification marks). Values are
@@ -138,11 +154,14 @@ type Config struct {
 	PresenceLastSeenDrainTimeout time.Duration
 }
 
-// Router 把解密后的 RPC 请求按 semantic method 路由到 typed handler（tlprofile.Dispatcher）。
+// Router routes decrypted RPC requests by semantic method to typed handlers
+// (tlprofile.Dispatcher).
 //
-// handler 输入输出均为 gotd/td/tg 类型，各业务域的 handler
-// 与注册见 help.go / auth.go / users.go / updates.go。Router 本身只负责协议外壳：
-// 剥离 invokeWithLayer / initConnection / invokeWithoutUpdates / invokeAfter*，并兜底未注册 RPC。
+// Handler inputs and outputs are all gotd/td/tg types; each business domain's
+// handlers and registration live in help.go / auth.go / users.go / updates.go.
+// Router itself only handles the protocol shell: stripping invokeWithLayer /
+// initConnection / invokeWithoutUpdates / invokeAfter*, and falling back for
+// unregistered RPCs.
 type Router struct {
 	cfg               Config
 	appLinks          links.AppLinkBuilder
@@ -183,24 +202,35 @@ type Router struct {
 	botAPIUpdates              *botAPIUpdateNotifier
 	instanceID                 string
 	channelFanout              *channelFanoutDispatcher
-	// botAPIEnqueueQueue 把 user→bot 私聊消息的 bot_api_updates 写入移出发送者 RPC 同步
-	// 路径（性能审计 H2）；队列满同步回退，绝不丢（队列行是 Bot API 投递真值）。
+	// botAPIEnqueueQueue moves the bot_api_updates write for user->bot private-chat
+	// messages off the sender's synchronous RPC path (performance audit H2); when
+	// the queue is full it falls back synchronously and never drops (the queue row
+	// is the source of truth for Bot API delivery).
 	botAPIEnqueueQueue *botAPIEnqueueDispatcher
 
-	// presenceCandidateCache 缓存 presence fan-out 的候选 peer 集合（联系人 ∪ 私聊对端，
-	// online 过滤前），按 userID 短 TTL；零值 sync.Map 即可用，无需构造器初始化。候选集变动
-	// 很慢（加好友/开新私聊），短 TTL 内复用避免 updateStatus 每次重跑 ~25-30 条 hydration 查询。
+	// presenceCandidateCache caches the candidate peer set for presence fan-out
+	// (contacts ∪ private-chat peers, before the online filter) per userID with a
+	// short TTL; the zero-value sync.Map is usable without constructor
+	// initialization. The candidate set changes slowly (adding a friend / starting a
+	// new private chat), and reusing it within the short TTL avoids rerunning
+	// ~25-30 hydration queries on every updateStatus.
 	presenceCandidateCache sync.Map // userID(int64) -> *presenceCandidateEntry
 
-	// botStatus 永久缓存 userID->是否 bot。bot 标志按账号不可变（BotFather 注册即定，普通用户永不变 bot），
-	// 故可无 TTL 缓存。userIsBot 在 PFS 连接上被 announceSessionOnline 每 RPC 调用，不缓存则每次一发
-	// Users.ByID 重投影——开群洪峰 ~50 并发时退化成 ~300ms herd（既拖尾延迟也飙 PG CPU）。零值即可用。
+	// botStatus permanently caches userID->is-bot. The bot flag is immutable per
+	// account (set at BotFather registration, and an ordinary user never becomes a
+	// bot), so it can be cached without a TTL. userIsBot is called by
+	// announceSessionOnline on every RPC on a PFS connection, and without the cache
+	// each call triggers a Users.ByID reprojection - on a burst of ~50 concurrent
+	// channel creations this degrades into a ~300ms herd (dragging tail latency and
+	// spiking PG CPU). The zero value is usable.
 	botStatus sync.Map // userID(int64) -> bool
-	// lastSeenPersist 记录每个 user 最近一次 last_seen 落库时刻（unix），用于写去抖：
-	// updateStatus 高频续期时数秒内只落一次 DB。
+	// lastSeenPersist records each user's most recent last_seen persist time (unix),
+	// used for write debouncing: high-frequency updateStatus renewals write to the
+	// DB only once every few seconds.
 	lastSeenPersist sync.Map // userID(int64) -> int64(unix)
 	lastSeenBatch   *presenceLastSeenBatchDispatcher
-	// tempKeyResolveCache 缓存 rawTempKeyID -> resolved perm（带过期），容量有界。
+	// tempKeyResolveCache caches rawTempKeyID -> resolved perm (with expiry), with a
+	// bounded capacity.
 	tempKeyResolveCache          *tempKeyResolveCache
 	storyProjectionCache         *storyProjectionCache
 	storySparseProjectionCache   *storySparseProjectionCache
@@ -220,17 +250,23 @@ type Router struct {
 	accountFreezeWake            chan struct{}
 	accountDeletionWake          chan struct{}
 
-	// frozenPresence 记录因账号冻结而不得向任何对端显示/广播在线的 userID。
-	// freeze/unfreeze 由 admin hook 与 durable 通知 worker 即时维护；会话首次绑定时
-	// 用 durable fact 补种（seedFrozenPresence），覆盖重启/漏消息后旧在线水位外泄。
-	// 零值 sync.Map 即可用。值仅为占位，存在即冻结。
+	// frozenPresence records userIDs that must never appear/broadcast as online to
+	// any peer because of an account freeze. freeze/unfreeze is maintained
+	// immediately by the admin hook and the durable notification worker; on a
+	// session's first bind it is backfilled from the durable fact
+	// (seedFrozenPresence), covering the leak of a stale online watermark after a
+	// restart/missed message. The zero-value sync.Map is usable. The value is only a
+	// placeholder; its presence means frozen.
 	frozenPresence sync.Map // userID(int64) -> struct{}
-	// webPageResolveSem 是链接预览异步解析的并发信号量（有界）：发送后把 pending 占位
-	// 解析为卡片并就地替换。满则丢弃任务（消息留 pending）。nil=未启用（测试可直接调
-	// resolvePendingWebPage 同步验证）。
+	// webPageResolveSem is the concurrency semaphore for asynchronous link-preview
+	// resolution (bounded): after a send it resolves the pending placeholder into a
+	// card and replaces it in place. When full the task is dropped (the message
+	// stays pending). nil = disabled (tests can call resolvePendingWebPage directly
+	// to verify synchronously).
 	webPageResolveSem chan struct{}
-	// selfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟
-	// （见 photos.go pushSelfPhotoUpdateToCurrentSession）；<=0 时同步推送（测试用）。
+	// selfPhotoEchoPushDelay is the delay before echoing updateUser back to the
+	// current session after a photo change (see photos.go
+	// pushSelfPhotoUpdateToCurrentSession); <=0 pushes synchronously (for tests).
 	selfPhotoEchoPushDelay time.Duration
 }
 
@@ -292,7 +328,8 @@ type authUserCacheEntry struct {
 	found  bool
 }
 
-// New 创建 Router，由各业务域自行注册其 RPC handler（registerHelp/Auth/Users/Updates）。
+// New creates a Router; each business domain registers its own RPC handlers
+// (registerHelp/Auth/Users/Updates).
 func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	assertNoTypedNilDeps(deps)
 	appLinks, err := links.NewAppLinkBuilder(cfg.PublicAppScheme, cfg.PublicAppLinkBase)
@@ -413,9 +450,10 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 	return enc, err
 }
 
-// DispatchWithMethod 路由一条 RPC 请求：先剥离 invokeWithLayer / initConnection /
-// invokeWithoutUpdates / invokeAfter* 等 wrapper（注入 layer / 客户端信息到 ctx），
-// 再按 TypeID 路由到 typed handler，并返回 exact innermost method。
+// DispatchWithMethod routes one RPC request: first strips wrappers such as
+// invokeWithLayer / initConnection / invokeWithoutUpdates / invokeAfter*
+// (injecting layer / client info into ctx), then routes by TypeID to the typed
+// handler and returns the exact innermost method.
 func (r *Router) DispatchWithMethod(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, string, error) {
 	if b == nil {
 		return nil, "", inputRequestInvalidErr()
@@ -713,7 +751,8 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if err != nil {
 			return nil, fmt.Errorf("decode invokeWithLayer layer: %w", err)
 		}
-		// query 紧跟 layer，buffer 剩余即内层请求。
+		// query follows layer immediately; the rest of the buffer is the inner
+		// request.
 		ctx = WithLayer(ctx, layer)
 		r.rememberClientLayer(ctx, layer)
 		return r.dispatch(ctx, b, depth+1, meta)
@@ -841,10 +880,14 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if err := r.checkSensitiveRPCRateLimit(ctx, id); err != nil {
 			return nil, err
 		}
-		// 任何未包 invokeWithoutUpdates 的已登录 RPC 都把当前 session 视为 updates
-		// 接收者。仅靠 updates.getState/getDifference 置位会漏掉 DrKLO 热恢复：
-		// 它重连后不重建同步基线（pts 在进程内存里），只发普通业务请求，置位
-		// 永不发生时主动推送会一直暂存直至超时丢弃，表现为另一端消息不再实时同步。
+		// Any logged-in RPC not wrapped in invokeWithoutUpdates treats the current
+		// session as an updates recipient. Relying only on
+		// updates.getState/getDifference to set the flag would miss DrKLO warm
+		// recovery: it does not rebuild the sync baseline after reconnecting (pts is
+		// in process memory) and only sends ordinary business requests, so the flag
+		// would never be set and proactive pushes would stay buffered until they time
+		// out and are dropped, showing up as the other side's messages no longer
+		// syncing in real time.
 		r.maybeMarkSessionReceivesUpdates(ctx)
 		dbBefore := dbtrace.SnapshotFromContext(ctx)
 		start := time.Now()
@@ -891,12 +934,16 @@ func tlTypeName(id uint32) string {
 	return fmt.Sprintf("%#x", id)
 }
 
-// maxClientInfoEntries / maxAuthInfoEntries 是客户端元数据缓存的容量上限兜底。
-// 条目含客户端可控字符串且 session_id 由客户端任意生成，无上限时恶意客户端
-// 在单连接上反复换 session_id / 轮换 temp auth key 可线速膨胀直至 OOM。
-// 达到上限后驱逐任意旧条目：受害条目只损失进程内默认/客户端描述缓存，
-// 下一次 auth-key resolver、initConnection 或 authorization 回填即可恢复。
-// exact profile 由下方独立的 same-session registry 管理，永远优先于默认。
+// maxClientInfoEntries / maxAuthInfoEntries are the capacity-limit fallbacks for
+// the client metadata caches. Entries contain client-controlled strings and
+// session_id is generated arbitrarily by the client, so without a limit a
+// malicious client could, on a single connection, repeatedly switch session_id /
+// rotate temp auth keys and grow at wire speed until OOM. On reaching the limit an
+// arbitrary old entry is evicted: the victim only loses the in-process
+// default/client-description cache, recoverable on the next auth-key resolver,
+// initConnection or authorization backfill. The exact profile is managed by the
+// separate same-session registry below and always takes precedence over the
+// default.
 const (
 	maxClientInfoEntries = 1 << 16
 	maxAuthInfoEntries   = 1 << 16
@@ -910,9 +957,12 @@ const (
 	// derived above from its msg_id.
 	exactSessionProfileTTL        = exactSessionProfileLegacyTTL
 	maxExactSessionProfileEntries = 1 << 16
-	// maxAuthUsersCached 给 authUsers 授权缓存设容量上界，与 clientInfo/authInfo 一致。
-	// 原本无任何上限：设备轮换 temp 键而不显式登出时每个新 authKeyID 永久累积一条，
-	// 只靠 logout/reset 的显式 invalidate 清理。达上限驱逐任意旧条目，下次按需回查回填。
+	// maxAuthUsersCached bounds the authUsers authorization cache, consistent with
+	// clientInfo/authInfo. It previously had no limit at all: a device rotating temp
+	// keys without an explicit logout accumulated one entry per new authKeyID
+	// forever, cleaned up only by the explicit invalidate on logout/reset. On
+	// reaching the limit it evicts an arbitrary old entry, with a lazy re-lookup
+	// backfill next time.
 	maxAuthUsersCached = 1 << 16
 )
 
@@ -1059,11 +1109,15 @@ func (r *Router) rememberClientLayerAt(ctx context.Context, layer int, msgID int
 	}
 	sessionKey := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
 	sessionInfo, exists := r.clientInfo[sessionKey]
-	// session 级记录缺失或 layer 变化时把新值即时下推到连接：invokeWithLayer 在
-	// Dispatch 入口被处理（早于鉴权门与 updates 就绪置位），此时下推能保证同一请求
-	// handler 执行期间触发的 pending flush / 并发 push 已按正确 layer 降级。记录已
-	// 存在且相同（如客户端每条请求都带 wrapper）时跳过——连接侧已由注册播种或此前
-	// 下推持有同值。
+	// When the session-level record is missing or the layer changed, push the new
+	// value down to the connection immediately: invokeWithLayer is handled at the
+	// Dispatch entry (before the authorization gate and the updates-readiness flag),
+	// so pushing here guarantees that a pending flush / concurrent push triggered
+	// while the same request's handler runs is already downgraded to the correct
+	// layer. When the record already exists and is identical (e.g. the client
+	// carries the wrapper on every request) it is skipped - the connection side
+	// already holds the same value from a seed by the registration or a previous
+	// push.
 	notifyConn := !exists || sessionInfo.layer != layer
 	sessionInfo.layer = layer
 	if !exists {
@@ -1384,8 +1438,9 @@ func (r *Router) ObserveInitConnection(
 	return nil
 }
 
-// mutateClientSessionInfo 在单个临界区内完成「读旧值-修改-写回」，避免
-// RLock 读出与 Lock 写回之间被并发写覆盖的窗口。
+// mutateClientSessionInfo performs "read old value - mutate - write back" in a
+// single critical section, avoiding the window between an RLock read and a Lock
+// write-back where a concurrent write could overwrite it.
 func (r *Router) mutateClientSessionInfo(ctx context.Context, mutate func(*clientSessionInfo)) {
 	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
 	if !ok {
@@ -1880,8 +1935,9 @@ func clientSessionInfoNeedsAuthKeyInfo(info clientSessionInfo) bool {
 	return info.layer == 0 || !info.hasClientInfo || info.clientInfo.ClientType() == ClientTypeUnknown
 }
 
-// fallback 处理未注册的 RPC：记录到 compatibility trace（落兼容矩阵），
-// 返回 NOT_IMPLEMENTED rpc_error 让客户端继续运行而非断连。
+// fallback handles an unregistered RPC: it records to the compatibility trace
+// (into the compatibility matrix) and returns a NOT_IMPLEMENTED rpc_error so the
+// client keeps running instead of disconnecting.
 func (r *Router) fallback(ctx context.Context, b *bin.Buffer) (bin.Encoder, error) {
 	id, _ := b.PeekID()
 	fields := append([]zap.Field{
@@ -1915,8 +1971,9 @@ func (r *Router) contextLogFields(ctx context.Context) []zap.Field {
 	return fields
 }
 
-// rawObject 在解码 wrapper 时按原样捕获内层 query 的 TL 字节，供递归分发。
-// 它实现 bin.Object（Encode/Decode），但只搬运字节、不解释内容。
+// rawObject captures the inner query's TL bytes verbatim while decoding a wrapper,
+// for recursive dispatch. It implements bin.Object (Encode/Decode) but only moves
+// bytes without interpreting their contents.
 type rawObject struct {
 	data []byte
 }

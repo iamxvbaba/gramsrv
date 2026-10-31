@@ -1,5 +1,7 @@
--- 频道私信(monoforum):私信消息存进 channel_messages(复用 channel pts/事件/difference),
--- 用 saved_peer 维度按订阅者分子会话。普通频道消息 saved_peer 为空,部分索引仅覆盖 monoforum 行。
+-- Channel direct messages (monoforum): direct messages are stored in
+-- channel_messages (reusing channel pts/events/difference) and split into
+-- sub-conversations per subscriber via the saved_peer dimension. For ordinary
+-- channel messages saved_peer is empty, so the partial index covers only monoforum rows.
 ALTER TABLE public.channel_messages
     ADD COLUMN saved_peer_type character varying(16) DEFAULT ''::character varying NOT NULL;
 ALTER TABLE public.channel_messages

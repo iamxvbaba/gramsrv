@@ -1,4 +1,4 @@
--- 回退：从白名单移除 'channel_web_page'。
+-- Rollback: remove 'channel_web_page' from the allowlist.
 ALTER TABLE public.channel_update_events DROP CONSTRAINT IF EXISTS channel_update_events_type_check;
 ALTER TABLE public.channel_update_events ADD CONSTRAINT channel_update_events_type_check CHECK (
     (event_type)::text = ANY (ARRAY[

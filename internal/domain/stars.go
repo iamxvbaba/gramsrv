@@ -7,14 +7,14 @@ import (
 	"strconv"
 )
 
-// Stars 本地账本领域模型（无 TL 类型，镜像 boost.go 风格）。本实现是本地账本、
-// 非真实支付：余额为整数 Stars（线上 Nanos 恒 0），借记原子、永不为负。
+// Stars local ledger domain model (no TL types, mirroring the boost.go style). This implementation is a local ledger,
+// not a real payment: the balance is integer Stars (Nanos is always 0 online), and debits are atomic and never go negative.
 
-// StarsBalance 是一个账号的当前可用 Stars 余额。
+// StarsBalance is an account's current available Stars balance.
 type StarsBalance struct {
 	UserID  int64
-	Balance int64 // 当前可花费 Stars，恒 >= 0
-	Granted bool  // 起始授予是否已应用（惰性首读授予的幂等守卫）
+	Balance int64 // currently spendable Stars, always >= 0
+	Granted bool  // whether the starting grant has been applied (idempotency guard for the lazy first-read grant)
 }
 
 // StarsPurchaseKind identifies the balance owner affected by a fiat Stars
@@ -158,51 +158,51 @@ type StarsGiveawayInfo struct {
 	DisallowedCountry     string
 }
 
-// StarsTransactionReason 标记一条流水的语义（投影到 tg.StarsTransaction 的标志位/标题）。
+// StarsTransactionReason marks the semantics of a ledger entry (projected to tg.StarsTransaction's flags/title).
 type StarsTransactionReason string
 
 const StarsReasonTransfer StarsTransactionReason = "transfer"
 
 const (
-	StarsReasonGrant           StarsTransactionReason = "grant"        // 起始余额自动授予
-	StarsReasonTopup           StarsTransactionReason = "topup"        // 充值（本地铸造）
-	StarsReasonReaction        StarsTransactionReason = "reaction"     // 付费 reaction 花费
-	StarsReasonGift            StarsTransactionReason = "gift"         // 星礼花费/收取
-	StarsReasonGiftUpgrade     StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
+	StarsReasonGrant           StarsTransactionReason = "grant"        // automatic starting-balance grant
+	StarsReasonTopup           StarsTransactionReason = "topup"        // top-up (minted locally)
+	StarsReasonReaction        StarsTransactionReason = "reaction"     // paid reaction spend
+	StarsReasonGift            StarsTransactionReason = "gift"         // star gift spend/receive
+	StarsReasonGiftUpgrade     StarsTransactionReason = "gift_upgrade" // upgrade a regular gift into a unique gift
 	StarsReasonGiftTransfer    StarsTransactionReason = "gift_transfer"
 	StarsReasonGiftResale      StarsTransactionReason = "gift_resale"
 	StarsReasonGiftOffer       StarsTransactionReason = "gift_offer"
 	StarsReasonGiftAuction     StarsTransactionReason = "gift_auction"
 	StarsReasonGiftPrepaid     StarsTransactionReason = "gift_prepaid_upgrade"
 	StarsReasonGiftDrop        StarsTransactionReason = "gift_drop_original_details"
-	StarsReasonPaidMedia       StarsTransactionReason = "paid_media"   // 付费媒体解锁
-	StarsReasonPaidMessage     StarsTransactionReason = "paid_message" // 频道 Direct Message 花费
+	StarsReasonPaidMedia       StarsTransactionReason = "paid_media"   // paid media unlock
+	StarsReasonPaidMessage     StarsTransactionReason = "paid_message" // channel Direct Message spend
 	StarsReasonSuggestedPost   StarsTransactionReason = "suggested_post"
 	StarsReasonPremium         StarsTransactionReason = "premium"
 	StarsReasonWithdrawal      StarsTransactionReason = "withdrawal"
-	StarsReasonAdjust          StarsTransactionReason = "adjust"           // 兜底/人工调整
+	StarsReasonAdjust          StarsTransactionReason = "adjust"           // fallback/manual adjustment
 	StarsReasonDonationDeposit StarsTransactionReason = "donation_deposit" // crypto deposit credited after on-chain confirmation
-	StarsReasonBotInvoice      StarsTransactionReason = "bot_invoice"      // 结算 XTR 发票，贷记 bot 钱包
-	StarsReasonBotSpend        StarsTransactionReason = "bot_spend"        // bot 钱包支出
-	StarsReasonBotRefund       StarsTransactionReason = "bot_refund"       // 发票退款，借记 bot 钱包
+	StarsReasonBotInvoice      StarsTransactionReason = "bot_invoice"      // settle an XTR invoice, crediting the bot wallet
+	StarsReasonBotSpend        StarsTransactionReason = "bot_spend"        // bot wallet spend
+	StarsReasonBotRefund       StarsTransactionReason = "bot_refund"       // invoice refund, debiting the bot wallet
 )
 
-// StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。
+// StarsTransaction is one ledger entry. amount is signed: credit > 0 (including refund/receive), debit < 0.
 type StarsTransaction struct {
-	ID              int64 // 单调递增账本 id（keyset 游标）
-	UserID          int64 // 账本归属
-	Peer            Peer  // 对手方（grant/topup 等无对手时为零 Peer）
-	Amount          int64 // 带符号金额
-	Date            int   // Unix 秒
+	ID              int64 // monotonic ledger id (keyset cursor)
+	UserID          int64 // ledger owner
+	Peer            Peer  // counterparty (a zero Peer when there is none, e.g. grant/topup)
+	Amount          int64 // signed amount
+	Date            int   // Unix seconds
 	Reason          StarsTransactionReason
-	Title           string // 可选，投影到 tg.StarsTransaction.Title
-	Description     string // 可选，投影到 tg.StarsTransaction.Description
+	Title           string // optional, projected to tg.StarsTransaction.Title
+	Description     string // optional, projected to tg.StarsTransaction.Description
 	PaymentID       int64
 	RecipientUserID int64
 	PremiumMonths   int
 }
 
-// IsCredit 报告该流水是否为入账（贷记），投影到 tg.StarsTransaction.Refund。
+// IsCredit reports whether the entry is a credit, projected to tg.StarsTransaction.Refund.
 func (t StarsTransaction) IsCredit() bool { return t.Amount > 0 }
 
 // StarsTransactionDirection scopes one payments.getStarsTransactions view.
@@ -256,12 +256,12 @@ func NormalizeStarsTransactionQuery(query StarsTransactionQuery) (StarsTransacti
 	return query, nil
 }
 
-// StarsTransactionPage 是一页账本流水 + 当前余额 + 分页游标 + 对手方用户富化集合。
+// StarsTransactionPage is one page of ledger entries + current balance + pagination cursor + the counterparty user enrichment set.
 type StarsTransactionPage struct {
 	Balance      int64
 	Transactions []StarsTransaction
-	NextOffset   string // 空表示无更多页（DrKLO 据此停止翻页，勿在末页给非空值）
-	Users        []User // History 中提到的对手方用户，供 tg Users 富化
+	NextOffset   string // empty means no more pages (DrKLO stops paging on it; do not give a non-empty value on the last page)
+	Users        []User // counterparty users mentioned in History, for tg Users enrichment
 }
 
 // TonUSDRate is the fixed local-ledger USD reference rate, not a live market quote.
@@ -290,23 +290,23 @@ type TonTransactionPage struct {
 	Users        []User
 }
 
-// Stars 账本边界常量。
+// Stars ledger boundary constants.
 const (
-	// DefaultStarsStartingGrant 是惰性首读授予的起始 Stars 余额（本地测试用）。
+	// DefaultStarsStartingGrant is the starting Stars balance of the lazy first-read grant (for local testing).
 	DefaultStarsStartingGrant = 1000
-	// MaxStarsTransactionsLimit 是 getStarsTransactions 单页上限。
+	// MaxStarsTransactionsLimit is the per-page limit of getStarsTransactions.
 	MaxStarsTransactionsLimit = 100
-	// MaxStarsTransactionsOffsetBytes 是 keyset 游标字符串长度上限。
+	// MaxStarsTransactionsOffsetBytes is the keyset cursor string length limit.
 	MaxStarsTransactionsOffsetBytes = 64
 )
 
-// Stars 账本哨兵错误（rpc 层 errors.Is 匹配后映射为 tgerr，仿 ErrPremiumRequired）。
+// Stars ledger sentinel errors (the rpc layer matches via errors.Is and maps to tgerr, mirroring ErrPremiumRequired).
 var (
-	// ErrStarsInsufficient 表示余额不足以完成借记（映射 BALANCE_TOO_LOW）。
+	// ErrStarsInsufficient means the balance is insufficient to complete the debit (maps to BALANCE_TOO_LOW).
 	ErrStarsInsufficient = errors.New("stars: insufficient balance")
-	// ErrStarsInvalidAmount 表示金额非法（<=0）。
+	// ErrStarsInvalidAmount means the amount is invalid (<=0).
 	ErrStarsInvalidAmount = errors.New("stars: invalid amount")
-	// ErrStarsTransactionQueryInvalid 表示内部构造了不可能的流水方向。
+	// ErrStarsTransactionQueryInvalid means an impossible transaction direction was constructed internally.
 	ErrStarsTransactionQueryInvalid = errors.New("stars: invalid transaction query")
 	// ErrStarsPurchaseFormInvalid covers a missing/cross-account/mutated form.
 	ErrStarsPurchaseFormInvalid = errors.New("stars: purchase form invalid")
@@ -314,7 +314,7 @@ var (
 	ErrStarsPurchaseFormExpired = errors.New("stars: purchase form expired")
 	// ErrStarsGiftUnavailable covers a recipient that cannot receive the gift.
 	ErrStarsGiftUnavailable = errors.New("stars: gift unavailable")
-	// ErrStarsAirdropUnsupported表示底层 store 不支持批量贷记（内存后端等）。
+	// ErrStarsAirdropUnsupported means the underlying store does not support bulk credit (e.g. the in-memory backend).
 	ErrStarsAirdropUnsupported = errors.New("stars: airdrop unsupported")
 )
 
@@ -329,13 +329,13 @@ func (e *StarsPaymentRequiredError) Error() string {
 	return fmt.Sprintf("stars: allow payment required: %d", e.Stars)
 }
 
-// EncodeStarsCursor 把 keyset 游标（最后一条流水 id）编码为客户端不透明字符串。
+// EncodeStarsCursor encodes the keyset cursor (the last entry id) into a client-opaque string.
 func EncodeStarsCursor(id int64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(id, 10)))
 }
 
-// DecodeStarsCursor 反解 EncodeStarsCursor；无法解析（含空串）时返回 ok=false，
-// 调用方应据此从首页开始（客户端只会回传我们给过的游标，畸形仅作兜底）。
+// DecodeStarsCursor reverses EncodeStarsCursor; it returns ok=false when it cannot parse (including an empty string),
+// and the caller should start from the first page (the client only echoes back cursors we gave it; malformed is only a fallback).
 func DecodeStarsCursor(s string) (int64, bool) {
 	if s == "" {
 		return 0, false

@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/store"
 )
 
-// PhoneChangeStore 是测试用内存实现。用户唯一性在 UserStore 锁内维护；
-// updateUserPhone 无 PTS，所以不向 UpdateEventStore 写 durable event。
+// PhoneChangeStore is a test-only in-memory implementation. User uniqueness is maintained
+// under the UserStore lock; updateUserPhone has no PTS, so it does not write a durable event to UpdateEventStore.
 type PhoneChangeStore struct {
 	users  *UserStore
 	events store.UpdateEventStore

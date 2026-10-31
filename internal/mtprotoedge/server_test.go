@@ -26,8 +26,8 @@ import (
 	"github.com/iamxvbaba/td/transport"
 )
 
-// TestServerAcceptAndCodec 验证 M0：
-// server 能接受连接、自动协商 codec、读到客户端帧，并在 ctx 取消时优雅退出。
+// TestServerAcceptAndCodec verifies M0: the server can accept a connection,
+// auto-negotiate the codec, read a client frame, and exit gracefully on ctx cancellation.
 func TestServerAcceptAndCodec(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -49,7 +49,7 @@ func TestServerAcceptAndCodec(t *testing.T) {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, ln) }()
 
-	// 客户端：TCP 拨号 + intermediate 协议握手 + 发送一帧。
+	// Client: TCP dial + intermediate protocol handshake + send one frame.
 	raw, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -59,8 +59,9 @@ func TestServerAcceptAndCodec(t *testing.T) {
 		t.Fatalf("handshake: %v", err)
 	}
 
-	// payload 必须 ≠ 4 字节：codec 把恰好 4 字节的帧当作 transport 协议错误码（checkProtocolError）。
-	// 真实 MTProto 帧远大于 4 字节，这里发 8 字节模拟一个普通帧。
+	// The payload must ≠ 4 bytes: the codec treats a frame of exactly 4 bytes as a
+	// transport protocol error code (checkProtocolError). Real MTProto frames are far
+	// larger than 4 bytes; here 8 bytes are sent to simulate an ordinary frame.
 	var b bin.Buffer
 	b.PutInt32(0x12345678)
 	b.PutInt32(0x0badf00d)
@@ -81,7 +82,7 @@ func TestServerAcceptAndCodec(t *testing.T) {
 
 	_ = conn.Close()
 
-	// 验证优雅退出。
+	// Verify graceful shutdown.
 	cancel()
 	select {
 	case err := <-serveErr:
@@ -93,8 +94,9 @@ func TestServerAcceptAndCodec(t *testing.T) {
 	}
 }
 
-// TestServerAcceptObfuscatedAbridged 验证 TDesktop tcpo_only 连接形态：
-// 先做 MTProto TCP obfuscation，再在解密后的流上使用 abridged codec。
+// TestServerAcceptObfuscatedAbridged verifies the TDesktop tcpo_only connection
+// shape: first do MTProto TCP obfuscation, then use the abridged codec on the
+// decrypted stream.
 func TestServerAcceptObfuscatedAbridged(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -456,21 +458,27 @@ func TestSamePortWebSocketTransportRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout 回归：WebSocket 同端口复用的嗅探
-// 读超时（读首 4 字节做 HTTP/TCP 分流）必须对齐 HandshakeIdleTimeout，而不是旧的硬上限 5s。
-// 合法 MTProto 客户端（DrKLO）会预开「暖」连接、在有请求前并不立即发 obfuscated2 init；旧实现
-// 用 minDuration(5s, handshakeTimeout) 把嗅探压到 5s，比非 mux 路径（serveDetectedConn 用满
-// handshakeTimeout）激进 12 倍，会把这些暖连接在 5s 误杀，触发 DrKLO 6s 重连风暴 + EPOLLRDHUP
-// + 误判后端不健康回退外部 DNS（见 docs/client-compat-notes.md）。
+// TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout regression: the sniff
+// read timeout of WebSocket same-port reuse (reading the first 4 bytes for HTTP/TCP
+// splitting) must align with HandshakeIdleTimeout, not the old hard cap of 5s.
+// Legitimate MTProto clients (DrKLO) pre-open "warm" connections and do not
+// immediately send the obfuscated2 init before there is a request; the old
+// implementation used minDuration(5s, handshakeTimeout) to force the sniff down to
+// 5s, 12x more aggressive than the non-mux path (serveDetectedConn uses the full
+// handshakeTimeout), which wrongly killed these warm connections at 5s and
+// triggered a DrKLO 6s reconnect storm + EPOLLRDHUP + a wrong "backend unhealthy"
+// fallback to external DNS (see docs/client-compat-notes.md).
 //
-// HandshakeIdleTimeout 必须 >5s 才能暴露旧的截断：连一条裸 TCP、不发任何字节，本地用 6s 读
-// deadline。新实现下连接在 8s 嗅探超时前一直存活，故本地 Read 因自身 deadline 超时（net timeout）；
-// 旧实现下服务端 5s 即 FIN，本地 Read 会在 6s 前拿到 EOF/reset —— 据此判定回归。
+// HandshakeIdleTimeout must be >5s to expose the old truncation: connect a bare TCP,
+// send no bytes, and use a 6s local read deadline. Under the new implementation the
+// connection stays alive until the 8s sniff timeout, so the local Read times out on
+// its own deadline (net timeout); under the old implementation the server FINs at
+// 5s, so the local Read gets EOF/reset before 6s—that is how the regression is judged.
 func TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout(t *testing.T) {
 	addr, _, _ := startTestServer(t, Options{
 		WebSocket:            true,
 		ObfuscatedTCP:        true,
-		HandshakeIdleTimeout: 8 * time.Second, // 必须 >5s 才能区分「对齐 handshakeTimeout」与旧的 5s 截断
+		HandshakeIdleTimeout: 8 * time.Second, // must be >5s to distinguish "aligned with handshakeTimeout" from the old 5s truncation
 	})
 
 	raw, err := net.Dial("tcp", addr)
@@ -479,7 +487,7 @@ func TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout(t *testing.T) {
 	}
 	defer func() { _ = raw.Close() }()
 
-	// 不发任何字节，模拟客户端预开、暂未发首帧的暖连接。
+	// Send no bytes, simulating a client's pre-opened warm connection that has not yet sent its first frame.
 	if err := raw.SetReadDeadline(time.Now().Add(6 * time.Second)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
@@ -487,8 +495,10 @@ func TestSamePortMuxIdleConnNotReapedBeforeHandshakeTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatalf("unexpected %d bytes on idle pre-handshake conn (server should send nothing)", n)
 	}
-	// 只有「本地读 deadline 超时」才说明连接在 6s 时仍存活（嗅探超时已对齐 8s）。
-	// 任何由对端关闭导致的 EOF/reset 都意味着服务端在 handshakeTimeout 前过早回收了连接。
+	// Only "the local read deadline timed out" indicates the connection is still
+	// alive at 6s (the sniff timeout is aligned to 8s). Any EOF/reset caused by the
+	// peer closing means the server reclaimed the connection too early, before the
+	// handshakeTimeout.
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
 		return
@@ -509,8 +519,10 @@ func expectFrameLen(t *testing.T, frames <-chan int, want int) {
 	}
 }
 
-// TestWebSocketRouteHandlerChecksBrowserOrigin 回归保护 Origin 修复：浏览器发起的 WS 升级
-// 必带 Origin（≠ Host），白名单来源需要改写 Origin 通过 coder/websocket，同名单外来源必须 403。
+// TestWebSocketRouteHandlerChecksBrowserOrigin regression-protects the Origin fix:
+// a browser-initiated WS upgrade necessarily carries an Origin (≠ Host); whitelisted
+// origins need Origin rewritten to pass coder/websocket, and non-whitelisted
+// origins must get 403.
 func TestWebSocketRouteHandlerChecksBrowserOrigin(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -525,7 +537,7 @@ func TestWebSocketRouteHandlerChecksBrowserOrigin(t *testing.T) {
 
 	host := ln.Addr().String()
 
-	// 白名单跨源升级：Origin 指向页面来源（端口/主机不同于 Host）。
+	// Whitelisted cross-origin upgrade: Origin points to the page origin (port/host differs from Host).
 	status := wsUpgradeStatus(t, host, "/apiws", "http://localhost:1234")
 	if !strings.Contains(status, "101") {
 		t.Fatalf("allowed cross-origin /apiws upgrade: got status %q, want 101 Switching Protocols", status)
@@ -536,7 +548,7 @@ func TestWebSocketRouteHandlerChecksBrowserOrigin(t *testing.T) {
 		t.Fatalf("disallowed origin: got status %q, want 403", status)
 	}
 
-	// 非白名单路径必须 404，不得升级。
+	// A non-whitelisted path must 404 and must not upgrade.
 	status = wsUpgradeStatus(t, host, "/nope", "http://localhost:1234")
 	if !strings.Contains(status, "404") {
 		t.Fatalf("disallowed path: got status %q, want 404", status)
@@ -600,7 +612,7 @@ func TestSamePortHTTPServesInjectedRoutes(t *testing.T) {
 	}
 }
 
-// wsUpgradeStatus 用裸连接发一个合法的 WebSocket 升级请求并返回状态行。
+// wsUpgradeStatus sends a valid WebSocket upgrade request over a bare connection and returns the status line.
 func wsUpgradeStatus(t *testing.T, host, path, origin string) string {
 	t.Helper()
 	conn, err := net.Dial("tcp", host)
@@ -631,9 +643,11 @@ func wsUpgradeStatus(t *testing.T, host, path, origin string) string {
 	return statusLine
 }
 
-// TestServerObfuscatedTCPNotBlockedByStalledClient 回归保护「去 worker 池 / 握手移出 accept
-// 循环」的修复：一个发了几字节就挂起的连接，过去会卡死串行 accept 循环、阻塞所有后续接入；
-// 现在它只占用自己的 goroutine，正常客户端仍能在握手超时内被服务。
+// TestServerObfuscatedTCPNotBlockedByStalledClient regression-protects the
+// "remove worker pool / move handshake out of the accept loop" fix: a connection
+// that hangs after sending a few bytes used to deadlock the serial accept loop and
+// block all subsequent intake; now it only occupies its own goroutine, and normal
+// clients can still be served within the handshake timeout.
 func TestServerObfuscatedTCPNotBlockedByStalledClient(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -654,8 +668,9 @@ func TestServerObfuscatedTCPNotBlockedByStalledClient(t *testing.T) {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, ln) }()
 
-	// 挂起连接：发 4 个非 HTTP 字节通过分流（路由到 TCP），但不补满 obfuscated2 的 64 字节
-	// init，使其卡在去混淆读取上。修复前这会拖死整个 TCP accept 循环。
+	// Stalled connection: send 4 non-HTTP bytes to pass the split (routed to TCP),
+	// but do not fill in the full 64-byte obfuscated2 init, leaving it stuck on the
+	// de-obfuscation read. Before the fix this would drag down the whole TCP accept loop.
 	stalled, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("stalled dial: %v", err)
@@ -665,7 +680,7 @@ func TestServerObfuscatedTCPNotBlockedByStalledClient(t *testing.T) {
 		t.Fatalf("stalled write: %v", err)
 	}
 
-	// 正常的 obfuscated abridged 客户端：应当照常被服务（onFrame 触发）。
+	// A normal obfuscated abridged client: should still be served as usual (onFrame fires).
 	raw, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("tcp dial: %v", err)

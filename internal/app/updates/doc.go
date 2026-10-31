@@ -1,3 +1,4 @@
-// Package updates 是更新状态机与投递：user 级 pts/qts/seq/date、离线差量（updates.getDifference）、
-// 在线推送。第一阶段持久化 auth_key 维度的初始空状态，消息事件队列留第二阶段。
+// Package updates is the update state machine and delivery: per-user pts/qts/seq/date,
+// offline deltas (updates.getDifference), and online push. The first phase persists the
+// initial empty state at auth_key scope; the message event queue comes in the second phase.
 package updates

@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestNotifySettingsRoundTripPostgres 回归迁移 0005：per-scope 通知设置真实持久化
-// （peer / 类别默认 / 批量 / reset），含可空字段=未设置语义。
+// TestNotifySettingsRoundTripPostgres regression for migration 0005: per-scope notify settings are really persisted
+// (peer / category default / batch / reset), including nullable fields = unset semantics.
 func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -34,7 +34,7 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("get before save = found %v err %v", found, err)
 	}
 
-	// peer A：只设 mute_until + silent（其余 nil=未设置）。
+	// peer A: only mute_until + silent are set (the rest nil = unset).
 	mute := 2000000000
 	silent := true
 	if err := store.SaveNotifySettings(ctx, u.ID, scopeA, domain.PeerNotifySettings{MuteUntil: &mute, Silent: &silent}); err != nil {
@@ -51,7 +51,7 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("unset fields must stay nil, got %+v", got)
 	}
 
-	// 类别默认（users）独立。
+	// The users category default is independent.
 	usersScope := domain.NotifyScope{Kind: domain.NotifyScopeUsers}
 	dmute := 100
 	if err := store.SaveNotifySettings(ctx, u.ID, usersScope, domain.PeerNotifySettings{MuteUntil: &dmute}); err != nil {
@@ -60,12 +60,12 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 	if g, found, _ := store.GetNotifySettings(ctx, u.ID, usersScope); !found || g.MuteUntil == nil || *g.MuteUntil != dmute {
 		t.Fatalf("users default = %+v found %v, want mute=%d", g, found, dmute)
 	}
-	// peer A 不受类别默认影响。
+	// peer A is unaffected by the category default.
 	if g, _, _ := store.GetNotifySettings(ctx, u.ID, scopeA); g.MuteUntil == nil || *g.MuteUntil != mute {
 		t.Fatalf("scope A polluted by users default: %+v", g)
 	}
 
-	// upsert 覆盖 + 批量（mute_until 是 TL int32，取接近上限的合法值）。
+	// upsert overwrite + batch (mute_until is a TL int32; use a valid value near the upper bound).
 	mute2 := 2100000000
 	if err := store.SaveNotifySettings(ctx, u.ID, domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: peerB}, domain.PeerNotifySettings{MuteUntil: &mute2}); err != nil {
 		t.Fatalf("save scope B: %v", err)
@@ -84,25 +84,25 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("batch peerB = %+v ok %v", b, ok)
 	}
 
-	// AllPeerNotifySettings：返全部整-peer 设置（peerA+peerB），排除类别默认（per-user notify 缓存的加载源）。
+	// AllPeerNotifySettings: returns all whole-peer settings (peerA+peerB), excluding category defaults (the load source for the per-user notify cache).
 	all, err := store.AllPeerNotifySettings(ctx, u.ID)
 	if err != nil {
 		t.Fatalf("all peer notify settings: %v", err)
 	}
 	if len(all) != 2 {
-		t.Fatalf("AllPeerNotifySettings = %d, want 2 (peerA+peerB, 类别默认不计)", len(all))
+		t.Fatalf("AllPeerNotifySettings = %d, want 2 (peerA+peerB, category defaults excluded)", len(all))
 	}
 	if a, ok := all[peerA]; !ok || a.MuteUntil == nil || *a.MuteUntil != mute {
 		t.Fatalf("AllPeerNotifySettings peerA = %+v ok %v", a, ok)
 	}
 
-	// ListNotifyExceptions：只返 per-peer 非默认（peerA+peerB），排除类别默认。
+	// ListNotifyExceptions: returns only non-default per-peer entries (peerA+peerB), excluding category defaults.
 	exceptions, err := store.ListNotifyExceptions(ctx, u.ID)
 	if err != nil {
 		t.Fatalf("list exceptions: %v", err)
 	}
 	if len(exceptions) != 2 {
-		t.Fatalf("exceptions = %d, want 2 (peerA+peerB, 类别默认不计)", len(exceptions))
+		t.Fatalf("exceptions = %d, want 2 (peerA+peerB, category defaults excluded)", len(exceptions))
 	}
 	seen := map[domain.Peer]bool{}
 	for _, ex := range exceptions {
@@ -112,7 +112,7 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("exceptions peers = %v, want peerA+peerB", seen)
 	}
 
-	// reset 清空全部作用域。
+	// reset clears all scopes.
 	for _, id := range []int{42, 43} {
 		if err := store.SaveNotifySettings(ctx, u.ID, domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: peerB, TopicID: id}, domain.PeerNotifySettings{MuteUntil: &mute}); err != nil {
 			t.Fatal(err)

@@ -147,8 +147,9 @@ func (r *Router) tgMessagesDiscussionMessage(ctx context.Context, viewerUserID i
 	if linked, ok := r.linkedDiscussionChat(ctx, viewerUserID, discussion.PostChannel.ID); ok {
 		out.Chats = replaceTGChat(out.Chats, linked)
 	}
-	// 用带 presence + self 标志的投影覆盖裸 tgUsers，防止 viewer 自己以 self=false
-	// 进入 Users（Android putUsers 会覆盖 currentUser）。
+	// Overwrite the bare tgUsers with the projection carrying presence + the self
+	// flag, preventing the viewer from entering Users with self=false (Android
+	// putUsers would overwrite currentUser).
 	out.Users = r.tgUsersForViewer(viewerUserID, discussion.Users)
 	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out

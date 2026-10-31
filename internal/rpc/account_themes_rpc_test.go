@@ -32,8 +32,8 @@ func mustEncodeTheme(t *testing.T, th *tg.Theme) {
 	}
 }
 
-// TestAccountUploadThemeReturnsDocument 验证 uploadTheme 把上传文件落成可下载 Document 返回,
-// 且校验 mime 前缀。
+// TestAccountUploadThemeReturnsDocument verifies uploadTheme turns an uploaded file into a
+// downloadable Document and returns it, and validates the mime prefix.
 func TestAccountUploadThemeReturnsDocument(t *testing.T) {
 	ctx := WithUserID(context.Background(), 1000001)
 	r := newThemeRouter(t, &fakeFiles{})
@@ -52,7 +52,7 @@ func TestAccountUploadThemeReturnsDocument(t *testing.T) {
 		t.Fatalf("uploaded document id = 0, want non-zero downloadable id")
 	}
 
-	// 非主题 mime 前缀拒绝。
+	// A non-theme mime prefix is rejected.
 	bad := &tg.AccountUploadThemeRequest{FileName: "x", MimeType: "image/png"}
 	bad.File = &tg.InputFile{ID: 7, Parts: 1, Name: "x"}
 	if _, err := r.onAccountUploadTheme(ctx, bad); !tgerr.Is(err, "THEME_MIME_INVALID") {
@@ -60,8 +60,9 @@ func TestAccountUploadThemeReturnsDocument(t *testing.T) {
 	}
 }
 
-// TestAccountCreateThemeFullFlow 验证 createTheme 自动分配 slug、设 creator=true、回填 document,
-// getTheme 按 slug 取回带 document;saveTheme/installTheme 返回 true。
+// TestAccountCreateThemeFullFlow verifies createTheme auto-assigns a slug, sets creator=true,
+// and backfills the document; getTheme fetches it back by slug with the document;
+// saveTheme/installTheme return true.
 func TestAccountCreateThemeFullFlow(t *testing.T) {
 	const userID = 1000002
 	ctx := WithUserID(context.Background(), userID)
@@ -92,7 +93,7 @@ func TestAccountCreateThemeFullFlow(t *testing.T) {
 	}
 	mustEncodeTheme(t, th)
 
-	// getTheme by slug 取回,仍带 document。
+	// getTheme by slug fetches it back, still carrying the document.
 	get := &tg.AccountGetThemeRequest{Format: "android"}
 	get.Theme = &tg.InputThemeSlug{Slug: th.Slug}
 	got, err := r.onAccountGetTheme(ctx, get)
@@ -119,7 +120,7 @@ func TestAccountCreateThemeFullFlow(t *testing.T) {
 		t.Fatalf("installTheme = %v/%v, want true/nil", ok, err)
 	}
 
-	// 未知主题引用 → THEME_INVALID。
+	// Unknown theme reference -> THEME_INVALID.
 	bad := &tg.AccountGetThemeRequest{Format: "android", Theme: &tg.InputThemeSlug{Slug: "does-not-exist"}}
 	if _, err := r.onAccountGetTheme(ctx, bad); !tgerr.Is(err, "THEME_INVALID") {
 		t.Fatalf("getTheme unknown slug err = %v, want THEME_INVALID", err)
@@ -215,9 +216,10 @@ func TestAccountDefaultThemeReferencesResolveWithoutCustomPersistence(t *testing
 	}
 }
 
-// TestAccountGetThemesIncludesUserThemes 验证 getThemes 跨设备同步:返回内置默认主题
-// (is_default=true,emoji 预览条用)+ 当前用户创建的自定义主题(is_default=false,creator=true);
-// hash 稳定→NotModified,集合变化→重取。
+// TestAccountGetThemesIncludesUserThemes verifies getThemes cross-device sync: it returns the
+// built-in default themes (is_default=true, for the emoji preview strip) + the current user's
+// self-created custom themes (is_default=false, creator=true); a stable hash -> NotModified, a
+// changed set -> re-fetch.
 func TestAccountGetThemesIncludesUserThemes(t *testing.T) {
 	const userID = 1000004
 	ctx := WithUserID(context.Background(), userID)
@@ -226,7 +228,7 @@ func TestAccountGetThemesIncludesUserThemes(t *testing.T) {
 	}}
 	r := newThemeRouter(t, files)
 
-	// 初始:仅默认主题。
+	// Initial: only the default themes.
 	first, err := r.onAccountGetThemes(ctx, &tg.AccountGetThemesRequest{Format: "android", Hash: 0})
 	if err != nil {
 		t.Fatalf("getThemes initial err = %v", err)
@@ -239,7 +241,7 @@ func TestAccountGetThemesIncludesUserThemes(t *testing.T) {
 	if defaultCount == 0 {
 		t.Fatalf("getThemes returned no default themes")
 	}
-	// 同 hash 回传 → NotModified。
+	// Same hash echoed back -> NotModified.
 	if again, _ := r.onAccountGetThemes(ctx, &tg.AccountGetThemesRequest{Hash: base.Hash}); func() bool {
 		_, ok := again.(*tg.AccountThemesNotModified)
 		return !ok
@@ -247,7 +249,7 @@ func TestAccountGetThemesIncludesUserThemes(t *testing.T) {
 		t.Fatalf("getThemes with matching hash should be NotModified")
 	}
 
-	// 创建一个自定义主题。
+	// Create a custom theme.
 	create := &tg.AccountCreateThemeRequest{Title: "Synced"}
 	create.SetDocument(&tg.InputDocument{ID: 321, AccessHash: 3})
 	created, err := r.onAccountCreateTheme(ctx, create)
@@ -255,7 +257,7 @@ func TestAccountGetThemesIncludesUserThemes(t *testing.T) {
 		t.Fatalf("createTheme err = %v", err)
 	}
 
-	// 现在 getThemes 必须包含该自定义主题,且 hash 变化。
+	// Now getThemes must include this custom theme, and the hash changes.
 	second, err := r.onAccountGetThemes(ctx, &tg.AccountGetThemesRequest{Hash: base.Hash})
 	if err != nil {
 		t.Fatalf("getThemes after create err = %v", err)
@@ -284,9 +286,10 @@ func TestAccountGetThemesIncludesUserThemes(t *testing.T) {
 	}
 }
 
-// TestAccountGetThemesTDesktopExcludesDocumentlessDefaults 验证:对 format="tdesktop"
-// 不下发无 document 的合成 emoji 默认主题(否则 TDesktop 云主题网格点击会弹
-// lng_theme_no_desktop),而 format="android" 仍下发它们供 emoji 预览条使用。
+// TestAccountGetThemesTDesktopExcludesDocumentlessDefaults verifies: for format="tdesktop" the
+// synthesized documentless emoji default themes are not sent (otherwise clicking one in the
+// TDesktop cloud-themes grid would show lng_theme_no_desktop), while format="android" still
+// sends them for the emoji preview strip.
 func TestAccountGetThemesTDesktopExcludesDocumentlessDefaults(t *testing.T) {
 	const userID = 1000007
 	ctx := WithUserID(context.Background(), userID)
@@ -313,8 +316,9 @@ func TestAccountGetThemesTDesktopExcludesDocumentlessDefaults(t *testing.T) {
 			}
 		}
 	case *tg.AccountThemesNotModified:
-		// 空集合(全新账号无自建主题)对应的稳定 hash 与 0 不同,首个 hash=0 不会命中,
-		// 故这里若返回 NotModified 说明哈希实现异常。
+		// The stable hash for an empty set (a brand-new account with no self-created themes)
+		// differs from 0, so the first hash=0 will not hit; returning NotModified here would
+		// therefore indicate a broken hash implementation.
 		t.Fatalf("tdesktop getThemes with hash=0 = NotModified, want themes")
 	default:
 		t.Fatalf("tdesktop getThemes = %T, want *tg.AccountThemes", desktop)
@@ -519,7 +523,7 @@ func assertThemeAccentColorsOpaque(t *testing.T, themes []tg.Theme) {
 	}
 }
 
-// TestAccountCreateThemeAccentSettingsEncode 验证带 settings 的 accent 主题往返且 base_theme 非空可编码。
+// TestAccountCreateThemeAccentSettingsEncode verifies an accent theme with settings round-trips and encodes with a non-empty base_theme.
 func TestAccountCreateThemeAccentSettingsEncode(t *testing.T) {
 	ctx := WithUserID(context.Background(), 1000003)
 	r := newThemeRouter(t, &fakeFiles{})

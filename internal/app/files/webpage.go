@@ -23,27 +23,31 @@ import (
 	"telesrv/internal/readmodelcache"
 )
 
-// 链接预览（webpage preview）：抓取消息里的 URL，解析 OpenGraph/Twitter-card/<title>+meta
-// 元数据，铸造预览卡片（含可选预览图）。安全模型与 external_media 同构（SSRF 拨号期 IP 校验、
-// 仅 http/https、重定向/大小/超时上限、全局限速），但用独立的限速器与缓存，避免与外链媒体抓取
-// 争用同一预算。HTML 与预览图共用一个总时长预算（父 ctx deadline）。
+// Link preview (webpage preview): fetch the URL in a message, parse OpenGraph/Twitter-card/<title>+meta
+// metadata, and mint a preview card (with an optional preview image). The security model is
+// isomorphic with external_media (SSRF IP check at dial time, http/https only, redirect/size/timeout
+// limits, global rate limit), but it uses an independent rate limiter and cache to avoid contending
+// for the same budget as external media fetching. HTML and the preview image share one total duration
+// budget (the parent ctx deadline).
 //
-// 解析结果（done / empty）经 L1 进程内缓存（singleflight 折叠并发同 URL 抓取）+ L3 web_pages
-// 表（按规范化 URL 哈希跨实例去重）。瞬时失败（网络/限速/SSRF 拦截）返回 error 不缓存，避免一次
-// 抖动把热门链接毒成"无预览"。
+// The parse result (done / empty) goes through the L1 in-process cache (singleflight folding concurrent
+// fetches of the same URL) + the L3 web_pages table (deduplicated across instances by normalized URL
+// hash). A transient failure (network/rate limit/SSRF block) returns an error and is not cached,
+// avoiding one glitch poisoning a popular link into "no preview".
 
 var (
-	// ErrWebPagePreviewDisabled 表示未启用链接预览抓取。
+	// ErrWebPagePreviewDisabled means link preview fetching is not enabled.
 	ErrWebPagePreviewDisabled = errors.New("web page preview disabled")
-	// ErrWebPagePreviewInvalid 表示 URL 不合法/被 SSRF 拦截/上游失败/超限。
+	// ErrWebPagePreviewInvalid means the URL is invalid / blocked by SSRF / upstream failed / over a limit.
 	ErrWebPagePreviewInvalid = errors.New("web page preview invalid")
-	// errWebPageTerminal 标记「确定性、短期不会变」的失败（SSRF 拦截/4xx/非法 URL）。这类
-	// 解析为终态空预览并负缓存，避免每次按键/发送重复打 PG+外网；瞬时失败（5xx/超时/限速/
-	// dial 失败）不带此标记、不缓存、可重试。
+	// errWebPageTerminal marks "deterministic, short-term-unchangeable" failures (SSRF block/4xx/
+	// invalid URL). These resolve to a terminal empty preview and are negatively cached, avoiding a
+	// repeated PG + external hit on every keystroke/send; transient failures (5xx/timeout/rate limit/
+	// dial failure) do not carry this marker, are not cached, and are retryable.
 	errWebPageTerminal = errors.New("web page terminal")
 )
 
-// terminalFetchErr 构造一个终态失败错误（会被负缓存）。
+// terminalFetchErr builds a terminal failure error (which is negatively cached).
 func terminalFetchErr(msg string) error {
 	return fmt.Errorf("%w: %w: %s", ErrWebPagePreviewInvalid, errWebPageTerminal, msg)
 }
@@ -52,21 +56,24 @@ const (
 	webpageRequestTimeout = 15 * time.Second
 	webpageTotalTimeout   = 20 * time.Second
 	webpageMaxRedirects   = 5
-	// DefaultWebPagePreviewMaxBytes 覆盖 HTML 抓取与预览图抓取（head 在页首，足够）。
+	// DefaultWebPagePreviewMaxBytes covers HTML fetching and preview image fetching (the head is at the top of the page, which is enough).
 	DefaultWebPagePreviewMaxBytes = int64(5 << 20)
-	// DefaultWebPagePreviewRatePerMin 是全局每分钟抓取上限；一次解析最多 2 次上游（HTML+图）。
-	// 60 是单用户口径，多用户实例偏低（输入预览与真实发送共用此预算易互相饿死），上调到 300。
+	// DefaultWebPagePreviewRatePerMin is the global per-minute fetch limit; one resolution makes at
+	// most 2 upstream requests (HTML + image). 60 is a single-user figure and is on the low side for a
+	// multi-user instance (typed-preview and real send share this budget and easily starve each other),
+	// so it is raised to 300.
 	DefaultWebPagePreviewRatePerMin = 300
 	webpageRateWindow               = time.Minute
-	// maxWebpageImagePixels 是预览图解压炸弹上界（解码前按 DecodeConfig 尺寸拦截）。
+	// maxWebpageImagePixels is the upper bound against a preview image decompression bomb (intercepted by DecodeConfig dimensions before decoding).
 	maxWebpageImagePixels  = int64(25_000_000)
 	webpageCacheMaxEntries = 4096
 	webpageCacheTTL        = 10 * time.Minute
-	// webPageRefreshTTL 是已解析卡片的陈旧阈值：L3 命中且超过此龄时后台 stale-while-revalidate
-	// 刷新（返回的仍是旧卡片，不阻塞）。webPageRefreshConcurrency 限并发刷新 goroutine。
+	// webPageRefreshTTL is the staleness threshold for a resolved card: when an L3 hit exceeds this
+	// age it is refreshed in the background with stale-while-revalidate (still returning the old card,
+	// without blocking). webPageRefreshConcurrency limits concurrent refresh goroutines.
 	webPageRefreshTTL         = 24 * time.Hour
 	webPageRefreshConcurrency = 8
-	// webpageUserAgent 用 Telegram 爬虫标识：很多站点只对已知爬虫吐 OG 标签。
+	// webpageUserAgent uses the Telegram crawler identity: many sites only emit OG tags to known crawlers.
 	webpageUserAgent = "TelegramBot (like TwitterBot)"
 	acceptHTML       = "text/html,application/xhtml+xml"
 	acceptImage      = "image/*"
@@ -83,7 +90,7 @@ type webpageFetcher struct {
 	fetchTimes []time.Time
 }
 
-// WithWebPagePreview 启用链接预览抓取。maxBytes<=0 / ratePerMin<=0 用默认。SSRF 防护恒开。
+// WithWebPagePreview enables link preview fetching. maxBytes<=0 / ratePerMin<=0 uses the default. SSRF protection is always on.
 func WithWebPagePreview(maxBytes int64, ratePerMin int) Option {
 	return func(s *Service) {
 		if maxBytes <= 0 {
@@ -96,7 +103,7 @@ func WithWebPagePreview(maxBytes int64, ratePerMin int) Option {
 	}
 }
 
-// newWebpageFetcher 构造抓取器。allowPrivate 仅供测试（指向 httptest loopback）；生产恒 false。
+// newWebpageFetcher constructs the fetcher. allowPrivate is for tests only (pointing at httptest loopback); in production it is always false.
 func newWebpageFetcher(maxBytes int64, ratePerMin int, allowPrivate bool) *webpageFetcher {
 	dialer := &net.Dialer{Timeout: webpageRequestTimeout}
 	dialer.Control = func(_, address string, _ syscall.RawConn) error {
@@ -109,7 +116,7 @@ func newWebpageFetcher(maxBytes int64, ratePerMin int, allowPrivate bool) *webpa
 			return ErrWebPagePreviewInvalid
 		}
 		if !allowPrivate && isBlockedExternalIP(ip) {
-			// SSRF 拦截是确定性失败 → 标记终态供负缓存（否则每次按键重打 PG+重 dial）。
+			// An SSRF block is a deterministic failure → mark it terminal for negative caching (otherwise every keystroke re-hits PG and re-dials).
 			return terminalFetchErr("blocked address " + host + " (SSRF guard)")
 		}
 		return nil
@@ -157,14 +164,14 @@ func (f *webpageFetcher) allowFetch() bool {
 	return true
 }
 
-// fetch 抓取 URL，返回 (字节, content-type)。SSRF 检查在 dial 阶段发生；ctx 承载共享总预算。
+// fetch fetches a URL and returns (bytes, content-type). The SSRF check happens at dial time; ctx carries the shared total budget.
 func (f *webpageFetcher) fetch(ctx context.Context, rawURL, accept string) ([]byte, string, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, "", terminalFetchErr("bad url") // 非法 URL 是终态
+		return nil, "", terminalFetchErr("bad url") // an invalid URL is terminal
 	}
 	if !f.allowFetch() {
-		return nil, "", fmt.Errorf("%w: rate limited", ErrWebPagePreviewInvalid) // 限速=瞬时，可重试
+		return nil, "", fmt.Errorf("%w: rate limited", ErrWebPagePreviewInvalid) // rate limiting is transient, retryable
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -174,13 +181,13 @@ func (f *webpageFetcher) fetch(ctx context.Context, rawURL, accept string) ([]by
 	req.Header.Set("Accept", accept)
 	resp, err := f.client.Do(req)
 	if err != nil {
-		// SSRF 拦截（dial Control 返回的 terminal）经 url.Error 传上来，errors.Is 仍能识别；
-		// 其余 dial/超时错误是瞬时。
+		// An SSRF block (the terminal returned by dial Control) comes up through url.Error and
+		// errors.Is can still identify it; the other dial/timeout errors are transient.
 		return nil, "", fmt.Errorf("%w: %w", ErrWebPagePreviewInvalid, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// 4xx=确定性（404/403/410…）终态负缓存；5xx=瞬时可重试。
+		// 4xx = deterministic (404/403/410…) and terminal, negatively cached; 5xx = transient and retryable.
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return nil, "", terminalFetchErr(fmt.Sprintf("upstream status %d", resp.StatusCode))
 		}
@@ -200,14 +207,16 @@ func (f *webpageFetcher) fetch(ctx context.Context, rawURL, accept string) ([]by
 	return data, strings.TrimSpace(strings.ToLower(contentType)), nil
 }
 
-// WebPagePreviewEnabled 报告链接预览抓取是否启用。
+// WebPagePreviewEnabled reports whether link preview fetching is enabled.
 func (s *Service) WebPagePreviewEnabled() bool {
 	return s != nil && s.webpage != nil
 }
 
-// LookupWebPage 仅查缓存（L1 进程内 → L3 web_pages 表）返回已解析的链接预览，不抓取。命中
-// 返回 (page,true)；未缓存或未启用返回 false。发送路径用它在 echo 直接带 done 卡片。
-// 先 Peek L1：客户端输入时 getWebPagePreview 多半已把同一 URL 解析进 L1，发送时即免一次 PG。
+// LookupWebPage returns a resolved link preview from the cache only (L1 in-process → L3 web_pages
+// table) without fetching. On a hit it returns (page,true); when uncached or disabled it returns
+// false. The send path uses it to attach the done card directly on echo. It Peek's L1 first: while the
+// client is typing, getWebPagePreview has most likely already resolved the same URL into L1, saving a
+// PG lookup at send time.
 func (s *Service) LookupWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool) {
 	if s == nil || s.webpage == nil {
 		return domain.MessageWebPage{}, false
@@ -224,12 +233,13 @@ func (s *Service) LookupWebPage(ctx context.Context, rawURL string) (domain.Mess
 	if err != nil || !found {
 		return domain.MessageWebPage{}, false
 	}
-	s.webpage.cache.Store(urlHash, page) // 回填 L1，后续 Peek 命中。
+	s.webpage.cache.Store(urlHash, page) // backfill L1 so later Peek hits.
 	return page, true
 }
 
-// ResolveWebPage 解析链接预览，经 L1 缓存（singleflight 去重）+ L3 web_pages 持久去重。
-// 返回 done / empty 形态的 MessageWebPage；瞬时失败返回 error（调用方降级为空，不报错给用户）。
+// ResolveWebPage resolves a link preview through the L1 cache (singleflight dedup) + L3 web_pages
+// durable dedup. It returns a MessageWebPage in done / empty form; a transient failure returns an
+// error (the caller degrades to empty without erroring to the user).
 func (s *Service) ResolveWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, error) {
 	if s == nil || s.webpage == nil {
 		return domain.MessageWebPage{}, ErrWebPagePreviewDisabled
@@ -240,17 +250,17 @@ func (s *Service) ResolveWebPage(ctx context.Context, rawURL string) (domain.Mes
 	}
 	urlHash := domain.WebPageURLHash(normalized)
 	return s.webpage.cache.GetOrLoad(ctx, urlHash, func() (domain.MessageWebPage, error) {
-		// L3 durable 命中：直接复用，跨实例去重；超龄则后台刷新（返回旧卡片不阻塞）。
+		// L3 durable hit: reuse directly, deduplicated across instances; when stale, refresh in the background (returning the old card without blocking).
 		if page, refreshedAt, found, err := s.media.GetWebPageByURLHash(ctx, urlHash); err == nil && found {
 			s.webpage.maybeRefresh(s, normalized, urlHash, refreshedAt)
 			return page, nil
 		}
-		// miss：抓取 + 解析（+ 图）。瞬时失败返回 error → GetOrLoad 不缓存（热门链接不被毒化）。
+		// miss: fetch + parse (+ image). A transient failure returns an error → GetOrLoad does not cache (popular links are not poisoned).
 		page, err := s.webpage.resolve(ctx, s, normalized, urlHash)
 		if err != nil {
 			return domain.MessageWebPage{}, err
 		}
-		// 终态（done / empty）：落 L3 供跨实例 + 重启复用。
+		// Terminal (done / empty): store in L3 for cross-instance + restart reuse.
 		if perr := s.media.PutWebPage(ctx, urlHash, page, int(time.Now().Unix())); perr != nil {
 			s.log.Warn("persist web page preview failed", zap.Int64("url_hash", urlHash), zap.Error(perr))
 		}
@@ -258,8 +268,9 @@ func (s *Service) ResolveWebPage(ctx context.Context, rawURL string) (domain.Mes
 	})
 }
 
-// maybeRefresh 在卡片超过 webPageRefreshTTL 龄时后台 stale-while-revalidate 刷新一次。
-// 并发受 refreshSem 限；满则跳过（下次再刷）。瞬时失败保留旧卡片。
+// maybeRefresh refreshes once in the background with stale-while-revalidate when a card exceeds the
+// webPageRefreshTTL age. Concurrency is limited by refreshSem; when full it skips (retries next time).
+// A transient failure keeps the old card.
 func (f *webpageFetcher) maybeRefresh(s *Service, normalizedURL string, urlHash int64, refreshedAt int) {
 	if refreshedAt == 0 || time.Now().Unix()-int64(refreshedAt) < int64(webPageRefreshTTL/time.Second) {
 		return
@@ -275,31 +286,32 @@ func (f *webpageFetcher) maybeRefresh(s *Service, normalizedURL string, urlHash 
 		defer cancel()
 		page, err := f.resolve(ctx, s, normalizedURL, urlHash)
 		if err != nil {
-			return // 瞬时失败：保留旧卡片。
+			return // transient failure: keep the old card.
 		}
 		if perr := s.media.PutWebPage(ctx, urlHash, page, int(time.Now().Unix())); perr != nil {
 			return
 		}
-		f.cache.Store(urlHash, page) // 刷新 L1，使后续读到新卡片。
+		f.cache.Store(urlHash, page) // refresh L1 so later reads see the new card.
 	}()
 }
 
-// resolve 实际抓取并构造卡片。HTML 与预览图共享 ctx 总时长预算。
+// resolve actually fetches and builds the card. HTML and the preview image share the ctx total duration budget.
 func (f *webpageFetcher) resolve(ctx context.Context, s *Service, normalizedURL string, urlHash int64) (domain.MessageWebPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, webpageTotalTimeout)
 	defer cancel()
 
 	data, contentType, err := f.fetch(ctx, normalizedURL, acceptHTML)
 	if err != nil {
-		// 终态失败（SSRF/4xx/非法 URL）→ 负缓存为空预览，避免重复按键/发送重打 PG+外网。
-		// 瞬时失败（5xx/超时/dial/限速）→ 上抛 error，GetOrLoad 不缓存、可重试。
+		// Terminal failure (SSRF/4xx/invalid URL) → negatively cached as an empty preview, avoiding a
+		// repeated PG + external hit on each keystroke/send. Transient failure (5xx/timeout/dial/rate
+		// limit) → propagate the error; GetOrLoad does not cache and it is retryable.
 		if isTerminalWebPageFetchError(err) {
 			return emptyWebPage(normalizedURL, urlHash), nil
 		}
 		return domain.MessageWebPage{}, err
 	}
 	if !isHTMLContentType(contentType) {
-		// 非 HTML（如直接指向图片/二进制）：终态空预览。
+		// Non-HTML (e.g. pointing directly at an image/binary): terminal empty preview.
 		return emptyWebPage(normalizedURL, urlHash), nil
 	}
 	meta := parseWebPageMeta(data, normalizedURL)
@@ -324,7 +336,7 @@ func isTerminalWebPageFetchError(err error) bool {
 	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
 }
 
-// fetchImage 抓取并铸造预览图（best-effort）。解码前按尺寸拦截解压炸弹；非图片/失败丢弃。
+// fetchImage fetches and mints the preview image (best-effort). It intercepts decompression bombs by size before decoding; non-images/failures are dropped.
 func (f *webpageFetcher) fetchImage(ctx context.Context, s *Service, imageURL string) (domain.Photo, bool) {
 	data, _, err := f.fetch(ctx, imageURL, acceptImage)
 	if err != nil {
@@ -361,7 +373,7 @@ func doneWebPage(meta webpageMeta, rawURL string, urlHash int64) domain.MessageW
 	return page
 }
 
-// webpageMeta 是从 HTML head 提取的预览元数据（已按 og>twitter>title/meta 优先级归并）。
+// webpageMeta is the preview metadata extracted from the HTML head (merged by og>twitter>title/meta priority).
 type webpageMeta struct {
 	title       string
 	description string
@@ -385,8 +397,9 @@ func (m webpageMeta) pageType() string {
 	return "article"
 }
 
-// parseWebPageMeta 扫描 HTML head 的 <meta>/<title>，提取 OpenGraph/Twitter-card/标准元数据。
-// 遇到 <body> 或 </head> 即停止（元数据都在 head）。og:image 相对 URL 按 baseURL 解析为绝对。
+// parseWebPageMeta scans the HTML head's <meta>/<title> and extracts OpenGraph/Twitter-card/standard
+// metadata. It stops at <body> or </head> (the metadata is all in the head). A relative og:image URL
+// is resolved to absolute against baseURL.
 func parseWebPageMeta(htmlBytes []byte, baseURL string) webpageMeta {
 	var (
 		m                          webpageMeta
@@ -466,7 +479,7 @@ scan:
 	return m
 }
 
-// metaKeyContent 从一个 <meta> 标签收集 (property|name) 与 content。
+// metaKeyContent collects (property|name) and content from one <meta> tag.
 func metaKeyContent(z *html.Tokenizer, hasAttr bool) (string, string) {
 	var key, content string
 	for hasAttr {
@@ -508,8 +521,9 @@ func webpageDisplayURL(raw string) string {
 	return strings.TrimPrefix(u.Host, "www.")
 }
 
-// webpageContentHash 对卡片内容算稳定 31-bit 哈希（webPage.hash 是 TL int，用于 getWebPage
-// NotModified 短路）。仅覆盖文本字段，预览图变化不计入（同 URL 预览图按内容寻址已去重）。
+// webpageContentHash computes a stable 31-bit hash of the card content (webPage.hash is a TL int,
+// used for the getWebPage NotModified short-circuit). It covers only text fields; a preview image
+// change is not counted (a preview image for the same URL is already deduplicated by content addressing).
 func webpageContentHash(p domain.MessageWebPage) int {
 	h := fnv.New32a()
 	for _, s := range []string{p.URL, p.Title, p.Description, p.SiteName, p.Author, p.Type} {

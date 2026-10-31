@@ -10,13 +10,18 @@ import (
 	"telesrv/internal/sfu"
 )
 
-// GroupCallSweepDispatcher 清理群通话幽灵参与者（kill 进程/断电后无人发 leave）。
+// GroupCallSweepDispatcher cleans up ghost participants of group calls (nobody
+// sends leave after a killed process / power loss).
 //
-// ⚠ P0-2 活性契约：客户端只在 Connecting 态发 checkGroupCall（媒体连通后心跳停止），
-// 单凭 last_check_date 判死会把所有连上媒体的健康参与者踢光。约定的判据是
-// 「max(心跳, 媒体面活性)」：M0（SFU disabled）客户端恒 Connecting、4s 心跳不断，
-// 纯水位成立；M1 起 SFU 必须对媒体面存活（ICE consent/近期 SRTP 收包）的 endpoint
-// 周期性刷新 last_check_date（liveness reporter），使单一水位同时承载两路活性。
+// ⚠ P0-2 liveness contract: the client only sends checkGroupCall in the
+// Connecting state (the heartbeat stops once media is connected), so judging
+// death by last_check_date alone would kick every healthy participant that has
+// connected media. The agreed criterion is "max(heartbeat, media-plane
+// liveness)": with M0 (SFU disabled) the client stays Connecting and its 4s
+// heartbeat never stops, so a pure watermark holds; from M1 on the SFU must
+// periodically refresh last_check_date (liveness reporter) for endpoints alive
+// on the media plane (ICE consent / recent SRTP reception), so a single
+// watermark carries both liveness sources.
 type GroupCallSweepDispatcher struct {
 	router   *Router
 	log      *zap.Logger
@@ -88,7 +93,7 @@ func (d *GroupCallSweepDispatcher) DispatchOnce(ctx context.Context) {
 	}
 }
 
-// channelForGroupCall 取通话所属频道行（推送 hydration 用）。
+// channelForGroupCall fetches the channel row owning the call (used for push hydration).
 func (r *Router) channelForGroupCall(ctx context.Context, call domain.GroupCall) (domain.Channel, error) {
 	view, err := r.deps.Channels.GetChannel(ctx, call.CreatorUserID, call.ChannelID)
 	if err != nil {

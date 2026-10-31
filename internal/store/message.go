@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// MessageStore 持久化账号视角下的消息。
+// MessageStore persists messages from the account's point of view.
 type MessageStore interface {
 	Create(ctx context.Context, msg domain.Message) (domain.Message, error)
 	SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error)
@@ -27,11 +27,11 @@ type MessageStore interface {
 	DeleteHistory(ctx context.Context, req domain.DeleteHistoryRequest) (domain.DeleteMessagesResult, error)
 	GetByIDs(ctx context.Context, userID int64, ids []int) (domain.MessageList, error)
 	ListByUser(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error)
-	// SearchPrivateMedia 返回某私聊会话中属于给定媒体类别的消息(共享媒体标签页),newest-first 分页。
+	// SearchPrivateMedia returns messages in a private-chat dialog that belong to the given media category (shared media tab), paginated newest-first.
 	SearchPrivateMedia(ctx context.Context, ownerUserID, peerID int64, req domain.MediaSearchRequest) (domain.MessageList, error)
-	// CountPrivateMediaCategories 返回某私聊会话按基础媒体类别聚合的精确计数。
+	// CountPrivateMediaCategories returns exact counts for a private-chat dialog aggregated by base media category.
 	CountPrivateMediaCategories(ctx context.Context, ownerUserID, peerID int64) (domain.MediaCategoryCounts, error)
-	// Saved Messages 分会话（self-chat 按 saved_peer 分组的子会话）。
+	// Saved Messages sub-dialogs (self-chat sub-dialogs grouped by saved_peer).
 	ListSavedDialogs(ctx context.Context, userID int64, filter domain.SavedDialogsFilter) (domain.SavedDialogList, error)
 	ListPinnedSavedDialogs(ctx context.Context, userID int64) (domain.SavedDialogList, error)
 	ListSavedDialogsByPeers(ctx context.Context, userID int64, peers []domain.Peer) (domain.SavedDialogList, error)

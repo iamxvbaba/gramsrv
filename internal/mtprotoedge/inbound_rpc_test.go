@@ -183,8 +183,9 @@ func TestInboundRPCSchedulerFairAcrossConnections(t *testing.T) {
 		}
 	}
 
-	// 先在 worker 启动前形成 [c1, c2] ready 顺序。c1 每次只执行一条后回到队尾，
-	// 因此 c2 必须在 c1 的第二条之前获得执行机会。
+	// First form the [c1, c2] ready order before workers start. c1 runs only one
+	// task at a time then returns to the tail, so c2 must get a chance to run before
+	// c1's second task.
 	enqueue(c1, "c1-first")
 	enqueue(c1, "c1-second")
 	enqueue(c2, "c2-first")
@@ -357,7 +358,7 @@ func TestInboundRPCExpiredInQueueNeverRunsAndSignalsTimeout(t *testing.T) {
 		size:   7,
 		run: func(context.Context) error {
 			close(started)
-			<-release // 刻意忽略 deadline，确保下一条在队列中到期。
+			<-release // deliberately ignore the deadline, ensuring the next item expires in the queue.
 			return nil
 		},
 	}); err != nil {

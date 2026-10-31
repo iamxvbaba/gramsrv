@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// PasswordStore 持久化账号 2FA/SRP 配置。
+// PasswordStore persists account 2FA/SRP settings.
 type PasswordStore interface {
 	GetByUser(ctx context.Context, userID int64) (domain.PasswordSettings, bool, error)
 	LoginEmailOwner(ctx context.Context, email string) (int64, bool, error)

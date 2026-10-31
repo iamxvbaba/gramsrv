@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestStickerCollectionsRoundTripPostgres 回归迁移 0006：个人贴纸/GIF 集合持久化
-// （最新置顶 / 截断 / unsave / clear / 类别隔离）。store 仅存 document_id（无 FK）。
+// TestStickerCollectionsRoundTripPostgres regression for migration 0006: personal sticker/GIF collections are persisted
+// (newest first / truncation / unsave / clear / kind isolation). The store keeps only document_id (no FK).
 func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -19,7 +19,7 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 	_, _ = pool.Exec(ctx, "DELETE FROM user_sticker_collections WHERE owner_user_id = $1", owner)
 
 	faved := domain.StickerCollectionFaved
-	// fave 101 then 102 → 最新在前。
+	// fave 101 then 102 -> newest first.
 	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 101, false, 1000, 100); err != nil {
 		t.Fatalf("fave 101: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("faved = %v, want [102 101]", ids)
 	}
 
-	// 重 fave 101（更新 used_at）→ 移到最前。
+	// re-fave 101 (updates used_at) -> moves to front.
 	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 101, false, 1002, 100); err != nil {
 		t.Fatalf("re-fave 101: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("faved after re-fave = %v, want 101 first", ids)
 	}
 
-	// used_at 只有秒精度：同秒保存仍必须严格按最后一次 mutation 排序。
+	// used_at has only second precision: same-second saves must still strictly order by the last mutation.
 	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 102, false, 3000, 100); err != nil {
 		t.Fatalf("same-second fave 102: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("same-second order = %v, want [101 102]", ids)
 	}
 
-	// 截断：max=2，加第 3 个挤掉最旧。
+	// Truncation: max=2; adding a 3rd evicts the oldest.
 	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 103, false, 1003, 2); err != nil {
 		t.Fatalf("fave 103 (max 2): %v", err)
 	}
@@ -57,7 +57,7 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("faved after trim = %v, want [103 101]", ids)
 	}
 
-	// 类别隔离：recent 与 faved 独立。
+	// Kind isolation: recent and faved are independent.
 	if err := store.SaveStickerCollectionItem(ctx, owner, domain.StickerCollectionRecent, 999, false, 2000, 30); err != nil {
 		t.Fatalf("save recent: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 	if ids := stickerIDs(t, store, ctx, owner, faved); len(ids) != 0 {
 		t.Fatalf("faved after clear = %v, want empty", ids)
 	}
-	// clear 只清该类别，recent 仍在。
+	// clear only clears that kind; recent remains.
 	if ids := stickerIDs(t, store, ctx, owner, domain.StickerCollectionRecent); len(ids) != 1 {
 		t.Fatalf("recent gone after clearing faved: %v", ids)
 	}

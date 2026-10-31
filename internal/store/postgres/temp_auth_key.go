@@ -14,13 +14,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// TempAuthKeyBindingStore 用 PostgreSQL 实现 store.TempAuthKeyBindingStore。
+// TempAuthKeyBindingStore implements store.TempAuthKeyBindingStore with PostgreSQL.
 type TempAuthKeyBindingStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewTempAuthKeyBindingStore 基于 pgx 连接池（或事务）创建 TempAuthKeyBindingStore。
+// NewTempAuthKeyBindingStore creates a TempAuthKeyBindingStore on top of a pgx pool (or transaction).
 func NewTempAuthKeyBindingStore(db sqlcgen.DBTX) *TempAuthKeyBindingStore {
 	return &TempAuthKeyBindingStore{db: db, q: sqlcgen.New(db)}
 }
@@ -91,9 +91,10 @@ FROM public.telesrv_bind_temp_auth_key($1, $2, $3, $4, $5, $6)
 	}
 }
 
-// DeleteExpired 实现 store.TempAuthKeyBindingStore：按 auth_keys.expires_at 的部分索引
-// 有界删除所有过期 temp key（含从未绑定的握手 key），binding 经 CASCADE 一并清除。
-// Edge 已在准确协议时刻停止使用 key；这里的 24h 宽限只控制数据库物理回收。
+// DeleteExpired implements store.TempAuthKeyBindingStore: bounded deletion of all expired temp keys
+// (including never-bound handshake keys) via the partial index on auth_keys.expires_at, with bindings
+// removed by CASCADE. Edge already stops using a key at the exact protocol moment; the 24h grace here
+// only controls physical database reclamation.
 func (s *TempAuthKeyBindingStore) DeleteExpired(ctx context.Context, expiredBefore int64, limit int) (int, error) {
 	if limit <= 0 {
 		return 0, nil

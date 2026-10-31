@@ -9,8 +9,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// accountNotifySettingsService 是 per-scope 通知设置持久化的可选扩展，由
-// *app/account.Service 实现。未接通时各 handler 回落历史默认（tdesktop.NotifySettings）。
+// accountNotifySettingsService is the optional per-scope notification-settings persistence
+// extension, implemented by *app/account.Service. When not wired, handlers fall back to the
+// historical default (tdesktop.NotifySettings).
 type accountNotifySettingsService interface {
 	GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, error)
 	SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error
@@ -25,8 +26,9 @@ func (r *Router) accountNotifySvc() (accountNotifySettingsService, bool) {
 	return svc, ok
 }
 
-// notifyScopeFromInput 把 InputNotifyPeer 解析为业务作用域。peer/forumTopic 需解析
-// 出 domain.Peer（不校验访问权限——通知偏好是请求者自己对某 peer 的设置）。
+// notifyScopeFromInput resolves an InputNotifyPeer into a business scope. For peer/forumTopic a
+// domain.Peer must be resolved (access is not checked -- notification preferences are the
+// requester's own settings for a peer).
 func (r *Router) notifyScopeFromInput(userID int64, in tg.InputNotifyPeerClass) (domain.NotifyScope, bool) {
 	switch p := in.(type) {
 	case *tg.InputNotifyUsers:
@@ -94,7 +96,7 @@ func (r *Router) onAccountUpdateNotifySettings(ctx context.Context, req *tg.Acco
 		}
 		r.notifySettings.Delete(userID)
 	}
-	// 推 updateNotifySettings 给本人其它在线设备（多设备静音同步）。
+	// Push updateNotifySettings to the caller's other online devices (multi-device mute sync).
 	r.pushUserUpdates(ctx, userID, &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdateNotifySettings{
 			Peer:           tgNotifyPeer(scope),
@@ -121,9 +123,10 @@ func (r *Router) onAccountResetNotifySettings(ctx context.Context) (bool, error)
 	return true, nil
 }
 
-// onAccountGetNotifyExceptions 返回"有自定义通知设置的会话"全局索引：每条异常一个
-// updateNotifySettings，附带被引用 peer 的 Users/Chats。默认（无 compare 标志）只返
-// 消息级异常（mute/silent/show_previews）；compare_stories 额外纳入仅 story 维度异常。
+// onAccountGetNotifyExceptions returns a global index of "sessions with custom notification
+// settings": one updateNotifySettings per exception, with the referenced peer's Users/Chats.
+// By default (no compare flag) only message-level exceptions are returned (mute/silent/
+// show_previews); compare_stories additionally includes story-only exceptions.
 func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.AccountGetNotifyExceptionsRequest) (tg.UpdatesClass, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -193,8 +196,8 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 	return out, nil
 }
 
-// notifyExceptionQualifies 判定一条异常是否纳入 getNotifyExceptions 结果。
-// 自定义铃声未建模故 compare_sound 无额外效果。
+// notifyExceptionQualifies decides whether an exception is included in the getNotifyExceptions result.
+// Custom ringtones are not modeled, so compare_sound has no additional effect.
 func notifyExceptionQualifies(s domain.PeerNotifySettings, compareStories bool) bool {
 	if s.MuteUntil != nil || s.Silent != nil || s.ShowPreviews != nil {
 		return true
@@ -205,8 +208,8 @@ func notifyExceptionQualifies(s domain.PeerNotifySettings, compareStories bool) 
 	return false
 }
 
-// tgChatsForChannelIDs 把一组 channel id 解析为 tg.Chat（无权限/已失效者跳过）。
-// perf：一次批量 GetChannels，而非逐个 GetChannel（N+1）。
+// tgChatsForChannelIDs resolves a set of channel ids into tg.Chat (skipping ones without access/expired).
+// perf: one batched GetChannels instead of GetChannel per id (N+1).
 func (r *Router) tgChatsForChannelIDs(ctx context.Context, viewerUserID int64, channelIDs []int64) []tg.ChatClass {
 	out := make([]tg.ChatClass, 0, len(channelIDs))
 	if r.deps.Channels == nil || len(channelIDs) == 0 {
@@ -222,9 +225,9 @@ func (r *Router) tgChatsForChannelIDs(ctx context.Context, viewerUserID int64, c
 	return out
 }
 
-// tgPeerNotifySettings 把存储的 per-peer 设置叠加在默认通知设置上：未设置的字段
-// 保留默认（声音=default、show_previews=true 等），已设置字段覆盖。nil=纯默认，
-// 与历史 tdesktop.NotifySettings() 行为一致。
+// tgPeerNotifySettings overlays the stored per-peer settings on the default notification settings:
+// unset fields keep the default (sound=default, show_previews=true, etc.), set fields override.
+// nil = purely default, consistent with the historical tdesktop.NotifySettings() behavior.
 func tgPeerNotifySettings(s *domain.PeerNotifySettings) *tg.PeerNotifySettings {
 	return applyStoredNotifySettings(tdesktop.NotifySettings(), s)
 }
@@ -300,9 +303,10 @@ func tgNotifyPeer(scope domain.NotifyScope) tg.NotifyPeerClass {
 	}
 }
 
-// withDialogNotifySettings 装配 dialog 列表的 per-peer 通知设置，让静音状态在列表正确
-// 显示且跨重启恢复。perf：从 per-user notify 缓存读取（命中即 0 PG），而非每次 getDialogs
-// 都查 notify_settings——绝大多数用户没有任何自定义静音，缓存命中后零数据库开销。
+// withDialogNotifySettings populates the per-peer notification settings of a dialog list so mute
+// state displays correctly in the list and survives restarts. perf: reads from the per-user notify
+// cache (a hit costs 0 PG) instead of querying notify_settings on every getDialogs -- the vast
+// majority of users have no custom mutes, so a cache hit means zero database cost.
 func (r *Router) withDialogNotifySettings(ctx context.Context, viewerUserID int64, list domain.DialogList) domain.DialogList {
 	if len(list.Dialogs) == 0 && len(list.Communities) == 0 {
 		return list
@@ -327,9 +331,9 @@ func (r *Router) withDialogNotifySettings(ctx context.Context, viewerUserID int6
 	return list
 }
 
-// applyNotifySettingsToUserFull 在缓存后 overlay userFull 的 notify_settings（避免
-// 投影缓存使 notify 状态陈旧）。perf：从 per-user notify 缓存读取，不再每次 getFullUser
-// 单 peer 查 PG。
+// applyNotifySettingsToUserFull overlays userFull's notify_settings after caching (to avoid the
+// projection cache making notify state stale). perf: reads from the per-user notify cache instead
+// of querying PG for a single peer on every getFullUser.
 func (r *Router) applyNotifySettingsToUserFull(ctx context.Context, viewerUserID, ownerUserID int64, full *tg.UserFull) {
 	settings := r.userNotifySettings(ctx, viewerUserID)
 	s, ok := settings[domain.Peer{Type: domain.PeerTypeUser, ID: ownerUserID}]
@@ -339,7 +343,7 @@ func (r *Router) applyNotifySettingsToUserFull(ctx context.Context, viewerUserID
 	full.NotifySettings = *tgPeerNotifySettings(&s)
 }
 
-// applyNotifySettingsToChannelFull 在缓存后 overlay channelFull 的 notify_settings。
+// applyNotifySettingsToChannelFull overlays channelFull's notify_settings after caching.
 func (r *Router) applyNotifySettingsToChannelFull(ctx context.Context, viewerUserID, channelID int64, full *tg.ChannelFull) {
 	settings := r.userNotifySettings(ctx, viewerUserID)
 	s, ok := settings[domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}]

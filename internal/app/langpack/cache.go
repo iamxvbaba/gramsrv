@@ -84,8 +84,8 @@ func (c *langPackCache) loadEpoch() uint64 {
 	return epoch
 }
 
-// putIfEpoch 返回 false 仅表示 load 期间发生过 flush，调用方必须重载。
-// 超大单项不进入缓存，但仍可安全返回给当前请求，因此返回 true。
+// putIfEpoch returns false only when a flush happened during load; the caller must reload.
+// An oversized item is not cached but can still be safely returned to the current request, so it returns true.
 func (c *langPackCache) putIfEpoch(key langPackCacheKey, pack domain.LangPack, loadEpoch uint64) bool {
 	if c == nil {
 		return true

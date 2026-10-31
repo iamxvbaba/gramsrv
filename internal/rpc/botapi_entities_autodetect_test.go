@@ -26,12 +26,12 @@ func botAPIEntityText(message string, entities []domain.MessageEntity, typ domai
 	return "", false
 }
 
-// utf16Units 把消息文本摊成 UTF-16 码元，实体偏移/长度正是这个口径。
+// utf16Units flattens the message text into UTF-16 code units; entity offsets/lengths are in exactly this unit.
 func utf16Units(message string) []uint16 {
 	var out []uint16
 	for _, r := range message {
 		if r > 0xffff {
-			out = append(out, 0xd800, 0xdc00) // 真实代理对取值不影响本测试的偏移断言
+			out = append(out, 0xd800, 0xdc00) // the actual surrogate-pair values do not affect this test's offset assertions
 		} else {
 			out = append(out, uint16(r))
 		}
@@ -146,7 +146,7 @@ func TestBotAPISendMessagePersistsBotCommandEntities(t *testing.T) {
 		t.Fatalf("sent entities = %#v, want /buy persisted as bot_command", sent.Entities)
 	}
 
-	// 同一份实体必须对读侧可见：客户端只渲染服务端下发的 entity。
+	// The same entities must be visible to the read side: clients render only the entity the server sends.
 	received := privateBotAPIHistory(t, fixture, fixture.owner.ID, fixture.bot.ID)
 	got, ok = botAPIEntityText(received.Body, received.Entities, domain.MessageEntityBotCommand)
 	if !ok || got != "/buy" {

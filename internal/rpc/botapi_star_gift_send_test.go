@@ -15,8 +15,9 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// botGiftService 是 Bot API 星礼物通路专用的假 GiftsService：只实现 sendGift 真正
-// 触碰的四个方法，其余方法靠内嵌接口满足 rpc.GiftsService。
+// botGiftService is a fake GiftsService dedicated to the Bot API star-gift path: it implements
+// only the four methods sendGift actually touches, and satisfies rpc.GiftsService via an embedded
+// interface for the rest.
 type botGiftService struct {
 	GiftsService
 	gift        domain.StarGift
@@ -61,8 +62,8 @@ func (s *botGiftService) Purchase(_ context.Context, req domain.StarGiftPurchase
 	return s.purchase, s.purchaseErr
 }
 
-// botStarGiftFixture 提供一个真实的 bot 账号、一个普通用户和一个 bot 有访问权的频道，
-// 用来验证 sendGift 的收礼人校验（不能给自己、频道需要访问权）。
+// botStarGiftFixture provides a real bot account, an ordinary user and a channel the bot can
+// access, to verify sendGift's recipient validation (cannot gift itself, channel needs access).
 type botStarGiftFixture struct {
 	ctx       context.Context
 	router    *Router
@@ -104,7 +105,7 @@ func newBotStarGiftFixture(t *testing.T, gifts *botGiftService) botStarGiftFixtu
 	}
 }
 
-// botAPIGiftChannelChatID 复现 Bot API 的频道 chat_id 编码（-100xxxxxxxxxx）。
+// botAPIGiftChannelChatID reproduces the Bot API channel chat_id encoding (-100xxxxxxxxxx).
 func botAPIGiftChannelChatID(channelID int64) int64 {
 	return -botAPIChannelChatIDBase - channelID
 }
@@ -131,9 +132,9 @@ func TestBotAPISendStarGiftUsesCatalogAndStableCommandKey(t *testing.T) {
 		purchase.CommandKey != wantCommand {
 		t.Fatalf("purchase = %+v, want command key %q", purchase, wantCommand)
 	}
-	// Bot API 没有 MTProto 会话：只填 OriginAuthKeyID 而 session 为 0 会构成 dispatch
-	// 排除的「半对」，PurchaseStarGift 会在 enqueueDispatch 处让整笔事务失败。
-	// 这两个字段必须同时为零。
+	// Bot API has no MTProto session: filling only OriginAuthKeyID while session is 0 forms a
+	// dispatch-exclusion "half pair", and PurchaseStarGift would fail the whole transaction at
+	// enqueueDispatch. These two fields must both be zero.
 	if purchase.OriginAuthKeyID != ([8]byte{}) || purchase.OriginSessionID != 0 {
 		t.Fatalf("purchase origin = %v/%d, want a zero pair", purchase.OriginAuthKeyID, purchase.OriginSessionID)
 	}
@@ -143,14 +144,15 @@ func TestBotAPISendStarGiftUsesCatalogAndStableCommandKey(t *testing.T) {
 	if purchase.Message != "Enjoy" || purchase.Date != 1_800_000_000 {
 		t.Fatalf("purchase message/date = %q, %d", purchase.Message, purchase.Date)
 	}
-	// 表单必须与付款请求同价同物，否则事务内的 FOR UPDATE 校验会拒绝这张表单。
+	// The form must carry the same price and item as the payment request, otherwise the in-transaction FOR UPDATE validation rejects the form.
 	if f.gifts.issued.ChargeStars != purchase.ChargeStars || f.gifts.issued.GiftID != 6011 ||
 		f.gifts.issued.RevisionID != 77 || f.gifts.issued.BuyerUserID != f.botID ||
 		f.gifts.issued.ExpiresAt != f.gifts.issued.IssuedAt+600 {
 		t.Fatalf("issued form = %+v", f.gifts.issued)
 	}
-	// 扣款必须走机器人的钱包（bot_stars_balances），而不是它根本没有行的个人账本：
-	// 漏掉这个标记会让 sendGift 对任何余额都回 BALANCE_TOO_LOW。
+	// The charge must go through the bot's wallet (bot_stars_balances), not the personal ledger
+	// where it has no row at all: omitting this flag makes sendGift return BALANCE_TOO_LOW for any
+	// balance.
 	if !purchase.BuyerIsBot {
 		t.Fatal("purchase must be marked as a bot buyer so the wallet is charged")
 	}
@@ -198,7 +200,7 @@ func TestBotAPISendStarGiftReplaysSettledCommandWithoutCharging(t *testing.T) {
 			t.Fatalf("sendGift replay = %v, %v", ok, err)
 		}
 	}
-	// 重放必须完全绕过表单签发与扣款，否则同一个键会收两次钱。
+	// A replay must completely bypass form issuance and charging, otherwise the same key would be charged twice.
 	if len(f.gifts.purchases) != 0 || f.gifts.issuedCalls != 0 {
 		t.Fatalf("replay charged again: purchases=%d issued=%d", len(f.gifts.purchases), f.gifts.issuedCalls)
 	}
@@ -219,8 +221,9 @@ func TestBotAPISendStarGiftRejectsIdempotencyKeyReuseForAnotherRequest(t *testin
 }
 
 func TestBotAPISendStarGiftRecoversConcurrentDuplicateOfSameKey(t *testing.T) {
-	// 并发的同键请求里，输掉 command_key 唯一约束的那一个会先撞上 form_id 比对失败。
-	// 此时付款其实已经落地，必须如实报告成功，而不是让机器人以为白花了钱。
+	// Among concurrent same-key requests, the one that loses the command_key unique constraint
+	// first hits a form_id comparison failure. The payment has actually landed by then, so it must
+	// be truthfully reported as success rather than letting the bot think it wasted its money.
 	f := newBotStarGiftFixture(t, &botGiftService{gift: sellableBotGift(), giftFound: true, formID: 7,
 		purchaseErr: domain.ErrStarGiftInvalid,
 		settled:     domain.StarGiftPurchaseResult{Duplicate: true}, settledOK: true})
@@ -288,17 +291,17 @@ func TestBotAPISendStarGiftRejectsExhaustedUpgrade(t *testing.T) {
 func TestBotAPISendStarGiftRejectsInvalidRecipients(t *testing.T) {
 	f := newBotStarGiftFixture(t, &botGiftService{gift: sellableBotGift(), giftFound: true, formID: 11})
 
-	// 机器人不能给自己送礼。
+	// A bot cannot gift itself.
 	if _, err := f.router.BotAPISendStarGift(f.ctx, f.botID, 6011, f.botID, 0, false,
 		domain.PremiumGiftMessage{}, "self"); err == nil || err.Error() != "USER_ID_INVALID" {
 		t.Fatalf("self gift err = %v, want USER_ID_INVALID", err)
 	}
-	// 用户与频道都没有收礼目标。
+	// Neither the user nor the channel is a valid gift recipient.
 	if _, err := f.router.BotAPISendStarGift(f.ctx, f.botID, 6011, 0, 0, false,
 		domain.PremiumGiftMessage{}, "none"); err == nil || err.Error() != "CHAT_ID_INVALID" {
 		t.Fatalf("no recipient err = %v, want CHAT_ID_INVALID", err)
 	}
-	// bot 不在的频道：礼物通路不会替我们校验发帖权，必须由网关自己拒绝。
+	// A channel the bot is not in: the gift path does not validate posting rights for us, so the gateway must reject it itself.
 	if _, err := f.router.BotAPISendStarGift(f.ctx, f.botID, 6011, 0,
 		botAPIGiftChannelChatID(f.channelID+9999), false, domain.PremiumGiftMessage{}, "chan"); err == nil ||
 		err.Error() != "CHAT_ID_INVALID" {

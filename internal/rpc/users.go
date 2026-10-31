@@ -16,7 +16,7 @@ import (
 const maxSavedMusicLimit = 100
 const maxRequirementsToContactUsers = 100
 
-// registerUsers 注册 users.* RPC handler。
+// registerUsers registers the users.* RPC handlers.
 func (r *Router) registerUsers(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.UsersGetUsersRequest](d, tlprofile.SemanticMethodUsersGetUsers, func(ctx context.Context, layerRequest *tg.UsersGetUsersRequest) (any, error) {
 		return r.onUsersGetUsers(ctx, layerRequest.
@@ -32,7 +32,8 @@ func (r *Router) registerUsers(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.UsersGetSavedMusicRequest](d, tlprofile.SemanticMethodUsersGetSavedMusic, func(ctx context.Context, layerRequest *tg.UsersGetSavedMusicRequest) (
 
-		// onUsersGetUsers 处理 users.getUsers：支持 self 和已知 user peer（含 777000 官方账号）。
+		// onUsersGetUsers handles users.getUsers: supports self and known user peers
+		// (including the 777000 official account).
 		any, error) {
 		return r.onUsersGetSavedMusic(ctx, layerRequest)
 	})
@@ -117,8 +118,9 @@ func (r *Router) onUsersGetUsers(ctx context.Context, ids []tg.InputUserClass) (
 		if !found || (in.accessHash != 0 && in.accessHash != u.AccessHash) {
 			continue
 		}
-		// 客户端也可能用显式自己 ID（非 inputUserSelf）请求；同样须带 self 标志，
-		// 否则 self=false 的自己 user 会污染 DrKLO 账号缓存（Saved Messages 变身）。
+		// The client may also request with an explicit own ID (not inputUserSelf); it must
+		// likewise carry the self flag, or a self=false own user would pollute the DrKLO
+		// account cache (turning Saved Messages into a normal chat).
 		if u.ID == currentUserID {
 			out = append(out, r.tgSelfUser(u))
 			continue
@@ -349,8 +351,9 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			full.SetNoforwardsPeerEnabled(peerEnabled)
 		}
 	}
-	// 通话入口：客户端不见 phone_calls_available=true 不显示通话按钮（P1 前置项）。
-	// phone_calls_private 标记对端禁 P2P（p2p_allowed 真值在通话确认时另行计算）。
+	// Call entry point: without phone_calls_available=true the client does not show the
+	// call button (a P1 prerequisite). phone_calls_private marks the peer as P2P-disabled
+	// (the true p2p_allowed value is computed separately at call confirmation).
 	if !u.Bot && u.ID != currentUserID {
 		callsAllowed := visibility[domain.PrivacyKeyPhoneCall]
 		p2pAllowed := visibility[domain.PrivacyKeyPhoneP2P]
@@ -408,8 +411,9 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 		}
 	}
 	if r.deps.Messages != nil {
-		// 置顶发现链路：userFull.pinned_msg_id 是该私聊（含 Saved
-		// Messages）当前最顶置顶；客户端凭此触发 filterPinned 搜索。
+		// Pin-discovery chain: userFull.pinned_msg_id is the current top pin of this
+		// private chat (including Saved Messages); the client uses it to trigger a
+		// filterPinned search.
 		pinnedList, err := r.deps.Messages.Search(ctx, currentUserID, domain.MessageFilter{
 			HasPeer:    true,
 			Peer:       domain.Peer{Type: domain.PeerTypeUser, ID: u.ID},
@@ -422,7 +426,8 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 		if len(pinnedList.Messages) > 0 {
 			full.SetPinnedMsgID(pinnedList.Messages[0].ID)
 		}
-		// 私聊双方恒可置顶（官方对 user peer 置位 can_pin_message）。
+		// Both sides of a private chat can always pin (the official server sets
+		// can_pin_message for a user peer).
 		full.SetCanPinMessage(true)
 	}
 	if r.deps.Channels != nil && u.ID != currentUserID {
@@ -437,9 +442,10 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 		}
 		full.CommonChatsCount = common.Count
 	}
-	// star gift 数量：客户端把资料页 Gifts 区段/标签页门控在 stargifts_count>0
-	//（DrKLO ProfileActivity:10497 / TDesktop data_user.cpp:924），不下发则收到的礼物
-	// 不在资料页展示。计展示在资料的礼物数（非转换、非隐藏）。
+	// Star gift count: the client gates the profile Gifts section/tab on
+	// stargifts_count>0 (DrKLO ProfileActivity:10497 / TDesktop data_user.cpp:924), so
+	// without it the received gifts are not shown on the profile. Counts the gifts
+	// displayed on the profile (not converted, not hidden).
 	if r.deps.Gifts != nil {
 		if n, err := r.deps.Gifts.CountSaved(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}); err == nil && n > 0 {
 			full.SetStargiftsCount(n)
@@ -461,17 +467,18 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			})
 		}
 	}
-	// 生日（account.updateBirthday）：落 userFull.birthday，按 PrivacyKeyBirthday 对他人裁剪，
-	// 本人恒可见。
+	// Birthday (account.updateBirthday): stored in userFull.birthday, trimmed for others
+	// per PrivacyKeyBirthday, and always visible to the user themself.
 	if u.Birthday.IsSet() {
 		if visibility[domain.PrivacyKeyBirthday] {
 			full.SetBirthday(tgBirthday(u.Birthday))
 		}
 	}
 	r.applyAccountRatingToUserFull(ctx, currentUserID, u, &full)
-	// 个人频道（account.updatePersonalChannel）不在此落地：它按 viewer 实时解析，作为缓存后的
-	// overlay 处理（applyPersonalChannelToUserFull），避免烤进 per-(viewer,target) 投影缓存以及
-	// build/chats 两次解析同一频道。
+	// The personal channel (account.updatePersonalChannel) is not set here: it is
+	// resolved live per viewer, handled as a post-cache overlay
+	// (applyPersonalChannelToUserFull), avoiding baking it into the per-(viewer,target)
+	// projection cache and resolving the same channel twice in build/chats.
 	return full, nil
 }
 
@@ -565,7 +572,8 @@ func tgAccountRatingLevel(in domain.AccountRatingLevel) tg.StarsRating {
 	return out
 }
 
-// tgBirthday 把 domain 生日转 tg.Birthday（Year 可选，0 表示不含年份）。
+// tgBirthday converts a domain birthday to tg.Birthday (Year is optional; 0 means no
+// year).
 func tgBirthday(b domain.Birthday) tg.Birthday {
 	out := tg.Birthday{Day: b.Day, Month: b.Month}
 	if b.Year != 0 {
@@ -574,10 +582,13 @@ func tgBirthday(b domain.Birthday) tg.Birthday {
 	return out
 }
 
-// applyPersonalChannelToUserFull 一次解析资料页个人频道：设 personal_channel_id + 最新一帖 id
-// 到 userFull，并返回频道对象供响应 chats；频道不可解析/已删则不下发。放在 userFull 投影缓存
-// 之后做（与 notify/stories overlay 同构）：个人频道可访问性随 viewer 变化须实时解析，且避免
-// build（缓存 miss）与 chats 两次解析同一频道。personalChannelID 取自当次加载的 owner 用户。
+// applyPersonalChannelToUserFull resolves the profile personal channel once: it sets
+// personal_channel_id + the latest post id on userFull and returns the channel object for
+// the response chats; when the channel cannot be resolved/is deleted nothing is emitted.
+// It runs after the userFull projection cache (isomorphic to the notify/stories overlay):
+// personal-channel accessibility varies per viewer so it must be resolved live, and this
+// avoids resolving the same channel twice in build (cache miss) and chats.
+// personalChannelID comes from the owner user loaded for this request.
 func (r *Router) applyPersonalChannelToUserFull(ctx context.Context, viewerUserID, personalChannelID int64, full *tg.UserFull) []tg.ChatClass {
 	if personalChannelID == 0 || r.deps.Channels == nil {
 		return nil
@@ -595,8 +606,9 @@ func (r *Router) applyBotCanEditToUser(ctx context.Context, currentUserID int64,
 	if !u.Bot || r.deps.Bots == nil || currentUserID == 0 || currentUserID == u.ID || user == nil {
 		return nil
 	}
-	// owner 视角置 bot_can_edit(flags2.1)：TDesktop/DrKLO 据此显示 bot 管理 UI
-	//（改名/简介/头像入口）。仅 owner 看得到。
+	// Set bot_can_edit (flags2.1) from the owner's perspective: TDesktop/DrKLO uses it to
+	// show the bot management UI (rename/description/photo entry points). Only the owner
+	// sees it.
 	owns, err := r.deps.Bots.OwnsBot(ctx, currentUserID, u.ID)
 	if err != nil {
 		return nil
@@ -867,9 +879,10 @@ func (r *Router) fillUserFullPhotos(ctx context.Context, viewerUserID, ownerUser
 	return nil
 }
 
-// tgBotInfo 构造 userFull.bot_info。bot 用户必须携带（哪怕命令为空）：缺失时
-// TDesktop 的 botInfo.inited 永不置位，每次开聊/输 "/" 都会重拉 getFullUser；
-// user_id 必填且必须等于该 bot 的 id，不匹配会被客户端整体静默忽略。
+// tgBotInfo constructs userFull.bot_info. A bot user must carry it (even with empty
+// commands): without it TDesktop's botInfo.inited is never set, and every chat open /
+// "/" input re-fetches getFullUser; user_id is mandatory and must equal the bot's id,
+// and a mismatch is silently ignored entirely by the client.
 func (r *Router) tgBotInfo(ctx context.Context, u domain.User) tg.BotInfo {
 	info := tgBotInfoFromProfile(u.ID, domain.BotProfile{}, false)
 	if r.deps.Bots != nil {

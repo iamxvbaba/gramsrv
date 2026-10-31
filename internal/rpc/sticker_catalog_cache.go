@@ -10,13 +10,16 @@ import (
 
 const (
 	stickerCatalogCacheMaxEntries = 8
-	// stickerCatalogCacheTTL 对齐客户端 trending/贴纸目录 ~5min 刷新率：TTL 内 getAllStickers/
-	// getFeaturedStickers/getStickers(emoji 索引重建) 复用同一份集目录，避免每请求 ListStickerSets。
+	// stickerCatalogCacheTTL aligns with the client's ~5min trending/sticker-catalog
+	// refresh rate: within the TTL, getAllStickers/
+	// getFeaturedStickers/getStickers(emoji index rebuild) reuse the same set
+	// catalog, avoiding a ListStickerSets per request.
 	stickerCatalogCacheTTL = 5 * time.Minute
 )
 
-// stickerCatalogCache 缓存 kind→贴纸集目录（全局、非 per-viewer：ListStickerSets 无用户维度）。
-// 内建 TTL + singleflight，让"先查后判 hash"的目录类 RPC 在 hash 命中时不打 PG。
+// stickerCatalogCache caches kind->sticker set catalog (global, not per-viewer:
+// ListStickerSets has no user dimension). Built-in TTL + singleflight let the
+// "look up then compare hash" catalog RPCs avoid hitting PG when the hash matches.
 type stickerCatalogCache struct {
 	cache *readmodelcache.Cache[domain.StickerSetKind, []domain.StickerSet]
 }
@@ -31,8 +34,9 @@ func newStickerCatalogCache(now func() time.Time) *stickerCatalogCache {
 	}
 }
 
-// stickerCatalogSets 返回某 kind 的（缓存的）贴纸集目录。Files 缺失或出错返回 nil。
-// 返回的切片只读（调用方不得修改元素），需要派生时各自计算 hash/过滤。
+// stickerCatalogSets returns the (cached) sticker set catalog for a kind. Returns
+// nil when Files is missing or errors. The returned slice is read-only (callers
+// must not modify elements); derive hash/filter separately when needed.
 func (r *Router) stickerCatalogSets(ctx context.Context, kind domain.StickerSetKind) []domain.StickerSet {
 	sets, _ := r.loadStickerCatalogSets(ctx, kind)
 	return sets

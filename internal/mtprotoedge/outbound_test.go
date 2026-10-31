@@ -1235,7 +1235,7 @@ func TestSendBestEffortQueueFullBehavior(t *testing.T) {
 	c.outbound = make(chan *outboundOp, 1)
 	c.outboundControl = make(chan *outboundOp, 1)
 	c.outboundStop = make(chan struct{})
-	// 占满普通队列，模拟出站拥塞。
+	// Fill the ordinary queue to simulate outbound congestion.
 	c.outbound <- &outboundOp{}
 
 	if err := c.SendBestEffort(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}, 0); err != ErrOutboundQueueFull {
@@ -1256,7 +1256,7 @@ func TestSendBestEffortQueueFullBehavior(t *testing.T) {
 		t.Fatalf("canceled ctx on full queue: err = %v, want context.Canceled", err)
 	}
 
-	// 腾出队列后快路径应直接入队成功。
+	// After draining the queue the fast path should enqueue successfully.
 	<-c.outbound
 	if err := c.SendBestEffort(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}, 0); err != nil {
 		t.Fatalf("enqueue after drain: %v", err)

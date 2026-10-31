@@ -1,12 +1,16 @@
-// Package webauthn 实现 telesrv passkey 登录所需的 WebAuthn/FIDO2 服务端原语:
-// 生成注册/断言挑战选项、验证注册 attestation、验证登录 assertion。
+// Package webauthn implements the WebAuthn/FIDO2 server primitives needed for
+// telesrv passkey login: generating registration/assertion challenge options,
+// verifying registration attestation, and verifying login assertions.
 //
-// 它只处理字节与 JSON,不依赖 tg/domain/store——便于独立单测(配套
-// internal/webauthn/webauthntest 的软件 authenticator)。MTProto 场景下,客户端把
-// WebAuthn 各字段 base64url 解码后塞进 TL,故这里直接收原始字节(clientDataJSON、
-// authenticatorData、signature、attestationObject、credentialID)。
+// It only handles bytes and JSON and does not depend on tg/domain/store -- which
+// makes it easy to unit test standalone (together with the software authenticator
+// in internal/webauthn/webauthntest). In the MTProto scenario the client
+// base64url-decodes each WebAuthn field and packs it into TL, so this package
+// takes raw bytes directly (clientDataJSON, authenticatorData, signature,
+// attestationObject, credentialID).
 //
-// 支持算法:ES256(ECDSA P-256,平台 passkey 主流)与 EdDSA(Ed25519)。
+// Supported algorithms: ES256 (ECDSA P-256, mainstream for platform passkeys)
+// and EdDSA (Ed25519).
 package webauthn
 
 import (
@@ -27,7 +31,7 @@ import (
 	"telesrv/internal/branding"
 )
 
-// 验证错误。调用方据此映射到 TL 错误码/拒绝登录。
+// Verification errors. The caller maps these to TL error codes / rejects the login.
 var (
 	ErrClientDataInvalid    = errors.New("webauthn: client data invalid")
 	ErrChallengeMismatch    = errors.New("webauthn: challenge mismatch")
@@ -41,7 +45,7 @@ var (
 	ErrCounterRegressed     = errors.New("webauthn: sign counter regressed (possible cloned authenticator)")
 )
 
-// authenticatorData 标志位(WebAuthn §6.1)。
+// authenticatorData flag bits (WebAuthn §6.1).
 const (
 	flagUserPresent      = 0x01
 	flagUserVerified     = 0x04
@@ -49,13 +53,13 @@ const (
 	flagExtensionData    = 0x80
 )
 
-// COSE algorithm identifiers。
+// COSE algorithm identifiers.
 const (
 	coseAlgES256 = -7
 	coseAlgEdDSA = -8
 )
 
-// COSE key type / curve。
+// COSE key type / curve.
 const (
 	coseKtyOKP     = 1
 	coseKtyEC2     = 2
@@ -63,10 +67,10 @@ const (
 	coseCrvEd25519 = 6
 )
 
-// b64 是 WebAuthn 用的 base64url 无填充编码。
+// b64 is the unpadded base64url encoding WebAuthn uses.
 var b64 = base64.RawURLEncoding
 
-// decodeB64URL 容忍有/无填充的 base64url。
+// decodeB64URL tolerates base64url with or without padding.
 func decodeB64URL(s string) ([]byte, error) {
 	if out, err := base64.RawURLEncoding.DecodeString(s); err == nil {
 		return out, nil
@@ -74,20 +78,21 @@ func decodeB64URL(s string) ([]byte, error) {
 	return base64.URLEncoding.DecodeString(s)
 }
 
-// RegistrationParams 是构造 publicKey creation options 所需的输入。
+// RegistrationParams is the input needed to construct publicKey creation options.
 type RegistrationParams struct {
 	RPID          string
 	RPName        string
-	UserID        []byte // 通常是 "dcId:userId" 的字节
+	UserID        []byte // usually the bytes of "dcId:userId"
 	UserName      string
 	UserDisplay   string
 	Challenge     []byte
 	TimeoutMillis int
-	ExcludeIDs    [][]byte // 已有凭据 id,避免同一 authenticator 重复注册
+	ExcludeIDs    [][]byte // existing credential ids, to avoid re-registering the same authenticator
 }
 
-// BuildRegistrationOptions 返回 account.passkeyRegistrationOptions 的 DataJSON 内容
-// （顶层含 publicKey 字段,与 DrKLO PasskeysController 读取约定一致）。
+// BuildRegistrationOptions returns the DataJSON content of
+// account.passkeyRegistrationOptions (top-level publicKey field, matching the
+// convention DrKLO's PasskeysController reads).
 func BuildRegistrationOptions(p RegistrationParams) ([]byte, error) {
 	if p.RPID == "" || len(p.Challenge) == 0 || len(p.UserID) == 0 {
 		return nil, errors.New("webauthn: incomplete registration params")
@@ -119,15 +124,16 @@ func BuildRegistrationOptions(p RegistrationParams) ([]byte, error) {
 	return json.Marshal(map[string]any{"publicKey": pub})
 }
 
-// LoginParams 是构造 publicKey request options（断言挑战）的输入。
+// LoginParams is the input for constructing publicKey request options (assertion challenge).
 type LoginParams struct {
 	RPID          string
 	Challenge     []byte
 	TimeoutMillis int
 }
 
-// BuildLoginOptions 返回 auth.passkeyLoginOptions 的 DataJSON 内容。无 allowCredentials
-// （discoverable/usernameless 登录,用户由 user_handle 反查)。
+// BuildLoginOptions returns the DataJSON content of auth.passkeyLoginOptions. No
+// allowCredentials (discoverable/usernameless login; the user is looked up from
+// user_handle).
 func BuildLoginOptions(p LoginParams) ([]byte, error) {
 	if p.RPID == "" || len(p.Challenge) == 0 {
 		return nil, errors.New("webauthn: incomplete login params")
@@ -146,15 +152,16 @@ func BuildLoginOptions(p LoginParams) ([]byte, error) {
 	return json.Marshal(map[string]any{"publicKey": pub})
 }
 
-// clientData 是 clientDataJSON 的解析结构。
+// clientData is the parsed structure of clientDataJSON.
 type clientData struct {
 	Type      string `json:"type"`
 	Challenge string `json:"challenge"`
 	Origin    string `json:"origin"`
 }
 
-// verifyClientData 校验 type/challenge/origin。allowedOrigins 为空表示不强校验 origin
-// （dev:服务端通常不预知 Android apk-key-hash origin)。
+// verifyClientData validates type/challenge/origin. An empty allowedOrigins means
+// origin is not strictly validated (dev: the server usually cannot know the
+// Android apk-key-hash origin in advance).
 func verifyClientData(clientDataJSON []byte, wantType string, challenge []byte, allowedOrigins []string) error {
 	var cd clientData
 	if err := json.Unmarshal(clientDataJSON, &cd); err != nil {
@@ -185,8 +192,9 @@ func verifyClientData(clientDataJSON []byte, wantType string, challenge []byte, 
 	return nil
 }
 
-// ChallengeFromClientData 提取 clientDataJSON 里的 challenge 原始字节,供调用方按挑战
-// 反查/消费一次性挑战 store(此时尚未验证,仅做查表键)。
+// ChallengeFromClientData extracts the raw challenge bytes from clientDataJSON, for
+// the caller to look up/consume the one-time challenge store by challenge (at this
+// point it is not yet verified and is only used as a lookup key).
 func ChallengeFromClientData(clientDataJSON []byte) ([]byte, error) {
 	var cd clientData
 	if err := json.Unmarshal(clientDataJSON, &cd); err != nil {
@@ -199,14 +207,14 @@ func ChallengeFromClientData(clientDataJSON []byte) ([]byte, error) {
 	return b, nil
 }
 
-// parsedAuthData 是 authenticatorData 的解析结果。
+// parsedAuthData is the parsed result of authenticatorData.
 type parsedAuthData struct {
 	rpIDHash   []byte
 	flags      byte
 	signCount  uint32
 	aaguid     []byte
 	credID     []byte
-	credPubKey []byte // COSE 公钥原始字节(仅注册时存在)
+	credPubKey []byte // raw COSE public key bytes (present only during registration)
 }
 
 func parseAuthData(authData []byte) (parsedAuthData, error) {
@@ -231,7 +239,7 @@ func parseAuthData(authData []byte) (parsedAuthData, error) {
 		}
 		out.credID = rest[:credIDLen]
 		rest = rest[credIDLen:]
-		// 之后是 COSE 公钥(变长 CBOR);用 UnmarshalFirst 只吃一个 CBOR item。
+		// Then comes the COSE public key (variable-length CBOR); UnmarshalFirst consumes exactly one CBOR item.
 		var raw cbor.RawMessage
 		remaining, err := cbor.UnmarshalFirst(rest, &raw)
 		if err != nil {
@@ -247,15 +255,15 @@ func rpIDHashFor(rpID string) []byte {
 	return h[:]
 }
 
-// Credential 是注册验证产出的凭据材料,调用方据此持久化。
+// Credential is the credential material produced by registration verification, which the caller persists.
 type Credential struct {
-	ID            []byte // credential id 原始字节
-	COSEPublicKey []byte // COSE 公钥原始字节
+	ID            []byte // raw credential id bytes
+	COSEPublicKey []byte // raw COSE public key bytes
 	SignCount     uint32
 	AAGUID        []byte
 }
 
-// VerifyRegistrationInput 是注册验证输入。
+// VerifyRegistrationInput is the registration verification input.
 type VerifyRegistrationInput struct {
 	ClientDataJSON    []byte
 	AttestationObject []byte
@@ -270,8 +278,10 @@ type attestationObject struct {
 	AttStmt  cbor.RawMessage `cbor:"attStmt"`
 }
 
-// VerifyRegistration 校验 attestation 并提取凭据公钥。attestation 格式仅要求能取出
-// 公钥(消费级 passkey 一般是 "none",不校验 attestation statement 签名)。
+// VerifyRegistration validates the attestation and extracts the credential public
+// key. The attestation format only needs to yield the public key (consumer
+// passkeys are generally "none"; the attestation statement signature is not
+// verified).
 func VerifyRegistration(in VerifyRegistrationInput) (*Credential, error) {
 	if err := verifyClientData(in.ClientDataJSON, "webauthn.create", in.Challenge, in.AllowedOrigins); err != nil {
 		return nil, err
@@ -293,7 +303,7 @@ func VerifyRegistration(in VerifyRegistrationInput) (*Credential, error) {
 	if ad.flags&flagAttestedCredData == 0 || len(ad.credID) == 0 || len(ad.credPubKey) == 0 {
 		return nil, ErrAttestationInvalid
 	}
-	// 公钥能解析即认为有效(none attestation)。
+	// The public key parsing successfully is enough to consider it valid (none attestation).
 	if _, err := parseCOSEKey(ad.credPubKey); err != nil {
 		return nil, err
 	}
@@ -305,7 +315,7 @@ func VerifyRegistration(in VerifyRegistrationInput) (*Credential, error) {
 	}, nil
 }
 
-// VerifyAssertionInput 是登录断言验证输入。
+// VerifyAssertionInput is the login assertion verification input.
 type VerifyAssertionInput struct {
 	COSEPublicKey     []byte
 	ClientDataJSON    []byte
@@ -317,7 +327,7 @@ type VerifyAssertionInput struct {
 	StoredSignCount   uint32
 }
 
-// VerifyAssertion 校验登录断言,成功返回新的签名计数器(供持久化)。
+// VerifyAssertion validates the login assertion and returns the new signature counter on success (for persistence).
 func VerifyAssertion(in VerifyAssertionInput) (uint32, error) {
 	if err := verifyClientData(in.ClientDataJSON, "webauthn.get", in.Challenge, in.AllowedOrigins); err != nil {
 		return 0, err
@@ -336,7 +346,7 @@ func VerifyAssertion(in VerifyAssertionInput) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	// 签名覆盖 authenticatorData || sha256(clientDataJSON)。
+	// The signature covers authenticatorData || sha256(clientDataJSON).
 	cdHash := sha256.Sum256(in.ClientDataJSON)
 	signed := make([]byte, 0, len(in.AuthenticatorData)+len(cdHash))
 	signed = append(signed, in.AuthenticatorData...)
@@ -344,14 +354,14 @@ func VerifyAssertion(in VerifyAssertionInput) (uint32, error) {
 	if err := pub.verify(signed, in.Signature); err != nil {
 		return 0, err
 	}
-	// 计数器回退检测:仅当双方都非 0 时严格(passkey 常报 0)。
+	// Counter regression check: strict only when both sides are non-zero (passkeys often report 0).
 	if ad.signCount != 0 && in.StoredSignCount != 0 && ad.signCount <= in.StoredSignCount {
 		return 0, ErrCounterRegressed
 	}
 	return ad.signCount, nil
 }
 
-// publicKey 抽象 ES256/EdDSA 验签。
+// publicKey abstracts ES256/EdDSA signature verification.
 type publicKey struct {
 	ec *ecdsa.PublicKey
 	ed ed25519.PublicKey

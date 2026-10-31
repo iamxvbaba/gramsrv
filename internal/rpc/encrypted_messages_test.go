@@ -12,7 +12,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// acceptChat 跑完 request→accept，返回 normal 态密聊 id 与 participant 视角 access_hash。
+// acceptChat runs request→accept and returns the normal-state secret chat id and the participant-view access_hash.
 func (f *encryptedFixture) acceptChat(t *testing.T) (chatID int, partAccessHash int64) {
 	t.Helper()
 	res, err := f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
@@ -81,7 +81,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 	chat, _, _ := f.store.GetSecretChat(f.ctx, chatID)
 	f.sessions.reset()
 
-	// admin 发加密消息 → 投给 participant 设备。
+	// admin sends an encrypted message → delivered to the participant device.
 	data := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 	sent, err := f.router.onMessagesSendEncrypted(f.adminCtx(), &tg.MessagesSendEncryptedRequest{
 		Peer:     tg.InputEncryptedChat{ChatID: chatID, AccessHash: chat.AdminAccessHash},
@@ -108,7 +108,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 		t.Fatalf("pushed message = %+v, want EncryptedMessage bytes verbatim", upd.Message)
 	}
 
-	// participant getState：设备 qts = 1。
+	// participant getState: device qts = 1.
 	st, err := f.router.onUpdatesGetState(f.participantCtx())
 	if err != nil {
 		t.Fatalf("getState: %v", err)
@@ -117,7 +117,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 		t.Fatalf("participant getState qts = %d, want 1", st.Qts)
 	}
 
-	// participant 离线补差分：从 qts=0 拿回该加密消息。
+	// participant offline difference catch-up: recover the encrypted message from qts=0.
 	differenceCtx := postresponse.WithCallbacks(f.participantCtx())
 	diff, err := f.router.onUpdatesGetDifference(differenceCtx, &tg.UpdatesGetDifferenceRequest{Qts: 0})
 	if err != nil {
@@ -136,7 +136,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 	}
 	postresponse.Run(differenceCtx)
 
-	// receivedQueue：确认到 qts=1，返回空 Vector。
+	// receivedQueue: acknowledge to qts=1, returns an empty Vector.
 	rq, err := f.router.onMessagesReceivedQueue(f.participantCtx(), 1)
 	if err != nil {
 		t.Fatalf("receivedQueue: %v", err)
@@ -145,7 +145,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 		t.Fatalf("receivedQueue = %v, want empty vector", rq)
 	}
 
-	// 确认后再补差分（qts=1）：已无新消息 → DifferenceEmpty。
+	// Difference catch-up after ack (qts=1): no new messages → DifferenceEmpty.
 	diff2, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{Qts: 1})
 	if err != nil {
 		t.Fatalf("getDifference 2: %v", err)
@@ -154,7 +154,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 		t.Fatalf("difference after ack = %T, want UpdatesDifferenceEmpty", diff2)
 	}
 
-	// 幂等重发同 random_id → 返回首次 date，不产生新 qts。
+	// Idempotent resend of the same random_id → returns the first date, no new qts.
 	f.sessions.reset()
 	sent2, err := f.router.onMessagesSendEncrypted(f.adminCtx(), &tg.MessagesSendEncryptedRequest{
 		Peer:     tg.InputEncryptedChat{ChatID: chatID, AccessHash: chat.AdminAccessHash},
@@ -165,7 +165,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 		t.Fatalf("idempotent resend: %v", err)
 	}
 	if sent2.(*tg.MessagesSentEncryptedMessage).Date != sentMsg.Date {
-		t.Fatalf("idempotent resend date = %d, want %d (首次落库 date)", sent2.(*tg.MessagesSentEncryptedMessage).Date, sentMsg.Date)
+		t.Fatalf("idempotent resend date = %d, want %d (first-persisted date)", sent2.(*tg.MessagesSentEncryptedMessage).Date, sentMsg.Date)
 	}
 }
 
@@ -231,8 +231,9 @@ func encOtherUpdate[T tg.UpdateClass](t *testing.T, diff tg.UpdatesDifferenceCla
 	return zero
 }
 
-// TestEncryptionStateEventOfflineDelivery：participant 在 requestEncryption 时离线，
-// 重连 getDifference 经 durable 状态事件补回 updateEncryption(requested)，且只补一次。
+// TestEncryptionStateEventOfflineDelivery: the participant is offline during
+// requestEncryption; on reconnect, getDifference recovers updateEncryption(requested)
+// via the durable state event, and only once.
 func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 	f := newEncryptedFixture(t)
 	res, err := f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
@@ -245,7 +246,7 @@ func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 	}
 	chatID := res.(*tg.EncryptedChatWaiting).ID
 
-	// participant 离线补差分：拿到 updateEncryption(encryptedChatRequested, 携 g_a)。
+	// participant offline difference catch-up: get updateEncryption(encryptedChatRequested, carries g_a).
 	differenceCtx := postresponse.WithCallbacks(f.participantCtx())
 	diff, err := f.router.onUpdatesGetDifference(differenceCtx, &tg.UpdatesGetDifferenceRequest{Qts: 0})
 	if err != nil {
@@ -267,7 +268,7 @@ func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 		t.Fatalf("state events after difference delivery = %v err=%v, want none", afterDelivery, err)
 	}
 
-	// 再次补差分：已投递 → 不重复（DifferenceEmpty）。
+	// Difference catch-up again: already delivered → no repeat (DifferenceEmpty).
 	diff2, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{Qts: 0})
 	if err != nil {
 		t.Fatalf("getDifference 2: %v", err)
@@ -281,7 +282,7 @@ func TestAcceptConvergesLosingAndFutureParticipantDevices(t *testing.T) {
 	f := newEncryptedFixture(t)
 	chatID, _ := f.acceptChat(t)
 
-	// 未绑定 participant 设备只能看到 history-deleting discarded，不能拿到 normal/access_hash。
+	// An unbound participant device may only see history-deleting discarded, and must not get normal/access_hash.
 	loserCtx := postresponse.WithCallbacks(f.participantOtherCtx())
 	diff, err := f.router.onUpdatesGetDifference(loserCtx, &tg.UpdatesGetDifferenceRequest{})
 	if err != nil {
@@ -294,7 +295,7 @@ func TestAcceptConvergesLosingAndFutureParticipantDevices(t *testing.T) {
 	}
 	postresponse.Run(loserCtx)
 
-	// 获胜设备已经从 accept 同步响应获得 normal；账号级邀请事件仅确认、不回放。
+	// The winning device already got normal from the accept synchronous response; the account-level invitation event only acknowledges and does not replay.
 	winnerCtx := postresponse.WithCallbacks(f.participantCtx())
 	winnerDiff, err := f.router.onUpdatesGetDifference(winnerCtx, &tg.UpdatesGetDifferenceRequest{})
 	if err != nil {
@@ -472,8 +473,9 @@ func TestEncryptedDifferenceAcknowledgesOnlyProjectedStateEvents(t *testing.T) {
 	}
 }
 
-// TestDiscardStateEventOfflineDelivery：admin 在 participant 未接受时 discard（账号级），
-// participant 离线设备 getDifference 补回 encryptedChatDiscarded。
+// TestDiscardStateEventOfflineDelivery: the admin discards while the participant has
+// not accepted (account-level); the participant's offline device recovers
+// encryptedChatDiscarded via getDifference.
 func TestDiscardStateEventOfflineDelivery(t *testing.T) {
 	f := newEncryptedFixture(t)
 	res, err := f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
@@ -485,11 +487,11 @@ func TestDiscardStateEventOfflineDelivery(t *testing.T) {
 		t.Fatalf("request: %v", err)
 	}
 	chatID := res.(*tg.EncryptedChatWaiting).ID
-	// admin 撤回邀请。
+	// admin revokes the invitation.
 	if _, err := f.router.onMessagesDiscardEncryption(f.adminCtx(), &tg.MessagesDiscardEncryptionRequest{ChatID: chatID, DeleteHistory: false}); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
-	// participant 离线补差分：现态是 discarded，重建出 encryptedChatDiscarded。
+	// participant offline difference catch-up: the current state is discarded, rebuilt into encryptedChatDiscarded.
 	diff, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{Qts: 0})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)

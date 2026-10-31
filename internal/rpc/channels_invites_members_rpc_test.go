@@ -401,10 +401,11 @@ func tgUserListHasUser(users []tg.UserClass, userID int64) bool {
 	return false
 }
 
-// TestChannelCreateHasPermanentInviteLink 复刻 DrKLO 建频道后的真实调用序列：
-// ChannelCreateActivity.generateLink() 发 getExportedChatInvites(admin=self, limit=1)
-// 后对 invites.get(0) 直接取值，空列表即 IndexOutOfBounds 闪退——服务端必须保证
-// 创建者的永久主链接随创建即存在，且重复列出不会重复生成。
+// TestChannelCreateHasPermanentInviteLink reproduces DrKLO's real call sequence after creating a
+// channel: ChannelCreateActivity.generateLink() sends getExportedChatInvites(admin=self, limit=1)
+// and then indexes invites.get(0) directly, so an empty list is an IndexOutOfBounds crash -- the
+// server must guarantee the creator's permanent primary link exists as soon as the channel is
+// created, and repeated listing must not regenerate it.
 func TestChannelCreateHasPermanentInviteLink(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -433,14 +434,14 @@ func TestChannelCreateHasPermanentInviteLink(t *testing.T) {
 		t.Fatalf("get exported invites after create: %v", err)
 	}
 	if inviteList.Count < 1 || len(inviteList.Invites) < 1 {
-		t.Fatalf("exported invites after create = %+v, want at least the permanent link (DrKLO 直接取 invites[0])", inviteList)
+		t.Fatalf("exported invites after create = %+v, want at least the permanent link (DrKLO indexes invites[0] directly)", inviteList)
 	}
 	invite, ok := inviteList.Invites[0].(*tg.ChatInviteExported)
 	if !ok || !invite.Permanent || invite.Revoked || invite.AdminID != owner.ID || !strings.HasPrefix(invite.Link, "https://telesrv.net/+") {
 		t.Fatalf("invites[0] = %#v, want creator's non-revoked permanent link", inviteList.Invites[0])
 	}
 
-	// 幂等：再次列出仍只有同一条主链接，不重复生成。
+	// Idempotent: listing again still yields only the same primary link, not regenerated.
 	again, err := r.onMessagesGetExportedChatInvites(WithUserID(ctx, owner.ID), &tg.MessagesGetExportedChatInvitesRequest{
 		Peer:    &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
 		AdminID: &tg.InputUserSelf{},
@@ -692,8 +693,9 @@ func TestChannelAdminPinInviteRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get exported invites: %v", err)
 	}
-	// 官方语义：管理员列出自己的有效链接时永久主链接必有（首页自愈生成），
-	// 因此列表 = 主链接 + 显式导出的 "join" 链接。
+	// Official semantics: when an admin lists its own valid links, the permanent primary link is
+	// always present (self-healed on the first page), so the list = the primary link + explicitly
+	// exported "join" links.
 	if inviteList.Count != 2 || len(inviteList.Invites) != 2 || len(inviteList.Users) == 0 {
 		t.Fatalf("exported invite list = %+v, want permanent link plus exported invite", inviteList)
 	}
@@ -756,8 +758,8 @@ func TestChannelAdminPinInviteRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get admins with invites: %v", err)
 	}
-	// 创建者随建自动持有主链接（1 条）；friend 为显式导出的 "join" + 列表自愈
-	// 生成的主链接（2 条）。
+	// The creator automatically holds the primary link upon creation (1 entry); friend gets the
+	// explicitly exported "join" + the primary link self-healed by listing (2 entries).
 	adminInvites := map[int64]int{}
 	for _, admin := range adminsWithInvites.Admins {
 		adminInvites[admin.AdminID] = admin.InvitesCount
@@ -906,8 +908,8 @@ func TestChannelEditBannedKickNotifiesKickedViewer(t *testing.T) {
 	channel := created.Updates.(*tg.Updates).Chats[0].(*tg.Channel)
 	input := &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
 
-	// 被踢者视角的推送 chats 必须是完整（非 min）投影并带 left：
-	// 客户端只对非 min channel 应用 left/banned_rights。
+	// From the kicked user's perspective, the pushed chats must be the full (non-min) projection
+	// carrying left: the client applies left/banned_rights only to non-min channels.
 	kickedView := r.channelParticipantUpdates(ctx, kicked.ID, owner.ID, domain.Channel{ID: channel.ID, AccessHash: channel.AccessHash, Title: channel.Title, Megagroup: true},
 		domain.ChannelMember{ChannelID: channel.ID, UserID: kicked.ID, Status: domain.ChannelMemberActive},
 		domain.ChannelMember{ChannelID: channel.ID, UserID: kicked.ID, Status: domain.ChannelMemberKicked, BannedRights: domain.ChannelBannedRights{ViewMessages: true}},
@@ -941,7 +943,7 @@ func TestChannelEditBannedKickNotifiesKickedViewer(t *testing.T) {
 		t.Fatalf("kick member: %v", err)
 	}
 
-	// 被踢后 channels.getChannels 必须返回 channelForbidden 而不是省略。
+	// After being kicked, channels.getChannels must return channelForbidden rather than omitting it.
 	got, err := r.onChannelsGetChannels(WithUserID(ctx, kicked.ID), []tg.InputChannelClass{input})
 	if err != nil {
 		t.Fatalf("kicked getChannels: %v", err)
@@ -956,10 +958,11 @@ func TestChannelEditBannedKickNotifiesKickedViewer(t *testing.T) {
 	}
 }
 
-// TestChannelEditBannedMaintainsOnlineMembershipIndex 验证 editBanned 与 editAdmin 对称
-// 维护在线成员推送路由索引：踢出/封禁后必须立即摘除（否则被踢在线成员保留 stale
-// byMemberChannel 条目直到断线，占用实时 fan-out cap 名额，且群通话推送会继续投递）；
-// 仅限制权限（仍为 active 成员）时索引保留。
+// TestChannelEditBannedMaintainsOnlineMembershipIndex verifies that editBanned maintains the
+// online-member push-routing index symmetrically with editAdmin: it must be removed immediately
+// on kick/ban (otherwise the kicked online member keeps a stale byMemberChannel entry until
+// disconnect, occupying a realtime fan-out cap slot, and group-call pushes keep delivering); it
+// is retained when only permissions are restricted (still an active member).
 func TestChannelEditBannedMaintainsOnlineMembershipIndex(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -992,7 +995,7 @@ func TestChannelEditBannedMaintainsOnlineMembershipIndex(t *testing.T) {
 		t.Fatalf("membership index after create = %v, want target %d", sessions.onlineChannelMemberIDs(channel.ID), target.ID)
 	}
 
-	// 仅限制发言（仍为 active 成员）：索引保留。
+	// Only speech is restricted (still an active member): the index is retained.
 	if _, err := r.onChannelsEditBanned(WithUserID(ctx, owner.ID), &tg.ChannelsEditBannedRequest{
 		Channel:      input,
 		Participant:  &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},
@@ -1004,7 +1007,7 @@ func TestChannelEditBannedMaintainsOnlineMembershipIndex(t *testing.T) {
 		t.Fatalf("membership index after restrict = %v, restricted member must stay routed", sessions.onlineChannelMemberIDs(channel.ID))
 	}
 
-	// 踢出（view_messages）：索引必须立即摘除，其他成员不受影响。
+	// Kicked (view_messages): the index must be removed immediately, other members unaffected.
 	if _, err := r.onChannelsEditBanned(WithUserID(ctx, owner.ID), &tg.ChannelsEditBannedRequest{
 		Channel:      input,
 		Participant:  &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},

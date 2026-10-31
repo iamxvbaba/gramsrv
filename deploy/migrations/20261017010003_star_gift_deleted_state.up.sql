@@ -1,8 +1,10 @@
--- payments.deleteStarGift (Layer 232) 需要一个「已删除」终态：礼物离开资料页，
--- 但审计历史（升级命令、报价、转账记录）仍引用 peer_star_gifts 行，所以不能硬删。
--- 复用 lifecycle_status：新增 'deleted'，读路径本来就只投影 'active'，删除后自然隐身。
--- 约束和代码保持一致：只有未升级的普通礼物能进入 'deleted'（unique_gift_id IS NULL），
--- 删除也永远不会留下 converted 行。
+-- payments.deleteStarGift (Layer 232) needs a "deleted" terminal state: the gift
+-- leaves the profile page, but the audit history (upgrade commands, offers,
+-- transfer records) still references the peer_star_gifts row, so it cannot be hard
+-- deleted. Reuse lifecycle_status: add 'deleted'; the read paths already project
+-- only 'active', so a deleted gift hides itself naturally. The constraint stays
+-- consistent with the code: only a non-upgraded ordinary gift can enter 'deleted'
+-- (unique_gift_id IS NULL), and deletion never leaves a converted row behind.
 
 ALTER TABLE public.peer_star_gifts
     DROP CONSTRAINT IF EXISTS peer_star_gifts_lifecycle_check,

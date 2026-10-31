@@ -20,27 +20,31 @@ import (
 	"go.uber.org/zap"
 )
 
-// PionConfig 是内嵌 SFU 的运行参数。
+// PionConfig holds the runtime parameters of the embedded SFU.
 type PionConfig struct {
-	// UDPPort 是单 UDP 监听端口（pion ICE UDPMux，全部 endpoint 复用）。
+	// UDPPort is the single UDP listening port (pion ICE UDPMux, shared by all endpoints).
 	UDPPort int
-	// AdvertiseIP 是写进下行 candidate 的客户端可达地址。⚠ 127.0.0.1 会让
-	// 真机 ICE 永远连不上且无任何 RPC 错误（纯媒体面静默失败）。
+	// AdvertiseIP is the client-reachable address written into downstream candidates.
+	// ⚠ 127.0.0.1 makes real-device ICE never connect and produces no RPC error at all
+	// (a pure media-plane silent failure).
 	AdvertiseIP string
 	Logger      *zap.Logger
-	// Touch 是媒体面活性回报钩子：对仍存活（近期 SRTP 收包/ICE 连通）的
-	// endpoint 周期性刷新 group_call_participants.last_check_date，使 sweeper 的
-	// 单一水位同时承载「心跳 ∨ 媒体活性」（P0-2 双过期判据的实现方式）。
+	// Touch is the media-plane liveness reporting hook: for endpoints still alive
+	// (recent SRTP receive / ICE connectivity) it periodically refreshes
+	// group_call_participants.last_check_date, so the sweeper's single watermark carries
+	// both "heartbeat ∨ media activity" (the implementation of the P0-2 double-expiry
+	// criterion).
 	Touch func(callID, userID int64)
-	// LivenessInterval 是活性回报周期（默认 15s，远小于 sweeper 的 45s TTL）。
+	// LivenessInterval is the liveness reporting period (default 15s, far below the sweeper's 45s TTL).
 	LivenessInterval time.Duration
-	// ActivityWindow 判定 endpoint 媒体面存活的最近收包窗口（默认 25s）。
+	// ActivityWindow is the most-recent-receive window used to judge an endpoint's media plane alive (default 25s).
 	ActivityWindow time.Duration
 }
 
-// pionSFU 是 Service 的 pion 实现：full-ICE CONTROLLING + DTLS 主动握手（client
-// 角色，对应下行 setup:"active"）+ SRTP 房间内原样转发（不重写 SSRC、保留
-// audio-level 等 RTP 扩展，speaking 指示由客户端渲染）。
+// pionSFU is the pion implementation of Service: full-ICE CONTROLLING + active DTLS
+// handshake (client role, corresponding to downstream setup:"active") + verbatim
+// in-room SRTP forwarding (no SSRC rewriting, preserving RTP extensions such as
+// audio-level; the speaking indication is rendered by the client).
 type pionSFU struct {
 	cfg         PionConfig
 	log         *zap.Logger
@@ -65,13 +69,15 @@ type room struct {
 	endpoints map[epKey]*endpoint
 }
 
-// mediaPlan 是一个发布 endpoint 的 ssrc 转发计划（Join 时从 ssrc-groups 算定）：
-// 订阅端只为 SIM[0]（最低层）建解码 sink——只转发该层与其 FID RTX 伙伴，
-// 其余 simulcast 层在 SFU 侧丢弃（客户端反正会丢，转发纯浪费下行）。
+// mediaPlan is the ssrc forwarding plan of a publishing endpoint (computed from
+// ssrc-groups at Join): the subscriber creates a decode sink only for SIM[0] (the lowest
+// layer) — only that layer and its FID RTX partner are forwarded, while the remaining
+// simulcast layers are dropped at the SFU (the client would drop them anyway, so
+// forwarding only wastes downlink).
 type mediaPlan struct {
 	audioSSRC uint32
-	forward   map[uint32]bool // 转发的视频 ssrc（SIM[0] 层 + 其 RTX）
-	drop      map[uint32]bool // 其余已声明视频 ssrc（高层及其 RTX）
+	forward   map[uint32]bool // forwarded video ssrcs (SIM[0] layer + its RTX)
+	drop      map[uint32]bool // the remaining declared video ssrcs (higher layers and their RTX)
 }
 
 func buildMediaPlan(offer ClientOffer) mediaPlan {
@@ -87,7 +93,7 @@ func buildMediaPlan(offer ClientOffer) mediaPlan {
 			break
 		}
 	}
-	// 单层发布（conference 模式）没有 SIM 组：唯一组的第一个 ssrc 即主流。
+	// Single-layer publish (conference mode) has no SIM group: the first ssrc of the sole group is the primary stream.
 	if primary == 0 && len(offer.SsrcGroups) == 1 && len(offer.SsrcGroups[0].Sources) > 0 {
 		primary = offer.SsrcGroups[0].Sources[0]
 	}
@@ -108,8 +114,9 @@ func buildMediaPlan(offer ClientOffer) mediaPlan {
 	return plan
 }
 
-// shouldForward 报告该 ssrc 的流是否进入扇出（true）或在 SFU 终结（false）。
-// 未声明的 ssrc 一律转发：音频、未来的探测流——订阅端对无 sink 的包安全丢弃。
+// shouldForward reports whether the stream of this ssrc enters the fan-out (true) or is
+// terminated at the SFU (false). Undeclared ssrcs are always forwarded: audio, future
+// probing streams — the subscriber safely drops packets with no sink.
 func (p mediaPlan) shouldForward(ssrc uint32) bool {
 	return !p.drop[ssrc]
 }
@@ -133,7 +140,7 @@ type endpoint struct {
 	closeOnce    sync.Once
 }
 
-// NewPion 启动内嵌 SFU：绑定 UDP 端口、生成进程级 DTLS 证书。
+// NewPion starts the embedded SFU: it binds the UDP port and generates a process-wide DTLS certificate.
 func NewPion(cfg PionConfig) (Service, error) {
 	if cfg.UDPPort <= 0 {
 		return nil, fmt.Errorf("sfu: invalid udp port %d", cfg.UDPPort)
@@ -175,16 +182,17 @@ func NewPion(cfg PionConfig) (Service, error) {
 		zap.Int("udp_port", cfg.UDPPort),
 		zap.String("advertise_ip", cfg.AdvertiseIP))
 	if cfg.AdvertiseIP == "127.0.0.1" {
-		s.log.Warn("TELESRV_SFU_ADVERTISE_IP 为 127.0.0.1：真机 ICE 将无法连接（纯媒体面静默失败），多设备联调必须设为宿主机 LAN IP")
+		s.log.Warn("TELESRV_SFU_ADVERTISE_IP is 127.0.0.1: real-device ICE will fail to connect (pure media-plane silent failure); multi-device bring-up must set it to the host LAN IP")
 	}
 	return s, nil
 }
 
 func (s *pionSFU) Enabled() bool { return true }
 
-// Join 为参与者建立媒体 endpoint：本端生成独立 ufrag/pwd，ICE CONTROLLING 等待
-// 客户端 Binding Request（上行 JSON 无 candidates，对端地址靠 peer-reflexive 学得），
-// 连通后以 DTLS client 主动握手并建 SRTP 会话。
+// Join establishes a participant's media endpoint: the local side generates its own
+// ufrag/pwd, ICE CONTROLLING waits for the client's Binding Request (the upstream JSON
+// has no candidates, so the peer address is learned via peer-reflexive), and once
+// connected it actively handshakes as a DTLS client and establishes the SRTP session.
 func (s *pionSFU) Join(ctx context.Context, callID, userID int64, kind EndpointKind, offer ClientOffer) (ServerAnswer, error) {
 	if offer.Ufrag == "" || offer.Pwd == "" {
 		return ServerAnswer{}, fmt.Errorf("sfu: empty remote ice credentials")
@@ -209,8 +217,9 @@ func (s *pionSFU) Join(ctx context.Context, callID, userID int64, kind EndpointK
 	if err != nil {
 		return ServerAnswer{}, fmt.Errorf("sfu: new ice agent: %w", err)
 	}
-	// pion 要求注册 OnCandidate 才能收集；候选地址由我们直接以
-	// AdvertiseIP:UDPPort 写进下行 JSON，回调本身无需消费。
+	// pion requires registering OnCandidate in order to gather; we write the candidate
+	// address directly into the downstream JSON as AdvertiseIP:UDPPort, so the callback
+	// itself need not consume anything.
 	if err := agent.OnCandidate(func(ice.Candidate) {}); err != nil {
 		_ = agent.Close()
 		return ServerAnswer{}, fmt.Errorf("sfu: on candidate: %w", err)
@@ -255,15 +264,16 @@ func (s *pionSFU) attachEndpoint(ep *endpoint) {
 	rm.endpoints[key] = ep
 	var oldPresentation *endpoint
 	if ep.kind == EndpointMain {
-		// 主连接 rejoin：旧 presentation 登记一并作废（信令侧同样清 presentation_json，
-		// 客户端随后重发 joinGroupCallPresentation）。
+		// Main connection rejoin: the old presentation registration is voided along with it
+		// (the signaling side likewise clears presentation_json, and the client then resends
+		// joinGroupCallPresentation).
 		pk := epKey{userID: ep.userID, kind: EndpointPresentation}
 		oldPresentation = rm.endpoints[pk]
 		delete(rm.endpoints, pk)
 	}
 	s.mu.Unlock()
 	if old != nil {
-		old.close() // rejoin：替换旧 endpoint
+		old.close() // rejoin: replace the old endpoint
 	}
 	if oldPresentation != nil {
 		oldPresentation.close()
@@ -276,7 +286,8 @@ func (s *pionSFU) Leave(_ context.Context, callID, userID int64, kind EndpointKi
 	if rm, ok := s.rooms[callID]; ok {
 		keys := []epKey{{userID: userID, kind: kind}}
 		if kind == EndpointMain {
-			// 整体离会从不补发 leaveGroupCallPresentation：主 endpoint 离开联动拆屏幕。
+			// Leaving the call as a whole never sends a follow-up leaveGroupCallPresentation:
+			// main endpoint departure tears down the screen share alongside it.
 			keys = append(keys, epKey{userID: userID, kind: EndpointPresentation})
 		}
 		for _, key := range keys {
@@ -320,7 +331,7 @@ func (s *pionSFU) AliveUserIDs(callID int64) []int64 {
 	seen := make(map[int64]bool)
 	var out []int64
 	for key, ep := range rm.endpoints {
-		// 任一连接（主/屏幕）存活即视为该参与者媒体面存活。
+		// Either connection (main/screen) being alive means the participant's media plane is alive.
 		if !seen[key.userID] && ep.aliveSince(cutoff) {
 			seen[key.userID] = true
 			out = append(out, key.userID)
@@ -329,7 +340,7 @@ func (s *pionSFU) AliveUserIDs(callID int64) []int64 {
 	return out
 }
 
-// livenessLoop 周期性把媒体面存活回报给信令侧（刷新保活水位）。
+// livenessLoop periodically reports media-plane liveness back to the signaling side (refreshing the keepalive watermark).
 func (s *pionSFU) livenessLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.cfg.LivenessInterval)
 	defer ticker.Stop()
@@ -363,16 +374,18 @@ func (s *pionSFU) livenessLoop(ctx context.Context) {
 	}
 }
 
-// forwardRTP 把一条解密后的 RTP 包原样转发给房间内其他参与者的**主** endpoint
-// （不重写 SSRC，扩展头随包透传——audio-level 即 speaking 指示数据源；
-// 观看屏幕共享也走观看者的主连接，presentation 连接不收任何远端流）。
+// forwardRTP forwards a decrypted RTP packet verbatim to the **main** endpoint of every
+// other participant in the room (no SSRC rewriting; the extension header passes through
+// with the packet — audio-level is the data source for the speaking indication). Watching
+// a screen share also goes over the viewer's main connection; the presentation connection
+// receives no remote stream.
 func (s *pionSFU) forwardRTP(from *endpoint, packet []byte) {
 	for _, ep := range s.mainTargets(from) {
 		ep.writeRTP(packet)
 	}
 }
 
-// mainTargets 返回房间内除 from 所属参与者外的全部主 endpoint。
+// mainTargets returns every main endpoint in the room except that of from's participant.
 func (s *pionSFU) mainTargets(from *endpoint) []*endpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -389,8 +402,9 @@ func (s *pionSFU) mainTargets(from *endpoint) []*endpoint {
 	return targets
 }
 
-// publisherBySSRC 找到房间内声明了该 ssrc（音频/任一视频层/RTX）的发布 endpoint，
-// 供 RTCP 反馈（PLI/NACK）按 media ssrc 路由回发布端。房间规模小，直接遍历。
+// publisherBySSRC finds the publishing endpoint that declared this ssrc (audio / any
+// video layer / RTX), so that RTCP feedback (PLI/NACK) can be routed back to the
+// publisher by media ssrc. Rooms are small, so it just iterates.
 func (s *pionSFU) publisherBySSRC(callID int64, ssrc uint32) *endpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -412,8 +426,8 @@ func (ep *endpoint) run(offer ClientOffer) {
 	s := ep.sfu
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// CONTROLLING：主动发起连通性检查；对端候选靠带 ufrag/pwd 认证的
-	// Binding Request 学得（peer-reflexive）。
+	// CONTROLLING: actively initiates connectivity checks; the peer candidate is learned
+	// from a Binding Request authenticated with ufrag/pwd (peer-reflexive).
 	conn, err := ep.agent.Dial(ctx, offer.Ufrag, offer.Pwd)
 	if err != nil {
 		s.log.Debug("sfu ice dial", zap.Int64("call_id", ep.callID), zap.Int64("user_id", ep.userID), zap.Error(err))
@@ -425,7 +439,7 @@ func (ep *endpoint) run(offer ClientOffer) {
 
 	dtlsConfig := &dtls.Config{
 		Certificates:         []tls.Certificate{s.cert},
-		InsecureSkipVerify:   true, // 身份校验走指纹（信令面 commit），非 CA 链
+		InsecureSkipVerify:   true, // identity is verified via fingerprint (signaling-plane commit), not a CA chain
 		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 		SRTPProtectionProfiles: []dtls.SRTPProtectionProfile{
 			dtls.SRTP_AEAD_AES_128_GCM,
@@ -439,8 +453,9 @@ func (ep *endpoint) run(offer ClientOffer) {
 		ep.close()
 		return
 	}
-	// pion/dtls v3 构造器是惰性握手（首次读写才握手）：必须显式 HandshakeContext
-	// 完成并设硬上限，否则 ConnectionState 拿不到状态、停滞的握手会挂死 goroutine。
+	// The pion/dtls v3 constructor handshakes lazily (only on first read/write): we must
+	// call HandshakeContext explicitly to completion with a hard limit, or ConnectionState
+	// has no state and a stalled handshake hangs the goroutine.
 	hsCtx, hsCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	err = dtlsConn.HandshakeContext(hsCtx)
 	hsCancel()
@@ -449,7 +464,7 @@ func (ep *endpoint) run(offer ClientOffer) {
 		ep.close()
 		return
 	}
-	// 指纹核验：DTLS 证书必须与 join JSON 承诺的 sha-256 指纹一致。
+	// Fingerprint verification: the DTLS certificate must match the sha-256 fingerprint promised in the join JSON.
 	state, ok := dtlsConn.ConnectionState()
 	if !ok || len(state.PeerCertificates) == 0 {
 		ep.close()
@@ -476,7 +491,7 @@ func (ep *endpoint) run(offer ClientOffer) {
 		ep.close()
 		return
 	}
-	// SFU 是 DTLS client：isClient=true 决定 SRTP 读写密钥方向。
+	// The SFU is the DTLS client: isClient=true determines the SRTP read/write key direction.
 	if err := srtpConfig.ExtractSessionKeysFromDTLS(&state, true); err != nil {
 		s.log.Debug("sfu srtp keys", zap.Error(err))
 		ep.close()
@@ -493,9 +508,10 @@ func (ep *endpoint) run(offer ClientOffer) {
 		ep.close()
 		return
 	}
-	// RTCP 升级为 SRTCP session（同一份 srtpConfig 复用）：读侧做 PLI/NACK 路由，
-	// 写侧供把反馈转投给发布端。注意：建了 SessionSRTCP 后绝不能再裸读
-	// srtcpConn（双读互偷包）。
+	// RTCP is upgraded to an SRTCP session (reusing the same srtpConfig): the read side
+	// routes PLI/NACK, the write side relays feedback to the publisher. Note: once
+	// SessionSRTCP is created, srtcpConn must never be read raw again (double reads steal
+	// packets from each other).
 	rtcpSession, err := srtp.NewSessionSRTCP(ep.demux.srtcpConn(), srtpConfig)
 	if err != nil {
 		s.log.Debug("sfu srtcp session", zap.Error(err))
@@ -519,11 +535,12 @@ func (ep *endpoint) run(offer ClientOffer) {
 		zap.Int("kind", int(ep.kind)))
 
 	go ep.serveRTCP(rtcpSession)
-	// SCTP 数据通道骑在同一条 DTLS 连接上（握手后的 application data 即 SCTP 包）。
+	// The SCTP data channel rides on the same DTLS connection (application data after the handshake is SCTP packets).
 	go ep.serveData(dtlsConn)
 
-	// 入站 SRTP：按 SSRC 接收流。转发/终结决策在流粒度一次性做出
-	//（AcceptStream 即按 SSRC 分流，selective forwarding 零每包开销）。
+	// Inbound SRTP: receive streams by SSRC. The forward/terminate decision is made once
+	// at stream granularity (AcceptStream demultiplexes by SSRC, giving selective
+	// forwarding zero per-packet overhead).
 	for {
 		stream, ssrc, err := session.AcceptStream()
 		if err != nil {
@@ -533,7 +550,8 @@ func (ep *endpoint) run(offer ClientOffer) {
 		if ep.plan.shouldForward(ssrc) {
 			go ep.readStream(stream, ssrc)
 		} else {
-			// 非转发层（高层 simulcast 及其 RTX）：必须持续排空防 buffer 堆积。
+			// Non-forwarded layers (higher simulcast layers and their RTX): must be drained
+			// continuously to prevent buffer buildup.
 			go ep.drainStream(stream)
 		}
 	}
@@ -563,13 +581,16 @@ func (ep *endpoint) drainStream(stream *srtp.ReadStreamSRTP) {
 	}
 }
 
-// serveRTCP 消费本 endpoint 的入站 RTCP 并路由：
-//   - PLI / FIR / NACK（订阅端反馈）→ 按 media ssrc 找到发布 endpoint 转投——
-//     恒等转发下订阅端反馈里的 ssrc 就是发布端的原始 ssrc，无需改写；
-//     发布端自带 RTX 重传与 300ms keyframe 限流；
-//   - SR（发布端报告）→ 转发给其他主 endpoint（A/V 同步的 NTP↔RTP 映射来源）；
-//   - RR / REMB / transport-cc：丢弃（v1 不做带宽自适应；layer0 所需码率
-//     远低于发布端 400kbps 起始值，不会饿死）。
+// serveRTCP consumes and routes the inbound RTCP of this endpoint:
+//   - PLI / FIR / NACK (subscriber feedback) → find the publishing endpoint by media
+//     ssrc and relay to it — under verbatim forwarding the ssrc in subscriber feedback
+//     is the publisher's original ssrc, so no rewriting is needed; the publisher provides
+//     its own RTX retransmission and 300ms keyframe rate limit;
+//   - SR (publisher report) → forward to the other main endpoints (the NTP↔RTP mapping
+//     source for A/V sync);
+//   - RR / REMB / transport-cc: dropped (v1 does no bandwidth adaptation; layer0's
+//     required bitrate is far below the publisher's 400kbps starting value, so it won't
+//     starve).
 func (ep *endpoint) serveRTCP(session *srtp.SessionSRTCP) {
 	for {
 		stream, _, err := session.AcceptStream()
@@ -632,12 +653,14 @@ func (ep *endpoint) writeRTCP(pkt rtcp.Packet) {
 	_, _ = w.Write(raw)
 }
 
-// serveData 在 DTLS 连接上被动承接 SCTP 关联与 DCEP data channel：
-//   - 客户端总是 SCTP INIT 与 DATA_CHANNEL_OPEN 的发起方（sid=0, label="data"），
-//     SFU 绝不主动 OPEN（客户端没有 accept 入站 OPEN 的逻辑）；
-//   - 关联被客户端重建（restartDataChannel）时在同一 DTLS 上重新 accept；
-//   - 数据通道上没有任何消息是音视频工作的硬前置：v1 只消费（记录）
-//     ReceiverVideoConstraints，其余忽略。
+// serveData passively accepts SCTP associations and DCEP data channels on the DTLS connection:
+//   - the client is always the initiator of SCTP INIT and DATA_CHANNEL_OPEN (sid=0,
+//     label="data"); the SFU never OPENs on its own (the client has no logic to accept an
+//     inbound OPEN);
+//   - when the association is rebuilt by the client (restartDataChannel), it re-accepts on
+//     the same DTLS;
+//   - no message on the data channel is a hard prerequisite for audio/video work: v1 only
+//     consumes (records) ReceiverVideoConstraints and ignores the rest.
 func (ep *endpoint) serveData(conn *dtls.Conn) {
 	logf := logging.NewDefaultLoggerFactory()
 	logf.DefaultLogLevel = logging.LogLevelError
@@ -652,12 +675,12 @@ func (ep *endpoint) serveData(conn *dtls.Conn) {
 			LoggerFactory: logf,
 		})
 		if err != nil {
-			return // DTLS 关闭/endpoint 拆除
+			return // DTLS closed / endpoint torn down
 		}
 		for {
 			dc, err := datachannel.Accept(assoc, &datachannel.Config{LoggerFactory: logf})
 			if err != nil {
-				break // 关联结束：外层重试承接客户端重建的新关联
+				break // association ended: the outer loop retries to accept the new one the client rebuilt
 			}
 			go ep.serveDataChannel(dc)
 		}
@@ -683,8 +706,9 @@ func (ep *endpoint) serveDataChannel(dc *datachannel.DataChannel) {
 		if err := json.Unmarshal(buf[:n], &msg); err != nil {
 			continue
 		}
-		// v1：ReceiverVideoConstraints 仅记录（转发策略固定为 SIM[0] 层广播，
-		// 客户端对未订阅 endpoint 的包安全丢弃）；选层/按订阅裁剪留下一轮。
+		// v1: ReceiverVideoConstraints is only recorded (the forwarding policy is fixed to
+		// SIM[0]-layer broadcast; the client safely drops packets for endpoints it did not
+		// subscribe to); layer selection / trimming by subscription is left to a later round.
 		ep.sfu.log.Debug("sfu data channel message",
 			zap.Int64("call_id", ep.callID),
 			zap.Int64("user_id", ep.userID),
@@ -727,7 +751,7 @@ func (ep *endpoint) close() {
 	})
 }
 
-// pionLoggerFactory 把 pion 日志降为静默（按需可接 zap）。
+// pionLoggerFactory quiets pion logs (can be wired to zap on demand).
 type pionLoggerFactory struct{ log *zap.Logger }
 
 func (f *pionLoggerFactory) NewLogger(scope string) logging.LeveledLogger {

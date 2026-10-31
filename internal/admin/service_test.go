@@ -1736,7 +1736,7 @@ func TestPublishStarGiftCollectiblesAllowsDeterministicModelAndPattern(t *testin
 	}
 }
 
-// 官方快照会给售罄限定礼物下发 permille=0 的属性，导入时必须接受；负权重仍然非法。
+// Official snapshots send permille=0 attributes for sold-out limited gifts, which the import must accept; a negative weight is still invalid.
 func TestOfficialRarityAcceptsZeroPermille(t *testing.T) {
 	zero := 0
 	kind, permille, err := officialRarity(officialgifts.Rarity{Kind: "permille", Permille: &zero})
@@ -1799,7 +1799,7 @@ func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testi
 		t.Fatalf("imported models=%+v backdrops=%+v", models, gifts.lastBundle.Collectible.Backdrops)
 	}
 	catalog := gifts.lastBundle.Catalog
-	// The collectible supply ("уникальный тираж") configures the pool alone and
+	// The collectible supply ("unique supply") configures the pool alone and
 	// never turns the base gift into a limited edition: without the explicit
 	// Limited flag the base catalog stays unlimited even when the snapshot and
 	// pool carry finite numbers. Sold-out, resale, and sale-date state still does

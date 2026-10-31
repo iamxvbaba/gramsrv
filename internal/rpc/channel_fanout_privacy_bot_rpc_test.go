@@ -12,7 +12,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// privacyBotResolver 让指定 user 成为 bot_chat_history=false 的隐私 bot（命令/@/回复以外的群消息不可见）。
+// privacyBotResolver makes the given user a privacy bot with bot_chat_history=false (group messages other than commands/@/replies are invisible to it).
 type privacyBotResolver map[int64]bool
 
 func (p privacyBotResolver) BotInfo(_ context.Context, botUserID int64) (domain.BotProfile, bool, error) {
@@ -22,10 +22,13 @@ func (p privacyBotResolver) BotInfo(_ context.Context, botUserID int64) (domain.
 	return domain.BotProfile{BotUserID: botUserID, ChatHistory: false}, true, nil
 }
 
-// TestChannelMessageFanoutSkipsPrivacyBotOnlinePush 回归:在线 privacy bot 不得经实时 fanout 收到群里
-// 的纯文本消息。修复前 channelFanoutRecipients 按「在线活跃成员」重算 recipients,会把 send 时已按
-// SkipDeliveryUserIDs 排除的 bot 加回 → 在线 bot 实时收到全部群聊内容(持久 history/difference 已正确
-// 隐藏,仅此直接推送泄漏内容)。修复后 fanout build 对被 skip 的 viewer 返回 nil,不推送。
+// TestChannelMessageFanoutSkipsPrivacyBotOnlinePush regression: an online privacy bot must not
+// receive a group's plain-text message via realtime fanout. Before the fix,
+// channelFanoutRecipients recomputed recipients by "online active members", adding back the bot
+// that send had already excluded via SkipDeliveryUserIDs -> the online bot received all group
+// content in realtime (persistent history/difference already hid it correctly; only this direct
+// push leaked content). After the fix, fanout build returns nil for a skipped viewer and does not
+// push.
 func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 	ctx := context.Background()
 	channelStore := memory.NewChannelStore()
@@ -40,7 +43,7 @@ func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 		t.Fatalf("create channel: %v", err)
 	}
 
-	// 纯文本消息:privacy bot 1003 不可见 → SendMessage 把它放进 SkipDeliveryUserIDs、排除出 Recipients。
+	// Plain-text message: invisible to privacy bot 1003 -> SendMessage places it in SkipDeliveryUserIDs and excludes it from Recipients.
 	res, err := channelService.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: created.Channel.ID,
 		RandomID:  2001,
@@ -57,7 +60,7 @@ func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 		t.Fatalf("res.Recipients = %v, privacy bot 1003 must not be a delivery recipient", res.Recipients)
 	}
 
-	// 两成员都在线;channelFanoutRecipients 据此把 1003 当在线活跃成员加回 recipients。
+	// Both members are online; channelFanoutRecipients therefore adds 1003 back to recipients as an online active member.
 	sessions := &captureSessions{
 		channelMembers: map[int64][]int64{created.Channel.ID: {1002, 1003}},
 	}
@@ -66,11 +69,12 @@ func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 	}}}
 	r := New(Config{}, Deps{Channels: channelService, Sessions: sessions, Users: users}, zaptest.NewLogger(t), clock.System)
 
-	// 复核前置:修复前后 channelFanoutRecipients 都会把 1003 列进 recipients(在线活跃成员),
-	// 漏洞/修复的差异在 build 是否对它返回 nil。
+	// Recheck precondition: both before and after the fix, channelFanoutRecipients lists 1003 in
+	// recipients (online active member), so the difference between the bug and the fix is whether
+	// build returns nil for it.
 	got := r.channelFanoutRecipients(ctx, channelFanoutMembers, created.Channel.ID, res.Recipients)
 	if !fanoutHasID(got, 1003) {
-		t.Fatalf("channelFanoutRecipients = %v, 期望在线活跃成员 1003 仍被列入(否则测不到 build 跳过)", got)
+		t.Fatalf("channelFanoutRecipients = %v, expected online active member 1003 to still be listed (otherwise the build-skip cannot be tested)", got)
 	}
 
 	r.enqueueChannelMessageFanout(ctx, 1001, res, nil)

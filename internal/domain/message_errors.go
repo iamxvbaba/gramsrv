@@ -8,19 +8,19 @@ var (
 	ErrMessageAuthorRequired = errors.New("message author required")
 	ErrMessageNotModified    = errors.New("message not modified")
 	ErrMessageNotReadYet     = errors.New("message not read yet")
-	// ErrFactCheckInvalid 表示事实核查标签本身不合法（空文本、非法国家码）。
+	// ErrFactCheckInvalid means the fact-check tag itself is invalid (empty text, illegal country code).
 	ErrFactCheckInvalid = errors.New("fact check invalid")
-	// ErrFactCheckTooLong 表示事实核查结论文本超过客户端上限。
+	// ErrFactCheckTooLong means the fact-check verdict text exceeds the client limit.
 	ErrFactCheckTooLong = errors.New("fact check text too long")
-	// ErrFactCheckForbidden 表示当前用户无权改写这条消息的事实核查标签。
+	// ErrFactCheckForbidden means the current user is not allowed to rewrite this message's fact-check tag.
 	ErrFactCheckForbidden = errors.New("fact check forbidden")
 	// ErrPeerDeleted rejects a private write whose recipient is an account
 	// tombstone. The rows survive for history, so only this gate stops the
 	// message from landing in a dialog nobody can read.
 	ErrPeerDeleted = errors.New("peer deleted")
-	// ErrMessageRandomIDDuplicate 表示同一发送者重复使用 random_id，且本次
-	// 不可变请求载荷与首次成功发送不一致。完全相同的重放不返回此错误，
-	// 而是复用首次发送结果。
+	// ErrMessageRandomIDDuplicate means the same sender reused a random_id and this
+	// immutable request payload differs from the first successful send. An exactly identical replay does not return this error,
+	// but reuses the first send's result.
 	ErrMessageRandomIDDuplicate = errors.New("message random id duplicate")
 	// ErrLoginCodeDeliveryInvalid rejects malformed durable 777000 delivery
 	// commands before allocating message/pts facts.
@@ -39,10 +39,10 @@ var (
 	ErrQuoteTextInvalid                 = errors.New("quote text invalid")
 	ErrChatForwardsRestricted           = errors.New("chat forwards restricted")
 	ErrNoForwardsRequestExpired         = errors.New("no forwards request expired")
-	// ErrPinnedSavedDialogsTooMuch 映射 PINNED_TOO_MUCH：收藏夹子会话置顶
-	// 数量达到 MaxPinnedSavedDialogs 上限。
+	// ErrPinnedSavedDialogsTooMuch maps PINNED_TOO_MUCH: the saved-messages sub-chat pin
+	// count reached the MaxPinnedSavedDialogs limit.
 	ErrPinnedSavedDialogsTooMuch = errors.New("pinned saved dialogs too much")
-	// ErrPinnedDialogsTooMuch 映射 PINNED_DIALOGS_TOO_MUCH：目标 folder 内
-	// 置顶会话数量达到上限。
+	// ErrPinnedDialogsTooMuch maps PINNED_DIALOGS_TOO_MUCH: the pinned chat count in the
+	// target folder reached the limit.
 	ErrPinnedDialogsTooMuch = errors.New("pinned dialogs too much")
 )

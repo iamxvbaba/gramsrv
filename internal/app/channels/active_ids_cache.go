@@ -33,8 +33,10 @@ type activeChannelIDsCacheKey struct {
 	limit          int
 }
 
-// activeChannelIDsReadModelCache 由统一缓存原语承载(版本闸门 / epoch 守卫 / LRU / clone)。
-// 无版本(version 缺失)时用 activeChannelIDsNoVersionHash 哨兵作版本,仍享 TTL+epoch 失效。
+// activeChannelIDsReadModelCache is backed by the shared cache primitive
+// (version gate / epoch guard / LRU / clone).
+// When no version is present the activeChannelIDsNoVersionHash sentinel is used as
+// the version; TTL+epoch invalidation still applies.
 type activeChannelIDsReadModelCache struct {
 	cache *readmodelcache.Cache[activeChannelIDsCacheKey, []int64]
 }

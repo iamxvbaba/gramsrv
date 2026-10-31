@@ -939,8 +939,9 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if _, err := r.onChannelsConvertToGigagroup(WithUserID(ctx, owner.ID), input); err != nil {
 		t.Fatalf("convert to gigagroup: %v", err)
 	}
-	// 建群服务消息（id=1）被保留为会话兜底 top message，不随创建者
-	// 历史一起删除；可删的是 seed 文本与 thread reply 两条。
+	// The group-creation service message (id=1) is kept as the dialog fallback top
+	// message and is not deleted with the creator's history; the deletable ones are
+	// the seed text and thread reply, two messages.
 	if affected, err := r.onChannelsDeleteParticipantHistory(WithUserID(ctx, owner.ID), &tg.ChannelsDeleteParticipantHistoryRequest{Channel: input, Participant: &tg.InputPeerUser{UserID: owner.ID, AccessHash: owner.AccessHash}}); err != nil || affected.PtsCount != 2 || affected.Pts == 0 || affected.Offset != 0 {
 		t.Fatalf("delete participant history = %+v err %v, want one bounded delete update for owner text and reply messages", affected, err)
 	}
@@ -1062,8 +1063,10 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if forumTopicsWithCreated.Count != 2 || len(forumTopicsWithCreated.Topics) != 2 || len(forumTopicsWithCreated.Messages) == 0 {
 		t.Fatalf("messages.getForumTopics with created topic = %+v, want General + created topic + root message", forumTopicsWithCreated)
 	}
-	// 回归:官方 web(telegram-tt 首屏 loadTopics)发 limit=500,超单页上限。服务端必须钳到上限正常返回,
-	// 而非报 LIMIT_INVALID(此前 web 端每次 getForumTopics 恒失败)。客户端据返回的 count 用 offset 翻页。
+	// Regression: official web (telegram-tt first-screen loadTopics) sends limit=500,
+	// above the single-page cap. The server must clamp to the cap and return normally,
+	// not error with LIMIT_INVALID (previously the web client's every getForumTopics
+	// failed). The client paginates with offset based on the returned count.
 	forumTopicsLargeLimit, err := r.onMessagesGetForumTopics(WithUserID(ctx, owner.ID), &tg.MessagesGetForumTopicsRequest{
 		Peer:  forumPeer,
 		Limit: 500,
@@ -1489,9 +1492,11 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if monoChat.Broadcast || !monoChat.Megagroup {
 		t.Fatalf("free monoforum kind = broadcast:%v megagroup:%v, want megagroup monoforum", monoChat.Broadcast, monoChat.Megagroup)
 	}
-	// 母广播频道收到 paid_messages_price(渲染 "Channel enabled Direct Messages");monoforum 首次
-	// 创建则收到 channelCreate 创建消息(渲染 "Direct messages were enabled in this channel."),
-	// 不再收 paid_messages_price——在 megagroup 里那会渲染成错误的"消息免费/设价"文案。
+	// The parent broadcast channel receives paid_messages_price (rendering "Channel
+	// enabled Direct Messages"); the monoforum, on first creation, receives a
+	// channelCreate creation message (rendering "Direct messages were enabled in this
+	// channel."), and no longer receives paid_messages_price -- in a megagroup that
+	// would render the wrong "messages free/price set" wording.
 	freeServices := paidMessagesPriceServicePeers(t, freeUpdates)
 	if price := freeServices[broadcast.ID]; price == nil || !price.BroadcastMessagesAllowed || price.Stars != 0 {
 		t.Fatalf("free parent direct messages action = %+v, want enabled stars=0", price)
@@ -1532,7 +1537,7 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if monoChat.Broadcast || !monoChat.Megagroup {
 		t.Fatalf("paid monoforum kind = broadcast:%v megagroup:%v, want megagroup monoforum", monoChat.Broadcast, monoChat.Megagroup)
 	}
-	// 价格变更只进母频道;monoforum 已存在,不再收任何服务消息(仍作为引用 chat 被同批下发)。
+	// The price change goes only to the parent channel; the monoforum already exists and receives no service message (it is still sent as a referenced chat in the same batch).
 	paidServices := paidMessagesPriceServicePeers(t, paidUpdates)
 	if price := paidServices[broadcast.ID]; price == nil || !price.BroadcastMessagesAllowed || price.Stars != maxChannelPaidMessageStars {
 		t.Fatalf("paid parent direct messages action = %+v, want enabled stars=%d", price, maxChannelPaidMessageStars)
@@ -1545,9 +1550,11 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 		t.Fatalf("disable direct messages after enable: %v", err)
 	}
 	disabledAfterEnableChats := disabledAfterEnableUpdates.(*tg.Updates).Chats
-	// 关闭后只下发母频道(linked_monoforum_id 被隐藏 → 客户端缓存里 monoforum 翻出 MonoforumDisabled
-	// 状态显示停用页脚);monoforum 自身不再随关闭重新下发(无新服务消息,且 broadcast_messages_allowed
-	// =false 时 linkedMonoforumForChannelState 也不再附带它)。
+	// After disable only the parent channel is sent (linked_monoforum_id is hidden →
+	// the client cache flips the monoforum into the MonoforumDisabled state showing
+	// the disabled footer); the monoforum itself is no longer re-sent on disable (no
+	// new service message, and linkedMonoforumForChannelState no longer attaches it
+	// when broadcast_messages_allowed=false).
 	if len(disabledAfterEnableChats) != 1 {
 		t.Fatalf("disable direct messages chats = %d, want parent only", len(disabledAfterEnableChats))
 	}
@@ -1558,7 +1565,7 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if _, ok := disabledParent.GetLinkedMonoforumID(); ok {
 		t.Fatalf("disable direct messages parent projected linked_monoforum_id, want hidden")
 	}
-	// 关闭只进母频道;monoforum 不再收服务消息(停用页脚靠客户端从隐藏的 linked_monoforum_id 派生)。
+	// Disable goes only to the parent channel; the monoforum receives no service message (the disabled footer is derived client-side from the hidden linked_monoforum_id).
 	disabledServices := paidMessagesPriceServicePeers(t, disabledAfterEnableUpdates)
 	if price := disabledServices[broadcast.ID]; price == nil || price.BroadcastMessagesAllowed || price.Stars != 0 {
 		t.Fatalf("disable parent direct messages action = %+v, want disabled stars=0", price)
@@ -1712,9 +1719,11 @@ func paidMessagesPriceServicePeers(t *testing.T, updates tg.UpdatesClass) map[in
 	return out
 }
 
-// monoforumCreationServicePeers 收集 updates 里 messageActionChannelCreate 服务消息的 peer 集合。
-// monoforum 首次开启时收到一条创建消息(TDesktop 渲染 "Direct messages were enabled in this
-// channel."),这是它在直连会话里唯一的服务消息;开关/价格变更不再往 mono 追加服务消息。
+// monoforumCreationServicePeers collects the peer set of messageActionChannelCreate
+// service messages in updates. A monoforum receives one creation message when it is
+// first enabled (TDesktop renders "Direct messages were enabled in this channel."),
+// its only service message in the direct conversation; toggles/price changes no
+// longer append service messages to the mono.
 func monoforumCreationServicePeers(t *testing.T, updates tg.UpdatesClass) map[int64]struct{} {
 	t.Helper()
 	box, ok := updates.(*tg.Updates)

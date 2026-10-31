@@ -166,7 +166,7 @@ func TestParseSOCKS5Proxy(t *testing.T) {
 }
 
 func TestClientOptions(t *testing.T) {
-	// 登录与抓取共用同一份出口配置：SOCKS5_PROXY 只影响 Resolver，绝不能改写会话路径。
+	// Login and fetching share the same egress config: SOCKS5_PROXY only affects the Resolver and must never rewrite the session path.
 	t.Run("no proxy keeps default resolver", func(t *testing.T) {
 		t.Setenv("SOCKS5_PROXY", "")
 		opts, err := clientOptions(filepath.Join(t.TempDir(), "gift.session"))
@@ -218,7 +218,7 @@ func TestRenderTerminalQR(t *testing.T) {
 	out := renderTerminalQR(code)
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 
-	// 每个字符承载两行模块，四周再加两个模块的静区。
+	// Each character carries two rows of modules, plus a two-module quiet zone on each side.
 	wantDim := code.Size + 2*2
 	wantLines := (wantDim + 1) / 2
 	if len(lines) != wantLines {
@@ -235,7 +235,7 @@ func TestRenderTerminalQR(t *testing.T) {
 	if runes == 0 {
 		t.Fatal("rendered nothing")
 	}
-	// 静区必须全白，否则手机扫不出来。
+	// The quiet zone must be entirely white, otherwise a phone cannot scan it.
 	for _, line := range lines {
 		if !strings.HasPrefix(line, strings.Repeat(" ", 2)) || !strings.HasSuffix(line, strings.Repeat(" ", 2)) {
 			t.Fatalf("quiet zone is not blank: %q", line)
@@ -389,7 +389,7 @@ func TestGiftTitleFallsBackForRegularGifts(t *testing.T) {
 			t.Fatalf("%s: giftTitle=%q want %q", test.name, got, test.want)
 		}
 	}
-	// 补名的 ID 必须覆盖所有普通礼物，且彼此不重复。
+	// The named IDs must cover every regular gift and must not duplicate each other.
 	seen := map[string]struct{}{}
 	for id, title := range regularGiftTitles {
 		if strings.TrimSpace(title) == "" || id <= 0 {

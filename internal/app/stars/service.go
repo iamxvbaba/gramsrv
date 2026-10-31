@@ -1,6 +1,8 @@
-// Package stars 实现 Stars 本地账本应用服务：余额查询、贷记/借记、流水分页，
-// 以及「惰性首读授予」起始余额（靠 stars_balances.granted 布尔幂等，新老账号都覆盖、
-// 无需回填迁移）。原子性由 store 事务保证；本层只做校验 + 授予策略。
+// Package stars implements the local Stars ledger application service: balance queries,
+// credit/debit, transaction pagination, and the "lazy grant on first read" starting
+// balance (idempotent via the stars_balances.granted boolean, covering both old and new
+// accounts with no backfill migration). Atomicity comes from store transactions; this
+// layer only does validation + grant policy.
 package stars
 
 import (
@@ -11,7 +13,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// Service 是 Stars 账本应用服务。
+// Service is the Stars ledger application service.
 type Service struct {
 	store         store.StarsStore
 	purchaseStore store.StarsPurchaseStore
@@ -19,10 +21,10 @@ type Service struct {
 	now           func() time.Time
 }
 
-// Option 配置 Service。
+// Option configures Service.
 type Option func(*Service)
 
-// WithStartingGrant 设置惰性首读授予的起始余额；amount<=0 关闭自动授予。
+// WithStartingGrant sets the starting balance granted lazily on first read; amount<=0 disables the automatic grant.
 func WithStartingGrant(amount int64) Option {
 	return func(s *Service) { s.grantAmount = amount }
 }
@@ -32,7 +34,7 @@ func WithPurchaseStore(st store.StarsPurchaseStore) Option {
 	return func(s *Service) { s.purchaseStore = st }
 }
 
-// WithClock 注入时钟（测试用）。
+// WithClock injects the clock (for tests).
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) {
 		if now != nil {
@@ -41,7 +43,7 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-// NewService 创建 Stars 账本服务，默认起始授予 domain.DefaultStarsStartingGrant。
+// NewService creates the Stars ledger service, with domain.DefaultStarsStartingGrant as the default starting grant.
 func NewService(st store.StarsStore, opts ...Option) *Service {
 	s := &Service{store: st, grantAmount: domain.DefaultStarsStartingGrant, now: time.Now}
 	for _, opt := range opts {
@@ -50,7 +52,7 @@ func NewService(st store.StarsStore, opts ...Option) *Service {
 	return s
 }
 
-// ensureGranted 惰性应用一次起始授予（幂等），返回最新余额。
+// ensureGranted lazily applies the starting grant once (idempotent) and returns the latest balance.
 func (s *Service) ensureGranted(ctx context.Context, userID int64) (domain.StarsBalance, error) {
 	if s.grantAmount > 0 {
 		bal, _, err := s.store.EnsureGrant(ctx, userID, s.grantAmount, int(s.now().Unix()))
@@ -59,12 +61,12 @@ func (s *Service) ensureGranted(ctx context.Context, userID int64) (domain.Stars
 	return s.store.GetBalance(ctx, userID)
 }
 
-// GetBalance 返回账号余额，首读时惰性授予起始余额。
+// GetBalance returns the account balance, lazily granting the starting balance on first read.
 func (s *Service) GetBalance(ctx context.Context, userID int64) (domain.StarsBalance, error) {
 	return s.ensureGranted(ctx, userID)
 }
 
-// Credit 为账号入账（amount>0）。
+// Credit credits the account (amount>0).
 func (s *Service) Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error) {
 	if amount <= 0 {
 		return domain.StarsBalance{}, domain.ErrStarsInvalidAmount
@@ -72,8 +74,9 @@ func (s *Service) Credit(ctx context.Context, userID, amount int64, reason domai
 	return s.store.Credit(ctx, userID, amount, reason, peer, int(s.now().Unix()), title, desc)
 }
 
-// Debit 从账号扣款（amount>0），余额不足返回 domain.ErrStarsInsufficient。
-// 先确保起始授予已应用，避免新账号在尚未首读余额前借记被误判余额不足。
+// Debit debits the account (amount>0); an insufficient balance returns domain.ErrStarsInsufficient.
+// It first ensures the starting grant has been applied, so a new account is not misjudged as
+// insufficient before it has read its balance for the first time.
 func (s *Service) Debit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error) {
 	if amount <= 0 {
 		return domain.StarsBalance{}, domain.ErrStarsInvalidAmount
@@ -84,8 +87,8 @@ func (s *Service) Debit(ctx context.Context, userID, amount int64, reason domain
 	return s.store.Debit(ctx, userID, amount, reason, peer, int(s.now().Unix()), title, desc)
 }
 
-// CountStarsAllUsers 返回批量贷记的候选真实用户数（dry-run 预览用）；
-// 底层 store 不支持时返回 domain.ErrStarsAirdropUnsupported。
+// CountStarsAllUsers returns the number of real user candidates for bulk crediting (for a
+// dry-run preview); if the underlying store does not support it, returns domain.ErrStarsAirdropUnsupported.
 func (s *Service) CountStarsAllUsers(ctx context.Context) (int64, error) {
 	airdrop, ok := s.store.(store.StarsAirdropStore)
 	if !ok {
@@ -94,8 +97,9 @@ func (s *Service) CountStarsAllUsers(ctx context.Context) (int64, error) {
 	return airdrop.CountCreditAllUsers(ctx)
 }
 
-// GrantStarsAll 批量贷记给所有真实用户（admin 的「发给所有人」）；返回受影响账号数。
-// 底层 store 不支持时返回 domain.ErrStarsAirdropUnsupported。
+// GrantStarsAll bulk-credits all real users (the admin "send to everyone"); returns the
+// number of affected accounts. If the underlying store does not support it, returns
+// domain.ErrStarsAirdropUnsupported.
 func (s *Service) GrantStarsAll(ctx context.Context, amount int64, title, desc string) (int64, error) {
 	if amount <= 0 {
 		return 0, domain.ErrStarsInvalidAmount
@@ -107,7 +111,7 @@ func (s *Service) GrantStarsAll(ctx context.Context, amount int64, title, desc s
 	return airdrop.CreditAll(ctx, amount, domain.StarsReasonAdjust, int(s.now().Unix()), title, desc)
 }
 
-// ListTransactions 按方向与顺序做 keyset 分页，首读时惰性授予。
+// ListTransactions does keyset pagination by direction and order, lazily granting on first read.
 func (s *Service) ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error) {
 	query, err := domain.NormalizeStarsTransactionQuery(query)
 	if err != nil {

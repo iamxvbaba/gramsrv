@@ -16,11 +16,13 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestChannelMultiPinAndroidOpenAndJump 模拟 DrKLO Android 超级群多置顶消费链路：
-// 打开聊天 → messages.search(filterPinned, limit=40, offset_id=0) 全量拉置顶列表；
-// 点置顶栏跳最旧 pin → messages.getHistory(offset_id=pin, add_offset=-count/2, limit=count)
-// AROUND 加载，响应必须包含锚点消息本身，否则客户端弹 MessageNotFound 放弃跳转；
-// 本地缺对象 → channels.getMessages 精确补拉，messageEmpty 会被客户端丢弃。
+// TestChannelMultiPinAndroidOpenAndJump simulates DrKLO Android's multi-pin consumption chain for
+// a supergroup: open the chat -> messages.search(filterPinned, limit=40, offset_id=0) to pull the
+// full pinned list; tap the pinned bar to jump to the oldest pin ->
+// messages.getHistory(offset_id=pin, add_offset=-count/2, limit=count) loads AROUND, and the
+// response must include the anchor message itself, otherwise the client shows MessageNotFound and
+// abandons the jump; a missing local object -> channels.getMessages fetches it precisely, and
+// messageEmpty is discarded by the client.
 func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -65,7 +67,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 		ids = append(ids, sent.Message.ID)
 	}
-	// 五条置顶：覆盖用户反馈中的真实规模；Android 置顶栏循环跳转需要全部可跳。
+	// Five pins: covering the real scale from user reports; Android's pinned-bar cyclic jumping needs all of them jumpable.
 	pins := []int{ids[4], ids[9], ids[14], ids[20], ids[27]}
 	for _, id := range pins {
 		if _, err := channelSvc.UpdatePinnedMessage(ctx, owner.ID, domain.UpdateChannelPinnedMessageRequest{
@@ -96,7 +98,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		return enc
 	}
 
-	// ① 打开聊天：MediaDataController.loadPinnedMessages → messages.search filterPinned。
+	// (1) Open the chat: MediaDataController.loadPinnedMessages -> messages.search filterPinned.
 	androidPinnedSearch := &tg.MessagesSearchRequest{
 		Peer:   peer,
 		Q:      "",
@@ -125,7 +127,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	for i, raw := range channelMessages.Messages {
 		msg, ok := raw.(*tg.Message)
 		if !ok {
-			// TL_messageService / TL_messageEmpty 会被 Android loadPinnedMessages 直接跳过。
+			// TL_messageService / TL_messageEmpty are skipped directly by Android loadPinnedMessages.
 			t.Fatalf("pinned search message[%d] = %T, want *tg.Message", i, raw)
 		}
 		if msg.ID != wantDesc[i] {
@@ -136,8 +138,9 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 	}
 
-	// ② tweb 冷加载：先用 limit=1 取最新 pin，并把 messages.channelMessages.count
-	// 当作完整置顶数；旧实现把 count 错算成 len(page)+hasMore，即五条只报两条。
+	// (2) tweb cold load: first fetch the latest pin with limit=1, and treat
+	// messages.channelMessages.count as the full pin count; the old implementation miscounted count
+	// as len(page)+hasMore, reporting only two of five.
 	twebSearchEnc := dispatch(&tg.MessagesSearchRequest{
 		Peer:   peer,
 		Q:      "",
@@ -152,7 +155,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		t.Fatalf("tweb pinned search messages/count = %d/%d, want 1/%d", len(twebSearch.Messages), twebSearch.Count, len(pins))
 	}
 
-	// limit=0 是官方 count-only 入口：不得为了计数反序列化/返回消息页。
+	// limit=0 is the official count-only entry point: it must not deserialize/return a message page just to count.
 	countOnlyEnc := dispatch(&tg.MessagesSearchRequest{
 		Peer:   peer,
 		Q:      "",
@@ -178,7 +181,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		t.Fatalf("pinned search counters = %+v, want count %d", counters, len(pins))
 	}
 
-	// ③ 点置顶栏跳最旧 pin：scrollToMessageId → getHistory AROUND（手机 count=20）。
+	// (3) Tap the pinned bar to jump to the oldest pin: scrollToMessageId -> getHistory AROUND (mobile count=20).
 	const aroundCount = 20
 	histEnc := dispatch(&tg.MessagesGetHistoryRequest{
 		Peer:      peer,
@@ -188,7 +191,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	})
 	histMessages, _, _ := searchMessagesPayload(t, histEnc)
 	if len(histMessages) == 0 || len(histMessages) > aroundCount {
-		t.Fatalf("around history size = %d, want 1..%d (超出 count 时 Android 会丢最新一条)", len(histMessages), aroundCount)
+		t.Fatalf("around history size = %d, want 1..%d (Android drops the newest one when count is exceeded)", len(histMessages), aroundCount)
 	}
 	anchorFound := false
 	lastID := int(^uint(0) >> 1)
@@ -206,13 +209,13 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 	}
 	if !anchorFound {
-		// ChatActivity postponedScroll 在响应缺锚点时直接 MessageNotFound 放弃跳转。
+		// ChatActivity postponedScroll gives up the jump with MessageNotFound directly when the response lacks the anchor.
 		t.Fatalf("around history lacks anchor %d: jump shows MessageNotFound on Android", pins[0])
 	}
 
-	// ④ 本地缺对象补拉：MessagesStorage.loadChatInfo → channels.getMessages。
-	// DrKLO 发的是 pre-InputMessage 构造器 #93d7b347（id:Vector<int>），
-	// 该请求 500 会让客户端把这批 pin 按「已取消置顶」从本地缓存删除。
+	// (4) Fetch a missing local object precisely: MessagesStorage.loadChatInfo -> channels.getMessages.
+	// DrKLO sends the pre-InputMessage constructor #93d7b347 (id:Vector<int>), and a 500 for that
+	// request makes the client delete this batch of pins from its local cache as "unpinned".
 	var legacy bin.Buffer
 	legacy.PutID(0x93d7b347)
 	if err := (&tg.InputChannel{ChannelID: channelID, AccessHash: memberView.Channel.AccessHash}).Encode(&legacy); err != nil {
@@ -233,13 +236,13 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	for i, raw := range getMessages {
 		msg, ok := raw.(*tg.Message)
 		if !ok {
-			t.Fatalf("legacy channels.getMessages[%d] = %T, want *tg.Message (messageEmpty 会被客户端丢弃)", i, raw)
+			t.Fatalf("legacy channels.getMessages[%d] = %T, want *tg.Message (messageEmpty is discarded by the client)", i, raw)
 		}
 		if !msg.Pinned {
 			t.Fatalf("legacy channels.getMessages message %d lacks pinned flag", msg.ID)
 		}
 	}
-	// 新构造器（TDesktop 路径）必须与 legacy 返回一致的消息集合。
+	// The new constructor (TDesktop path) must return the same message set as the legacy one.
 	getIDs := make([]tg.InputMessageClass, 0, len(pins))
 	for _, id := range pins {
 		getIDs = append(getIDs, &tg.InputMessageID{ID: id})
@@ -258,7 +261,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 	}
 
-	// ⑤ chatFull 降级缓存：pinned_msg_id 必须是最新置顶（Android 以它判断是否重拉列表）。
+	// (5) chatFull degraded cache: pinned_msg_id must be the latest pin (Android uses it to decide whether to re-pull the list).
 	fullEnc := dispatch(&tg.ChannelsGetFullChannelRequest{
 		Channel: &tg.InputChannel{ChannelID: channelID, AccessHash: memberView.Channel.AccessHash},
 	})

@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// StarsStore 是 store.StarsStore 的内存实现，复刻 postgres 版的原子语义
-// （在单个互斥锁下完成读-检查-写，等价于 SELECT ... FOR UPDATE）。
+// StarsStore is the in-memory implementation of store.StarsStore, replicating the postgres
+// version's atomic semantics (read-check-write under a single mutex, equivalent to SELECT ... FOR UPDATE).
 type StarsStore struct {
 	mu     sync.Mutex
 	states map[int64]*starsState
@@ -18,10 +18,10 @@ type StarsStore struct {
 type starsState struct {
 	balance int64
 	granted bool
-	txns    []domain.StarsTransaction // 追加序，读时倒序
+	txns    []domain.StarsTransaction // append order, reversed on read
 }
 
-// NewStarsStore 创建内存 StarsStore。
+// NewStarsStore creates an in-memory StarsStore.
 func NewStarsStore() *StarsStore {
 	return &StarsStore{states: make(map[int64]*starsState)}
 }

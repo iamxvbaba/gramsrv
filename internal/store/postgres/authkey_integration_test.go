@@ -16,7 +16,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// testPool 连接 TELESRV_TEST_POSTGRES_DSN 指向的库（迁移到最新），未设则跳过。
+// testPool connects to the database named by TELESRV_TEST_POSTGRES_DSN (migrated to latest), and skips when unset.
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
@@ -41,8 +41,8 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// TestAuthKeyStoreRoundTrip 验证 auth_key 落 PG 后，用全新 store 实例（模拟进程重启、无内存缓存）能原样读回。
-// 这是「server 重启保住 auth_key」的直接证明。
+// TestAuthKeyStoreRoundTrip verifies that after an auth_key lands in PG, a fresh store instance (simulating a process restart with no in-memory cache) reads it back unchanged.
+// This is direct proof that "the server restart preserves the auth_key".
 func TestAuthKeyStoreRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -74,7 +74,7 @@ func TestAuthKeyStoreRoundTrip(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if !found {
-		t.Fatal("auth key not found after save (重启后丢失)")
+		t.Fatal("auth key not found after save (lost after restart)")
 	}
 	if got.ID != want.ID || got.Value != want.Value || got.ServerSalt != want.ServerSalt || got.ExpiresAt != want.ExpiresAt {
 		t.Fatalf("round trip mismatch: got salt=%#x expires_at=%d value[:4]=%x, want salt=%#x expires_at=%d value[:4]=%x",

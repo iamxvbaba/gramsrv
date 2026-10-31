@@ -7,8 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// Регрессия: available_min_id 只增不减,导致"隐藏历史期间入群"的成员在频道关闭隐藏历史后
-// 仍永久看到空频道,且重新加入也救不回(upsert 取 GREATEST)。
+// Regression: available_min_id only ever increases, so a member who joined while history was
+// hidden permanently sees an empty channel even after hidden history is disabled, and rejoining
+// cannot recover it either (the upsert takes GREATEST).
 func TestPreHistoryHiddenBoundaryIsReleasedWhenDisabled(t *testing.T) {
 	ctx := context.Background()
 	users := NewUserStore()
@@ -43,7 +44,7 @@ func TestPreHistoryHiddenBoundaryIsReleasedWhenDisabled(t *testing.T) {
 	}
 	seed(3)
 
-	// 开启隐藏历史:新成员只能看到入群之后的消息。
+	// Enable hidden history: new members can only see messages sent after they join.
 	hidden, err := store.SetPreHistoryHidden(ctx, owner.ID, channelID, true)
 	if err != nil || !hidden.PreHistoryHidden {
 		t.Fatalf("enable prehistory hidden = %+v err=%v", hidden, err)
@@ -67,12 +68,12 @@ func TestPreHistoryHiddenBoundaryIsReleasedWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("late history: %v", err)
 	}
-	// 入群服务消息 + 入群后的 2 条种子。
+	// The join service message + the 2 seeded messages after the join.
 	if len(lateHistory.Messages) != 3 {
 		t.Fatalf("late member sees %d messages, want 3 (join service + 2 post-join)", len(lateHistory.Messages))
 	}
 
-	// 关闭隐藏历史:必须归还读边界,否则该成员永久空频道。
+	// Disable hidden history: the read boundary must be returned, otherwise the member permanently sees an empty channel.
 	shown, err := store.SetPreHistoryHidden(ctx, owner.ID, channelID, false)
 	if err != nil || shown.PreHistoryHidden {
 		t.Fatalf("disable prehistory hidden = %+v err=%v", shown, err)
@@ -89,7 +90,7 @@ func TestPreHistoryHiddenBoundaryIsReleasedWhenDisabled(t *testing.T) {
 		t.Fatalf("late member sees %d messages after release, want all %d", len(lateHistory.Messages), len(ownerAll.Messages))
 	}
 
-	// 重新加入同样要归还边界(upsert 是 GREATEST,不显式归零则救不回)。
+	// Rejoining must likewise return the boundary (the upsert takes GREATEST, so without an explicit reset it cannot recover).
 	if _, err := store.LeaveChannel(ctx, channelID, late.ID, 1700000200); err != nil {
 		t.Fatalf("leave: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestPreHistoryHiddenBoundaryIsReleasedWhenDisabled(t *testing.T) {
 		t.Fatalf("rejoined member sees %d messages, want all %d", len(rejoinedHistory.Messages), len(ownerAll.Messages))
 	}
 
-	// 护栏:成员自己"清空历史"产生的边界(history_clear_anchor)不得被群设置改写。
+	// Guard rail: the boundary produced by the member's own "clear history" (history_clear_anchor) must not be rewritten by group settings.
 	if _, err := store.DeleteChannelHistory(ctx, domain.DeleteChannelHistoryRequest{
 		UserID: late.ID, ChannelID: channelID, Date: 1700000400,
 	}); err != nil {

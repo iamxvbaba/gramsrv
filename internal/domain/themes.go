@@ -2,7 +2,7 @@ package domain
 
 import "errors"
 
-// 自定义云主题(account.createTheme 等)相关错误。
+// Errors related to custom cloud themes (account.createTheme etc.).
 var (
 	ErrThemeNotFound      = errors.New("theme not found")
 	ErrThemeInvalid       = errors.New("theme invalid")
@@ -10,8 +10,8 @@ var (
 	ErrThemeFormatInvalid = errors.New("theme format invalid")
 )
 
-// ThemeBaseKind 对应 TL baseTheme 的五个变体(classic/day/night/tinted/arctic)。
-// 客户端按当前 base theme 选取匹配的 ThemeSettings。
+// ThemeBaseKind corresponds to the five variants of TL baseTheme (classic/day/night/tinted/arctic).
+// The client selects the matching ThemeSettings based on the current base theme.
 type ThemeBaseKind string
 
 const (
@@ -22,10 +22,10 @@ const (
 	ThemeBaseArctic  ThemeBaseKind = "arctic"
 )
 
-// ThemeWallpaperSpec 是一份主题设置里的纯渐变墙纸(对应 wallPaperNoFile + wallPaperSettings)。
-// 自定义云主题只用纯色渐变(无下载),与静态目录一致。
+// ThemeWallpaperSpec is a pure-gradient wallpaper within a theme setting (corresponding to wallPaperNoFile + wallPaperSettings).
+// Custom cloud themes use only solid-color gradients (no download), consistent with the static catalog.
 type ThemeWallpaperSpec struct {
-	BackgroundColors []int  `json:"background_colors,omitempty"` // 最多 4 个
+	BackgroundColors []int  `json:"background_colors,omitempty"` // at most 4
 	Intensity        int    `json:"intensity,omitempty"`
 	Rotation         int    `json:"rotation,omitempty"`
 	Blur             bool   `json:"blur,omitempty"`
@@ -34,8 +34,8 @@ type ThemeWallpaperSpec struct {
 	Dark             bool   `json:"dark,omitempty"`
 }
 
-// WallpaperSettings 是频道/私聊 wallpaper 的 domain-only 设置。Has* 字段保留 TL
-// conditional flag 语义，避免黑色(0)这类合法取值在持久化时丢失。
+// WallpaperSettings is the domain-only settings for a channel/private-chat wallpaper. The Has* fields keep TL
+// conditional-flag semantics so that legally valid values like black (0) are not lost on persistence.
 type WallpaperSettings struct {
 	Blur                     bool   `json:"blur,omitempty"`
 	Motion                   bool   `json:"motion,omitempty"`
@@ -68,8 +68,8 @@ func (s WallpaperSettings) Empty() bool {
 		!s.HasEmoticon
 }
 
-// Wallpaper 是频道/私聊当前 wallpaper 的 domain-only 描述。NoFile=true 对应
-// wallPaperNoFile；否则 ID+AccessHash/Slug 引用 catalog/document wallpaper。
+// Wallpaper is the domain-only description of a channel/private-chat's current wallpaper. NoFile=true corresponds to
+// wallPaperNoFile; otherwise ID+AccessHash/Slug references a catalog/document wallpaper.
 type Wallpaper struct {
 	ID         int64             `json:"id,omitempty"`
 	AccessHash int64             `json:"access_hash,omitempty"`
@@ -98,8 +98,8 @@ func WallpaperEqual(a, b *Wallpaper) bool {
 	return *a == *b
 }
 
-// ThemeSettingsSpec 是一个 base theme 下的配色(对应 themeSettings/inputThemeSettings)。
-// BaseTheme 与 AccentColor 必填(TL 编码器要求 base_theme 非空)。
+// ThemeSettingsSpec is the color scheme under one base theme (corresponding to themeSettings/inputThemeSettings).
+// BaseTheme and AccentColor are required (the TL encoder requires base_theme to be non-empty).
 type ThemeSettingsSpec struct {
 	BaseTheme             ThemeBaseKind       `json:"base_theme"`
 	AccentColor           int                 `json:"accent_color"`
@@ -110,8 +110,8 @@ type ThemeSettingsSpec struct {
 	Wallpaper             *ThemeWallpaperSpec `json:"wallpaper,omitempty"`
 }
 
-// Theme 是一份持久化的自定义云主题。document_id 软引用 documents(无硬外键),
-// settings 仅 accent 主题非空;完整 .attheme 主题靠 DocumentID 下载。
+// Theme is a persisted custom cloud theme. document_id soft-references documents (no hard foreign key);
+// settings is non-empty only for accent themes; a full .attheme theme is downloaded via DocumentID.
 type Theme struct {
 	ID            int64
 	AccessHash    int64
@@ -123,10 +123,10 @@ type Theme struct {
 	DocumentID    int64
 	Settings      []ThemeSettingsSpec
 	InstallsCount int
-	CreatedAt     int64 // unix 秒
+	CreatedAt     int64 // unix seconds
 }
 
-// Clone 深拷贝(切片字段),避免内存 store 暴露内部引用。
+// Clone deep-copies the slice fields so the in-memory store never exposes internal references.
 func (t Theme) Clone() Theme {
 	out := t
 	out.Settings = cloneThemeSettings(t.Settings)
@@ -150,22 +150,22 @@ func cloneThemeSettings(in []ThemeSettingsSpec) []ThemeSettingsSpec {
 	return out
 }
 
-// IsCreator 报告 userID 是否为该主题的创建者(决定客户端再次上传走 create 还是 update)。
+// IsCreator reports whether userID created the theme (deciding whether a subsequent client upload uses create or update).
 func (t Theme) IsCreator(userID int64) bool {
 	return t.CreatorUserID != 0 && t.CreatorUserID == userID
 }
 
-// ThemeRef 引用一份主题:按 id+access_hash(inputTheme)或 slug(inputThemeSlug,深链)。
+// ThemeRef references a theme: by id+access_hash (inputTheme) or slug (inputThemeSlug, a deep link).
 type ThemeRef struct {
 	ID         int64
 	AccessHash int64
 	Slug       string
 }
 
-// IsZero 报告该引用是否为空(既无 id 也无 slug)。
+// IsZero reports whether the reference is empty (neither id nor slug).
 func (r ThemeRef) IsZero() bool { return r.ID == 0 && r.Slug == "" }
 
-// ThemeSpec 是 createTheme 的输入。Slug 为空表示由服务端自动分配。
+// ThemeSpec is the input of createTheme. An empty Slug means the server assigns one automatically.
 type ThemeSpec struct {
 	CreatorUserID int64
 	Slug          string
@@ -176,7 +176,7 @@ type ThemeSpec struct {
 	Settings      []ThemeSettingsSpec
 }
 
-// ThemeUpdate 是 updateTheme 的部分更新;nil 字段表示不改。
+// ThemeUpdate is a partial update of updateTheme; a nil field means unchanged.
 type ThemeUpdate struct {
 	Slug       *string
 	Title      *string

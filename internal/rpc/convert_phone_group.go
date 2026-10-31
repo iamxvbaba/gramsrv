@@ -11,21 +11,24 @@ import (
 	"telesrv/internal/sfu"
 )
 
-// ---- TL 转换 ----
+// ---- TL conversion ----
 
-// groupCallUnmutedVideoLimit 是同时开视频的参与者上限（官方经 appConfig
-// groupcall_video_participants_max 下发，缺省 30）。
-// ⚠ unmuted_video_limit 是 TL 非可选 int：留 0 会让两端的视频/屏幕共享闸门
-// `activeVideoSendersCount() >= limit` 恒真——「You can't share your screen in
-// this chat」即此（TDesktop emitShareScreenError / DrKLO ChatObject.canStreamVideo）。
+// groupCallUnmutedVideoLimit is the maximum number of participants with video on at
+// once (official distributes it via appConfig groupcall_video_participants_max,
+// default 30). ⚠ unmuted_video_limit is a non-optional TL int: leaving it 0 makes
+// both ends' video/screen-share gate `activeVideoSendersCount() >= limit` always
+// true -- that is the "You can't share your screen in this chat" case (TDesktop
+// emitShareScreenError / DrKLO ChatObject.canStreamVideo).
 const groupCallUnmutedVideoLimit = 30
 
-// groupCallStreamDCID 是写进 RTMP groupCall.stream_dc_id 的 DC 号。本服务单 DC，
-// 由 router New() 从 cfg.DC 初始化；缺省 2 与 help.getConfig 的 ThisDC 默认一致。
-// 值仅用于客户端拉流 DC 路由标记（telesrv 拉流走同连接），避免 TDesktop fallback 日志。
+// groupCallStreamDCID is the DC number written into the RTMP groupCall.stream_dc_id.
+// This server is single-DC, initialized from cfg.DC by router New(); the default 2
+// matches help.getConfig's ThisDC default. The value is only used as a client
+// stream-pull DC routing marker (telesrv pulls on the same connection), avoiding a
+// TDesktop fallback log.
 var groupCallStreamDCID = 2
 
-// tgGroupCall 把 call 行转为 TL groupCall。
+// tgGroupCall converts a call row into TL groupCall.
 func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool, publicBaseURL ...string) tg.GroupCallClass {
 	if !call.Active() {
 		return &tg.GroupCallDiscarded{ID: call.ID, AccessHash: call.AccessHash, Duration: call.Duration}
@@ -35,8 +38,8 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool, publ
 		CanChangeJoinMuted: canManage,
 		Creator:            call.CreatorUserID == viewerUserID && viewerUserID != 0,
 		Conference:         call.Conference(),
-		// can_start_video：TDesktop 不读；DrKLO 用它喂入会前 dummy self 行的
-		// video_joined。RTC 通话一律放行。
+		// can_start_video: TDesktop does not read it; DrKLO uses it to feed
+		// video_joined for the dummy self row before joining. RTC calls always allow it.
 		CanStartVideo:     true,
 		ID:                call.ID,
 		AccessHash:        call.AccessHash,
@@ -45,18 +48,21 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool, publ
 		Version:           call.Version,
 	}
 	if call.RtmpStream {
-		// RTMP 直播房间：观众经 broadcast 拉流。rtmp_stream 决定 TDesktop 打开
-		// 直播 UI（而非语音聊天）；listeners_hidden 让观众数只用 participants_count
-		// 表达、不逐个下发 listener 行（RTMP 观众通常不进 participant 列表）。
+		// RTMP live room: viewers pull via broadcast. rtmp_stream decides that TDesktop
+		// opens the live UI (rather than a voice chat); listeners_hidden makes the
+		// listener count expressed only via participants_count, without sending
+		// per-listener rows (RTMP viewers usually do not enter the participant list).
 		out.RtmpStream = true
 		out.ListenersHidden = true
-		// stream_dc_id 缺省会让 TDesktop fallback 到 main DC 并打 log；本服务单 DC，
-		// 显式回填本 DC id（拉流仍走同连接，DC shift 只影响客户端路由标记）。
+		// A missing stream_dc_id makes TDesktop fall back to the main DC and log; this
+		// server is single-DC, so explicitly fill in this DC id (stream pulling still
+		// uses the same connection; a DC shift only affects client routing markers).
 		out.SetStreamDCID(groupCallStreamDCID)
 	}
 	if call.ScheduleDate > 0 {
-		// 定时通话：客户端据 schedule_date 显示倒计时面板；schedule_start_subscribed
-		// 是 per-viewer 投影（出站前由 applyScheduleSubscription 回填）。
+		// Scheduled call: the client shows a countdown panel from schedule_date;
+		// schedule_start_subscribed is a per-viewer projection (filled by
+		// applyScheduleSubscription before egress).
 		out.SetScheduleDate(call.ScheduleDate)
 		out.ScheduleStartSubscribed = call.ScheduleStartSubscribed
 	}
@@ -77,9 +83,10 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool, publ
 	return out
 }
 
-// tgGroupCallParticipant 按 viewer 视角转换参与者行（Self flag per-viewer）。
-// join_as 频道身份输出 PeerChannel（客户端按 participant.peer==joinAs() 匹配自己，
-// 输出用户 peer 会让以频道身份入会的本人面板出现 ghost 双行）。
+// tgGroupCallParticipant converts a participant row by viewer (Self flag per-viewer).
+// A join_as channel identity outputs PeerChannel (the client matches itself by
+// participant.peer==joinAs(); outputting a user peer would make the panel of a
+// person joining as a channel show a ghost double row).
 func tgGroupCallParticipant(p domain.GroupCallParticipant, viewerUserID int64) tg.GroupCallParticipant {
 	var peer tg.PeerClass = &tg.PeerUser{UserID: p.UserID}
 	if p.JoinAsChannelID != 0 {
@@ -92,14 +99,14 @@ func tgGroupCallParticipant(p domain.GroupCallParticipant, viewerUserID int64) t
 		Self:          p.UserID == viewerUserID,
 		Peer:          peer,
 		Date:          p.JoinDate,
-		Source:        int(int32(uint32(p.SSRC))), // uint32 按位转 int32（join JSON 同款语义）
+		Source:        int(int32(uint32(p.SSRC))), // uint32 bit-reinterpreted to int32 (same semantics as the join JSON)
 	}
 	if p.Left {
-		// left 行不再携带 can_self_unmute 语义。
+		// A left row no longer carries can_self_unmute semantics.
 		out.CanSelfUnmute = false
 	} else {
-		// video_joined：RTC 入会一律置位。self 行缺它会让 TDesktop 置
-		// _videoIsWorking=false 并强制关掉本端摄像头/屏幕共享。
+		// video_joined: always set for an RTC join. Missing it on the self row makes
+		// TDesktop set _videoIsWorking=false and force off this end's camera / screen share.
 		out.VideoJoined = true
 	}
 	if p.ActiveDate > 0 {
@@ -112,9 +119,10 @@ func tgGroupCallParticipant(p domain.GroupCallParticipant, viewerUserID int64) t
 	if p.RaiseHandRating > 0 {
 		out.SetRaiseHandRating(p.RaiseHandRating)
 	}
-	// 视频/屏幕共享：Active 且未离会才输出字段（video_stopped ⇒ 字段消失；
-	// paused ⇒ 字段保留但置 paused flag）。min 行（overrides 推送）不会走到
-	// 这里改写 videoParams——applyParticipantOverride 只动 muted/volume。
+	// Video/screen share: output the field only when Active and not left
+	// (video_stopped ⇒ the field disappears; paused ⇒ the field remains with the
+	// paused flag set). A min row (overrides push) does not reach here to rewrite
+	// videoParams -- applyParticipantOverride only touches muted/volume.
 	if !p.Left {
 		if st, ok := decodeVideoState(p.VideoJSON); ok && st.Active {
 			out.SetVideo(*tgParticipantVideo(st, false))
@@ -134,9 +142,11 @@ func tgGroupCallParticipants(rows []domain.GroupCallParticipant, viewerUserID in
 	return out
 }
 
-// applyParticipantOverride 把 setter 的 per-viewer 覆盖（本地静音/音量）叠加到推给
-// 该 setter 的 participant 行上，并置 min flag——min 告诉客户端「本行的部分字段
-// 不可全信，按本地状态保留」，防止 setter 其它设备用此行覆盖本地 muted/volume。
+// applyParticipantOverride overlays the setter's per-viewer override (local mute /
+// volume) onto the participant row pushed to that setter and sets the min flag -- min
+// tells the client "part of this row's fields cannot be fully trusted, keep the local
+// state", preventing the setter's other devices from overwriting local muted/volume
+// with this row.
 func applyParticipantOverride(p tg.GroupCallParticipant, ov domain.GroupCallParticipantOverride) tg.GroupCallParticipant {
 	p.SetMin(true)
 	if ov.MutedByYou {
@@ -148,9 +158,10 @@ func applyParticipantOverride(p tg.GroupCallParticipant, ov domain.GroupCallPart
 	return p
 }
 
-// inputGroupCallRef 解析 InputGroupCallClass 的三个变体。
-// slug / inviteMessage 变体属 conference 路径（范围外），返回 GROUPCALL_INVALID
-// 而非类型断言 panic——TDesktop conference 迁移会真实发出 inputGroupCallSlug。
+// inputGroupCallRef parses the three variants of InputGroupCallClass. The slug /
+// inviteMessage variants belong to the conference path (out of scope); return
+// GROUPCALL_INVALID rather than a type-assertion panic -- TDesktop conference
+// migration really does send inputGroupCallSlug.
 func inputGroupCallRef(call tg.InputGroupCallClass) (callID, accessHash int64, err error) {
 	switch v := call.(type) {
 	case *tg.InputGroupCall:
@@ -160,10 +171,10 @@ func inputGroupCallRef(call tg.InputGroupCallClass) (callID, accessHash int64, e
 	}
 }
 
-// ---- join JSON（上行）----
+// ---- join JSON (uplink) ----
 
-// groupCallJoinPayload 是 phone.joinGroupCall.params 的上行 JSON
-// （tgcalls GroupJoinPayloadInternal::serialize 的产物，逐字段对应）。
+// groupCallJoinPayload is the uplink JSON of phone.joinGroupCall.params
+// (the product of tgcalls GroupJoinPayloadInternal::serialize, field-for-field).
 type groupCallJoinPayload struct {
 	SSRC         int32                  `json:"ssrc"`
 	Ufrag        string                 `json:"ufrag"`
@@ -183,9 +194,10 @@ type groupCallSsrcGroup struct {
 	Sources   []int64 `json:"sources"`
 }
 
-// parseGroupCallJoinPayload 解析并校验上行 JSON；解析必须容忍多余字段。
-// ssrc-groups（视频 simulcast/RTX 源组）无论摄像头开关都会随主 join 携带，
-// 必须存档：等 video_stopped=false 时原样回放进 participant.video。
+// parseGroupCallJoinPayload parses and validates the uplink JSON; parsing must
+// tolerate extra fields. ssrc-groups (video simulcast/RTX source groups) are carried
+// with the main join regardless of the camera toggle and must be archived: replay
+// them verbatim into participant.video when video_stopped=false.
 func parseGroupCallJoinPayload(data string) (sfu.ClientOffer, int64, error) {
 	var payload groupCallJoinPayload
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
@@ -195,7 +207,7 @@ func parseGroupCallJoinPayload(data string) (sfu.ClientOffer, int64, error) {
 		return sfu.ClientOffer{}, 0, fmt.Errorf("join payload missing ssrc/ufrag/pwd")
 	}
 	offer := sfu.ClientOffer{
-		// ssrc 是把 uint32 按位转 int32 的有符号值，还原为 uint32。
+		// ssrc is the signed value of a uint32 bit-reinterpreted to int32; restore it to uint32.
 		AudioSSRC: uint32(payload.SSRC),
 		Ufrag:     payload.Ufrag,
 		Pwd:       payload.Pwd,
@@ -212,7 +224,7 @@ func parseGroupCallJoinPayload(data string) (sfu.ClientOffer, int64, error) {
 	for _, g := range payload.SsrcGroups {
 		sg := sfu.SsrcGroup{Semantics: g.Semantics, Sources: make([]uint32, 0, len(g.Sources))}
 		for _, src := range g.Sources {
-			// sources 同样是 int32 位重解释。
+			// sources is likewise an int32 bit reinterpretation.
 			sg.Sources = append(sg.Sources, uint32(int32(src)))
 		}
 		offer.SsrcGroups = append(offer.SsrcGroups, sg)
@@ -220,17 +232,19 @@ func parseGroupCallJoinPayload(data string) (sfu.ClientOffer, int64, error) {
 	return offer, int64(offer.AudioSSRC), nil
 }
 
-// ---- participant 视频内部状态（video_json / presentation_json 列）----
+// ---- participant video internal state (video_json / presentation_json columns) ----
 
-// participantVideoState 是存进 video_json/presentation_json 的内部快照（非 wire
-// 格式）：endpoint 由服务端铸造且必须与 join 响应 video.endpoint 逐字节一致；
-// source_groups 是上行 ssrc-groups 的原样存档；Active 决定 TL 字段是否出现。
+// participantVideoState is the internal snapshot stored into
+// video_json/presentation_json (not the wire format): endpoint is minted by the
+// server and must match the join response's video.endpoint byte-for-byte;
+// source_groups is the verbatim archive of the uplink ssrc-groups; Active decides
+// whether the TL field appears.
 type participantVideoState struct {
 	Endpoint     string               `json:"endpoint"`
 	SourceGroups []groupCallSsrcGroup `json:"source_groups,omitempty"`
 	Active       bool                 `json:"active"`
 	Paused       bool                 `json:"paused,omitempty"`
-	// AudioSource 仅 presentation：屏幕实例自己的音频 ssrc（int32 位重解释存原值）。
+	// AudioSource is presentation only: the screen instance's own audio ssrc (stored as the raw value with the int32 bit reinterpretation).
 	AudioSource int64 `json:"audio_source,omitempty"`
 }
 
@@ -253,9 +267,10 @@ func decodeVideoState(raw []byte) (participantVideoState, bool) {
 	return st, true
 }
 
-// tgParticipantVideo 把内部状态转为 TL groupCallParticipantVideo（Active 才输出）。
-// withAudioSource 仅 presentation 置 true（DrKLO 用 audio_source 做屏幕 mySource，
-// 缺失会退化取首个视频 ssrc 致 checkGroupCall 死循环重建）。
+// tgParticipantVideo converts the internal state into TL groupCallParticipantVideo
+// (only when Active). withAudioSource is true only for presentation (DrKLO uses
+// audio_source as the screen mySource; missing it degrades to the first video ssrc
+// and causes checkGroupCall to rebuild in an infinite loop).
 func tgParticipantVideo(st participantVideoState, withAudioSource bool) *tg.GroupCallParticipantVideo {
 	out := &tg.GroupCallParticipantVideo{
 		Paused:   st.Paused,
@@ -274,8 +289,9 @@ func tgParticipantVideo(st participantVideoState, withAudioSource bool) *tg.Grou
 	return out
 }
 
-// groupCallSsrcGroupsFromOffer 把解析后的源组转回存档形态（保持 int32 位重解释
-// 的有符号写法，与上行 JSON 一致）。
+// groupCallSsrcGroupsFromOffer converts the parsed source groups back to the archive
+// shape (keeping the signed int32 bit-reinterpretation, consistent with the uplink
+// JSON).
 func groupCallSsrcGroupsFromOffer(offer sfu.ClientOffer) []groupCallSsrcGroup {
 	out := make([]groupCallSsrcGroup, 0, len(offer.SsrcGroups))
 	for _, g := range offer.SsrcGroups {
@@ -288,8 +304,9 @@ func groupCallSsrcGroupsFromOffer(offer sfu.ClientOffer) []groupCallSsrcGroup {
 	return out
 }
 
-// groupCallEndpointID 铸造 camera/presentation 的 endpoint 串：call 内唯一
-// （ssrc 有活跃唯一索引兜底）、同 participant 两路互异、rejoin 换 ssrc 自然换串。
+// groupCallEndpointID mints the camera/presentation endpoint string: unique within
+// the call (ssrc has an active unique index as a fallback), distinct between the two
+// paths of the same participant, and naturally changed by a rejoin with a new ssrc.
 func groupCallEndpointID(kind sfu.EndpointKind, audioSSRC uint32) string {
 	if kind == sfu.EndpointPresentation {
 		return fmt.Sprintf("presentation-%d", audioSSRC)
@@ -297,10 +314,11 @@ func groupCallEndpointID(kind sfu.EndpointKind, audioSSRC uint32) string {
 	return fmt.Sprintf("audio-%d", audioSSRC)
 }
 
-// ---- 下行 JSON（updateGroupCallConnection.params）----
+// ---- downlink JSON (updateGroupCallConnection.params) ----
 
-// videoRtcpFbs 是视频 codec 的反馈能力表（与客户端本地 addDefaultFeedbackParams
-// 一致：goog-remb/transport-cc/ccm fir/nack/nack pli）。
+// videoRtcpFbs is the feedback capability table for the video codec (consistent with
+// the client's local addDefaultFeedbackParams:
+// goog-remb/transport-cc/ccm fir/nack/nack pli).
 func videoRtcpFbs() []map[string]any {
 	return []map[string]any{
 		{"type": "goog-remb"},
@@ -311,17 +329,22 @@ func videoRtcpFbs() []map[string]any {
 	}
 }
 
-// buildGroupCallConnectionParams 组装下行 transport JSON（契约 schema 逐字段照抄，
-// 解析方为 tgcalls GroupJoinPayloadInternal/GroupNetworkManager）。要点：
-//   - transport.fingerprints.setup="active"：SFU 是 DTLS 主动握手方；
-//   - candidates 全部字段都是字符串（数值也要写成字符串）；
-//   - video 节即使纯收看也必须存在（缺失则客户端不建任何视频通道）；
-//   - video.endpoint 是**本参与者自己**的视频 endpoint 标识，必须与日后写进其
-//     participant.video.endpoint 的串逐字节一致（客户端靠它做自我过滤）；
-//   - payload-types 照抄客户端本地确定性分配（VP8=100/rtx101、VP9=102/rtx103，
-//     PT 由客户端自配，本表主要给其它平台客户端消费）；不含 H264 ⇒ 全网 VP8 缺省；
-//   - rtp-hdrexts 照抄客户端硬编码 id 表（1=audio-level、2=abs-send-time、
-//     3=transport-wide-cc、13=video-orientation）。
+// buildGroupCallConnectionParams assembles the downlink transport JSON (the contract
+// schema copied field-for-field; parsed by tgcalls GroupJoinPayloadInternal/
+// GroupNetworkManager). Key points:
+//   - transport.fingerprints.setup="active": the SFU is the DTLS active handshaker;
+//   - all candidates fields are strings (numeric values are written as strings too);
+//   - the video section must exist even for pure viewing (missing it means the client
+//     builds no video channel at all);
+//   - video.endpoint is **this participant's own** video endpoint identity and must
+//     match byte-for-byte the string later written into its
+//     participant.video.endpoint (the client uses it for self filtering);
+//   - payload-types copies the client's local deterministic assignment (VP8=100/
+//     rtx101, VP9=102/rtx103; the PT is configured by the client itself and this
+//     table is mainly consumed by clients on other platforms); no H264 ⇒ VP8 default
+//     network-wide;
+//   - rtp-hdrexts copies the client's hardcoded id table (1=audio-level,
+//     2=abs-send-time, 3=transport-wide-cc, 13=video-orientation).
 func buildGroupCallConnectionParams(answer sfu.ServerAnswer, endpoint string) (string, error) {
 	candidates := make([]map[string]any, 0, len(answer.Candidates))
 	for i, c := range answer.Candidates {

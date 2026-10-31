@@ -43,7 +43,7 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		_ = tx.Rollback(ctx)
 	}()
 
-	// advisory lock 串行化与会话对端的并发写，须在行锁前获取，消除 AB-BA 死锁。
+	// The advisory lock serializes concurrent writes with the conversation peer and must be acquired before row locks, eliminating the AB-BA deadlock.
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID, req.Peer.ID); err != nil {
 		return res, fmt.Errorf("lock edit message users: %w", err)
 	}
@@ -67,7 +67,7 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	if err != nil {
 		return res, fmt.Errorf("decode target rich message: %w", err)
 	}
-	// 空文本只在目标消息携带媒体/rich（或本次写入媒体/rich）时合法（清空 caption）。
+	// Empty text is only legal when the target message carries media/rich (or this write adds media/rich) (clearing the caption).
 	if req.Message == "" && req.Media == nil && (target.MediaJson == "" || target.MediaJson == "{}") {
 		if req.SetRichMessage {
 			if req.RichMessage.IsZero() {
@@ -111,8 +111,9 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		return res, domain.ErrMessageIDInvalid
 	}
 	if req.WebPageResolve {
-		// 链接预览就地替换：仅换 media（不碰 body/entities/edit_date，故不标记「已编辑」），
-		// 逐 box reserve 账号 pts + 追加 web_page 事件 + dispatch。幂等守卫见下。
+		// Link preview replaced in place: only media is swapped (body/entities/edit_date are not
+		// touched, so it is not marked "edited"); per box it reserves account pts + appends a
+		// web_page event + dispatches. See below for the idempotency guard.
 		targetMedia, err := decodeMessageMedia(target.MediaJson)
 		if err != nil {
 			return res, fmt.Errorf("decode target media for web page resolve: %w", err)
@@ -149,8 +150,9 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 			if err != nil {
 				return res, err
 			}
-			// box 行取自 media 替换前：用解析结果与新 pts 覆盖（链接预览不改文本/实体，
-			// 故共享媒体索引无需重建）。
+			// The box row is taken from before the media replacement: override it with the resolved
+			// result and the new pts (a link preview does not change text/entities, so the shared
+			// media index does not need rebuilding).
 			msg.Media = req.Media
 			msg.Pts = pts
 			event := domain.UpdateEvent{
@@ -196,8 +198,8 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 		return res, fmt.Errorf("update private message edit: %w", err)
 	}
 	if req.Media != nil {
-		// 媒体快照整体替换（live location 续报/停止）；先于 box 行编辑执行，
-		// 让 UpdateMessageBoxEdit RETURNING 直接带回新媒体。
+		// Media snapshot replaced wholesale (live location continuation/stop); executed before the
+		// box row edit, so UpdateMessageBoxEdit RETURNING brings back the new media directly.
 		mediaJSON, err := encodeMessageMedia(req.Media)
 		if err != nil {
 			return res, fmt.Errorf("encode edit message media: %w", err)
@@ -239,7 +241,8 @@ WHERE message_sender_id = $1 AND private_message_id = $2`, messageSenderID, targ
 		if err != nil {
 			return res, err
 		}
-		// 共享媒体索引(0118):编辑可换媒体、也可改文本链接实体 → 按编辑后有效媒体+实体逐 box 重建。
+		// Shared media index (0118): an edit can swap media or change text/link entities → rebuild
+		// per box from the effective media+entities after the edit.
 		if err := replaceMessageBoxMediaIndexTx(ctx, tx, msg.OwnerUserID, msg.Peer.ID, msg.ID, msg.Date, msg.Media, msg.Entities); err != nil {
 			return res, err
 		}

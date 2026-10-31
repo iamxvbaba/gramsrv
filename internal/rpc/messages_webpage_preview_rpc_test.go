@@ -14,8 +14,9 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestWebPagePreviewMedia 验证 getWebPagePreview 的 media 决策：done 卡片→messageMediaWebPage，
-// 无链接/解析失败/非 done 一律 messageMediaEmpty（绝不返回 pending、绝不报错）。
+// TestWebPagePreviewMedia verifies getWebPagePreview's media decision: a done card ->
+// messageMediaWebPage; no link / resolution failure / non-done -> messageMediaEmpty (never returns
+// pending, never errors).
 func TestWebPagePreviewMedia(t *testing.T) {
 	ctx := context.Background()
 	urlEntities := []tg.MessageEntityClass{&tg.MessageEntityURL{Offset: 0, Length: 9}} // "https://x"

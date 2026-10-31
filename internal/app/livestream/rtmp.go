@@ -10,8 +10,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// rtmpHandler 是单条 RTMP 连接的回调：publish 时用 stream key 鉴权并绑定
-// channel，media tag 直通 FLV → ffmpeg。一条连接只允许一路 publish。
+// rtmpHandler is the callback for a single RTMP connection: on publish it authenticates
+// with the stream key and binds the channel; media tags pass straight through FLV → ffmpeg.
+// A connection allows only one publish.
 type rtmpHandler struct {
 	rtmp.DefaultHandler
 	svc    *Service
@@ -36,7 +37,7 @@ func (h *rtmpHandler) OnSetDataFrame(timestamp uint32, data *rtmpmsg.NetStreamSe
 	if h.stream == nil {
 		return nil
 	}
-	// onMetaData 原样透传给 ffmpeg（可选信息，写失败不断流）。
+	// onMetaData is passed through to ffmpeg verbatim (optional info; a write failure does not break the stream).
 	_ = h.stream.writeTag(18, timestamp, data.Payload)
 	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// SetActiveCall 写入/清除 channel 行上的活跃群通话关联。
+// SetActiveCall writes/clears the active group-call association on the channel row.
 func (s *ChannelStore) SetActiveCall(_ context.Context, channelID, callID, callAccessHash int64, notEmpty bool) (domain.Channel, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -21,12 +21,12 @@ func (s *ChannelStore) SetActiveCall(_ context.Context, channelID, callID, callA
 	return ch, nil
 }
 
-// AppendCallServiceMessage 生成群通话服务消息（带频道 pts）。
+// AppendCallServiceMessage generates a group-call service message (with the channel pts).
 func (s *ChannelStore) AppendCallServiceMessage(_ context.Context, channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error) {
 	return s.appendServiceMessageLocked(channelID, senderUserID, date, action)
 }
 
-// AppendStarGiftAdminLog 记录频道 Star gift 到 Recent Actions，不进入频道消息历史。
+// AppendStarGiftAdminLog records a channel Star gift in Recent Actions without entering the channel message history.
 func (s *ChannelStore) AppendStarGiftAdminLog(_ context.Context, channelID, senderUserID int64, savedID int64, date int, action domain.ChannelMessageAction) error {
 	if channelID == 0 || senderUserID == 0 || savedID <= 0 {
 		return domain.ErrChannelInvalid

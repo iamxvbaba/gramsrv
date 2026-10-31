@@ -1,13 +1,15 @@
-// Package systemidentity 把管理面板 Server Settings → Server identity 里配置的
-// 服务器身份应用到正在运行的主服务器：官方系统账号 (777000) 的展示名，以及
-// 配置了图标时它的头像。
+// Package systemidentity applies the server identity configured in the admin panel's
+// Server Settings → Server identity to the running main server: the official system
+// account's (777000) display name, and, when an icon is configured, its avatar.
 //
-// 管理二进制与主服务器二进制是两个进程，只通过磁盘上的 identity.json 共享状态
-// （见 internal/identity 包注释）。因此主服务器不能靠一次启动读取就完事：名称与
-// 图标必须在运行期持续跟随面板改动，否则 operator 保存后要重启服务器才生效。
-// Watcher 以固定间隔轮询 identity.Store，名称与图标分别比较，只对真正变化的那一项
-// 重新应用——名称变化不重建头像，图标变化才重建。登录通知模板本来就在每次发送时
-// 实时读取，不走这里。
+// The admin binary and the main server binary are two processes that share state only
+// through identity.json on disk (see the internal/identity package comment). The main
+// server therefore cannot settle for a single read at startup: the name and icon must keep
+// following panel changes at runtime, otherwise an operator's save would not take effect
+// until the server restarts. The Watcher polls identity.Store at a fixed interval,
+// comparing name and icon separately and re-applying only the one that actually changed —
+// a name change does not rebuild the avatar, only an icon change does. The login
+// notification template already reads live on every send and does not go through here.
 package systemidentity
 
 import (
@@ -21,17 +23,18 @@ import (
 	"telesrv/internal/identity"
 )
 
-// AvatarSeeder 用 operator 的图标字节（空表示回退到内置默认头像）播种官方系统
-// 账号的头像，并把它设为当前头像。通常绑定到 files 服务上的
-// botavatars.SeedOfficialSystemAvatar。
+// AvatarSeeder seeds the official system account's avatar with the operator's icon bytes
+// (empty means fall back to the built-in default avatar) and sets it as the current
+// avatar. Usually bound to botavatars.SeedOfficialSystemAvatar on the files service.
 type AvatarSeeder func(ctx context.Context, icon []byte, now int64) (bool, error)
 
-// Apply 读取已存储的身份并一次性投影到运行中的服务器：777000 展示名（经 domain），
-// 以及（提供了 seeder 时）官方系统账号头像。启动阶段调用一次；运行期增量更新交给
-// Watcher。
+// Apply reads the stored identity and projects it onto the running server in one pass:
+// the 777000 display name (via domain), and the official system account avatar (when a
+// seeder is provided). Called once during startup; incremental runtime updates are left
+// to the Watcher.
 //
-// 名称即使 seeder 失败也已写入——名称投影是廉价且独立的一步，不应因为头像播种
-// 出错而一并丢失。
+// The name is written even if the seeder fails — the name projection is a cheap,
+// independent step and should not be lost along with an avatar-seeding error.
 func Apply(ctx context.Context, store *identity.Store, seedAvatar AvatarSeeder, now int64) (identity.Info, error) {
 	info, err := store.Get()
 	if err != nil {
@@ -57,18 +60,20 @@ func seedAvatarFromStore(ctx context.Context, store *identity.Store, seedAvatar 
 	return nil
 }
 
-// Watcher 轮询 identity.Store，名称或图标变化时重新应用。名称变化只更新展示名，
-// 图标变化才重建 777000 头像（含移除图标后回退到内置默认头像）。
+// Watcher polls identity.Store and re-applies when the name or icon changes. A name change
+// only updates the display name, while an icon change rebuilds the 777000 avatar (including
+// falling back to the built-in default avatar after the icon is removed).
 type Watcher struct {
 	Store      *identity.Store
 	SeedAvatar AvatarSeeder
-	// Interval 是轮询间隔，<= 0 时默认 5 秒。
+	// Interval is the polling interval; <= 0 defaults to 5 seconds.
 	Interval time.Duration
 	Logger   *zap.Logger
 }
 
-// Run 轮询直到 ctx 被取消。启动时先记下当前名称与图标指纹再进入轮询：启动阶段
-// 已经应用过一次身份（见 cmd/telesrv/main.go），这里只响应此后的变化。
+// Run polls until ctx is cancelled. It records the current name and icon fingerprint
+// before entering the poll loop: startup already applied the identity once (see
+// cmd/telesrv/main.go), so this only responds to changes from then on.
 func (w *Watcher) Run(ctx context.Context) {
 	interval := w.Interval
 	if interval <= 0 {

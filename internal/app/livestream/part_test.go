@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// readTLString 复刻 tgcalls readSerializedString，用于反解 packUnifiedPart 的头。
+// readTLString replicates tgcalls readSerializedString, used to decode the header of packUnifiedPart.
 func readTLString(data []byte, off *int) (string, bool) {
 	if *off >= len(data) {
 		return "", false
@@ -41,11 +41,12 @@ func readI32(data []byte, off *int) (int32, bool) {
 	return v, true
 }
 
-// TestPackUnifiedPartMatchesTgcallsHeader 校验打包头逐字段可被 tgcalls
-// consumeVideoStreamInfo 解出：签名、容器名、activeMask、单 event(endpoint="unified")，
-// 且 event.offset=0 对应紧随其后的 TS 数据。
+// TestPackUnifiedPartMatchesTgcallsHeader verifies that each field of the packed header can
+// be decoded by tgcalls consumeVideoStreamInfo: signature, container name, activeMask, single
+// event (endpoint="unified"), and that event.offset=0 corresponds to the TS data that
+// immediately follows.
 func TestPackUnifiedPartMatchesTgcallsHeader(t *testing.T) {
-	ts := []byte{0x47, 0x40, 0x00, 0x10, 0xDE, 0xAD, 0xBE, 0xEF} // 伪 TS 数据
+	ts := []byte{0x47, 0x40, 0x00, 0x10, 0xDE, 0xAD, 0xBE, 0xEF} // fake TS data
 	part := packUnifiedPart(ts)
 
 	off := 0
@@ -78,13 +79,13 @@ func TestPackUnifiedPartMatchesTgcallsHeader(t *testing.T) {
 	if rotation != 0 || extra != 0 {
 		t.Fatalf("rotation/extra = %d/%d, want 0/0", rotation, extra)
 	}
-	// 头之后（event.offset=0 起）应为原始 TS 数据。
+	// After the header (from event.offset=0) should be the raw TS data.
 	if got := part[off:]; string(got) != string(ts) {
 		t.Fatalf("payload = %x, want %x", got, ts)
 	}
 }
 
-// TestAppendTLStringPadding 校验短/长字符串都补齐到 4 字节边界。
+// TestAppendTLStringPadding verifies that both short and long strings are padded to a 4-byte boundary.
 func TestAppendTLStringPadding(t *testing.T) {
 	for _, s := range []string{"", "a", "ab", "abc", "mpegts", "unified"} {
 		out := appendTLString(nil, s)

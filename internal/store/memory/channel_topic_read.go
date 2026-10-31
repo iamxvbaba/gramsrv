@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// memoryTopicRead 是单个 (channel,user,topic) 的已读水位。
+// memoryTopicRead is the read watermark for a single (channel,user,topic).
 type memoryTopicRead struct {
 	ReadInbox  int
 	ReadOutbox int
@@ -23,9 +23,10 @@ func topicReadFallbackInboxMem(topicID, availableMinID int) int {
 	return base
 }
 
-// channelMessageInTopicMem 判断消息是否属于某 topic，与 postgres channelTopicMessageCond 严格对齐：
-// 普通 topic 仅 reply_to_top_id==topicID（不含 root 服务消息，其 reply_to_top_id=0）；
-// General(=1) 归并 reply_to_top_id∈{0,1}。
+// channelMessageInTopicMem reports whether a message belongs to a topic, strictly aligned
+// with postgres channelTopicMessageCond: an ordinary topic matches only
+// reply_to_top_id==topicID (excluding the root service message, whose reply_to_top_id=0);
+// General(=1) merges reply_to_top_id in {0,1}.
 func (s *ChannelStore) channelMessageInTopicLocked(channelID int64, msg domain.ChannelMessage, topicID int) bool {
 	top := 0
 	if msg.ReplyTo != nil {
@@ -35,7 +36,7 @@ func (s *ChannelStore) channelMessageInTopicLocked(channelID int64, msg domain.C
 		if top != domain.ForumGeneralTopicID && top != 0 {
 			return false
 		}
-		// 排除其它话题的根服务消息（reply_to_top_id=0 但 id 是某话题根，不属于 General）。
+		// Exclude root service messages of other topics (reply_to_top_id=0 but the id is the root of some topic, so not part of General).
 		if _, isRoot := s.topics[channelID][msg.ID]; isRoot {
 			return false
 		}
@@ -84,8 +85,9 @@ func (s *ChannelStore) channelTopicTopMessageIDLocked(channelID int64, topicID, 
 	return maxID
 }
 
-// channelTopicUnreadCountLocked 现算某 topic 对 viewer 的未读消息数（per-topic 水位 readMaxID）。
-// 与 postgres populateForumTopicUnreadCounts 同口径：reply_to_top_id==topicID、id>water、sender≠viewer。
+// channelTopicUnreadCountLocked computes, on the fly, the viewer's unread message count in
+// a topic (per-topic watermark readMaxID). Same convention as postgres
+// populateForumTopicUnreadCounts: reply_to_top_id==topicID, id>water, sender!=viewer.
 func (s *ChannelStore) channelTopicUnreadCountLocked(viewerUserID, channelID int64, topicID, readMaxID int) int {
 	unread := 0
 	for _, msg := range s.messages[channelID] {
@@ -102,7 +104,7 @@ func (s *ChannelStore) channelTopicUnreadCountLocked(viewerUserID, channelID int
 	return unread
 }
 
-// ReadChannelTopicHistory 推进 viewer 在 forum 单话题的 per-topic 已读水位（不碰频道级）。
+// ReadChannelTopicHistory advances the viewer's per-topic read watermark for a single forum topic (without touching the channel level).
 func (s *ChannelStore) ReadChannelTopicHistory(_ context.Context, req domain.ReadChannelTopicHistoryRequest) (domain.ReadChannelTopicHistoryResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || req.TopicID <= 0 {
 		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelInvalid
@@ -171,7 +173,7 @@ func (s *ChannelStore) advanceTopicReadOutboxLocked(channelID, readerUserID int6
 	return updates
 }
 
-// GeneralForumTopic 现算 General 话题（id=1）对 viewer 的状态（per-topic 水位，排除其它话题根消息）。
+// GeneralForumTopic computes, on the fly, the viewer's state for the General topic (id=1) (per-topic watermark, excluding other topics' root messages).
 func (s *ChannelStore) GeneralForumTopic(_ context.Context, viewerUserID, channelID int64) (domain.ChannelForumTopic, error) {
 	if viewerUserID == 0 || channelID == 0 {
 		return domain.ChannelForumTopic{}, domain.ErrChannelInvalid

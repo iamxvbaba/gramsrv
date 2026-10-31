@@ -1,8 +1,9 @@
--- 0218 необратима: активы ушли в vault с записью в журнале происхождения, а
--- погашенные username-строки и профильные фото потеряли исходные значения флагов
--- и sort_order-проекции. Восстановление означало бы воскресить либо актив, либо
--- «занятое» имя у удалённого аккаунта, что прямо противоречит цели миграции.
--- Как и 0217, откат отклоняется, а не чинит данные выдуманными значениями.
+-- 0218 is irreversible: assets went to the vault with a provenance-journal entry,
+-- and the retired username rows and profile photos lost their original flag values
+-- and sort_order projections. Restoring would mean resurrecting either an asset or a
+-- "taken" name for a deleted account, which directly contradicts the migration's
+-- goal. As with 0217, the rollback is refused rather than inventing values to patch
+-- the data.
 DO $$
 BEGIN
     IF EXISTS (

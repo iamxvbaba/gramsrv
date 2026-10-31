@@ -9,17 +9,21 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessageStoreBidirectionalConcurrencyNoDeadlock 验证 watermark/dialog 死锁修复（advisory lock）。
+// TestMessageStoreBidirectionalConcurrencyNoDeadlock verifies the watermark/dialog deadlock fix (advisory lock).
 //
-// 背景：send/read/edit/delete 在一个事务内会按业务顺序锁住收发双方的 user_update_watermarks 与
-// channel/private dialog 行。A→B 与 B→A 反向并发时，两个事务以相反顺序竞争同一对用户的这些行
-// （watermark[A]→watermark[B] vs watermark[B]→watermark[A]，dialog(A,B)→dialog(B,A) vs 反向），
-// 形成 AB-BA 死锁——PostgreSQL 会检测并 abort 其中一个事务（SQLSTATE 40P01），表现为操作返回错误。
+// Background: send/read/edit/delete within one transaction lock the sender's and recipient's
+// user_update_watermarks and channel/private dialog rows in business order. During concurrent
+// reverse A→B and B→A, the two transactions contend for these rows of the same pair of users in
+// opposite order (watermark[A]→watermark[B] vs watermark[B]→watermark[A], dialog(A,B)→dialog(B,A)
+// vs reverse), forming an AB-BA deadlock — PostgreSQL detects and aborts one of them (SQLSTATE
+// 40P01), surfacing as an operation error.
 //
-// 修复：每个写事务在任何行锁之前，用事务级 advisory lock 按 user_id 升序锁住涉及的用户
-// （lockUsersForUpdate），把同一对用户的并发写事务串行化。advisory 与行锁处于独立锁空间且升序获取，
-// 既不与行锁交叉成新死锁，也消除了 watermark 与 dialog 的 AB-BA。本测试在高并发反向负载下应
-// 全部成功、零错误；若死锁回归，会以 40P01 错误形式被捕获。
+// Fix: every write transaction, before any row lock, takes a transaction-level advisory lock on
+// the users involved in ascending user_id order (lockUsersForUpdate), serializing concurrent write
+// transactions for the same pair of users. The advisory and row locks live in separate lock spaces
+// and are acquired in ascending order, so they neither cross with row locks into a new deadlock nor
+// leave the watermark/dialog AB-BA. Under a high-concurrency reverse load this test should succeed
+// entirely with zero errors; if the deadlock regresses it will be caught as a 40P01 error.
 func TestMessageStoreBidirectionalConcurrencyNoDeadlock(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -57,7 +61,8 @@ func TestMessageStoreBidirectionalConcurrencyNoDeadlock(t *testing.T) {
 		return rid
 	}
 
-	// 预热：双向各发若干条，建立双向 dialog 与未读历史，使后续 read 真正推进 watermark（命中行锁）。
+	// Warm-up: send several messages in each direction, establishing bidirectional dialogs and
+	// unread history so later reads actually advance the watermark (hitting the row lock).
 	for i := 0; i < 4; i++ {
 		if _, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{SenderUserID: a.ID, RecipientUserID: b.ID, RandomID: nextRID(), Message: "warmup a->b", Date: date}); err != nil {
 			t.Fatalf("warmup a->b: %v", err)
@@ -67,7 +72,7 @@ func TestMessageStoreBidirectionalConcurrencyNoDeadlock(t *testing.T) {
 		}
 	}
 
-	// 反向并发：每轮同时发起 A→B send、B→A send、A 读 B、B 读 A，goroutine 一起抢同一对用户的行锁。
+	// Reverse concurrency: each round simultaneously issues A→B send, B→A send, A reads B, B reads A, with the goroutines contending together for the same pair of users' row locks.
 	const rounds = 80
 	var wg sync.WaitGroup
 	errCh := make(chan error, rounds*4)
@@ -110,11 +115,11 @@ func TestMessageStoreBidirectionalConcurrencyNoDeadlock(t *testing.T) {
 	for e := range errCh {
 		failed++
 		if failed <= 5 {
-			t.Errorf("反向并发操作失败（疑似死锁回归）: %v", e)
+			t.Errorf("reverse concurrent operation failed (suspected deadlock regression): %v", e)
 		}
 	}
 	if failed > 0 {
-		t.Fatalf("%d/%d 反向并发操作失败", failed, rounds*4)
+		t.Fatalf("%d/%d reverse concurrent operations failed", failed, rounds*4)
 	}
 }
 
@@ -210,10 +215,10 @@ func TestMessageStoreBidirectionalRevokeDeleteNoDeadlock(t *testing.T) {
 	for e := range errCh {
 		failed++
 		if failed <= 5 {
-			t.Errorf("双端 revoke delete 失败（疑似死锁回归）: %v", e)
+			t.Errorf("two-sided revoke delete failed (suspected deadlock regression): %v", e)
 		}
 	}
 	if failed > 0 {
-		t.Fatalf("%d/%d 双端 revoke delete 操作失败", failed, count*2)
+		t.Fatalf("%d/%d two-sided revoke delete operations failed", failed, count*2)
 	}
 }

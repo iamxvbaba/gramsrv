@@ -1,7 +1,10 @@
--- per-scope 通知设置（每用户多行）：具体 peer / forum 话题 / 三类全局默认
--- （users/chats/broadcasts）。此前 account.get/update/resetNotifySettings 为回显
--- stub（不持久化），mute 重启即丢、dialog 列表静音状态不正确。本表落地真实持久化。
--- 可空 bool/int 列表示“该项未设置=按所属类别继承默认”（与 TL flag-optional 一致）。
+-- Per-scope notification settings (multiple rows per user): a specific peer /
+-- forum topic / the three global defaults (users/chats/broadcasts). Previously
+-- account.get/update/resetNotifySettings were echo stubs (not persisted), so a
+-- mute was lost on restart and the dialog list's mute state was wrong. This table
+-- provides real persistence.
+-- Nullable bool/int columns mean "this item is unset = inherit the default of its
+-- category" (consistent with TL flag-optional).
 CREATE TABLE public.notify_settings (
     owner_user_id bigint NOT NULL,
     scope_kind text NOT NULL,
@@ -20,5 +23,5 @@ CREATE TABLE public.notify_settings (
 ALTER TABLE ONLY public.notify_settings
     ADD CONSTRAINT notify_settings_pkey PRIMARY KEY (owner_user_id, scope_kind, peer_type, peer_id, topic_id);
 
--- dialog 列表批量读：按 owner + 一组 peer 取整-peer（topic 0）设置。
+-- Dialog-list bulk read: fetch whole-peer (topic 0) settings by owner + a set of peers.
 CREATE INDEX notify_settings_owner_peer_idx ON public.notify_settings USING btree (owner_user_id, peer_type, peer_id) WHERE ((scope_kind = 'peer'::text) AND (topic_id = 0));

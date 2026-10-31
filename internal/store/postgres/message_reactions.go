@@ -238,8 +238,9 @@ func (s *MessageStore) enrichPrivateMessageReactions(ctx context.Context, db sql
 	if len(messages) == 0 {
 		return nil
 	}
-	// poll enrichment 与 reactions 同点位挂载：所有私聊消息读路径都经过本函数，
-	// poll media 的权威 closed/聚合/viewer 门控在此一并填充（见 message_polls.go）。
+	// Poll enrichment is attached at the same point as reactions: all private message read paths
+	// pass through this function, so the poll media's authoritative closed/aggregate/viewer gating
+	// is filled in here too (see message_polls.go).
 	if err := s.enrichPrivateMessagePolls(ctx, db, viewerUserID, messages); err != nil {
 		return err
 	}
@@ -318,10 +319,11 @@ ORDER BY r.message_sender_id ASC, r.private_message_id ASC, r.reaction_date DESC
 	}
 	for i := range messages {
 		key := privateMessageReactionKey{messageSenderID: messages[i].From.ID, privateMessageID: messages[i].UID}
-		// chosen/My 是 per-viewer 字段，必须按该副本的 box owner 视角解析：
-		// SetMessageReactions 会同时返回双方 owner 的副本，若统一用请求者视角，
-		// 对端收到的 updateMessageReactions 会把发起者的 reaction 标成"自己选的"
-		//（TDesktop 非 min 更新直接以 chosen_order 覆盖本地 my 状态）。
+		// chosen/My are per-viewer fields and must be resolved from that copy's box owner
+		// viewpoint: SetMessageReactions returns both sides' owner copies at once, and using the
+		// requester's viewpoint uniformly would make the peer's received updateMessageReactions mark
+		// the initiator's reaction as "chosen by itself" (TDesktop non-min updates overwrite the
+		// local my state directly with chosen_order).
 		viewpoint := messages[i].OwnerUserID
 		if viewpoint == 0 {
 			viewpoint = viewerUserID

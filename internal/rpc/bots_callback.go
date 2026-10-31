@@ -13,8 +13,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// botCallbackTimeout 是 getBotCallbackAnswer 的挂起上限：bot 未在窗口内
-// setBotCallbackAnswer 即回 BOT_RESPONSE_TIMEOUT（不快速失败，给 bot 上线追答的窗口）。
+// botCallbackTimeout is the pending cap for getBotCallbackAnswer: if the bot does not call
+// setBotCallbackAnswer within the window, BOT_RESPONSE_TIMEOUT is returned (no fast fail, giving
+// the bot a window to come online and answer late).
 const botCallbackTimeout = 25 * time.Second
 
 func botResponseTimeoutErr() error { return tgerr.New(502, "BOT_RESPONSE_TIMEOUT") }
@@ -24,9 +25,10 @@ type privateMessageByUIDService interface {
 	GetMessageByUID(ctx context.Context, userID, uid int64) (domain.Message, bool, error)
 }
 
-// onMessagesGetBotCallbackAnswer 处理 inline callback 按钮点击：把同一 callback query
-// 同时投递到在线 MTProto bot session 与 Bot API update_id 队列，挂起等待 bot 的
-// setBotCallbackAnswer/answerCallbackQuery，或超时回 BOT_RESPONSE_TIMEOUT。
+// onMessagesGetBotCallbackAnswer handles an inline callback button click: it delivers the same
+// callback query to both the online MTProto bot session and the Bot API update_id queue, then
+// pends waiting for the bot's setBotCallbackAnswer/answerCallbackQuery, or times out with
+// BOT_RESPONSE_TIMEOUT.
 func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.MessagesGetBotCallbackAnswerRequest) (*tg.MessagesBotCallbackAnswer, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -39,8 +41,9 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, err
 	}
-	// game 按钮（getBotCallbackAnswer.game）P3 不支持：返回空答案（客户端不弹任何东西），
-	// 不挂起、不推送（避免给 bot 投递无法处理的 game query）。
+	// The game button (getBotCallbackAnswer.game) is not supported in P3: return an empty answer
+	// (the client shows nothing), with no pending and no push (avoiding delivering an
+	// unhandleable game query to the bot).
 	if req.Game {
 		return &tg.MessagesBotCallbackAnswer{}, nil
 	}
@@ -51,7 +54,7 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	if len(data) > domain.MaxCallbackDataLen {
 		return nil, dataInvalidErr()
 	}
-	// 校验目标消息存在于请求者自己的盒、且对端正是该 bot。
+	// Verify the target message exists in the requester's own box and that the peer is exactly this bot.
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
@@ -62,12 +65,14 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	callback.ClientSession = clientSessionMetadataFromContext(ctx)
 	botUserID := callback.BotUserID
 
-	// 内置（进程内）service bot 分支：@verifybot 这类 bot 没有 MTProto session、也没有
-	// Bot API 消费者，走下面的「推 updateBotCallbackQuery + 挂起 25s」必然超时回
-	// BOT_RESPONSE_TIMEOUT。因此在 registerContext / 推送之前同步问 responder：点击本身
-	// 已由 resolveBotCallbackQuery 校验过（消息在请求者自己的盒里、对端正是该 bot、data
-	// 确实出现在该消息的 inline keyboard 中），此处只是把答案交给拥有该 bot 的实现。
-	// 不注册 query id：外部 setBotCallbackAnswer 因此无法伪造/覆盖内置 bot 的应答。
+	// Built-in (in-process) service bot branch: a bot like @verifybot has no MTProto session and
+	// no Bot API consumer, so going through the "push updateBotCallbackQuery + pend 25s" below
+	// would always time out with BOT_RESPONSE_TIMEOUT. So before registerContext / push, ask the
+	// responder synchronously: the click itself has already been validated by
+	// resolveBotCallbackQuery (the message is in the requester's own box, the peer is exactly this
+	// bot, and the data really appears in that message's inline keyboard), and here we only hand
+	// the answer to the implementation that owns the bot. The query id is not registered, so an
+	// external setBotCallbackAnswer cannot forge/override the built-in bot's response.
 	if r.deps.ServiceBotCallbacks != nil && r.deps.ServiceBotCallbacks.HandlesBot(botUserID) {
 		ans, handled, err := r.deps.ServiceBotCallbacks.OnCallbackQuery(ctx, callback)
 		if err != nil {
@@ -108,8 +113,9 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 		}
 	}
 
-	// updateBotCallbackQuery 是 ephemeral（无 pts/qts，不进 getDifference）；私聊 MessageID
-	// 已翻译为 bot 视角 box id，channel 使用共享 message id。
+	// updateBotCallbackQuery is ephemeral (no pts/qts, not part of getDifference); the private
+	// MessageID has been translated to the bot-perspective box id, while channels use the shared
+	// message id.
 	var update tg.UpdateClass
 	if callback.InlineMessage != nil {
 		inline := &tg.UpdateInlineBotCallbackQuery{
@@ -280,8 +286,8 @@ func replyMarkupContainsCallbackData(markup *domain.MessageReplyMarkup, data []b
 	return false
 }
 
-// onMessagesSetBotCallbackAnswer 是 bot 对一次 callback query 的应答：解挂等待中的
-// getBotCallbackAnswer。仅属主 bot 可解挂（callerBotID==pending.botUserID，I6）。
+// onMessagesSetBotCallbackAnswer is the bot's response to a callback query: it unblocks a pending
+// getBotCallbackAnswer. Only the owning bot may unblock (callerBotID==pending.botUserID, I6).
 func (r *Router) onMessagesSetBotCallbackAnswer(ctx context.Context, req *tg.MessagesSetBotCallbackAnswerRequest) (bool, error) {
 	botID, err := r.callerBotID(ctx)
 	if err != nil {
@@ -297,8 +303,9 @@ func (r *Router) onMessagesSetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	if url, ok := req.GetURL(); ok {
 		ans.URL = url
 	}
-	// resolve 返回是否投递成功；未注册/超时/非属主一律 false。对 bot 而言答案是否
-	// 被等待者接收无关紧要（官方恒返回 true），但非属主必须拒绝投递（防钓鱼弹窗）。
+	// resolve returns whether delivery succeeded; unregistered/expired/non-owner are all false. To
+	// the bot it does not matter whether the waiter receives the answer (the official API always
+	// returns true), but a non-owner must be refused delivery (to prevent phishing popups).
 	if _, err := r.callbacks.resolveContext(ctx, botID, req.QueryID, ans); err != nil {
 		return false, internalErr()
 	}

@@ -30,13 +30,16 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// legacyRPCHandler 把解密后的 canonical RPC 请求体路由到响应。
+// legacyRPCHandler routes a decrypted canonical RPC request body to a response.
 //
-// b 是明文 RPC 请求（已剥离 MTProto 外壳）；返回的 bin.Encoder 会被包成 rpc_result。
-// 返回 *tgerr.Error 时连接层将其转为 rpc_error 回发；其他 error 视为连接级故障。
+// b is the plaintext RPC request (MTProto envelope already stripped); the returned
+// bin.Encoder is wrapped into rpc_result. When *tgerr.Error is returned, the
+// connection layer converts it to rpc_error and sends it back; other errors are
+// treated as connection-level failures.
 //
-// 它只保留给本包旧连接状态机的回归测试。生产 API RPC 必须走 LayerRPCHandler，
-// 使 admission、request/result TypeRef 与 exact profile 不可绕过。
+// It is retained only for regression tests of this package's old connection state
+// machine. Production API RPCs must go through LayerRPCHandler, so that admission,
+// the request/result TypeRef and the exact profile cannot be bypassed.
 type legacyRPCHandler interface {
 	Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, error)
 	// NegotiatedLayer returns the TL layer proven via invokeWithLayer for this
@@ -240,67 +243,88 @@ type RPCInitConnectionObserver interface {
 	) error
 }
 
-// Options 配置 Server。
+// Options configures Server.
 type Options struct {
-	// Logger 日志器。默认 zap.NewNop()。
+	// Logger is the logger. Defaults to zap.NewNop().
 	Logger *zap.Logger
-	// Codec 传输 codec 构造器。nil 表示自动探测（intermediate/abridged/full）。自定义
-	// codec 必须是 gotd 内置四种 codec（可包 NoHeader），或实现 InboundFrameBudgetedCodec；
-	// 无法在 payload 分配前预检长度的 codec 会 fail-closed。
+	// Codec is the transport codec constructor. nil means auto-detect
+	// (intermediate/abridged/full). A custom codec must be one of gotd's four
+	// built-in codecs (optionally wrapping NoHeader), or implement
+	// InboundFrameBudgetedCodec; a codec that cannot pre-check its length before
+	// payload allocation fails closed.
 	Codec func() transport.Codec
-	// ObfuscatedTCP 允许裸 TCP 使用 MTProto transport obfuscation。开启时按每条
-	// 物理连接的首 1/4/8 字节自动区分明文 transport 与 64-byte obfuscated2，
-	// 随后把 wire mode + codec 冻结到同一条双向连接；Telegram Desktop 的
-	// tcpo_only 与未开启混淆的第三方客户端可共用同一端口。
+	// ObfuscatedTCP allows bare TCP to use MTProto transport obfuscation. When
+	// enabled, the first 1/4/8 bytes of each physical connection are used to
+	// automatically distinguish plaintext transport from 64-byte obfuscated2, then
+	// the wire mode + codec are frozen onto the same bidirectional connection;
+	// Telegram Desktop's tcpo_only and third-party clients without obfuscation can
+	// share the same port.
 	ObfuscatedTCP bool
-	// WebSocket 在同一个 listener 上接受 MTProto over WebSocket(/apiws*)。
-	// 开启后仅在连接建立时读取前 4 字节做 HTTP/TCP 分流；MTProto TCP
-	// 后续仍走原 TCP wire-mode + codec 探测路径。
+	// WebSocket accepts MTProto over WebSocket (/apiws*) on the same listener.
+	// When enabled, only the first 4 bytes are read at connection setup to split
+	// HTTP/TCP; MTProto TCP then still follows the original TCP wire-mode + codec
+	// detection path.
 	WebSocket bool
-	// WebSocketAllowedOrigins 是允许浏览器发起 WebSocket upgrade 的页面 origin。
-	// 空列表表示只接受无 Origin 的非浏览器客户端；"*" 表示允许所有来源（仅调试）。
+	// WebSocketAllowedOrigins is the page origins allowed to initiate a WebSocket
+	// upgrade from a browser. An empty list means only non-browser clients without
+	// Origin are accepted; "*" allows all origins (debug only).
 	WebSocketAllowedOrigins []string
-	// SamePortHTTP 接管同端口 HTTP 侧非 /apiws* 的请求（例如公开的 server-info 描述，
-	// 见 internal/serverinfo）。edge 只做路由，不解释内容；nil 时这些路径一律 404。
-	// 仅在 WebSocket 开启（同端口分流生效）时可达。
+	// SamePortHTTP handles non-/apiws* requests on the HTTP side of the same port
+	// (for example the public server-info description, see internal/serverinfo).
+	// The edge only routes and does not interpret the content; when nil these paths
+	// all return 404. Reachable only when WebSocket is enabled (same-port splitting
+	// in effect).
 	SamePortHTTP http.Handler
-	// ReadTimeout 单次读取超时。默认 5m。
+	// ReadTimeout is the single-read timeout. Defaults to 5m.
 	ReadTimeout time.Duration
-	// HandshakeIdleTimeout 是连接「建立 session 前」（握手 + 首个加密消息之前）的读超时，
-	// 比 ReadTimeout 短，用于快速回收握手后静默的半开 / 异常连接。默认 60s。
+	// HandshakeIdleTimeout is the read timeout before a connection "establishes a
+	// session" (handshake + before the first encrypted message); it is shorter than
+	// ReadTimeout, used to quickly reclaim half-open/aberrant connections that go
+	// silent after the handshake. Defaults to 60s.
 	HandshakeIdleTimeout time.Duration
-	// HandshakeMaxDuration 是单次密钥交换（serverExchange）的总时长上界。HandshakeIdleTimeout
-	// 只约束「单次读 idle」，对一个持续发包的客户端无效——若客户端陷入「收到 ResPQ→nonce 失步
-	// →重发 req_pq」的握手重启死循环（见 docs/client-compat-notes.md），无界的 serverExchange 会
-	// 对每个 req_pq 盲回 ResPQ、永不收敛地空转刷日志/占 CPU。本上界给整个握手设总预算，超时即
-	// 放弃并断开，客户端重连发起全新握手（无残留相位差）即恢复。正常握手 <1s。默认 20s。
+	// HandshakeMaxDuration is the overall duration bound of a single key exchange
+	// (serverExchange). HandshakeIdleTimeout only constrains a "single read idle"
+	// and is useless against a client that keeps sending—if a client falls into a
+	// "receive ResPQ→nonce desync→resend req_pq" handshake restart loop (see
+	// docs/client-compat-notes.md), an unbounded serverExchange would blindly reply
+	// ResPQ to every req_pq, spinning forever and flushing logs/burning CPU. This
+	// bound sets an overall budget for the whole handshake, abandoning and closing
+	// on timeout, and the client reconnecting with a fresh handshake (no residual
+	// phase offset) recovers. A normal handshake is <1s. Defaults to 20s.
 	HandshakeMaxDuration time.Duration
-	// WriteTimeout 单次写入超时。默认 30s。
+	// WriteTimeout is the single-write timeout. Defaults to 30s.
 	WriteTimeout time.Duration
-	// MaxConnections 是进程接受的 raw 物理连接总上限，覆盖 codec sniff、握手和
-	// 已认证连接的完整生命周期。默认 200000；负数表示不限制。
+	// MaxConnections is the total cap on raw physical connections accepted by the
+	// process, covering codec sniff, handshake and the full lifetime of
+	// authenticated connections. Defaults to 200000; a negative value means no limit.
 	MaxConnections int
-	// MaxConnectionsPerIP 是单 remote IP 的 raw 物理连接上限。默认 4096，
-	// 为共享 NAT 与 TDesktop 多候选连接保留足够突发；负数表示不限制。
+	// MaxConnectionsPerIP is the raw physical connection cap per remote IP.
+	// Defaults to 4096, leaving ample burst headroom for shared NAT and TDesktop
+	// multi-candidate connections; a negative value means no limit.
 	MaxConnectionsPerIP int
-	// MaxConcurrentHandshakes 是同时执行 auth_key_id=0 RSA/DH exchange 的上限。
-	// 达限时已完成 transport framing 的连接收到 -429 后断开。默认 256；负数表示不限制。
+	// MaxConcurrentHandshakes is the cap on simultaneous auth_key_id=0 RSA/DH
+	// exchanges. On reaching the cap, connections that have completed transport
+	// framing receive -429 and are closed. Defaults to 256; a negative value means no limit.
 	MaxConcurrentHandshakes int
-	// RPCMaxInflight 是单连接同时处理的 RPC 上限。默认 32。
+	// RPCMaxInflight is the cap on RPCs processed simultaneously by one connection. Defaults to 32.
 	RPCMaxInflight int
-	// RPCQueueSize 是单连接等待处理的 RPC 队列长度。默认 64；队列按首条请求懒分配。
+	// RPCQueueSize is the length of the per-connection queue of RPCs awaiting
+	// processing. Defaults to 64; the queue is lazily allocated on the first request.
 	RPCQueueSize int
-	// RPCTimeout 是单个 RPC 在连接层的最大处理时长。默认 30s。
-	// 超时从 Copy 前预算/入队开始计算，排队时间包含在内。
+	// RPCTimeout is the maximum processing duration of a single RPC at the
+	// connection layer. Defaults to 30s. The timeout is counted from pre-Copy
+	// budget/enqueue, including queue time.
 	RPCTimeout time.Duration
-	// RPCGlobalWorkers 是 Server 共享 inbound RPC worker 数。默认 256。
+	// RPCGlobalWorkers is the number of Server-shared inbound RPC workers. Defaults to 256.
 	RPCGlobalWorkers int
-	// RPCGlobalMaxTasks 是全进程已预留、排队和执行中的 RPC 条数上限。默认 32768；
-	// request materialization 仍独立受 RPCGlobalMaxBytes 硬限制。
+	// RPCGlobalMaxTasks is the process-wide cap on reserved, queued and executing
+	// RPCs. Defaults to 32768; request materialization is still separately hard
+	// limited by RPCGlobalMaxBytes.
 	RPCGlobalMaxTasks int
-	// RPCGlobalMaxBytes 是上述 RPC 的进程级 memory charge 预算。legacy charge
-	// 等于 copied body；exact charge 是 typed decode 前的保守 materialization
-	// 上界，因此该配置不表示可并发接收 512 MiB wire body。默认 512 MiB。
+	// RPCGlobalMaxBytes is the process-level memory charge budget for the above
+	// RPCs. The legacy charge equals the copied body; the exact charge is the
+	// conservative materialization bound before typed decode, so this setting does
+	// not mean 512 MiB of wire body can be received concurrently. Defaults to 512 MiB.
 	RPCGlobalMaxBytes int64
 	// RPCDeliveryHookWorkers bounds concurrent post-response correctness work
 	// such as delivered-cursor commits and first-session readiness. The pending
@@ -319,19 +343,23 @@ type Options struct {
 	// RPCExecutionPendingPerAuth is an additional active-owner bound, independent
 	// from the retained entry limits and RPCGlobalMaxTasks. Default 2048.
 	RPCExecutionPendingPerAuth int
-	// InboundFrameGlobalMaxBytes 是所有物理连接当前正在处理的 transport wire buffer
-	// 与最大解密 plaintext buffer 的总预算。长度前缀读取后、payload 分配前预留，默认
-	// 512 MiB；非正值使用默认值。
+	// InboundFrameGlobalMaxBytes is the total budget for the transport wire buffers
+	// and the maximum decrypted plaintext buffer currently being processed across
+	// all physical connections. Reserved after reading the length prefix and before
+	// payload allocation; defaults to 512 MiB, and a non-positive value uses the default.
 	InboundFrameGlobalMaxBytes int64
-	// OutboundQueueSize / OutboundControlQueueSize 是每连接普通与控制 mailbox 容量。
-	// 默认 128/32；控制队列在 actor 中保持严格优先。
+	// OutboundQueueSize / OutboundControlQueueSize are the per-connection ordinary
+	// and control mailbox capacities. Default 128/32; the control queue keeps strict
+	// priority in the actor.
 	OutboundQueueSize        int
 	OutboundControlQueueSize int
-	// OutboundTrackedGlobalMaxBytes 是所有连接为 msg_resend_req 保留的 RPC/update body
-	// 总预算。默认 512 MiB；编码后的 MTProto service frame 与控制向量另用 64 MiB
-	// control budget（包括需 resend tracking 的 new_session_created 等），避免 body 压力
-	// 阻断连接维持消息。可靠响应无法 tracking 时终止该连接，durable best-effort update
-	// 则只丢在线加速并由 difference 恢复。
+	// OutboundTrackedGlobalMaxBytes is the total budget for the RPC/update bodies
+	// kept by all connections for msg_resend_req. Defaults to 512 MiB; encoded
+	// MTProto service frames and control vectors use a separate 64 MiB control
+	// budget (including new_session_created etc. that need resend tracking), so body
+	// pressure does not block connection-maintenance messages. When a reliable
+	// response cannot be tracked, that connection is terminated; a durable
+	// best-effort update only drops the online acceleration and is recovered by difference.
 	OutboundTrackedGlobalMaxBytes int64
 	// OutboundCriticalGlobalMaxBytes is an independent retained-body reserve for
 	// bootstrap/convergence RPC results. Bulk traffic cannot consume it.
@@ -340,7 +368,7 @@ type Options struct {
 	// Scratch is shared and pooled across connections; default 512 MiB.
 	OutboundWriteGlobalMaxBytes int64
 
-	// DC 是本 server 的 DC ID。默认 2。
+	// DC is this server's DC ID. Defaults to 2.
 	DC int
 	// StrictDC enables DC-label validation during key exchange. It is false by
 	// default: this single physical backend accepts every wire int32 label for
@@ -349,11 +377,12 @@ type Options struct {
 	// permanent labels must equal DC and temporary labels may equal +/-DC.
 	// This diagnostic switch does not itself provide multi-DC isolation.
 	StrictDC bool
-	// RSAKey 是 server RSA 私钥，用于密钥交换。nil 时无法完成握手。
+	// RSAKey is the server RSA private key, used for the key exchange. When nil the handshake cannot complete.
 	RSAKey *rsa.PrivateKey
-	// AuthKeys 持久化 auth key。默认内存实现。
+	// AuthKeys persists auth keys. Defaults to the in-memory implementation.
 	AuthKeys store.AuthKeyStore
-	// ActiveSessions 管理活跃连接。默认新建；传入时可让 RPC 层共享同一注册表。
+	// ActiveSessions manages active connections. Defaults to a new one; passing one
+	// lets the RPC layer share the same registry.
 	ActiveSessions *SessionManager
 	// legacyRPC is an internal test hook for the pre-exact RPC state machine.
 	// It is deliberately unexported so production callers cannot bypass
@@ -362,15 +391,15 @@ type Options struct {
 	// LayerRPC is the generated exact-profile production path. When configured,
 	// every API request must complete admission before execution-ledger scheduling.
 	LayerRPC LayerRPCHandler
-	// Metrics 接收连接层指标。默认 NopMetrics。
+	// Metrics receives connection-layer metrics. Defaults to NopMetrics.
 	Metrics Metrics
 	// OnServing is called after the connection intake loops have been installed.
 	// It is a platform-neutral observation hook; all slow initialization must
 	// finish before ListenAndServe is entered.
 	OnServing func(net.Addr)
-	// Clock 用于消息 ID 与时间戳。默认 clock.System。
+	// Clock is used for message IDs and timestamps. Defaults to clock.System.
 	Clock clock.Clock
-	// Rand 随机源。默认 crypto.DefaultRand()。
+	// Rand is the random source. Defaults to crypto.DefaultRand().
 	Rand io.Reader
 }
 
@@ -494,11 +523,14 @@ func validateRPCExecutionOptions(o Options) error {
 	return nil
 }
 
-// Server 是 MTProto 连接层（mtprotoedge）。
+// Server is the MTProto connection layer (mtprotoedge).
 //
-// 职责见 doc.go。它把原始 TCP 字节流转换为「已解密、已识别 session 的 RPC 请求」：
-// 接受连接、协商 codec、完成密钥交换、解密并分发加密消息到 RPC 路由，处理服务消息，
-// 并把活跃连接注册到 SessionManager 以支持主动推送（updates 等）。不含业务逻辑。
+// See doc.go for its responsibilities. It turns the raw TCP byte stream into
+// "decrypted RPC requests for an identified session": it accepts connections,
+// negotiates the codec, completes the key exchange, decrypts encrypted messages
+// and dispatches them to the RPC router, handles service messages, and registers
+// active connections with SessionManager to support proactive pushes (updates
+// etc.). It contains no business logic.
 type Server struct {
 	log                      *zap.Logger
 	codec                    func() transport.Codec
@@ -544,11 +576,11 @@ type Server struct {
 	rpcResults *rpcExecutionLedger
 	rpcRewrap  *rpcRewrapRegistry
 
-	// onFrame 是测试钩子：收到一帧时回调其字节数；生产为 nil。
+	// onFrame is a test hook: it is called back with a frame's byte count when one is received; nil in production.
 	onFrame func(n int)
 }
 
-// New 创建 Server。
+// New creates a Server.
 func New(opts Options) *Server {
 	opts.setDefaults()
 	if err := validateRPCExecutionOptions(opts); err != nil {
@@ -627,7 +659,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	return s.Serve(ctx, ln)
 }
 
-// newConn 基于一次解密结果创建一个可发送的连接对象。
+// newConn creates a sendable connection object based on one decryption result.
 func (s *Server) newConn(tc transport.Conn, key crypto.AuthKey, sessionID, salt int64) *Conn {
 	if lease, ok := tc.(*physicalTransportLease); ok {
 		return s.newConnWithLease(lease, key, sessionID, salt)
@@ -692,20 +724,24 @@ func (s *Server) buildConn(tc transport.Conn, lease *physicalTransportLease, key
 	return c
 }
 
-// Serve 在 ln 上运行 MTProto 连接循环，直到 ctx 取消或发生不可恢复错误。
-// ctx 取消时优雅退出：关闭 listener 并等待在途连接处理结束。
+// Serve runs the MTProto connection loop on ln until ctx is canceled or an
+// unrecoverable error occurs. On ctx cancellation it exits gracefully: it closes
+// the listener and waits for in-flight connection handling to finish.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
-	// 共享 worker 池只在 Server 真正 Serve 后允许消费，并在首条 RPC 到达时懒启动。
-	// serveTCP/serveMixed 返回前会等待连接 goroutine 收敛，各 Conn 已先排空/取消任务；
-	// 最后再停止共享池并排空已预留 delivery hook，避免关闭过程中
-	// 留下无人消费但仍占预算的队列。
+	// The shared worker pool may consume only after the Server actually Serves, and
+	// starts lazily when the first RPC arrives. Before serveTCP/serveMixed return
+	// they wait for connection goroutines to converge, and each Conn has already
+	// drained/canceled its tasks; only then is the shared pool stopped and the
+	// reserved delivery hooks drained, avoiding leftover queues that no one consumes
+	// but that still occupy budget during shutdown.
 	s.rpcScheduler.start()
 	defer s.rpcDeliveryHooks.stop(rpcCloseWaitTimeout)
 	defer s.conns.releaseAllLogicalSessions()
 	defer s.rpcScheduler.stop(rpcCloseWaitTimeout)
 	defer s.bulkRPCScheduler.close()
-	// 只在最外层 listener 包一次，确保 same-port mux 的 sniff/HTTP upgrade 也计入
-	// raw admission，而不是等连接已经分流后才计数。
+	// Wrap only once at the outermost listener, ensuring the same-port mux's
+	// sniff/HTTP upgrade is also counted in raw admission, rather than counting only
+	// after the connection has been split.
 	ln = s.observeRawAccepts(s.admission.wrapListener(ln))
 	if s.websocket {
 		return s.serveMixed(ctx, ln)
@@ -735,13 +771,18 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// 嗅探(读首 4 字节做 HTTP/TCP 分流)的读超时必须对齐「建立 session 前」的读超时
-	// s.handshakeTimeout(默认 60s)——与 serveDetectedConn/serveConn 的 pre-session 读
-	// deadline 完全一致。一条尚未发出首帧的连接正处于「pre-session idle」状态：合法 MTProto
-	// 客户端(如 DrKLO)会预开「暖」连接、在有请求前并不立即发送 obfuscated2 init。此前用
-	// minDuration(5s,...) 把嗅探压到 5s，比非 mux 路径激进 12 倍，会把这些暖连接在 5s 误杀，
-	// 触发客户端 6s 重连风暴并误判「后端不健康」回退到外部 DNS。per-conn goroutine 模型已消解
-	// slow-loris 接入饥饿，故嗅探用满 handshakeTimeout 是安全的。
+	// The sniff read timeout (reading the first 4 bytes for HTTP/TCP splitting) must
+	// align with the "before establishing a session" read timeout
+	// s.handshakeTimeout (default 60s)—exactly matching serveDetectedConn/serveConn's
+	// pre-session read deadline. A connection that has not yet sent its first frame
+	// is in the "pre-session idle" state: legitimate MTProto clients (such as DrKLO)
+	// pre-open "warm" connections and do not immediately send the obfuscated2 init
+	// before there is a request. Previously minDuration(5s,...) forced the sniff down
+	// to 5s, 12x more aggressive than the non-mux path, which wrongly killed these
+	// warm connections at 5s and triggered a client 6s reconnect storm and a wrong
+	// "backend unhealthy" fallback to external DNS. The per-conn goroutine model has
+	// eliminated slow-loris intake starvation, so using the full handshakeTimeout for
+	// the sniff is safe.
 	mux := newSamePortMux(ln, s.handshakeTimeout, s.observeConnectionIntake)
 	wsRawLn, wsHandler := transport.WebsocketListener(ln.Addr())
 	wsLn := newTransportPacketMessageListener(wsRawLn)
@@ -777,17 +818,17 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	errCh := make(chan error, 4)
 	var wg sync.WaitGroup
 	wg.Add(4)
-	// 分流器：窥探前 4 字节把 HTTP(WebSocket 升级) 与裸 MTProto TCP 拆开。
+	// Splitter: sniff the first 4 bytes to separate HTTP (WebSocket upgrade) from bare MTProto TCP.
 	go func() {
 		defer wg.Done()
 		errCh <- mux.Serve(ctx)
 	}()
-	// 裸 MTProto TCP：每条连接在自己的 goroutine 里完成 wire mode + codec 探测。
+	// Bare MTProto TCP: each connection completes wire mode + codec detection in its own goroutine.
 	go func() {
 		defer wg.Done()
 		errCh <- s.acceptLoop(ctx, mux.TCP(), s.obfuscated)
 	}()
-	// WebSocket：gotd 升级处理器已剥离 obfuscated2 并补回 codec tag，这里只需探测 codec。
+	// WebSocket: the gotd upgrade handler has already stripped obfuscated2 and restored the codec tag, so here only the codec needs detecting.
 	go func() {
 		defer wg.Done()
 		errCh <- s.acceptLoopTransport(ctx, wsLn, false, "websocket")
@@ -823,11 +864,15 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	return firstErr
 }
 
-// acceptLoop 接受裸连接，并为每条连接单独起 goroutine 完成「wire mode + codec 探测 +
-// serveConn」。探测在 accept 循环之外、带握手超时进行——慢/半开/坏 init 的客户端只占用
-// 自己的 goroutine，绝不阻塞其他连接的接入；单条连接的握手失败也只关闭该连接，不会拖垮
-// 整个监听循环。obfuscated 为 true 时自动区分 plain 与 obfuscated2（裸 MTProto TCP）；
-// WebSocket 连接传 false（gotd 升级处理器已完成去混淆）。
+// acceptLoop accepts bare connections and starts a separate goroutine per
+// connection to complete "wire mode + codec detection + serveConn". Detection runs
+// outside the accept loop under the handshake timeout—a slow/half-open/bad-init
+// client only occupies its own goroutine and never blocks the intake of other
+// connections; a single connection's handshake failure only closes that
+// connection and does not bring down the whole listen loop. When obfuscated is
+// true it automatically distinguishes plain from obfuscated2 (bare MTProto TCP);
+// WebSocket connections pass false (the gotd upgrade handler has already
+// de-obfuscated).
 func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, obfuscated bool) error {
 	return s.acceptLoopTransport(ctx, ln, obfuscated, intakeTransport(obfuscated))
 }
@@ -882,22 +927,27 @@ func (s *Server) acceptLoopTransport(ctx context.Context, ln net.Listener, obfus
 	}
 }
 
-// serveDetectedConn 把一条裸连接提升为 transport.Conn（去混淆 + codec 探测）后运行 MTProto
-// 连接循环。提升过程的读取放在本 goroutine、且受握手读超时约束，而非塞在 accept 循环里，
-// 这样慢连接不会阻塞其他连接接入，去混淆/codec 握手本身也有时间上界。
+// serveDetectedConn promotes a bare connection to a transport.Conn (de-obfuscation
+// + codec detection) and then runs the MTProto connection loop. The reads during
+// promotion happen on this goroutine and are bounded by the handshake read
+// timeout, rather than being stuffed into the accept loop, so a slow connection
+// does not block other connections' intake and the de-obfuscation/codec handshake
+// itself has a time bound.
 func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated bool, transportName string) {
 	started := time.Now()
 	remote, local := connRemote(raw), connLocal(raw)
-	// 握手读超时只覆盖 wire-mode + codec 探测这一小段；用真实墙钟时间（SetReadDeadline 语义），
-	// 不走可能被测试注入的逻辑 clock。
+	// The handshake read timeout only covers the small wire-mode + codec detection
+	// stretch; it uses real wall-clock time (SetReadDeadline semantics) and does not
+	// go through a logical clock that tests may inject.
 	if err := raw.SetReadDeadline(time.Now().Add(s.handshakeTimeout)); err != nil {
 		_ = raw.Close()
 		return
 	}
 
-	// 探测阶段若 ctx 取消，主动关闭 raw 解除阻塞读取——否则去混淆读会一直挂到握手超时，
-	// 把半开连接拖进优雅退出的等待里。探测结束即停掉该 watcher，连接服务期由 serveConn
-	// 自己的 ctx watcher 接管。
+	// If ctx is canceled during detection, actively close raw to unblock the read—otherwise
+	// the de-obfuscation read would hang until the handshake timeout, dragging the
+	// half-open connection into the graceful-shutdown wait. Detection end stops this
+	// watcher, and the serving phase is taken over by serveConn's own ctx watcher.
 	promoted := make(chan struct{})
 	go func() {
 		select {
@@ -937,7 +987,8 @@ func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated
 		local:     local,
 		duration:  time.Since(started),
 	})
-	// 探测完成，撤掉握手读超时；后续每帧读写由 serveConn / 传输层各自管理超时。
+	// Detection is complete, so the handshake read timeout is removed; per-frame
+	// reads and writes are then subject to the timeouts managed by serveConn / the transport layer.
 	if err := raw.SetReadDeadline(time.Time{}); err != nil {
 		_ = conn.Close()
 		return
@@ -947,9 +998,10 @@ func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated
 	}
 }
 
-// promoteConn 针对单条连接执行一次 transport 提升。obfuscated=true 表示裸 TCP
-// 允许混淆并自动区分 plain/obfuscated2；WebSocket 必须传 false，因为 gotd upgrade
-// handler 已剥离 obfuscated2 并补回 codec tag。
+// promoteConn performs one transport promotion for a single connection.
+// obfuscated=true means bare TCP allows obfuscation and automatically distinguishes
+// plain/obfuscated2; WebSocket must pass false because the gotd upgrade handler has
+// already stripped obfuscated2 and restored the codec tag.
 func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, string, error) {
 	if obfuscated {
 		return s.promoteMixedTCP(raw)
@@ -958,13 +1010,14 @@ func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, str
 	return conn, "", err
 }
 
-// serveConn 处理单个传输连接：读帧并按 auth_key_id 分流。
+// serveConn handles a single transport connection: it reads frames and splits by auth_key_id.
 //
-//   - auth_key_id == 0：未加密的密钥交换起始消息，执行握手并落地 auth key。
-//   - auth_key_id 已注册：加密消息，解密、注册连接并分发到 RPC 路由。
-//   - auth_key_id 未注册：回 AuthKeyNotFound，促使客户端重新握手。
+//   - auth_key_id == 0: an unencrypted key-exchange start message, performing the handshake and persisting the auth key.
+//   - auth_key_id registered: an encrypted message, decrypted, registering the connection and dispatching to the RPC router.
+//   - auth_key_id not registered: reply AuthKeyNotFound, prompting the client to redo the handshake.
 //
-// 连接建立 session 后注册到 SessionManager，结束时注销。
+// The connection is registered with SessionManager after establishing a session and
+// unregistered when it ends.
 func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, local string) (err error) {
 	transportOwner, conn := newPhysicalTransportOwner(raw)
 	s.metrics.ConnOpened()
@@ -993,7 +1046,7 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 		s.log.Debug("Connection closed", zap.String("remote_addr", remote), zap.String("local_addr", local), zap.Error(err))
 	}()
 
-	// ctx 取消或处理结束时关闭连接，解除 Recv 阻塞。
+	// Close the connection when ctx is canceled or handling ends, unblocking Recv.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -1003,8 +1056,10 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 
 	cs := newConnState()
 	var b bin.Buffer
-	// plain 是本连接的复用明文缓冲：decryptClientFrame 把每帧解密进它，免去
-	// per-frame 整帧明文分配；帧内 slice 在下一帧读取前有效（RPC body 已在 dispatch 拷贝）。
+	// plain is this connection's reused plaintext buffer: decryptClientFrame
+	// decrypts each frame into it, avoiding per-frame whole-plaintext allocation;
+	// the in-frame slices are valid until the next frame is read (the RPC body is
+	// already copied in dispatch).
 	var plain bin.Buffer
 	var replay *bin.Buffer
 	for {
@@ -1012,8 +1067,10 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 			b.ResetTo(replay.Buf)
 			replay = nil
 		} else {
-			// 建立 session 前（current==nil，握手 + 首个加密消息之前）用较短的 handshakeTimeout
-			// 快速回收静默的半开 / 异常连接；建立 session 后用 readTimeout（客户端有 ping 心跳）。
+			// Before a session is established (current==nil, before the handshake +
+			// first encrypted message) use the shorter handshakeTimeout to quickly
+			// reclaim silent half-open/aberrant connections; after a session is
+			// established use readTimeout (the client has a ping heartbeat).
 			timeout := s.readTimeout
 			if current == nil || !current.isActive() {
 				timeout = s.handshakeTimeout
@@ -1081,14 +1138,19 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 			continue
 		}
 
-		// 已建立连接复用缓存密钥走快路径（fetchedKey=nil）：避开每帧回查 AuthKeyStore——
-		// 这是 mtprotoedge 层最热的库访问点。密钥材料创建后不可变；销毁(destroy_auth_key)/
-		// 撤销由 SessionManager 主动 Close 连接保证失效，不依赖被动的“下一帧 -404”。
-		// 尚未进入 SessionManager 的 bad-salt provisional 会在 handleEncrypted 建立 activation claim
-		// 后精确复查一次，既把撤销与激活线性化，也不把 salt storm 放大成 PG 写风暴。
-		// temporary key 的绝对 expiry 缓存在 Conn 上，逐帧只做内存比较；到期必须在
-		// RPC 前返回 -404，让官方客户端仅轮换 temp key。绝不能落到 Router 后退化为
-		// raw business identity，再以会触发整账号退出的 401 结束。
+		// An established connection reuses the cached key on the fast path
+		// (fetchedKey=nil): avoiding a per-frame AuthKeyStore lookup—the hottest
+		// library access point in the mtprotoedge layer. Key material is immutable
+		// after creation; destruction (destroy_auth_key)/revocation is invalidated by
+		// SessionManager actively Closing the connection, not relying on the passive
+		// "next frame -404". A bad-salt provisional not yet in SessionManager is
+		// precisely rechecked once after handleEncrypted establishes the activation
+		// claim, which linearizes revocation with activation and also does not amplify
+		// a salt storm into a PG write storm. A temporary key's absolute expiry is
+		// cached on the Conn and only needs an in-memory comparison per frame; on
+		// expiry it must return -404 before RPC, letting official clients rotate only
+		// the temp key. It must never fall through to the Router and degrade to a raw
+		// business identity, ending with a 401 that triggers a whole-account logout.
 		if current != nil && current.authKeyID == authKeyID && authKeyProtocolUnavailable(current.authKeyExpiresAt, s.clock.Now()) {
 			s.log.Info("Rejecting unavailable temporary or legacy auth key",
 				zap.String("auth_key_id", current.authKeyHex),
@@ -1115,8 +1177,9 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 				if sendErr != nil {
 					return sendErr
 				}
-				// -404 对 TDesktop 是 terminal key failure；继续保留 socket 只会允许
-				// 同一客户端反复触发 AuthKeyStore 查询。回包一次后立即断开。
+				// -404 is a terminal key failure for TDesktop; keeping the socket would
+				// only let the same client repeatedly trigger AuthKeyStore lookups.
+				// Reply once and then disconnect immediately.
 				return nil
 			}
 			if authKeyProtocolUnavailable(d.ExpiresAt, s.clock.Now()) {
@@ -1170,9 +1233,11 @@ func trimOversizedInboundBuffer(b *bin.Buffer) {
 	}
 }
 
-// deadlineReceiver 是可选的直管读超时接口：telesrv-owned compat transport 实现它，
-// 让每帧读只做一次 SetReadDeadline，不再分配 per-frame context timer。ctx 取消仍由
-// serveConn 的 watcher 关闭底层连接来解除阻塞读（与 ctx deadline 路径行为一致）。
+// deadlineReceiver is an optional direct read-timeout interface: the telesrv-owned
+// compat transport implements it so each frame read only does one SetReadDeadline
+// and no longer allocates a per-frame context timer. ctx cancellation is still
+// handled by serveConn's watcher closing the underlying connection to unblock the
+// read (matching the ctx-deadline path's behavior).
 type deadlineReceiver interface {
 	RecvDeadline(deadline time.Time, b *bin.Buffer) error
 }
@@ -1187,7 +1252,8 @@ func (s *Server) recv(ctx context.Context, conn transport.Conn, b *bin.Buffer, t
 	return conn.Recv(ctx, b)
 }
 
-// isClientDisconnect 判断错误是否为正常的客户端断开/服务关闭，不应作为异常记录。
+// isClientDisconnect determines whether an error is a normal client disconnect /
+// service shutdown and should not be logged as an anomaly.
 func isClientDisconnect(err error) bool {
 	switch {
 	case errors.Is(err, io.EOF),

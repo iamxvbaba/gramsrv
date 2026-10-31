@@ -42,7 +42,7 @@ func TestPaidMessageStarsChargedInSendTx(t *testing.T) {
 		})
 	}
 
-	// 无余额且要求付费：整条发送必须失败（ErrStarsInsufficient），不产生消息/账本。
+	// No balance and a fee is required: the whole send must fail (ErrStarsInsufficient), producing no message/ledger.
 	first, err := send(93001, price)
 	if first.SenderMessage.ID != 0 {
 		t.Fatalf("insufficient send must not persist a message, got %+v", first.SenderMessage)
@@ -60,7 +60,7 @@ func TestPaidMessageStarsChargedInSendTx(t *testing.T) {
 		}
 	}
 
-	// 充值后重发：事务内原子扣发方 + 贷记收件方，差值必须恰好为 price，双向账本落行。
+	// Resend after topping up: atomically debit the sender and credit the recipient in the transaction, the difference must be exactly price, and both ledger sides are written.
 	if err := mustFundStars(ctx, pool, sender.ID, 1000); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestPaidMessageStarsChargedInSendTx(t *testing.T) {
 		t.Fatalf("reloaded message paid stars = %+v (len %d), want %d", list.Messages, len(list.Messages), price)
 	}
 
-	// 幂等重放：同 random_id 重发不得重复扣费。
+	// Idempotent replay: resending the same random_id must not charge twice.
 	replay, err := send(93002, price)
 	if err != nil {
 		t.Fatalf("replay err = %v, want nil", err)

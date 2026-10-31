@@ -498,8 +498,9 @@ func (r *Router) onPaymentsGetUniqueStarGiftValueInfo(ctx context.Context, req *
 	if info.ListedCount > 0 {
 		out.SetListedCount(info.ListedCount)
 	}
-	// last_sale_on_fragment 与 fragment_listed_* 只有在本服务确实记录了
-	// Fragment 侧成交/挂牌时才可置位；自托管账本没有该来源，缺省即“未知”。
+	// last_sale_on_fragment and fragment_listed_* may only be set when this service actually
+	// recorded a Fragment-side sale/listing; the self-hosted ledger has no such source, so the
+	// default is "unknown".
 	return out, nil
 }
 
@@ -666,12 +667,14 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 }
 
 // onPaymentsDeleteStarGift implements payments.deleteStarGift (Layer 232).
-// 只有礼物主人能删自己的那份普通礼物：礼物离开资料页，同时退出所属集合。
-// 已升级的藏品、限量/拍卖礼物以及仍带转换价或预付升级 Stars 的礼物一律拒绝
-// （STARGIFT_INVALID），因为删除不可逆、会连带销毁这些 Stars。删除不硬删行：
-// 升级命令、报价、转账记录都引用这一行。频道礼物属于频道资产，不走个人删除
-// 路径（STARGIFT_OWNER_INVALID）；频道方删除需要频道所有权/转账权限语义，
-// 目前尚未实现。
+// Only the gift owner can delete their own ordinary gift: the gift leaves the profile page and
+// also exits any collection it belongs to. Upgraded collectibles, limited/auction gifts, and gifts
+// that still carry a conversion price or prepaid upgrade Stars are all rejected (STARGIFT_INVALID),
+// because deletion is irreversible and would destroy those Stars along with it. Deletion does not
+// hard-delete the row: upgrade commands, offers, and transfer records all reference it. Channel
+// gifts are channel assets and do not go through the personal deletion path
+// (STARGIFT_OWNER_INVALID); channel-side deletion requires channel ownership/transfer-permission
+// semantics and is not implemented yet.
 func (r *Router) onPaymentsDeleteStarGift(ctx context.Context, req *tg.PaymentsDeleteStarGiftRequest) (bool, error) {
 	if req == nil {
 		return false, inputRequestInvalidErr()
@@ -693,8 +696,10 @@ func (r *Router) onPaymentsDeleteStarGift(ctx context.Context, req *tg.PaymentsD
 	if !ok {
 		return false, starGiftInvalidErr()
 	}
-	// 频道礼物属于频道资产：官方客户端允许有转账权限的频道主/管理员删除，
-	// 这需要另一套频道所有权检查，本方法明确不覆盖，继续按个人删除路径拒绝。
+	// Channel gifts are channel assets: the official client allows a channel owner/admin with
+	// transfer permission to delete them, which requires a separate set of channel-ownership checks.
+	// This method explicitly does not cover that and keeps rejecting them via the personal deletion
+	// path.
 	if ref.Owner.Type != domain.PeerTypeUser || ref.Owner.ID != userID {
 		return false, tgerr.New(400, "STARGIFT_OWNER_INVALID")
 	}
@@ -707,7 +712,7 @@ func (r *Router) onPaymentsDeleteStarGift(ctx context.Context, req *tg.PaymentsD
 	if !result.Deleted {
 		return false, starGiftInvalidErr()
 	}
-	// 礼物离开资料页 → 失效 owner full 投影。
+	// The gift leaves the profile page -> invalidate the owner's full projection.
 	r.invalidateStarGiftOwnerProjection(ref.Owner)
 	return true, nil
 }
@@ -716,23 +721,24 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg
 	if req == nil {
 		return nil, starGiftInvalidErr()
 	}
-	// Layer 232 的 2FA 证明是本授权经 account.getTmpPassword 签发的 tmp_password。
+	// The Layer 232 2FA proof is the tmp_password issued for this authorization via
+	// account.getTmpPassword.
 	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, authKeyID [8]byte, now time.Time) error {
 		return r.deps.Account.CheckTmpPassword(ctx, userID, authKeyID, req.TmpPassword, now)
 	})
 }
 
-// onPaymentsGetStarGiftWithdrawalURLLegacy 服务 exact Layer 225–231 客户端：
-// 它们的 payments.getStarGiftWithdrawalUrl#d06e93a8 携带 SRP 证明而不是
-// tmp_password。td 把该构造器提升为独立的 legacy 方法，证明原样到达这里，
-// 只按 SRP 校验，永远不会被当成 tmp_password 或被丢弃。
+// onPaymentsGetStarGiftWithdrawalURLLegacy serves exact Layer 225-231 clients: their
+// payments.getStarGiftWithdrawalUrl#d06e93a8 carries an SRP proof instead of tmp_password. td
+// promotes that constructor to a separate legacy method, so the proof arrives here verbatim and is
+// validated only as SRP, never mistaken for tmp_password or dropped.
 func (r *Router) onPaymentsGetStarGiftWithdrawalURLLegacy(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
 	if req == nil {
 		return nil, starGiftInvalidErr()
 	}
 	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, _ [8]byte, _ time.Time) error {
-		// 与 payments.getStarsRevenueWithdrawalUrl 一致只认 SRP：账号已设 2FA 时
-		// inputCheckPasswordEmpty 不是证明。
+		// Consistent with payments.getStarsRevenueWithdrawalUrl, only SRP is accepted: when the
+		// account has 2FA set, inputCheckPasswordEmpty is not a proof.
 		if _, ok := req.Password.(*tg.InputCheckPasswordSRP); !ok {
 			return domain.ErrPasswordHashInvalid
 		}
@@ -740,8 +746,9 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURLLegacy(ctx context.Context, r
 	})
 }
 
-// starGiftWithdrawalURL 是两种 2FA 证明共用的导出门禁；checkProof 只校验
-// 各自方法的证明，其余顺序与判定对两种证明完全相同。
+// starGiftWithdrawalURL is the shared export gate for the two 2FA proofs; checkProof only
+// validates each method's own proof, while the rest of the order and decisions are identical for
+// both.
 func (r *Router) starGiftWithdrawalURL(
 	ctx context.Context,
 	input tg.InputSavedStarGiftClass,
@@ -757,14 +764,16 @@ func (r *Router) starGiftWithdrawalURL(
 	if r.userIsBot(ctx, userID) {
 		return nil, botMethodInvalidErr()
 	}
-	// 2FA 先于所有权与礼物状态校验：没有通过密码的调用方连“这个 slug 是否
-	// 可导出”都不该知道，withdrawal 是财务操作，顺序即信息泄露面。
+	// 2FA comes before ownership and gift-state checks: a caller who has not passed the password
+	// should not even learn "whether this slug is withdrawable"; withdrawal is a financial
+	// operation, so the order is the information-leak surface.
 	passwordState, err := r.deps.Account.RevenueWithdrawalPasswordState(ctx, userID)
 	if err != nil {
 		return nil, internalErr()
 	}
-	// 未设 2FA 的账号没有可校验的证明：空 tmp_password 与 inputCheckPasswordEmpty
-	// 都不能代表通过；与 payments.getStarsRevenueWithdrawalUrl 一致，先要求账号已设 2FA。
+	// An account without 2FA has no proof to validate: an empty tmp_password and
+	// inputCheckPasswordEmpty both fail to represent passing; consistent with
+	// payments.getStarsRevenueWithdrawalUrl, require the account to have 2FA set first.
 	if !passwordState.HasPassword {
 		return nil, tgerr.New(400, "PASSWORD_MISSING")
 	}
@@ -800,7 +809,8 @@ func (r *Router) starGiftWithdrawalURL(
 	if !ok {
 		return nil, starGiftInvalidErr()
 	}
-	// Host / 链上托管的收藏品 host 不是 owner，永远拿不到 ownership-only 操作。
+	// The Host / on-chain custodian of a collectible is not the owner and never gets ownership-only
+	// operations.
 	if ref.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
 		return nil, tgerr.New(400, "STARGIFT_OWNER_INVALID")
 	}
@@ -1118,8 +1128,9 @@ func tgStarGiftAuctionUserState(state domain.StarGiftAuctionUserState) tg.StarGi
 	if state.Returned {
 		out.SetReturned(true)
 	}
-	// bid_amount/bid_date/min_bid_amount/bid_peer 共用 flags.0：整组要么全给要么全省，
-	// 只置位而留下 nil 的 bid_peer 会让整条 user state 无法编码。
+	// bid_amount/bid_date/min_bid_amount/bid_peer share flags.0: the whole group is either all
+	// present or all absent; setting the flag but leaving bid_peer nil would make the entire user
+	// state unencodable.
 	if bidPeer := tgPeer(state.BidPeer); state.BidAmount > 0 && bidPeer != nil {
 		out.SetBidAmount(state.BidAmount)
 		out.SetBidDate(state.BidDate)

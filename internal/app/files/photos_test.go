@@ -355,10 +355,12 @@ func TestCreateAvatarMarkupGeneratesDownloadableStaticSizes(t *testing.T) {
 	assertDownloadableAvatarSize(t, svc, photo.ID, "c", 640)
 }
 
-// TestCreateAvatarMarkupComposesEmojiThumbIntoStaticSizes 守护两个行为：
-//  1. 普通彩色 emoji 合成进静态头像时保留原色（不得染白/变黑）；
-//  2. 贴图含非满 alpha 像素（抗锯齿常态）时不得因预乘溢出整片变黑——曾因把
-//     R=G=B=255、A<255 的非法预乘值喂给 draw.Over 溢出回绕，emoji 输出近黑色。
+// TestCreateAvatarMarkupComposesEmojiThumbIntoStaticSizes guards two behaviors:
+//  1. A regular color emoji composed into a static avatar keeps its original color (must not be
+//     whitened/blackened);
+//  2. An overlay with non-full alpha pixels (the norm for anti-aliasing) must not turn whole-black
+//     from premultiplication overflow — feeding the illegal R=G=B=255, A<255 premultiplied value to
+//     draw.Over once overflowed and wrapped, outputting the emoji as near-black.
 func TestCreateAvatarMarkupComposesEmojiThumbIntoStaticSizes(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
@@ -400,8 +402,9 @@ func TestCreateAvatarMarkupComposesEmojiThumbIntoStaticSizes(t *testing.T) {
 	}
 }
 
-// TestCreateAvatarMarkupTintsTextColorEmojiWhite 守护 text_color custom emoji 的
-// 白色剪影呈现：染色必须写合法预乘值（R=G=B=A），非满 alpha 像素不得溢出变黑。
+// TestCreateAvatarMarkupTintsTextColorEmojiWhite guards the white-silhouette presentation of a
+// text_color custom emoji: tinting must write legal premultiplied values (R=G=B=A), and non-full
+// alpha pixels must not overflow into black.
 func TestCreateAvatarMarkupTintsTextColorEmojiWhite(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
@@ -501,8 +504,9 @@ func TestCreateAvatarVideoMarkupGeneratesDownloadableStaticSizes(t *testing.T) {
 	}
 }
 
-// TestCreateAvatarVideoMarkupFallsBackToVideoFirstFrame 守护 markup document/thumb
-// 不可用时仍可从上传视频抽帧，不能让普通动画头像失去静态尺寸。
+// TestCreateAvatarVideoMarkupFallsBackToVideoFirstFrame guards that a frame can still be extracted
+// from the uploaded video when the markup document/thumb is unavailable, so an ordinary animated
+// avatar does not lose its static sizes.
 func TestCreateAvatarVideoMarkupFallsBackToVideoFirstFrame(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
@@ -592,9 +596,10 @@ func TestCreateAvatarVideoMarkupRejectsDegeneratePreviewAndFallsBackToVideo(t *t
 	}
 }
 
-// TestCreateAvatarVideoMarkupPrefersComposedStill 守护 DrKLO emoji 构造器边界：
-// 客户端生成 MP4 的第一帧可能只有渐变背景；只要 markup thumb 可解析，静态头像
-// 必须用服务端合成结果，确保 emoji 在当前 session 回显和冷启动中都可见。
+// TestCreateAvatarVideoMarkupPrefersComposedStill guards the boundary of the DrKLO emoji builder:
+// the first frame of the client-generated MP4 may contain only a gradient background; as long as
+// the markup thumb resolves, the static avatar must use the server-composed result, ensuring the
+// emoji is visible both in the current session echo and on a cold start.
 func TestCreateAvatarVideoMarkupPrefersComposedStill(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
@@ -672,8 +677,9 @@ func assertAvatarImageSize(t *testing.T, svc *Service, photoID int64, sizeType s
 	}
 }
 
-// testTransparentThumbPNG 构造红色方块贴图：周边透明、中心 alpha=250（模拟抗锯齿
-// 的非满 alpha），用于守护预乘溢出回归——溢出代码会把 alpha≠255 的像素整片渲染成黑。
+// testTransparentThumbPNG builds a red square overlay: transparent around the edges, center
+// alpha=250 (simulating anti-aliased non-full alpha), used to guard the premultiplication overflow
+// regression — the overflowing code renders every pixel with alpha≠255 whole-black.
 func testTransparentThumbPNG(t *testing.T) []byte {
 	t.Helper()
 	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))

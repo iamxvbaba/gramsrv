@@ -1,3 +1,3 @@
-// Package messages 是消息应用服务：发消息、编辑、删除、已读、历史记录。
-// 第一阶段先实现官方系统会话所需的历史、搜索和已读最小闭环；第二阶段扩展私聊发送与推送。
+// Package messages is the message application service: sending, editing, deleting, read state, and history.
+// Phase one implements the minimal history, search, and read loop needed by official system chats; phase two extends private-message sending and delivery.
 package messages

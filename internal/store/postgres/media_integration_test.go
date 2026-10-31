@@ -13,8 +13,9 @@ import (
 	"telesrv/internal/store"
 )
 
-// TestMediaStoreRoundTrip 验证 MediaStore 各表的写读往返（含 nil bytea 归一、JSONB attributes/sizes、
-// 头像历史 current/list/delete、上传分片）。直接证明媒体元数据落 PG 后可原样读回。
+// TestMediaStoreRoundTrip verifies the write/read round trip for MediaStore's tables (including
+// nil bytea normalization, JSONB attributes/sizes, profile photo history current/list/delete, and
+// upload parts). It directly proves media metadata can be read back as-is after landing in PG.
 func TestMediaStoreRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -31,7 +32,7 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 		cleanupMediaStoreRoundTripRows(t, context.Background(), pool)
 	})
 
-	// ---- file blob（backend/key/hash/size 是同一份合法永久对象事实）----
+	// ---- file blob (backend/key/hash/size are the same legal permanent object fact) ----
 	wantBlob := postgresTestBlob("doc:9100000000000000001", "media-round-trip", 1234, "application/x-tgsticker")
 	if err := s.PutFileBlob(ctx, wantBlob); err != nil {
 		t.Fatalf("put file blob: %v", err)
@@ -44,7 +45,7 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 		t.Fatalf("file blob mismatch: %+v", blob)
 	}
 
-	// ---- document（含 sticker 属性 + thumbs JSONB；nil file_reference 路径）----
+	// ---- document (with sticker attributes + thumbs JSONB; the nil file_reference path) ----
 	doc := domain.Document{
 		ID:         docID,
 		AccessHash: 77,
@@ -145,7 +146,7 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 		t.Fatal("inserted reaction not found in list")
 	}
 
-	// ---- profile photo 历史 ----
+	// ---- profile photo history ----
 	if err := s.AddProfilePhotoKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile, photoID, 1700000000); err != nil {
 		t.Fatalf("add profile photo: %v", err)
 	}

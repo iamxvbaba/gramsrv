@@ -7,18 +7,18 @@ import (
 	"telesrv/internal/store"
 )
 
-// Service 提供 poll 权威态的发送时创建与投票人列表查询。
-// 投票/关闭走 messages/channels 服务（需要消息可见性），不经本服务。
+// Service provides send-time creation of authoritative poll state and voter list queries.
+// Voting/closing goes through the messages/channels services (message visibility is required) and not through this service.
 type Service struct {
 	polls store.PollStore
 }
 
-// NewService 创建 poll 服务。
+// NewService creates the poll service.
 func NewService(polls store.PollStore) *Service {
 	return &Service{polls: polls}
 }
 
-// CreatePoll 在消息发送前落 poll 权威行（消息发送失败产生的孤儿行无害）。
+// CreatePoll persists the authoritative poll row before the message is sent (orphan rows from failed sends are harmless).
 func (s *Service) CreatePoll(ctx context.Context, def domain.PollDefinition) error {
 	if s == nil || s.polls == nil {
 		return domain.ErrPollInvalid
@@ -29,7 +29,7 @@ func (s *Service) CreatePoll(ctx context.Context, def domain.PollDefinition) err
 	return s.polls.CreatePoll(ctx, def)
 }
 
-// GetPollDefinition 返回权威定义（getPollVotes 的 public_voters/broadcast 校验用）。
+// GetPollDefinition returns the authoritative definition (used by getPollVotes for public_voters/broadcast checks).
 func (s *Service) GetPollDefinition(ctx context.Context, pollID int64) (domain.PollDefinition, bool, error) {
 	if s == nil || s.polls == nil || pollID == 0 {
 		return domain.PollDefinition{}, false, nil
@@ -37,7 +37,7 @@ func (s *Service) GetPollDefinition(ctx context.Context, pollID int64) (domain.P
 	return s.polls.GetPollDefinition(ctx, pollID)
 }
 
-// ListPollVotes 分页列出投票人（仅 public_voters poll 由 rpc 层放行）。
+// ListPollVotes lists voters with pagination (only public_voters polls are allowed by the rpc layer).
 func (s *Service) ListPollVotes(ctx context.Context, req domain.PollVotesListRequest) (domain.PollVotesList, error) {
 	if s == nil || s.polls == nil {
 		return domain.PollVotesList{}, domain.ErrPollNotFound

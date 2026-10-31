@@ -38,7 +38,7 @@ type phonePrivacyService interface {
 	AddAllowUser(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, targetUserID int64) (domain.PrivacyRules, bool, error)
 }
 
-// Service 提供通讯录查询。
+// Service provides address book queries.
 type Service struct {
 	contacts  store.ContactStore
 	users     store.UserStore
@@ -78,7 +78,7 @@ func WithReadModelVersions(v store.ReadModelVersionStore) Option {
 	return func(s *Service) { s.versions = v }
 }
 
-// NewService 创建 contacts 服务。
+// NewService creates the contacts service.
 func NewService(contacts store.ContactStore, users ...store.UserStore) *Service {
 	s := &Service{
 		contacts: contacts,
@@ -120,7 +120,7 @@ func (s *Service) rebuildProjector() {
 	)
 }
 
-// GetContacts 返回当前登录账号的通讯录。未登录或无持久化实现时按空账号处理。
+// GetContacts returns the address book of the currently logged-in account. When not logged in or with no durable implementation it is treated as an empty account.
 func (s *Service) GetContacts(ctx context.Context, userID int64, hash int64) (domain.ContactList, bool, error) {
 	if s == nil || s.contacts == nil || userID == 0 {
 		return domain.ContactList{}, false, nil
@@ -149,10 +149,13 @@ func (s *Service) AddContact(ctx context.Context, userID int64, input domain.Con
 	if input.FirstName == "" && input.LastName == "" {
 		return domain.Contact{}, ErrContactNameEmpty
 	}
-	// Android 的 contacts.addContact 会提交带 "+" 前缀的号码（TDesktop 传纯数字或空）。
-	// 可解析的完整号码写成与账号相同的 E.164 identity；无法解析的本地名片号码只
-	// 保留展示 digits，绝不能拿它做账号选择。空串表示客户端只按 user id 添加联系人，必须原样保留；
-	// TL 明确允许省略号码，服务端不得从 target 全局资料反向补出隐私号码。
+	// Android's contacts.addContact submits numbers with a "+" prefix (TDesktop passes a
+	// bare number or nothing). A resolvable complete number is written as the same E.164
+	// identity as the account; an unparseable local phonebook number keeps only display
+	// digits and must never be used for account selection. An empty string means the client
+	// is adding the contact by user id alone and must be preserved as-is; TL explicitly
+	// allows omitting the phone, and the server must not reconstruct a private number in
+	// reverse from the target's global profile.
 	if input.Phone != "" {
 		if canonical := domain.NormalizePhone(input.Phone); canonical != "" {
 			input.Phone = canonical
@@ -686,9 +689,10 @@ func (s *Service) projectSearchResult(ctx context.Context, userID int64, res dom
 	return res, nil
 }
 
-// digitsOnly 只保留数字字符。保存进 contacts.contact_phone 的号码必须与 users.phone
-// 一样是不带 "+" 的纯数字：下发时 contact_phone 优先充当 TL user.phone，而客户端展示
-// user.phone 时会自行补 "+"，任何非数字前缀都会变成 "++<号码>" 这类坏显示。
+// digitsOnly keeps only digit characters. A number saved into contacts.contact_phone must,
+// like users.phone, be bare digits without "+": on output contact_phone is preferred as the
+// TL user.phone, and the client itself prepends "+" when displaying user.phone, so any
+// non-digit prefix becomes a bad display like "++<number>".
 func digitsOnly(phone string) string {
 	var b strings.Builder
 	b.Grow(len(phone))

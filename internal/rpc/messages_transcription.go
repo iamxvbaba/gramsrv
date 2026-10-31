@@ -8,9 +8,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// onMessagesTranscribeAudio 是 messages.transcribeAudio 的入口。缓存命中直接回文本；
-// 否则登记/复用 pending 后台 ASR 任务，完成时经 PushTranscribedAudioUpdate 推
-// updateTranscribedAudio（与官方一致：客户端凭 Pending 标志等 update 拿终稿）。
+// onMessagesTranscribeAudio is the entry point for messages.transcribeAudio. A cache hit returns
+// the text directly; otherwise it registers/reuses a pending background ASR task and pushes
+// updateTranscribedAudio via PushTranscribedAudioUpdate on completion (matching official behavior:
+// the client waits for the update using the Pending flag to get the final text).
 func (r *Router) onMessagesTranscribeAudio(
 	ctx context.Context,
 	req *tg.MessagesTranscribeAudioRequest,
@@ -41,8 +42,9 @@ func (r *Router) onMessagesTranscribeAudio(
 	}, nil
 }
 
-// voiceMessageDocument 按 viewer 视角加载 (peer, msgID) 上的 voice 文档，
-// 结构与 loadMessagePoll 一致（频道按 channelID 限定，私聊需比对 peer）。
+// voiceMessageDocument loads the voice document at (peer, msgID) from the viewer's perspective,
+// with the same structure as loadMessagePoll (channels are scoped by channelID; private chats
+// must match the peer).
 func (r *Router) voiceMessageDocument(
 	ctx context.Context,
 	userID int64,
@@ -93,8 +95,9 @@ func voiceDocumentOf(id int, media *domain.MessageMedia, msgID int) (domain.Docu
 	return *media.Document, true
 }
 
-// PushTranscribedAudioUpdate 把完成的转写终稿推给发起方的在线 session。
-// 由 transcription.Service 的完成回调调用（background ctx，无 session 归属）。
+// PushTranscribedAudioUpdate pushes the completed transcription final text to the requester's
+// online sessions. Called by the transcription.Service completion callback (background ctx, no
+// session affiliation).
 func (r *Router) PushTranscribedAudioUpdate(
 	ctx context.Context,
 	userID int64,

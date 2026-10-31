@@ -10,12 +10,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendPrivateRichMessageSurvivesReadPaths 验证 Layer 227 富文本（rich_message JSONB）
-// 经全部读路径字节级保真且双盒一致：
-//   - 发送结果双端（sender/recipient）携带 rich_message；
-//   - Blocks 是不透明 TL 字节，含 0x00/0xFF/非 UTF-8 经 JSONB base64 逐字节相等；
-//   - 内嵌 photo 快照（id/access_hash/sizes）存活；
-//   - history（ListByUser）/ GetByIDs / 更新事件重建路径均带 rich_message。
+// TestSendPrivateRichMessageSurvivesReadPaths verifies Layer 227 rich text (rich_message JSONB)
+// stays byte-faithful through all read paths and consistent in both boxes:
+//   - the send result carries rich_message on both ends (sender/recipient);
+//   - Blocks is opaque TL bytes containing 0x00/0xFF/non-UTF-8, compared byte for byte through
+//     JSONB base64;
+//   - the embedded photo snapshot (id/access_hash/sizes) survives;
+//   - history (ListByUser) / GetByIDs / the update-event rebuild path all carry rich_message.
 func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -42,8 +43,8 @@ func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 
-	// Blocks 在 store 层是不透明字节（rpc 层 TL 编解码），含 0x00/0xFF/非 UTF-8 以验证
-	// JSONB base64 字节级 round-trip。
+	// At the store layer Blocks is opaque bytes (TL codec at the rpc layer); it contains
+	// 0x00/0xFF/non-UTF-8 to verify the byte-level JSONB base64 round trip.
 	rawBlocks := []byte{0x00, 0x01, 0xFF, 0x80, 'b', 'l', 'k'}
 	rich := &domain.MessageRichMessage{
 		Rtl:    true,
@@ -81,11 +82,11 @@ func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 		}
 	}
 
-	// 双端发送结果带 rich_message。
+	// The send result carries rich_message on both ends.
 	assertRich("sender result", res.SenderMessage.RichMessage)
 	assertRich("recipient result", res.RecipientMessage.RichMessage)
 
-	// history 读回（getHistory 主渲染路径，backward 扁平查询）。
+	// history reads back (the getHistory main render path, the flat backward query).
 	list, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("list by user: %v", err)
@@ -95,7 +96,7 @@ func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 	}
 	assertRich("recipient history", list.Messages[0].RichMessage)
 
-	// GetByIDs（getMessages / getRichMessage 共用取数路径）。
+	// GetByIDs (the fetch path shared by getMessages / getRichMessage).
 	byID, err := messages.GetByIDs(ctx, recipient.ID, []int{res.RecipientMessage.ID})
 	if err != nil {
 		t.Fatalf("recipient get by ids: %v", err)
@@ -105,7 +106,7 @@ func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 	}
 	assertRich("recipient get by ids", byID.Messages[0].RichMessage)
 
-	// 接收方经更新事件重建（离线 difference / 在线推送共用路径）。
+	// The recipient via the update-event rebuild (the path shared by offline difference / online push).
 	events := NewUpdateEventStore(pool)
 	got, err := events.ListAfter(ctx, recipient.ID, 0, 10)
 	if err != nil {

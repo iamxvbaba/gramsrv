@@ -9,10 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// stickerSetNegativeCache 是「按 ref 查不到的贴纸集」的短 TTL 负缓存。未 seed 的 short_name
-// 集合会被客户端反复 getStickerSet（每次都打一发 PG GetStickerSetByShortName），这里缓存
-// not-found 结果，TTL 内直接短路、不再查库。TTL 短（自愈）：运营/运行时新增的集合最多 TTL 后
-// 才被解析，避免负缓存长期遮住真实存在的集合。
+// stickerSetNegativeCache is the short-TTL negative cache of "sticker sets not found by ref".
+// A client repeatedly calls getStickerSet for an unseeded short_name set (each time hitting a PG
+// GetStickerSetByShortName), so the not-found result is cached here and short-circuits within the
+// TTL without querying the DB again. The TTL is short (self-healing): a set added by operations or
+// at runtime is resolved after at most the TTL, so the negative cache does not hide a real set for
+// long.
 type stickerSetNegativeCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
@@ -63,7 +65,7 @@ func (c *stickerSetNegativeCache) put(ref domain.StickerSetRef) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// 简单上限防无界增长：超限整表清空（短 TTL 下冷启代价可忽略）。
+	// A simple cap prevents unbounded growth: over the limit the whole table is cleared (with a short TTL the cold-start cost is negligible).
 	if len(c.entries) >= stickerSetNegativeCacheMaxEntries {
 		c.entries = make(map[string]time.Time, 1024)
 	}
@@ -83,12 +85,13 @@ func (c *stickerSetNegativeCache) delete(refs ...domain.StickerSetRef) {
 	}
 }
 
-// blobMetaCache 是 location_key → FileBlob 元数据的进程内 LRU，用于消除 upload.getFile
-// 每个 chunk 一次 GetFileBlob 的 PG 往返（一个文件按 ≤512KB/1MB 分多次 getFile，热门贴纸/
-// reaction/头像更被大量用户重复拉）。
+// blobMetaCache is the in-process LRU of location_key → FileBlob metadata, eliminating a PG
+// round-trip for GetFileBlob per upload.getFile chunk (a file is fetched with getFile many times at
+// ≤512KB/1MB, and popular stickers/reactions/avatars are repeatedly fetched by many users).
 //
-// FileBlob 元数据小（约百字节）且内容不可变：location_key 一旦写入即固定指向同一 object_key，
-// 新建 blob 用随机 id 生成 location_key 不会与已缓存项冲突，故只读填充、无需失效。
+// FileBlob metadata is small (about a hundred bytes) and immutable: once written, a location_key
+// always points to the same object_key, and a new blob generates a location_key with a random id
+// that does not collide with cached entries, so it is fill-only and needs no invalidation.
 type blobMetaCache struct {
 	mu  sync.Mutex
 	cap int
@@ -112,7 +115,7 @@ func newBlobMetaCache(capacity int) *blobMetaCache {
 	}
 }
 
-// get 返回缓存的 FileBlob 并把其移到 LRU 头部；未命中返回 ok=false。
+// get returns the cached FileBlob and moves it to the LRU head; returns ok=false on a miss.
 func (c *blobMetaCache) get(key string) (domain.FileBlob, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -123,7 +126,7 @@ func (c *blobMetaCache) get(key string) (domain.FileBlob, bool) {
 	return domain.FileBlob{}, false
 }
 
-// put 写入/更新缓存，超出容量时淘汰最久未用项。
+// put writes/updates the cache, evicting the least recently used entry when over capacity.
 func (c *blobMetaCache) put(key string, blob domain.FileBlob) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -141,9 +144,10 @@ func (c *blobMetaCache) put(key string, blob domain.FileBlob) {
 	}
 }
 
-// blobBytesCache 是 object_key → 小 blob 全量字节的 LRU。Sticker / reaction /
-// 缩略图通常只有几 KB 到几十 KB，缓存全量内容可以避开点击历史时的本地磁盘冷读抖动；
-// 大媒体仍由 BlobBackend.GetRange 分段读取，避免把大文件放进内存。
+// blobBytesCache is the LRU of object_key → full bytes of small blobs. Stickers / reactions /
+// thumbnails are usually only a few KB to tens of KB, so caching the full content avoids local-disk
+// cold-read jitter when opening history; large media is still read in ranges by BlobBackend.GetRange,
+// keeping large files out of memory.
 type blobBytesCache struct {
 	mu       sync.Mutex
 	maxBytes int
@@ -280,8 +284,9 @@ func (c *stickerSetFullCache) loadEpoch() uint64 {
 	return c.epoch
 }
 
-// putIfEpoch 只发布读取期间未发生修改/删除的快照。预热与 RPC 的读缓存填充不推进
-// epoch，写入/失效则推进；即使删除时缓存还为空，也能挡住稍后完成的旧查询。
+// putIfEpoch publishes only a snapshot for which no modification/deletion occurred during the read.
+// Warm-up and RPC read-cache fills do not advance the epoch, while writes/invalidations do; even if
+// the cache is still empty at deletion time, this blocks an older query completing later.
 func (c *stickerSetFullCache) putIfEpoch(set domain.StickerSet, docs []domain.Document, epoch uint64) bool {
 	if set.ID == 0 {
 		return false

@@ -13,7 +13,7 @@ import (
 
 func TestChannelDialogCacheNilDisabled(t *testing.T) {
 	if c := NewChannelDialogCache(0); c != nil {
-		t.Fatalf("max<=0 应返回 nil(禁用), got %v", c)
+		t.Fatalf("max<=0 should return nil (disabled), got %v", c)
 	}
 	var nilCache *ChannelDialogCache
 	nilCache.put(domain.ChannelDialog{UserID: 1, ChannelID: 2})
@@ -21,7 +21,7 @@ func TestChannelDialogCacheNilDisabled(t *testing.T) {
 	nilCache.deleteChannel(2)
 	nilCache.flush()
 	if _, ok := nilCache.get(1, 2); ok {
-		t.Fatalf("nil 缓存 get 必须返回 ok=false")
+		t.Fatalf("nil cache get must return ok=false")
 	}
 }
 
@@ -42,28 +42,28 @@ func TestChannelDialogCachePutGetDeleteFlushAndClone(t *testing.T) {
 	}
 
 	if _, ok := c.get(10, 20); ok {
-		t.Fatalf("空缓存不应命中")
+		t.Fatalf("an empty cache should not hit")
 	}
 	c.put(dialog)
 	dialog.DefaultSendAs.ID = 99
 	got, ok := c.get(10, 20)
 	if !ok || got.UserID != 10 || got.ChannelID != 20 || got.DefaultSendAs == nil || got.DefaultSendAs.ID != 10 {
-		t.Fatalf("put/get 往返或写入 clone 失败: %+v ok=%v", got, ok)
+		t.Fatalf("put/get round trip or write clone failed: %+v ok=%v", got, ok)
 	}
 	got.DefaultSendAs.ID = 77
 	again, ok := c.get(10, 20)
 	if !ok || again.DefaultSendAs == nil || again.DefaultSendAs.ID != 10 {
-		t.Fatalf("读取结果必须 clone，避免调用方污染缓存: %+v ok=%v", again, ok)
+		t.Fatalf("the read result must be cloned to keep callers from polluting the cache: %+v ok=%v", again, ok)
 	}
 
 	c.delete(10, 20)
 	if _, ok := c.get(10, 20); ok {
-		t.Fatalf("delete 后不应命中")
+		t.Fatalf("should not hit after delete")
 	}
 	c.put(dialog)
 	c.flush()
 	if _, ok := c.get(10, 20); ok {
-		t.Fatalf("flush 后不应命中")
+		t.Fatalf("should not hit after flush")
 	}
 }
 
@@ -94,25 +94,25 @@ func TestChannelDialogCacheDeleteChannelAndCap(t *testing.T) {
 	c.put(domain.ChannelDialog{UserID: 1, ChannelID: 11, TopMessageID: 3})
 	c.deleteChannel(10)
 	if _, ok := c.get(1, 10); ok {
-		t.Fatalf("deleteChannel 应失效同频道 user 1")
+		t.Fatalf("deleteChannel should invalidate user 1 for the same channel")
 	}
 	if _, ok := c.get(2, 10); ok {
-		t.Fatalf("deleteChannel 应失效同频道 user 2")
+		t.Fatalf("deleteChannel should invalidate user 2 for the same channel")
 	}
 	if got, ok := c.get(1, 11); !ok || got.TopMessageID != 3 {
-		t.Fatalf("其它频道不应失效: %+v ok=%v", got, ok)
+		t.Fatalf("other channels should not be invalidated: %+v ok=%v", got, ok)
 	}
 
 	c.put(domain.ChannelDialog{UserID: 1, ChannelID: 12, TopMessageID: 4})
-	c.put(domain.ChannelDialog{UserID: 1, ChannelID: 13, TopMessageID: 5}) // 超 cap=2:LRU 驱逐最旧的 (1,11)
+	c.put(domain.ChannelDialog{UserID: 1, ChannelID: 13, TopMessageID: 5}) // over cap=2: LRU evicts the oldest (1,11)
 	if _, ok := c.get(1, 11); ok {
-		t.Fatalf("超限后最旧条目 (1,11) 应被驱逐")
+		t.Fatalf("over the limit the oldest entry (1,11) should be evicted")
 	}
 	if got, ok := c.get(1, 12); !ok || got.TopMessageID != 4 {
-		t.Fatalf("LRU 单条驱逐应保留次新条目 (1,12),证明非整表 flush: %+v ok=%v", got, ok)
+		t.Fatalf("single-entry LRU eviction should keep the next-newest entry (1,12), proving it is not a whole-table flush: %+v ok=%v", got, ok)
 	}
 	if got, ok := c.get(1, 13); !ok || got.TopMessageID != 5 {
-		t.Fatalf("最新条目 (1,13) 应在: %+v ok=%v", got, ok)
+		t.Fatalf("the newest entry (1,13) should be present: %+v ok=%v", got, ok)
 	}
 }
 
@@ -176,22 +176,22 @@ func TestReadModelChangeListenerInvalidatesChannelDialogCache(t *testing.T) {
 	listener := NewReadModelChangeListener("", ReadModelCacheSet{ChannelDialogs: dialogs}, nil)
 	listener.handlePayload(`{"model":"dialog_light","owner_user_id":100,"peer_type":"channel","peer_id":7}`)
 	if _, ok := dialogs.get(100, 7); ok {
-		t.Fatalf("dialog_light 事件应失效精确 viewer/channel")
+		t.Fatalf("a dialog_light event should invalidate the exact viewer/channel")
 	}
 	if got, ok := dialogs.get(100, 8); !ok || got.TopMessageID != 2 {
-		t.Fatalf("其它频道不应失效: %+v ok=%v", got, ok)
+		t.Fatalf("other channels should not be invalidated: %+v ok=%v", got, ok)
 	}
 	if got, ok := dialogs.get(200, 7); !ok || got.TopMessageID != 3 {
-		t.Fatalf("其它 viewer 不应失效: %+v ok=%v", got, ok)
+		t.Fatalf("other viewers should not be invalidated: %+v ok=%v", got, ok)
 	}
 
 	listener.handlePayload(`{"model":"channel_member","owner_user_id":200,"peer_type":"channel","peer_id":7}`)
 	if _, ok := dialogs.get(200, 7); ok {
-		t.Fatalf("channel_member 事件应失效对应 viewer/channel")
+		t.Fatalf("a channel_member event should invalidate the corresponding viewer/channel")
 	}
 
 	listener.handlePayload(`{"model":"channel_base","owner_user_id":0,"peer_type":"channel","peer_id":8}`)
 	if _, ok := dialogs.get(100, 8); ok {
-		t.Fatalf("channel_base 事件应失效该频道所有 viewer dialog")
+		t.Fatalf("a channel_base event should invalidate all viewer dialogs of that channel")
 	}
 }

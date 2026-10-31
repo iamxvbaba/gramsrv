@@ -125,7 +125,7 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 通过邀请链接重新入群同样要归还 prehistory 读边界(upsert 是 GREATEST,不会下调)。
+	// Rejoining via an invite link also has to return the prehistory read boundary (the upsert is GREATEST and will not lower it).
 	if err := resetPrehistoryBoundaryTx(ctx, tx, channel, userID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
@@ -200,8 +200,8 @@ WHERE channel_id = $1 AND user_id = $2`, channel.ID, userID, member.ReadInboxMax
 	if err := upsertChannelDialogTx(ctx, tx, userID, channel, msg, member.ReadInboxMaxID, member.ReadOutboxMaxID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 经邀请链接重新入群同样是重进:按新 available_min_id 重算未读 reaction 计数,
-	// 清掉离群期间残留的幽灵角标(同 JoinChannel,门控自动对 prehistory-visible 保留真实计数)。
+	// Rejoining via an invite link is also a re-entry: recompute the unread reaction count by the new available_min_id,
+	// clearing the ghost badge left while out of the channel (same as JoinChannel; the gating automatically keeps the real count for prehistory-visible).
 	if err := refreshChannelUnreadReactionsCountTx(ctx, tx, userID, channel.ID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}

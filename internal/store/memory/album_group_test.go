@@ -103,7 +103,7 @@ func TestAlbumGroupReservationRejectsMixedOldGroupsAtomically(t *testing.T) {
 	if _, err := messages.ReserveAlbumGroup(ctx, albumReq(1001, peer, 123, one, two, three)); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
 		t.Fatalf("mixed old groups err=%v, want ErrMessageRandomIDDuplicate", err)
 	}
-	// 失败批次不能把尚未存在的 random_id 23 偷绑到任一旧组。
+	// A failed batch must not smuggle the not-yet-existing random_id 23 into any old group.
 	got, err := messages.ReserveAlbumGroup(ctx, albumReq(1001, peer, 124, three))
 	if err != nil || got != 124 {
 		t.Fatalf("post-conflict unbound item = %d err=%v, want fresh 124", got, err)

@@ -20,8 +20,9 @@ type channelFullBotInfoCacheKey struct {
 	channelID    int64
 }
 
-// channelFullBotInfoCache 收敛到 projectionCache[K,V](epoch 守卫 / LRU / TTL / clone 由原语承载)。
-// 它走 Router 级 singleflight + 外部构建再写回(LoadEpoch→loadChannelFullBotInfo→StoreIfEpoch)。
+// channelFullBotInfoCache is a thin wrapper over projectionCache[K,V] (the epoch guard / LRU /
+// TTL / clone are provided by the primitive). It uses Router-level singleflight plus external
+// build-then-write-back (LoadEpoch -> loadChannelFullBotInfo -> StoreIfEpoch).
 type channelFullBotInfoCache struct {
 	*projectionCache[channelFullBotInfoCacheKey, channelFullBotInfoResult]
 }
@@ -55,7 +56,7 @@ func (c *channelFullBotInfoCache) Lookup(viewerUserID, channelID int64) (channel
 	return c.lookup(channelFullBotInfoCacheKey{viewerUserID: viewerUserID, channelID: channelID})
 }
 
-// StoreIfEpoch 仅在 epoch 未变(构建期间没有失效)时写入。
+// StoreIfEpoch writes only when the epoch is unchanged (no invalidation during the build).
 func (c *channelFullBotInfoCache) StoreIfEpoch(viewerUserID, channelID int64, value channelFullBotInfoResult, loadEpoch uint64) {
 	if c == nil || viewerUserID == 0 || channelID == 0 {
 		return

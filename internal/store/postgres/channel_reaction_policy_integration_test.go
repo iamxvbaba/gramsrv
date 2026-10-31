@@ -176,7 +176,7 @@ func TestChannelStoreReactionPolicyEnforcedOnWrite(t *testing.T) {
 	if _, err := env.react(t, env.ownerID, "\U0001f44d"); !errors.Is(err, domain.ErrReactionInvalid) {
 		t.Fatalf("reaction under none policy err = %v, want ErrReactionInvalid", err)
 	}
-	// 策略收紧后撤销存量 reaction 必须仍然可行。
+	// Retracting existing reactions must still work after the policy is tightened.
 	if _, err := env.react(t, env.memberID); err != nil {
 		t.Fatalf("retract reaction under none policy: %v", err)
 	}
@@ -231,7 +231,7 @@ WHERE channel_id = $1 AND message_id = $2 AND reaction_type = $3`, env.channelID
 }
 
 func TestChannelStoreSetAvailableReactionsRefreshesRowCache(t *testing.T) {
-	pool := testPool(t) // 未设 DSN 会 t.Skip
+	pool := testPool(t) // without a DSN set this will t.Skip
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 	users := NewUserStore(pool)
@@ -299,7 +299,8 @@ func TestChannelStoreUniqueReactionsLimitOnlyBlocksNewKinds(t *testing.T) {
 	env := newReactionPolicyTestEnv(t, false)
 	ctx := context.Background()
 
-	// 默认策略下先造出 {👍, ❤}，再调低 reactions_limit 模拟存量超限。
+	// Under the default policy, first create {👍, ❤}, then lower reactions_limit to
+	// simulate an over-limit existing set.
 	if _, err := env.react(t, env.ownerID, "\U0001f44d"); err != nil {
 		t.Fatalf("seed owner reaction: %v", err)
 	}
@@ -330,7 +331,7 @@ func TestChannelStoreUniqueReactionsLimitOnlyBlocksNewKinds(t *testing.T) {
 func TestChannelStoreReactionVectorTrimsToPerUserMax(t *testing.T) {
 	env := newReactionPolicyTestEnv(t, false)
 
-	// 超出 reactions_user_max_default 的向量保留尾部最新项，不报错。
+	// A vector exceeding reactions_user_max_default keeps the newest trailing entries; no error.
 	res, err := env.react(t, env.memberID, "\U0001f44d", "❤")
 	if err != nil {
 		t.Fatalf("send oversized reaction vector: %v", err)

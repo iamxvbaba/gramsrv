@@ -11,11 +11,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件集中 poll 的 tg↔domain 转换与 updateMessagePoll 组装。
-// 定义快照（MessagePoll）不含机密；机密只进 PollDefinition（polls 权威表）。
+// This file centralizes the poll tg<->domain conversion and updateMessagePoll
+// assembly. The definition snapshot (MessagePoll) carries no secrets; secrets go
+// only into PollDefinition (the polls authoritative table).
 
-// resolvePollAuxMedia 解析 poll 配图（答案图/题干图）：只允许引用或上传 photo/document，
-// 其余 InputMedia（含嵌套 poll/todo——会先建孤儿权威行）显式拒绝。
+// resolvePollAuxMedia resolves the poll illustration (answer image / question
+// image): only referencing or uploading photo/document is allowed; all other
+// InputMedia (including nested poll/todo -- which would first create an orphan
+// authoritative row) is explicitly rejected.
 func (r *Router) resolvePollAuxMedia(ctx context.Context, userID int64, input tg.InputMediaClass) (*domain.MessageMedia, error) {
 	switch input.(type) {
 	case *tg.InputMediaPhoto, *tg.InputMediaDocument, *tg.InputMediaUploadedPhoto, *tg.InputMediaUploadedDocument:
@@ -32,18 +35,21 @@ func (r *Router) resolvePollAuxMedia(ctx context.Context, userID int64, input tg
 	return media, nil
 }
 
-// domainPollFromInputMedia 校验 InputMediaPoll 并产出 (渲染快照, 权威定义)。
-// pollID 由调用方分配；now 用于 close_period→close_date 折算。
+// domainPollFromInputMedia validates InputMediaPoll and produces (render snapshot,
+// authoritative definition). pollID is assigned by the caller; now is used for the
+// close_period → close_date conversion.
 func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMediaPoll, creatorUserID, pollID int64, now int) (*domain.MessagePoll, domain.PollDefinition, error) {
 	var zero domain.PollDefinition
 	poll := in.Poll
 	if poll.SubscribersOnly || len(poll.CountriesISO2) > 0 {
-		// subscribers-only / 国家限定是新版商业能力，当前无业务模型。
+		// subscribers-only / country restriction are new commercial capabilities with no business model here yet.
 		return nil, zero, mediaInvalidErr()
 	}
-	// open_answers（开放式答案，允许他人添加选项）在 TDesktop 创建面板默认勾选
-	//（kDefaultPollCreateFlags），不能拒；其依赖的 addPollAnswer/deletePollAnswer
-	// 未接入，故静默剥离不回 echo——客户端不渲染"添加答案"入口，行为自洽（矩阵 todo）。
+	// open_answers (open answers, allowing others to add options) is checked by
+	// default in the TDesktop creation panel (kDefaultPollCreateFlags) and cannot be
+	// rejected; the addPollAnswer/deletePollAnswer it depends on are not wired up, so
+	// it is silently stripped and not echoed back -- the client renders no "add
+	// answer" entry point, which is self-consistent (matrix todo).
 	question := poll.Question.Text
 	if strings.TrimSpace(question) == "" {
 		return nil, zero, mediaEmptyErr()
@@ -80,8 +86,9 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 		RevotingDisabled:      poll.RevotingDisabled,
 		HideResultsUntilClose: poll.HideResultsUntilClose,
 	}
-	// 答案两种形态：pollAnswer 自带 option 键（DrKLO Android 路径）；
-	// inputPollAnswer 无 option（TDesktop 创建路径）——option 键由服务端分配。
+	// Two answer shapes: pollAnswer carries its own option key (DrKLO Android path);
+	// inputPollAnswer has no option (TDesktop creation path) -- the option key is
+	// assigned by the server.
 	seen := make(map[string]struct{}, len(poll.Answers))
 	pendingOption := make([]bool, 0, len(poll.Answers))
 	for _, answerClass := range poll.Answers {
@@ -91,7 +98,7 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 		switch answer := answerClass.(type) {
 		case *tg.PollAnswer:
 			if answer.Media != nil {
-				// pollAnswer.media 是 MessageMedia（服务端输出形态），不是合法输入。
+				// pollAnswer.media is a MessageMedia (server output shape), not a valid input.
 				return nil, zero, mediaInvalidErr()
 			}
 			if len(answer.Option) == 0 || len(answer.Option) > maxPollOptionBytes {
@@ -100,7 +107,7 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 			text = answer.Text
 			option = append([]byte(nil), answer.Option...)
 		case *tg.InputPollAnswer:
-			// 答案配图（TDesktop 创建面板可给每个答案附 photo/document）。
+			// Answer image (the TDesktop creation panel can attach a photo/document to each answer).
 			if input, ok := answer.GetMedia(); ok && input != nil {
 				media, err := r.resolvePollAuxMedia(ctx, creatorUserID, input)
 				if err != nil {
@@ -133,7 +140,7 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 			Media:    answerMedia,
 		})
 	}
-	// 为 inputPollAnswer 分配服务端 option 键：取未被显式键占用的最小单字节。
+	// Assign a server option key for inputPollAnswer: take the smallest single byte not taken by an explicit key.
 	next := 0
 	for i := range snapshot.Answers {
 		if !pendingOption[i] {
@@ -155,8 +162,8 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 	for _, answer := range snapshot.Answers {
 		def.Options = append(def.Options, answer.Option)
 	}
-	// quiz 机密：correct_answers（Layer 224+ 为答案下标）必须恰好 1 个且指向合法选项；
-	// solution 仅 quiz 可带。
+	// quiz secrets: correct_answers (an answer index in Layer 224+) must be exactly 1
+	// and point at a valid option; solution is only allowed for quiz.
 	correct, hasCorrect := in.GetCorrectAnswers()
 	solution, hasSolution := in.GetSolution()
 	if poll.Quiz {
@@ -187,18 +194,18 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 		return nil, zero, mediaInvalidErr()
 	}
 	if _, ok := in.GetSolutionMedia(); ok {
-		// quiz 解释配图依赖 polls 权威表扩列（机密侧），当前未接入（矩阵 todo）。
+		// The quiz explanation image depends on extending the polls authoritative table (the secret side) and is not wired up yet (matrix todo).
 		return nil, zero, mediaInvalidErr()
 	}
 	if input, ok := in.GetAttachedMedia(); ok && input != nil {
-		// poll 题干配图（messageMediaPoll.attached_media），随快照落库。
+		// Poll question image (messageMediaPoll.attached_media), persisted with the snapshot.
 		media, err := r.resolvePollAuxMedia(ctx, creatorUserID, input)
 		if err != nil {
 			return nil, zero, err
 		}
 		snapshot.AttachedMedia = media
 	}
-	// close_period / close_date 互斥；period 折算出 close_date 供服务端到点判定。
+	// close_period / close_date are mutually exclusive; period is converted to close_date for server-side expiry.
 	closePeriod, hasPeriod := poll.GetClosePeriod()
 	closeDate, hasDate := poll.GetCloseDate()
 	if hasPeriod && hasDate {
@@ -222,7 +229,7 @@ func (r *Router) domainPollFromInputMedia(ctx context.Context, in *tg.InputMedia
 	return snapshot, def, nil
 }
 
-// tgPoll 把定义快照转成 tg.Poll（Closed/Results 由读路径 enrichment 决定）。
+// tgPoll converts the definition snapshot into tg.Poll (Closed/Results are decided by read-path enrichment).
 func tgPoll(p domain.MessagePoll) tg.Poll {
 	out := tg.Poll{
 		ID:                    p.ID,
@@ -255,7 +262,7 @@ func tgPoll(p domain.MessagePoll) tg.Poll {
 	return out
 }
 
-// tgPollResults 输出 viewer 视角结果；未 enrich（Results==nil）时回退 min（客户端保留本地缓存）。
+// tgPollResults emits the viewer's results; when not enriched (Results==nil) it falls back to min (the client keeps its local cache).
 func tgPollResults(p domain.MessagePoll) tg.PollResults {
 	out := tg.PollResults{}
 	results := p.Results
@@ -293,7 +300,7 @@ func tgTextWithEntities(text string, entities []domain.MessageEntity) tg.TextWit
 	return tg.TextWithEntities{Text: text, Entities: converted}
 }
 
-// tgUpdateMessagePoll 组装一条 updateMessagePoll（poll 总是内联，避免客户端缓存缺失）。
+// tgUpdateMessagePoll assembles an updateMessagePoll (the poll is always inlined to avoid a client cache miss).
 func tgUpdateMessagePoll(peer domain.Peer, msgID int, poll *domain.MessagePoll) *tg.UpdateMessagePoll {
 	if poll == nil {
 		return nil
@@ -310,7 +317,7 @@ func tgUpdateMessagePoll(peer domain.Peer, msgID int, poll *domain.MessagePoll) 
 	return update
 }
 
-// pollVotesNextOffset 编解码 getPollVotes 翻页 token（"<date>,<user_id>"）。
+// pollVotesNextOffset encodes/decodes the getPollVotes pagination token ("<date>,<user_id>").
 func pollVotesNextOffset(votes []domain.PollVote) string {
 	if len(votes) == 0 {
 		return ""

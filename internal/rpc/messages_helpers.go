@@ -86,8 +86,11 @@ func (r *Router) inputPeerForDomainPeer(ctx context.Context, currentUserID int64
 		if r.deps.Channels == nil || peer.ID == 0 {
 			return nil
 		}
-		// 只需 access_hash 解析 InputPeerChannel：走轻量 ResolveChannel（仅访问校验，省 dialog/读态/boost
-		// 这 3 条额外查询）。inputPeerFor 是各消息类 RPC 的通用 peer 解析器、调用极频，是 GetChannel 放大的主源头。
+		// Only access_hash is needed to resolve InputPeerChannel: use the
+		// lightweight ResolveChannel (access check only, saving the 3 extra
+		// dialog/read-state/boost queries). inputPeerFor is the generic peer
+		// resolver for message-class RPCs and is called extremely often, making it
+		// the main source of GetChannel amplification.
 		view, err := r.deps.Channels.ResolveChannel(ctx, currentUserID, peer.ID)
 		if err != nil || view.Channel.ID == 0 {
 			return nil
@@ -221,7 +224,8 @@ func (r *Router) onMessagesSetTyping(ctx context.Context, req *tg.MessagesSetTyp
 }
 
 func (r *Router) pushTypingUpdate(ctx context.Context, targetUserID int64, updates *tg.UpdateShort) {
-	// typing 是 transient（不写 durable log）：未就绪的 session 直接跳过、不进 pending。
+	// typing is transient (no durable log): a not-ready session is skipped
+	// outright and does not enter pending.
 	r.pushUserMessageTransient(ctx, targetUserID, "push typing update", updates)
 }
 
@@ -548,9 +552,11 @@ func (r *Router) validateInputPeerChannelAccess(ctx context.Context, userID int6
 	if !ref.CheckAccessHash || r.deps.Channels == nil {
 		return nil
 	}
-	// 这里只校验 InputPeerChannel 的 access_hash，不消费 dialog/read/unread/boost
-	// 等完整频道视图字段。走 ResolveChannel，避免 messages.search/getPeerSettings
-	// 这类高频入口为一次纯 access check 触发完整 GetChannel 投影。
+	// Only the InputPeerChannel access_hash is validated here; the full channel
+	// view fields (dialog/read/unread/boost etc.) are not consumed. Use
+	// ResolveChannel so high-frequency entry points like
+	// messages.search/getPeerSettings do not trigger a full GetChannel projection
+	// for a pure access check.
 	view, err := r.deps.Channels.ResolveChannel(ctx, userID, channelID)
 	if err != nil {
 		return channelInvalidErr(err)

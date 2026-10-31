@@ -88,7 +88,7 @@ func mustRequest(t *testing.T, s *Service, caller, callee int64, gaHash []byte) 
 		RandomID:   caller*1000 + callee,
 		GAHash:     gaHash,
 		Protocol:   testProtocol(),
-		PrivacyP2P: true, // rpc 层算定的 phone_p2p 双向放行（P3 起参与 p2p_allowed AND）
+		PrivacyP2P: true, // phone_p2p bidirectional allowance computed by the rpc layer (participates in the p2p_allowed AND since P3)
 	})
 	if err != nil {
 		t.Fatalf("RequestCall: %v", err)
@@ -138,7 +138,7 @@ func TestPhoneCallHappyPath(t *testing.T) {
 	if err != nil || already || discarded.State != domain.PhoneCallStateDiscarded || discarded.Duration != 30 {
 		t.Fatalf("DiscardCall = %+v already=%v err=%v", discarded, already, err)
 	}
-	// 双方同时挂断：后到者幂等拿快照，reason 由先到者决定。
+	// Simultaneous hangups: the later one idempotently gets the snapshot, the reason is set by the first.
 	again, already, err := s.DiscardCall(ctx, 1, call.ID, call.AccessHash, domain.PhoneCallDiscardReasonBusy, 0)
 	if err != nil || !already || again.DiscardReason != domain.PhoneCallDiscardReasonHangup {
 		t.Fatalf("second DiscardCall = %+v already=%v err=%v", again, already, err)
@@ -153,18 +153,18 @@ func TestPhoneCallStateErrors(t *testing.T) {
 	gb := testGB()
 	call := mustRequest(t, s, 1, 2, gaHash)
 
-	// confirm 前置必须 Accepted。
+	// confirm requires Accepted first.
 	if _, _, err := s.ConfirmCall(ctx, 1, call.ID, call.AccessHash, ga, 1, testProtocol()); !errors.Is(err, ErrPeerInvalid) {
 		t.Fatalf("confirm before accept err = %v, want ErrPeerInvalid", err)
 	}
-	// 非被叫不能 accept / receivedCall。
+	// A non-callee cannot accept / receivedCall.
 	if _, err := s.AcceptCall(ctx, 1, call.ID, call.AccessHash, gb, testProtocol(), domain.SessionRef{}); !errors.Is(err, ErrPeerInvalid) {
 		t.Fatalf("accept by caller err = %v, want ErrPeerInvalid", err)
 	}
 	if _, _, err := s.ReceivedCall(ctx, 1, call.ID, call.AccessHash); !errors.Is(err, ErrPeerInvalid) {
 		t.Fatalf("receivedCall by caller err = %v, want ErrPeerInvalid", err)
 	}
-	// access_hash 不符。
+	// access_hash mismatch.
 	if _, err := s.AcceptCall(ctx, 2, call.ID, call.AccessHash+1, gb, testProtocol(), domain.SessionRef{}); !errors.Is(err, ErrPeerInvalid) {
 		t.Fatalf("wrong access hash err = %v, want ErrPeerInvalid", err)
 	}
@@ -258,7 +258,7 @@ func TestPhoneCallRandomIDIdempotent(t *testing.T) {
 	if err != nil || second.ID != first.ID {
 		t.Fatalf("retry id = %d err=%v, want %d", second.ID, err, first.ID)
 	}
-	// 终结后同 random_id 重新可用（新通话）。
+	// After termination the same random_id is reusable (new call).
 	if _, _, err := s.DiscardCall(ctx, 1, first.ID, first.AccessHash, domain.PhoneCallDiscardReasonHangup, 0); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestPhoneCallRandomIDIdempotent(t *testing.T) {
 	if err != nil || third.ID == first.ID {
 		t.Fatalf("post-discard request id = %d err=%v, want fresh call", third.ID, err)
 	}
-	// 旧 tombstone 到期回收时，不得误删已改指向新 call 的 random_id 索引。
+	// When an old tombstone expires and is reclaimed, the random_id index already repointed to the new call must not be deleted by mistake.
 	clk.Advance(61 * time.Second)
 	retry, err := s.RequestCall(ctx, 1, req)
 	if err != nil || retry.ID != third.ID {
@@ -288,8 +288,9 @@ func TestPhoneCallQuotaAndExpiry(t *testing.T) {
 	if _, err := s.RequestCall(ctx, 1, domain.PhoneCallRequest{CalleeID: 99, RandomID: 99, GAHash: gaHash, Protocol: testProtocol()}); !errors.Is(err, ErrOccupyFailed) {
 		t.Fatalf("over quota err = %v, want ErrOccupyFailed", err)
 	}
-	// 未建立通话只能由 ExpireDue 迁入终态，确保 dispatcher 能推送并落历史；
-	// registry GC 不得静默删除 active call。
+	// An unestablished call can only be moved to a terminal state by ExpireDue, so the
+	// dispatcher can push and persist history; registry GC must not silently delete an active
+	// call.
 	clk.Advance(91 * time.Second)
 	expired := s.ExpireDue(ctx, clk.Now())
 	if len(expired) != 2 {
@@ -351,7 +352,7 @@ func TestPhoneCallTombstoneGC(t *testing.T) {
 		t.Fatalf("tombstone should be visible before TTL")
 	}
 	clk.Advance(61 * time.Second)
-	mustRequest(t, s, 3, 4, gaHash) // 触发 sweep
+	mustRequest(t, s, 3, 4, gaHash) // trigger sweep
 	if _, ok := s.Lookup(ctx, call.ID, call.AccessHash); ok {
 		t.Fatalf("tombstone should be collected after TTL")
 	}
@@ -376,7 +377,7 @@ func TestPhoneCallSignal(t *testing.T) {
 	_, gaHash := testGA()
 	call := mustRequest(t, s, 1, 2, gaHash)
 
-	// Accepted 前不可转发。
+	// Not forwardable before Accepted.
 	if _, err := s.Signal(ctx, 1, call.ID, call.AccessHash, func(int64, domain.SessionRef) {}); !errors.Is(err, ErrPeerInvalid) {
 		t.Fatalf("signal before accept err = %v, want ErrPeerInvalid", err)
 	}
@@ -390,7 +391,7 @@ func TestPhoneCallSignal(t *testing.T) {
 			t.Fatalf("signal %d: %v", i, err)
 		}
 	}
-	// 限速 2/s：第三条被静默丢弃。
+	// Rate limit 2/s: the third packet is silently dropped.
 	if len(forwarded) != 2 || forwarded[0] != 2 || forwarded[1] != 2 {
 		t.Fatalf("forwarded = %v, want [2 2]", forwarded)
 	}
@@ -401,7 +402,7 @@ func TestPhoneCallSignal(t *testing.T) {
 	if forwarded[len(forwarded)-1] != 1 {
 		t.Fatalf("callee→caller forward peer = %d, want 1", forwarded[len(forwarded)-1])
 	}
-	// 终态尾包静默吞掉。
+	// The terminal-state tail packet is silently swallowed.
 	if _, _, err := s.DiscardCall(ctx, 1, call.ID, call.AccessHash, domain.PhoneCallDiscardReasonHangup, 0); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
@@ -432,22 +433,23 @@ func TestNegotiateProtocol(t *testing.T) {
 		}
 	})
 	t.Run("preferred version beats semver max", func(t *testing.T) {
-		// ⚠ "9.0.0" 优先于更高版本：DrKLO 视频 gate 是字符串字典序比较
-		//（"1x.0.0" < "2.7.7" 会判不支持视频），且 12/13 走 V3 SCTP 信令。
+		// ⚠ "9.0.0" takes priority over higher versions: DrKLO's video gate is a string
+		// lexicographic comparison ("1x.0.0" < "2.7.7" would be judged as not supporting
+		// video), and 12/13 use V3 SCTP signaling.
 		out, err := negotiateProtocol(base(65, 92, "13.0.0", "10.0.0", "9.0.0"), base(65, 92, "9.0.0", "10.0.0", "13.0.0"))
 		if err != nil || out.LibraryVersions[0] != "9.0.0" {
 			t.Fatalf("versions = %v err=%v, want preferred [9.0.0]", out.LibraryVersions, err)
 		}
 	})
 	t.Run("numeric compare fallback not lexicographic", func(t *testing.T) {
-		// 交集无 preferred 版本时退化为语义化最高（数值比较，非字典序）。
+		// When the intersection has no preferred version it falls back to the semantically highest (numeric comparison, not lexicographic).
 		out, err := negotiateProtocol(base(65, 92, "10.0.0", "11.0.0"), base(65, 92, "11.0.0", "10.0.0"))
 		if err != nil || out.LibraryVersions[0] != "11.0.0" {
 			t.Fatalf("versions = %v err=%v, want [11.0.0]", out.LibraryVersions, err)
 		}
 	})
 	t.Run("no common versions passes callee list through", func(t *testing.T) {
-		// ⚠ P1-3：版本无交集绝不拒绝通话，透传被叫列表。
+		// ⚠ P1-3: a version intersection mismatch never rejects the call; the callee's list is passed through.
 		out, err := negotiateProtocol(base(65, 92, "11.0.0"), base(65, 92, "2.4.4", "3.0.0"))
 		if err != nil || len(out.LibraryVersions) != 2 || out.LibraryVersions[0] != "2.4.4" {
 			t.Fatalf("versions = %v err=%v, want callee passthrough", out.LibraryVersions, err)
@@ -480,7 +482,7 @@ func TestPhoneCallExpireDue(t *testing.T) {
 	ctx := context.Background()
 	ga, gaHash := testGA()
 
-	// 三通通话：振铃中（→missed）、Accepted 悬挂（→disconnect）、Confirmed（不回收）。
+	// Three calls: ringing (→missed), dangling Accepted (→disconnect), Confirmed (not reclaimed).
 	ringingCall := mustRequest(t, s, 1, 2, gaHash)
 	acceptedCall, err := s.RequestCall(ctx, 3, domain.PhoneCallRequest{CalleeID: 4, RandomID: 1, GAHash: gaHash, Protocol: testProtocol()})
 	if err != nil {
@@ -518,16 +520,16 @@ func TestPhoneCallExpireDue(t *testing.T) {
 	if reasons[acceptedCall.ID] != domain.PhoneCallDiscardReasonDisconnect {
 		t.Fatalf("accepted call reason = %s, want disconnect", reasons[acceptedCall.ID])
 	}
-	// Confirmed 通话不受服务端时长限制。
+	// Confirmed calls are not subject to the server-side duration limit.
 	if snap, ok := s.Lookup(ctx, confirmedCall.ID, confirmedCall.AccessHash); !ok || snap.State != domain.PhoneCallStateConfirmed {
 		t.Fatalf("confirmed call = %+v ok=%v, want untouched", snap, ok)
 	}
-	// 幂等：再跑一轮无新增。
+	// Idempotent: another round yields nothing new.
 	if got := s.ExpireDue(ctx, clk.Now()); len(got) != 0 {
 		t.Fatalf("second ExpireDue = %d, want 0", len(got))
 	}
-	// 回归：旧 registry GC 会在 2×RingTimeout 后静默删除 Confirmed，导致后续
-	// sendSignalingData/discardCall 返回 CALL_PEER_INVALID。
+	// Regression: the old registry GC silently deleted Confirmed after 2×RingTimeout, causing
+	// subsequent sendSignalingData/discardCall to return CALL_PEER_INVALID.
 	clk.Advance(91 * time.Second)
 	if got := s.ExpireDue(ctx, clk.Now()); len(got) != 0 {
 		t.Fatalf("confirmed call expired after 2×RingTimeout: %+v", got)

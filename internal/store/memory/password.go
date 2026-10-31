@@ -8,7 +8,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// PasswordStore 是 store.PasswordStore 的内存实现。
+// PasswordStore is the in-memory implementation of store.PasswordStore.
 type PasswordStore struct {
 	mu                             sync.RWMutex
 	m                              map[int64]domain.PasswordSettings
@@ -43,7 +43,7 @@ type connectedBusinessBotPeerKey struct {
 	peerUserID  int64
 }
 
-// NewPasswordStore 创建内存 PasswordStore。
+// NewPasswordStore creates an in-memory PasswordStore.
 func NewPasswordStore() *PasswordStore {
 	return &PasswordStore{
 		m:                              make(map[int64]domain.PasswordSettings),
@@ -157,7 +157,7 @@ func (s *PasswordStore) GetAccountSettings(_ context.Context, userID int64) (dom
 	s.mu.RLock()
 	settings, ok := s.accountSettings[userID]
 	s.mu.RUnlock()
-	return settings, ok, nil // AccountSettings 全是值类型，无需深拷贝
+	return settings, ok, nil // AccountSettings are all value types, so no deep copy is needed
 }
 
 func (s *PasswordStore) GetAccountSettingsBatch(_ context.Context, userIDs []int64) (map[int64]domain.AccountSettings, error) {
@@ -251,7 +251,7 @@ func (s *PasswordStore) SaveStickerCollectionItem(_ context.Context, userID int6
 	defer s.mu.Unlock()
 	key := stickerCollectionKey{owner: userID, kind: kind}
 	cur := s.stickerCollections[key]
-	// 移除既有同 id 项。
+	// Remove an existing item with the same id.
 	next := make([]domain.StickerCollectionItem, 0, len(cur)+1)
 	for _, it := range cur {
 		if it.DocumentID == documentID {
@@ -263,7 +263,7 @@ func (s *PasswordStore) SaveStickerCollectionItem(_ context.Context, userID int6
 		s.stickerCollections[key] = next
 		return nil
 	}
-	// 最新置顶 + 截断。
+	// Newest first, then truncate.
 	next = append([]domain.StickerCollectionItem{{DocumentID: documentID, Date: now}}, next...)
 	if len(next) > max {
 		next = next[:max]

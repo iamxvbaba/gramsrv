@@ -17,20 +17,26 @@ import (
 	"telesrv/internal/domain"
 )
 
-// validFiniteCoord 校验坐标是有限值且在 [-bound, bound] 内（NaN/±Inf 一律拒绝）。
+// validFiniteCoord validates that a coordinate is finite and within [-bound, bound]
+// (NaN/±Inf are always rejected).
 func validFiniteCoord(v, bound float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= -bound && v <= bound
 }
 
-// 本文件实现 upload.getWebFile。当前唯一真实路径是 geo/venue 消息的地图缩略图
-// （inputWebFileGeoPointLocation）：TDesktop 与 DrKLO Android 渲染位置消息时都会调它。
-// 地图图像由 files 服务提供：配置 Mapbox 代理时为真实静态地图（落盘缓存保证分片一致），
-// 否则确定性占位合成（见 app/files/maptile.go 与 maptile_proxy.go）；
-// access_hash 不做校验（发送时随机生成且未持久化，地图缩略图无机密性可言）。
-// URL 形态（inputWebFileLocation）只代理 inline registry 中已登记的 web document；
-// 任意客户端自造 URL/access_hash 仍显式拒绝，避免把服务端变成开放代理。
+// This file implements upload.getWebFile. The only real path currently is the map
+// thumbnail of a geo/venue message (inputWebFileGeoPointLocation): both TDesktop and
+// DrKLO Android call it when rendering a location message. The map image is provided by
+// the files service: with a Mapbox proxy configured it is a real static map (an
+// on-disk cache keeps parts consistent), otherwise a deterministic placeholder
+// synthesis (see app/files/maptile.go and maptile_proxy.go); access_hash is not
+// validated (it is generated randomly at send time and not persisted, and a map
+// thumbnail has no confidentiality). The URL form (inputWebFileLocation) only proxies a
+// web document already registered in the inline registry; a client-fabricated
+// URL/access_hash is still explicitly rejected, so the server does not become an open
+// proxy.
 
-// maxWebFileChunkLimit 与 upload.getFile 的单次上限一致，防止客户端超大 limit 放大内存。
+// maxWebFileChunkLimit matches upload.getFile's single-request limit, preventing an
+// oversized client limit from amplifying memory.
 const (
 	maxWebFileChunkLimit      = maxUploadGetFileChunkLimit
 	inlineWebFileFetchTimeout = 10 * time.Second
@@ -68,7 +74,9 @@ func (r *Router) onUploadGetWebFile(ctx context.Context, req *tg.UploadGetWebFil
 		return nil, locationInvalidErr()
 	}
 	point, ok := loc.GeoPoint.(*tg.InputGeoPoint)
-	// NaN 与所有比较都为 false，会穿过区间校验，必须显式拒绝（NaN/Inf 会污染缓存 key 与上游 URL）。
+	// NaN compares false against everything and would slip through the range check, so
+	// it must be explicitly rejected (NaN/Inf would pollute the cache key and upstream
+	// URL).
 	if !ok || !validFiniteCoord(point.Lat, 90) || !validFiniteCoord(point.Long, 180) {
 		return nil, locationInvalidErr()
 	}

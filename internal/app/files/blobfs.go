@@ -17,20 +17,23 @@ import (
 	"telesrv/internal/domain"
 )
 
-// BlobBackend 是 blob 字节内容的存储后端。第一阶段只有本地磁盘实现。
-// 内容寻址：Put 返回的 objectKey 是内容 sha256，相同内容自动去重。
+// BlobBackend is the storage backend for blob byte content. The first phase has only a local disk
+// implementation. Content-addressed: the objectKey returned by Put is the content sha256, so
+// identical content is automatically deduplicated.
 type BlobBackend interface {
 	Name() string
 	Put(ctx context.Context, data []byte) (objectKey string, err error)
 	PutReader(ctx context.Context, r io.Reader) (objectKey string, size int64, sha256 []byte, err error)
 	Get(ctx context.Context, objectKey string) ([]byte, error)
-	// GetRange 只读 [offset, offset+limit) 段并返回该段字节与文件总大小（limit<=0 读到末尾），
-	// 避免大文件每个 chunk 都整文件读入内存（getFile 按 chunk 多次请求 ⇒ 否则 O(N²) 放大）。
+	// GetRange reads only the [offset, offset+limit) range and returns that range's bytes plus the
+	// total file size (limit<=0 reads to the end), avoiding reading a whole large file into memory
+	// per chunk (getFile requests many chunks ⇒ otherwise O(N²) amplification).
 	GetRange(ctx context.Context, objectKey string, offset, limit int64) (data []byte, total int64, err error)
 }
 
-// UploadPartBackend 保存 upload.saveFilePart/saveBigFilePart 的临时分片字节。
-// 与正式 blob 不同，上传分片 key 唯一且可删除，成功组装/覆盖重传/GC 后必须清理。
+// UploadPartBackend stores the temporary part bytes of upload.saveFilePart/saveBigFilePart.
+// Unlike a regular blob, an upload part key is unique and deletable, and it must be cleaned up after
+// successful assembly / overwrite retransmission / GC.
 type UploadPartBackend interface {
 	PutUploadPart(ctx context.Context, ownerUserID, fileID int64, part int, data []byte) (uploadPartObject, error)
 	GetUploadPart(ctx context.Context, objectKey string) ([]byte, error)
@@ -46,7 +49,7 @@ type uploadPartObject struct {
 	SHA256    []byte
 }
 
-// LocalFS 把 blob 字节存到本地磁盘根目录下，路径按内容 hash 两级 fanout。
+// LocalFS stores blob bytes under a local disk root, with paths two-level fanout by content hash.
 type LocalFS struct {
 	root string
 
@@ -60,7 +63,7 @@ type sharedBlobFile struct {
 	refs int
 }
 
-// NewLocalFS 创建本地磁盘 blob backend，确保根目录存在。
+// NewLocalFS creates the local disk blob backend, ensuring the root directory exists.
 func NewLocalFS(root string) (*LocalFS, error) {
 	if root == "" {
 		return nil, fmt.Errorf("blob root dir is empty")
@@ -71,7 +74,7 @@ func NewLocalFS(root string) (*LocalFS, error) {
 	return &LocalFS{root: root, openBlobFiles: make(map[string]*sharedBlobFile)}, nil
 }
 
-// Name 返回后端标识，与 file_blobs.backend 一致。
+// Name returns the backend identifier, matching file_blobs.backend.
 func (l *LocalFS) Name() string { return "localfs" }
 
 func (l *LocalFS) pathFor(objectKey string) string {
@@ -81,13 +84,13 @@ func (l *LocalFS) pathFor(objectKey string) string {
 	return filepath.Join(l.root, objectKey[:2], objectKey[2:4], objectKey)
 }
 
-// Put 写入内容并返回 sha256 hex 作为 objectKey；同内容已存在则跳过写入（去重）。
+// Put writes content and returns the sha256 hex as the objectKey; if the same content already exists the write is skipped (dedup).
 func (l *LocalFS) Put(ctx context.Context, data []byte) (string, error) {
 	key, _, _, err := l.PutReader(ctx, bytes.NewReader(data))
 	return key, err
 }
 
-// PutReader 流式写入内容，边复制边计算 sha256，避免上层为大视频先拼出完整 []byte。
+// PutReader streams content, computing sha256 while copying, so the caller does not first assemble a full []byte for a large video.
 func (l *LocalFS) PutReader(ctx context.Context, r io.Reader) (string, int64, []byte, error) {
 	tmpDir := filepath.Join(l.root, "_tmp")
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
@@ -168,13 +171,14 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, 
 	}
 }
 
-// Get 读取 objectKey 对应的全部字节。
+// Get reads all bytes for the objectKey.
 func (l *LocalFS) Get(_ context.Context, objectKey string) ([]byte, error) {
 	return os.ReadFile(l.pathFor(objectKey))
 }
 
-// GetRange 用 ReadAt 只读 [offset, offset+limit) 段，total 取自文件大小；
-// n 受 total 约束，故即便客户端传超大 limit 也只分配文件实际大小，不会按客户端巨值分配。
+// GetRange uses ReadAt to read only the [offset, offset+limit) range, with total taken from the
+// file size; n is bounded by total, so even if the client passes a huge limit only the file's actual
+// size is allocated, never the client's huge value.
 func (l *LocalFS) GetRange(_ context.Context, objectKey string, offset, limit int64) ([]byte, int64, error) {
 	blobFile, err := l.openBlobFile(objectKey)
 	if err != nil {

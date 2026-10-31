@@ -9,9 +9,11 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
-// TestNewSessionCreatedUniqueIDPerSession 验证两次 session 建立收到的
-// new_session_created.unique_id 互不相同。客户端按 unique_id 去重，复用同一值
-// 会让断线重连后的 new_session_created 被吞掉，依赖它触发的差分补拉随之丢失。
+// TestNewSessionCreatedUniqueIDPerSession verifies that the
+// new_session_created.unique_id received on two session establishments differ.
+// Clients dedup by unique_id, so reusing the same value would make the
+// new_session_created after a reconnect be swallowed, and the difference
+// catch-up that depends on it is lost with it.
 func TestNewSessionCreatedUniqueIDPerSession(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})

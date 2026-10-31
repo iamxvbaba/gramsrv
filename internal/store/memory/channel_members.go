@@ -22,7 +22,7 @@ func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelI
 	if limit <= 0 || limit > domain.MaxChannelParticipantsLimit {
 		limit = domain.MaxChannelParticipantsLimit
 	}
-	// 广播频道订阅者列表仅管理员可枚举（与隐藏成员同一门控）：admins filter 仍放行（徽章数据源）。
+	// A broadcast channel's subscriber list is enumerable by admins only (same gate as hidden members); the admins filter is still allowed (badge data source).
 	if channel.MembersListAdminOnly() && !isChannelAdmin(viewer) {
 		switch filter.Kind {
 		case domain.ChannelParticipantsAdmins:
@@ -133,8 +133,10 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	member := domain.ChannelMember{
 		ChannelID: channelID,
 		UserID:    userID,
-		// 自加入：inviter 即本人（对齐官方 channelParticipantSelf.inviter_id == user_id），
-		// 客户端据此生成本地「您加入了此频道」服务消息把广播频道补进会话列表。见 postgres 同处注释。
+		// Self-join: the inviter is the user themselves (aligned with the official
+		// channelParticipantSelf.inviter_id == user_id), so the client generates a local
+		// "You joined this channel" service message that adds the broadcast channel to the
+		// dialog list. See the same comment in postgres.
 		InviterUserID: userID,
 		Role:          domain.ChannelRoleMember,
 		Status:        domain.ChannelMemberActive,
@@ -144,8 +146,9 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 		member = existing
 		member.Status = domain.ChannelMemberActive
 		member.LeftAt = 0
-		// 重进是全新 participant：不保留旧的角色/管理权/Tag；inviter 重置为本人（自加入）。
-		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
+		// Re-joining is a brand-new participant: old role/admin rights/Tag are not kept;
+		// the inviter is reset to the user themselves (self-join). The creator identity is
+		// only kept if the channel's current owner is still this account.
 		if existing.Role != domain.ChannelRoleCreator || channel.CreatorUserID != userID {
 			member.Role = domain.ChannelRoleMember
 			member.AdminRights = domain.ChannelAdminRights{}
@@ -171,10 +174,12 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	if s.members[channelID] == nil {
 		s.members[channelID] = make(map[int64]domain.ChannelMember)
 	}
-	// 与 postgres 同口径:重新入群时归还纯 prehistory 来源的读边界。available_min_id 只增
-	// 不减,不显式归零的话,"隐藏历史期间入群"的成员即使频道后来关闭隐藏历史也永远看不到
-	// 旧消息,重新加入也救不回。带 history_clear_anchor 的边界来自成员自己的"清空历史",
-	// 属 owner-local 语义,不回收。
+	// Same convention as postgres: re-joining restores read bounds that came purely from
+	// prehistory. available_min_id only ever increases, so without an explicit reset a
+	// member who joined while history was hidden would never see old messages even after
+	// the channel re-enables hidden history, and re-joining cannot rescue them. Bounds
+	// carrying a history_clear_anchor come from the member's own "clear history" and are
+	// owner-local semantics, so they are not recycled.
 	if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
 		member.AvailableMinID = 0
 	}
@@ -369,7 +374,7 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 	} else {
 		member.Role = domain.ChannelRoleAdmin
 	}
-	// 被重新激活的成员(此前 left/kicked)同样要归还 prehistory 读边界,否则永久空频道。
+	// A re-activated member (previously left/kicked) must likewise restore prehistory read bounds, otherwise the channel stays empty forever.
 	if previous.Status != domain.ChannelMemberActive && !channel.PreHistoryHidden &&
 		member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
 		member.AvailableMinID = 0
@@ -1227,8 +1232,9 @@ func channelParticipantMatchesFilter(member domain.ChannelMember, kind domain.Ch
 	case "", domain.ChannelParticipantsRecent, domain.ChannelParticipantsContacts, domain.ChannelParticipantsMentions, domain.ChannelParticipantsSearch:
 		return member.Status == domain.ChannelMemberActive
 	case domain.ChannelParticipantsAdmins:
-		// Layer 225 起 admins filter 同时是消息徽章数据源：客户端把整个返回
-		// （含 rank）灌进 badge 缓存，因此带成员 Tag 的普通成员也必须返回。
+		// Since Layer 225 the admins filter is also the message-badge data source: the
+		// client feeds the whole response (including rank) into its badge cache, so an
+		// ordinary member with a member Tag must also be returned.
 		return member.Status == domain.ChannelMemberActive && (isChannelAdmin(member) || member.Rank != "")
 	case domain.ChannelParticipantsKicked:
 		return member.Status == domain.ChannelMemberKicked || member.BannedRights.ViewMessages

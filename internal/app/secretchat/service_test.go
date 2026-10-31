@@ -10,8 +10,8 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// validGA 返回一个落在合法 DH 区间的 256 字节 g_a（首字节 0x55 ≈ 2^2046，
-// 既 > 2^1984 又 < p≈0xc7..）。
+// validGA returns a 256-byte g_a that falls within the valid DH range (first byte 0x55 ≈
+// 2^2046, both > 2^1984 and < p≈0xc7..).
 func validGA() []byte {
 	b := make([]byte, 256)
 	for i := range b {
@@ -180,7 +180,7 @@ func TestRequestEncryptionRejectsZeroAndDiscardedReuse(t *testing.T) {
 func TestRequestEncryptionInvalidGA(t *testing.T) {
 	svc, _ := newTestService()
 	req := requestFixture()
-	req.GA = []byte{0x01} // value 1 → 不在 (1, p-1)
+	req.GA = []byte{0x01} // value 1 → not in (1, p-1)
 	if _, err := svc.RequestEncryption(context.Background(), req); !errors.Is(err, ErrGAInvalid) {
 		t.Fatalf("err = %v, want ErrGAInvalid", err)
 	}
@@ -225,7 +225,7 @@ func TestAcceptEncryptionWrongUser(t *testing.T) {
 	svc, _ := newTestService()
 	ctx := context.Background()
 	chat, _ := svc.RequestEncryption(ctx, requestFixture())
-	// admin 自己冒充接受方。
+	// admin impersonates the recipient.
 	_, err := svc.AcceptEncryption(ctx, chat.ID, adminUser, adminAuthKey, chat.ParticipantAccessHash, validGA(), keyFP)
 	if !errors.Is(err, domain.ErrSecretChatNotFound) {
 		t.Fatalf("err = %v, want ErrSecretChatNotFound", err)
@@ -239,7 +239,7 @@ func TestAcceptEncryptionDoubleAccept(t *testing.T) {
 	if _, err := svc.AcceptEncryption(ctx, chat.ID, partUser, partAuthKey, chat.ParticipantAccessHash, validGA(), keyFP); err != nil {
 		t.Fatalf("first accept: %v", err)
 	}
-	// 第二台设备 accept：CAS 落空 → ENCRYPTION_ALREADY_ACCEPTED。
+	// A second device accepts: CAS misses → ENCRYPTION_ALREADY_ACCEPTED.
 	_, err := svc.AcceptEncryption(ctx, chat.ID, partUser, int64(0x3333), chat.ParticipantAccessHash, validGA(), keyFP)
 	if !errors.Is(err, domain.ErrSecretChatAlreadyAccepted) {
 		t.Fatalf("err = %v, want ErrSecretChatAlreadyAccepted", err)
@@ -327,7 +327,7 @@ func TestDiscardEncryption(t *testing.T) {
 	if got.State != domain.SecretChatStateDiscarded || !got.HistoryDeleted {
 		t.Fatalf("discarded chat = %+v", got)
 	}
-	// 幂等：再 discard 返回 already=true。
+	// Idempotent: discarding again returns already=true.
 	_, already, err = svc.DiscardEncryption(ctx, chat.ID, partUser, partAuthKey, false)
 	if err != nil || !already {
 		t.Fatalf("idempotent discard: already=%v err=%v", already, err)
@@ -344,7 +344,7 @@ func TestDiscardEncryptionNonParticipant(t *testing.T) {
 	}
 }
 
-// acceptedChat 跑完 request→accept，返回 normal 态密聊。
+// acceptedChat runs request→accept and returns a normal-state secret chat.
 func acceptedChat(t *testing.T, svc *Service) domain.SecretChat {
 	t.Helper()
 	ctx := context.Background()
@@ -373,7 +373,7 @@ func TestSendEncryptedQtsAllocation(t *testing.T) {
 	ctx := context.Background()
 	chat := acceptedChat(t, svc)
 
-	// admin 发 → 投给 participant 设备（partAuthKey），qts 从 1 起。
+	// admin sends → delivered to the participant device (partAuthKey), qts starts at 1.
 	_, m1, err := svc.SendEncrypted(ctx, chat.ID, adminUser, adminAuthKey, chat.AdminAccessHash, domain.SecretMessageDelivery{RandomID: 111, Bytes: []byte{1, 2, 3}, Date: 2000})
 	if err != nil {
 		t.Fatalf("send 1: %v", err)
@@ -386,16 +386,16 @@ func TestSendEncryptedQtsAllocation(t *testing.T) {
 		t.Fatalf("msg2 qts = %d err=%v, want 2", m2.Qts, err)
 	}
 
-	// 幂等重发同 random_id → 返回首次 qts/date，不分配新 qts。
+	// Idempotent resend of the same random_id → returns the first qts/date, does not allocate a new qts.
 	_, dup, err := svc.SendEncrypted(ctx, chat.ID, adminUser, adminAuthKey, chat.AdminAccessHash, domain.SecretMessageDelivery{RandomID: 111, Bytes: []byte{1, 2, 3}, Date: 9999})
 	if err != nil {
 		t.Fatalf("dup send: %v", err)
 	}
 	if dup.Qts != 1 || dup.Date != 2000 {
-		t.Fatalf("idempotent resend = %+v, want qts=1 date=2000 (首次落库值)", dup)
+		t.Fatalf("idempotent resend = %+v, want qts=1 date=2000 (first persisted values)", dup)
 	}
 
-	// participant 发 → 投给 admin 设备（adminAuthKey），独立 qts 序列从 1 起。
+	// participant sends → delivered to the admin device (adminAuthKey), an independent qts sequence starting at 1.
 	_, pm, err := svc.SendEncrypted(ctx, chat.ID, partUser, partAuthKey, chat.ParticipantAccessHash, domain.SecretMessageDelivery{RandomID: 333, Bytes: []byte{9}, Date: 2002})
 	if err != nil {
 		t.Fatalf("participant send: %v", err)
@@ -456,10 +456,10 @@ func TestDiscardEncryptionRejectsUnboundAccountDeviceAfterAccept(t *testing.T) {
 func TestSendEncryptedNonNormal(t *testing.T) {
 	svc, _ := newTestService()
 	ctx := context.Background()
-	chat, _ := svc.RequestEncryption(ctx, requestFixture()) // requested, 未 accept
+	chat, _ := svc.RequestEncryption(ctx, requestFixture()) // requested, not yet accepted
 	_, _, err := svc.SendEncrypted(ctx, chat.ID, adminUser, adminAuthKey, chat.AdminAccessHash, domain.SecretMessageDelivery{RandomID: 1, Bytes: []byte{1}, Date: 2000})
 	if !errors.Is(err, domain.ErrSecretChatNotFound) {
-		t.Fatalf("err = %v, want ErrSecretChatNotFound (未成型不能发)", err)
+		t.Fatalf("err = %v, want ErrSecretChatNotFound (cannot send before fully formed)", err)
 	}
 }
 
@@ -472,7 +472,7 @@ func TestListNewMessagesAndAck(t *testing.T) {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
-	// 接收设备（participant）补差分：qts>0 全部 3 条。
+	// Receiving device (participant) catches up: all 3 with qts>0.
 	msgs, err := svc.ListNewMessages(ctx, partAuthKey, 0, 0)
 	if err != nil || len(msgs) != 3 {
 		t.Fatalf("list since 0 = %d msgs err=%v, want 3", len(msgs), err)
@@ -480,20 +480,20 @@ func TestListNewMessagesAndAck(t *testing.T) {
 	if msgs[0].Qts != 1 || msgs[2].Qts != 3 {
 		t.Fatalf("qts sequence broken: %d..%d", msgs[0].Qts, msgs[2].Qts)
 	}
-	// qts>1 → 剩 2 条。
+	// qts>1 → 2 remaining.
 	msgs, _ = svc.ListNewMessages(ctx, partAuthKey, 1, 0)
 	if len(msgs) != 2 || msgs[0].Qts != 2 {
 		t.Fatalf("list since 1 = %+v, want qts 2,3", msgs)
 	}
-	// reserved qts = 3。
+	// reserved qts = 3.
 	if q, _ := svc.DeviceReservedQts(ctx, partAuthKey); q != 3 {
 		t.Fatalf("reserved qts = %d, want 3", q)
 	}
-	// ack 到 3：不报错（confirmed 推进）。
+	// ack up to 3: no error (confirmed advances).
 	if err := svc.AckQueue(ctx, partAuthKey, 3); err != nil {
 		t.Fatalf("ack: %v", err)
 	}
-	// 未参与设备 qts=0。
+	// A device not involved has qts=0.
 	if q, _ := svc.DeviceReservedQts(ctx, int64(0xDEAD)); q != 0 {
 		t.Fatalf("unrelated device reserved qts = %d, want 0", q)
 	}

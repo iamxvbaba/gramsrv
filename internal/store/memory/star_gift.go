@@ -10,13 +10,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// StarGiftStore 是 store.StarGiftStore 的内存实现。
+// StarGiftStore is the in-memory implementation of store.StarGiftStore.
 type StarGiftStore struct {
 	mu               sync.Mutex
 	nextID           int64
 	nextGiftID       int64
 	nextRevID        int64
-	gifts            []domain.SavedStarGift // 追加序
+	gifts            []domain.SavedStarGift // append order
 	catalog          map[int64]domain.StarGift
 	revisions        map[int64]domain.StarGift
 	enabled          map[int64]bool
@@ -32,7 +32,7 @@ type StarGiftStore struct {
 	nextCollectionID int
 }
 
-// NewStarGiftStore 创建内存 StarGiftStore。
+// NewStarGiftStore creates an in-memory StarGiftStore.
 func NewStarGiftStore() *StarGiftStore {
 	return &StarGiftStore{
 		catalog: make(map[int64]domain.StarGift), revisions: make(map[int64]domain.StarGift),
@@ -454,9 +454,9 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 		if filter.ExcludeUnupgradable && !filter.ExcludeUpgradable && !upgradable {
 			continue
 		}
-		// 内存存储只产出 lifecycle_status=active 的行，hosted 行由 SQL 侧的
-		// host 视图单独给出，因此 exclude_hosted 在这里是空操作而非过滤
-		// “唯一化过的礼物”。
+		// The in-memory store only produces lifecycle_status=active rows, while hosted rows are
+		// provided separately by the SQL-side host view, so exclude_hosted is a no-op here rather
+		// than filtering "uniquified gifts".
 		if filter.PeerColorAvailable {
 			gift, ok := s.catalog[g.GiftID]
 			if !ok || g.UniqueGiftID == 0 || !gift.PeerColorAvailable {

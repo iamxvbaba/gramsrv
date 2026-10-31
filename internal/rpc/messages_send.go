@@ -356,15 +356,17 @@ func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSend
 	if err != nil {
 		return nil, false, internalErr()
 	}
-	// 自动实体必须在普通/频道/monoforum 分流前完成，保证所有文本写路径持久化同一份
-	// 服务端补全结果。指纹仍基于原始请求，派生实体不改变 random_id 幂等语义。
+	// Auto entities must be resolved before the plain/channel/monoforum split so that every text
+	// write path persists the same server-augmented result. The fingerprint is still based on the
+	// original request; derived entities do not change random_id idempotency semantics.
 	entities := req.Entities
 	if req.RichMessage == nil {
 		entities = r.augmentAutoEntities(req.Message, entities)
 	}
 	suggestedInput, hasSuggestedPost := req.GetSuggestedPost()
-	// monoforum 普通用户发送不带 reply_to，saved_peer 必须由服务端推导为自己；管理员回复才必须
-	// 显式携带 monoforum_peer_id。仅凭 reply_to 判路由会把用户请求误送进普通 megagroup 路径。
+	// A normal user sending in a monoforum carries no reply_to, so saved_peer must be derived by
+	// the server as themselves; only admin replies must carry monoforum_peer_id explicitly.
+	// Routing solely by reply_to would misroute user requests into the plain megagroup path.
 	var mono domain.Channel
 	var monoforum, monoforumAdmin bool
 	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
@@ -451,9 +453,9 @@ func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSend
 	if err != nil {
 		return nil, false, err
 	}
-	// reply_markup：bot 可发送 inline keyboard 与普通 reply keyboard/hide/force；
-	// 非 bot 静默丢弃。仅请求携带 markup 时查询 is_bot。
-	// 仅在请求携带 markup 时才查 is_bot，避免普通发送多打一次查询。
+	// reply_markup: a bot may send an inline keyboard or a plain reply keyboard/hide/force;
+	// for non-bots it is silently dropped. is_bot is only queried when the request carries a markup,
+	// to avoid an extra lookup on ordinary sends.
 	var replyMarkup *domain.MessageReplyMarkup
 	if req.ReplyMarkup != nil {
 		replyMarkup, err = domainOutgoingReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
@@ -464,8 +466,8 @@ func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSend
 			return nil, false, err
 		}
 	}
-	// rich_message（Layer 228 富文本）：blocks、HTML、Markdown 均在边界归一为
-	// PageBlock + 内嵌媒体快照；普通消息恒 nil。
+	// rich_message (Layer 228 rich text): blocks, HTML and Markdown are all normalized at the
+	// boundary into PageBlock + embedded media snapshot; always nil for ordinary messages.
 	var richMessage *domain.MessageRichMessage
 	if req.RichMessage != nil {
 		richMessage, err = r.domainRichMessageFromInput(ctx, req.RichMessage)
@@ -479,8 +481,9 @@ func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSend
 	if req.Message == "" && richMessage == nil {
 		return nil, false, messageEmptyErr()
 	}
-	// 链接预览：纯文本消息（私聊或频道）含可预览 URL 且未抑制时，挂 pending 占位，异步解析回填。
-	// 富文本消息有独立媒体语义，不叠加。
+	// Link preview: when a plain-text message (private chat or channel) contains a previewable URL
+	// and previews are not suppressed, attach a pending placeholder and fill it in asynchronously.
+	// Rich-text messages have their own media semantics and do not stack a preview.
 	var previewMedia *domain.MessageMedia
 	if richMessage == nil {
 		previewMedia = r.webPageMediaFromText(ctx, req.Message, entities, req.NoWebpage, req.InvertMedia)
@@ -576,8 +579,9 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 	if !ok {
 		switch st := input.(type) {
 		case *tg.InputReplyToStory:
-			// story 回复（评论）：客户端发一条带 reply_to=inputReplyToStory 的私聊消息。
-			// 只支持回复会话对端（story 作者）的 story，投影为 messageReplyStoryHeader。
+			// story reply (comment): the client sends a private-chat message with
+			// reply_to=inputReplyToStory. Only replying to a story of the dialog peer (the story
+			// author) is supported, projected as messageReplyStoryHeader.
 			if st.StoryID <= 0 || st.StoryID > domain.MaxStoryID {
 				return nil, storyIDInvalidErr()
 			}
@@ -607,8 +611,8 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 	if _, ok := reply.GetPollOption(); ok {
 		return nil, pollOptionInvalidErr()
 	}
-	// Layer 232 rich quote 尚未建模：只存 quote_text 会静默丢掉富文本，只带 quote_rich
-	// 时整段引用都会丢，所以在写入前拒绝。
+	// Layer 232 rich quote is not modeled yet: storing only quote_text would silently drop the
+	// rich text, and with only quote_rich the entire quote would be lost, so reject before writing.
 	if _, ok := reply.GetQuoteRich(); ok {
 		return nil, quoteTextInvalidErr()
 	}
@@ -670,11 +674,12 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 
 func sendMessageUnsupportedOptionErr(req *tg.MessagesSendMessageRequest) error {
 	switch {
-	// reply_markup 不再一律拒绝：bot inline keyboard 在 sendOutgoing 前单独解析+校验
-	// （非 bot 静默丢弃，I1）。
+	// reply_markup is no longer rejected outright: a bot inline keyboard is parsed and validated
+	// separately before sendOutgoing (silently dropped for non-bots, I1).
 	case req.QuickReplyShortcut != nil:
 		return shortcutInvalidErr()
-	// req.Effect 不再一律拒绝：消息特效已实现，合法性在 messageEffectInvalid 单独校验。
+	// req.Effect is no longer rejected outright: message effects are implemented; validity is
+	// checked separately in messageEffectInvalid.
 	case req.AllowPaidStars < 0:
 		return starsAmountInvalidErr()
 	case req.AllowPaidFloodskip:
@@ -684,9 +689,11 @@ func sendMessageUnsupportedOptionErr(req *tg.MessagesSendMessageRequest) error {
 	}
 }
 
-// messageEffectInvalid 校验消息特效 id：0（无特效）恒合法；非零必须命中 getAvailableEffects
-// 目录（客户端只会从该目录选取 id），否则视为非法 → EFFECT_ID_INVALID。effects 目录常驻
-// 内存（seed 时构建），校验为内存线性扫描，不查库；effect==0 的常规发送零额外成本。
+// messageEffectInvalid validates a message effect id: 0 (no effect) is always valid; a non-zero
+// value must hit the getAvailableEffects catalog (clients only pick ids from that catalog),
+// otherwise it is invalid -> EFFECT_ID_INVALID. The effects catalog is resident in memory (built at
+// seed time) and validation is an in-memory linear scan, no DB lookup; an effect==0 ordinary send
+// costs nothing extra.
 func (r *Router) messageEffectInvalid(ctx context.Context, effect int64) bool {
 	if effect == 0 {
 		return false
@@ -941,7 +948,7 @@ func tgPrivateMessageUpdates(event domain.UpdateEvent, msg domain.Message, rando
 		Users:   users,
 		Chats:   chats,
 		Date:    date,
-		Seq:     0, // 私聊不维护账号级 seq，恒 0（客户端仅靠 pts 同步）
+		Seq:     0, // private chats keep no account-level seq, always 0 (clients sync by pts only)
 	}
 }
 
@@ -1171,8 +1178,8 @@ func (r *Router) chatsForMessageUpdates(ctx context.Context, ownerUserID int64, 
 	return chats
 }
 
-// mentionUserIDsFromDomain 从 domain 实体与文本解析 @ 目标（转发/重放路径，
-// mentionName 实体已携带解析好的 user_id）。
+// mentionUserIDsFromDomain resolves @ targets from domain entities and text (forward/replay path;
+// mentionName entities already carry the resolved user_id).
 func (r *Router) mentionUserIDsFromDomain(ctx context.Context, currentUserID int64, message string, entities []domain.MessageEntity) []int64 {
 	seen := make(map[int64]struct{})
 	out := make([]int64, 0)

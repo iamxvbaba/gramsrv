@@ -2,31 +2,32 @@ package mtprotoedge
 
 import "time"
 
-// Metrics 接收连接层运行指标。生产入口接入有界 Prometheus exporter；
-// 其它 embedder 可继续使用 NopMetrics（零开销）。
+// Metrics receives connection-layer runtime metrics. The production entry point
+// wires in a bounded Prometheus exporter; other embedders can keep using
+// NopMetrics (zero overhead).
 type Metrics interface {
-	// ConnOpened 在接受一个连接时调用。
+	// ConnOpened is called when a connection is accepted.
 	ConnOpened()
-	// ConnClosed 在一个连接结束时调用。
+	// ConnClosed is called when a connection ends.
 	ConnClosed()
-	// HandshakeDone 在一次密钥交换成功完成时调用，d 为握手耗时。
+	// HandshakeDone is called when a key exchange completes successfully; d is the handshake duration.
 	HandshakeDone(d time.Duration)
-	// RPCHandled 在一次 RPC 处理完成时调用：method 为 TL 方法名，
-	// d 为耗时，err 非 nil 表示失败。
+	// RPCHandled is called when an RPC finishes handling: method is the TL method
+	// name, d is the duration, and a non-nil err means failure.
 	RPCHandled(method string, d time.Duration, err error)
-	// InboundRPCQueued 在 RPC 成功进入单连接 bounded queue 时调用。
+	// InboundRPCQueued is called when an RPC successfully enters the per-connection bounded queue.
 	InboundRPCQueued(method string, len, cap int)
-	// InboundRPCStarted 在 RPC 从 bounded queue 取出开始执行时调用。
+	// InboundRPCStarted is called when an RPC is taken from the bounded queue and starts executing.
 	InboundRPCStarted(method string, queueWait time.Duration)
-	// InboundRPCDropped 在 RPC 因队列满、连接关闭或调度错误被丢弃时调用。
+	// InboundRPCDropped is called when an RPC is dropped due to a full queue, a closed connection or a scheduling error.
 	InboundRPCDropped(method, reason string)
-	// OutboundSend 在一条 server 出站消息完成写入或失败时调用。
+	// OutboundSend is called when a server outbound message finishes writing or fails.
 	OutboundSend(typeID uint32, queueWait time.Duration, bytes int, err error)
-	// OutboundResend 在一次 msg_resend_req/重复 RPC 触发重发后调用。
+	// OutboundResend is called after a resend triggered by msg_resend_req/a duplicate RPC.
 	OutboundResend(count int, err error)
-	// OutboundDropped 在出站队列或状态跟踪因背压丢弃时调用。
+	// OutboundDropped is called when the outbound queue or state tracking is dropped due to backpressure.
 	OutboundDropped(reason string)
-	// OutboundQueueWait 在出站入队等待超过阈值时调用。
+	// OutboundQueueWait is called when outbound enqueue waiting exceeds the threshold.
 	OutboundQueueWait(len, cap int)
 }
 
@@ -63,38 +64,38 @@ type ConnectionIntakeMetrics interface {
 	ConnectionIntake(stage, outcome string, duration time.Duration)
 }
 
-// NopMetrics 是 Metrics 的空实现。
+// NopMetrics is the empty implementation of Metrics.
 type NopMetrics struct{}
 
-// ConnOpened 实现 Metrics。
+// ConnOpened implements Metrics.
 func (NopMetrics) ConnOpened() {}
 
-// ConnClosed 实现 Metrics。
+// ConnClosed implements Metrics.
 func (NopMetrics) ConnClosed() {}
 
-// HandshakeDone 实现 Metrics。
+// HandshakeDone implements Metrics.
 func (NopMetrics) HandshakeDone(time.Duration) {}
 
-// RPCHandled 实现 Metrics。
+// RPCHandled implements Metrics.
 func (NopMetrics) RPCHandled(string, time.Duration, error) {}
 
-// InboundRPCQueued 实现 Metrics。
+// InboundRPCQueued implements Metrics.
 func (NopMetrics) InboundRPCQueued(string, int, int) {}
 
-// InboundRPCStarted 实现 Metrics。
+// InboundRPCStarted implements Metrics.
 func (NopMetrics) InboundRPCStarted(string, time.Duration) {}
 
-// InboundRPCDropped 实现 Metrics。
+// InboundRPCDropped implements Metrics.
 func (NopMetrics) InboundRPCDropped(string, string) {}
 
-// OutboundSend 实现 Metrics。
+// OutboundSend implements Metrics.
 func (NopMetrics) OutboundSend(uint32, time.Duration, int, error) {}
 
-// OutboundResend 实现 Metrics。
+// OutboundResend implements Metrics.
 func (NopMetrics) OutboundResend(int, error) {}
 
-// OutboundDropped 实现 Metrics。
+// OutboundDropped implements Metrics.
 func (NopMetrics) OutboundDropped(string) {}
 
-// OutboundQueueWait 实现 Metrics。
+// OutboundQueueWait implements Metrics.
 func (NopMetrics) OutboundQueueWait(int, int) {}

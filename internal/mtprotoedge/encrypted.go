@@ -31,7 +31,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// connState 是单连接的 MTProto 运行态。
+// connState is the per-connection MTProto runtime state.
 type connState struct {
 	// createdFloor is the smallest client msg_id covered by the latest
 	// new_session_created notification for this server-side session generation.
@@ -39,14 +39,16 @@ type connState struct {
 	// so advertising an outer container id while accepting smaller inner ids would
 	// orphan the original rpc_result messages.
 	createdFloor int64
-	seen         map[int64]clientMsgRecord // 已处理的 client msg_id，用于幂等和 msgs_state_req
+	seen         map[int64]clientMsgRecord // processed client msg_ids, used for idempotency and msgs_state_req
 	order        []int64
 	orderHead    int
 	minSeen      int64
 	maxSeen      int64
-	// maxContentMsgID/maxContentSeqNo 是已接受 content 消息的 msg_id / seq_no 高水位，
-	// 供 validateSeq 的 O(1) 快路径使用（客户端正常发送严格递增）。二者只增不减、
-	// 不随 seen 淘汰回退——快路径只接受「全扫描也必然接受」的子集，其余回落全扫描。
+	// maxContentMsgID/maxContentSeqNo are the msg_id / seq_no high-water marks of
+	// accepted content messages, used by validateSeq's O(1) fast path (well-behaved
+	// clients send strictly increasing values). Both only increase and never roll
+	// back as seen entries are evicted—the fast path only accepts the subset that a
+	// full scan would also necessarily accept, and falls back to a full scan otherwise.
 	maxContentMsgID int64
 	maxContentSeqNo int32
 }
@@ -111,13 +113,19 @@ const (
 
 var errActivationAuthKeyRejected = errors.New("activation auth key no longer exists")
 
-// handleEncrypted 解密加密消息，按需注册连接，处理服务消息并分发明文 payload。
-// 返回（可能新建/更新的）当前连接对象，供 serveConn 维护生命周期。
-// fetchedKey 非 nil 表示本帧的 auth key 是刚从 AuthKeyStore 查出的（首帧/换 auth key/被销毁
-// 后回落）；为 nil 表示走连接缓存快路径——serveConn 判定 current 仍持同一未销毁的 auth key，
-// 直接复用 current.key/current.salt 解密。任何 provisional 在 claim 建立后、发 required
-// control 前都会最终回查 AuthKeyStore，使外部撤销与 activation 线性化。
-// plain 是 serveConn 持有的复用明文缓冲，frame 的 slice 仅在下一帧解密前有效。
+// handleEncrypted decrypts an encrypted message, registers the connection on
+// demand, handles service messages and dispatches the plaintext payload.
+// It returns the (possibly newly created/updated) current connection object, for
+// serveConn to maintain its lifecycle.
+// A non-nil fetchedKey means this frame's auth key was just looked up from
+// AuthKeyStore (first frame / auth key change / fallback after destruction);
+// nil means the connection-cache fast path—serveConn determined current still
+// holds the same undestroyed auth key, so it decrypts directly reusing
+// current.key/current.salt. Any provisional, after the claim is established and
+// before required control is sent, ultimately rechecks AuthKeyStore, linearizing
+// external revocation with activation.
+// plain is the reused plaintext buffer held by serveConn; frame's slices are only
+// valid until the next frame is decrypted.
 func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, remote string, fetchedKey *store.AuthKeyData, b, plain *bin.Buffer) (*Conn, error) {
 	var key crypto.AuthKey
 	var serverSalt int64
@@ -127,7 +135,8 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		serverSalt = fetchedKey.ServerSalt
 		authKeyExpiresAt = fetchedKey.ExpiresAt
 	} else {
-		// 快路径：复用已建立连接缓存的密钥与盐（同一 auth key 的后续帧，含同连接换 session）。
+		// Fast path: reuse the key and salt cached by the established connection
+		// (later frames of the same auth key, including a session change on the same connection).
 		key = current.key
 		serverSalt = current.salt
 		authKeyExpiresAt = current.authKeyExpiresAt
@@ -138,11 +147,14 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		return current, fmt.Errorf("decrypt: %w", err)
 	}
 
-	// 首个加密消息（即使 salt 尚未修正）或 session 变化时创建并保留唯一的
-	// provisional Conn。同一物理 transport 换 session 必须先不可逆地 fence/drain
-	// 旧 writer，再把物理 lease 原子转交给新 generation。为每个 bad_server_salt
-	// 临时创建 Conn 会在同一 socket 上启动多个 outbound actor，Android 的启动重试
-	// 风暴随即变成并发写和重复结果放大。
+	// Create and retain a single provisional Conn on the first encrypted message
+	// (even if the salt has not been corrected yet) or on a session change. A
+	// session change on the same physical transport must first irreversibly
+	// fence/drain the old writer, then atomically transfer the physical lease to
+	// the new generation. Temporarily creating a Conn for each bad_server_salt
+	// would start multiple outbound actors on the same socket, and Android's
+	// startup retry storm would immediately turn into concurrent writes and
+	// duplicated-result amplification.
 	if current == nil || current.sessionID != frame.sessionID || current.authKeyID != key.ID {
 		var previousLayer LayerProfileSnapshot
 		if current != nil {
@@ -163,7 +175,8 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		} else {
 			current = s.newConn(tc, key, frame.sessionID, serverSalt)
 		}
-		// 记录对端 IP，供绑定设备授权时写入 authorizations.ip（admin 面板可见）。
+		// Record the peer IP, written to authorizations.ip when binding a device
+		// authorization (visible in the admin panel).
 		current.setRemoteAddrStr(remote)
 		current.authKeyExpiresAt = authKeyExpiresAt
 		// Same-session evidence is restored as explicit; auth-key metadata is only
@@ -183,8 +196,10 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 	}
 
 	if frame.salt != serverSalt {
-		// bad_server_salt 是修正后重试的物理屏障：payload 与加密 envelope 都必须携带
-		// 同一个权威 salt，写失败则该 provisional/active Conn 不得继续接收状态。
+		// bad_server_salt is the physical barrier for retry after correction: both
+		// the payload and the encrypted envelope must carry the same authoritative
+		// salt, and if the write fails this provisional/active Conn must not receive
+		// any further state.
 		return current, s.sendBadServerSalt(ctx, current, frame.messageID, frame.seqNo, serverSalt)
 	}
 
@@ -332,9 +347,10 @@ func sendQuickAckIfRequested(ctx context.Context, tc transport.Conn, key crypto.
 	return q.SendQuickAck(sendCtx, token)
 }
 
-// clientQuickAckToken 按 Android MTProto v2 公式计算 quick ack：SHA256(auth_key[88:120] +
-// 完整明文)[:4]。plaintext 直接来自解密复用缓冲（decryptClientFrame.plaintext），
-// 与旧实现「把解密结果重编码一遍再哈希」字节一致但零拷贝。
+// clientQuickAckToken computes the quick ack by the Android MTProto v2 formula:
+// SHA256(auth_key[88:120] + full plaintext)[:4]. plaintext comes directly from the
+// decryption reuse buffer (decryptClientFrame.plaintext), which is byte-identical
+// to the old implementation's "re-encode the decryption result then hash" but zero-copy.
 func clientQuickAckToken(key crypto.AuthKey, plaintext []byte) uint32 {
 	h := sha256.New()
 	_, _ = h.Write(key.Value[88:120])
@@ -668,9 +684,10 @@ func mergeStateInfo(primary, fallback []byte) []byte {
 // be an independently owned, budgeted copy.
 func (s *Server) newInboundRPCTask(c *Conn, msgID int64, method string, body []byte, owner *rpcResultOwnerLease) inboundRPC {
 	timeoutResponse := func() {
-		// 只有尚未进入 handler 的排队请求会走这里。运行中的请求只取消
-		// context，等 handler 收敛后再决定成功或 RPC_TIMEOUT，避免客户端用
-		// 新 msg_id 重试时与旧业务提交并发。
+		// Only queued requests that have not yet entered the handler reach here. A
+		// running request only cancels its context and decides success or RPC_TIMEOUT
+		// after the handler converges, avoiding concurrency with the old business
+		// commit when the client retries with a new msg_id.
 		writeTimeout := c.writeTimeout
 		if writeTimeout <= 0 || writeTimeout > 5*time.Second {
 			writeTimeout = 5 * time.Second
@@ -707,8 +724,9 @@ func (s *Server) newInboundRPCTask(c *Conn, msgID int64, method string, body []b
 			}
 		},
 		run: func(taskCtx context.Context) error {
-			// body 是预算成功后生成的独立副本，且每个任务只 run 一次，
-			// 无需再 append 拷贝；直接复用，省掉一份 inbound 在途内存。
+			// body is an independent copy produced after the budget succeeds, and each
+			// task runs only once, so no further append copy is needed; reuse it
+			// directly, saving one copy of inbound in-flight memory.
 			if err := s.handleRPC(taskCtx, c, msgID, method, &bin.Buffer{Buf: body}, owner); err != nil {
 				fields := []zap.Field{
 					zap.Int64("msg_id", msgID),
@@ -741,7 +759,8 @@ func (s *Server) handleInboundRPCAdmissionError(ctx context.Context, c *Conn, ms
 	return err
 }
 
-// handleRPC 把明文 RPC 请求交给 RPC 路由，并将结果或错误包成 rpc_result 回发。
+// handleRPC passes a plaintext RPC request to the RPC router and wraps the result
+// or error into an rpc_result to send back.
 func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method string, b *bin.Buffer, owner *rpcResultOwnerLease) error {
 	if s.rpc == nil {
 		if err := ctx.Err(); err != nil {
@@ -794,8 +813,9 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	if databaseMetrics, ok := s.metrics.(RPCDatabaseMetrics); ok {
 		databaseMetrics.RPCDatabase(effectiveMethod, dbSnapshot.Queries, dbSnapshot.Duration, dbSnapshot.Errors)
 	}
-	// 刷新本连接由 invokeWithLayer 证明并冻结的 exact-session layer。ok=false
-	// 表示仍无协议证据；设备/授权元数据和其它 session 都不具备回填资格。
+	// Refresh this connection's exact-session layer, proven and frozen by
+	// invokeWithLayer. ok=false means there is still no protocol evidence;
+	// device/authorization metadata and other sessions are not eligible to backfill it.
 	if layer, ok := s.rpc.NegotiatedLayer(c.authKeyID, c.sessionID); ok {
 		c.setLegacyClientLayer(layer)
 	}
@@ -1049,7 +1069,7 @@ func (s *Server) publishRPCResult(
 	return nil
 }
 
-// sendResult 把 RPC 结果包成 rpc_result 并加密回发。
+// sendResult wraps an RPC result into rpc_result and sends it back encrypted.
 func (s *Server) sendResult(ctx context.Context, c *Conn, reqMsgID int64, result bin.Encoder) error {
 	if result == nil {
 		result = &mt.RPCError{ErrorCode: 500, ErrorMessage: "INTERNAL"}
@@ -1193,11 +1213,14 @@ func (s *Server) runRPCReplayRestore(c *Conn, source string, restore func() erro
 	return restore()
 }
 
-// encodeRPCResult 编码 rpc_result。内层对象与 rpc_result 头（type_id + req_msg_id）
-// 一次性编码进同一 buffer——旧实现先编码内层、再经 proto.Result.Encode 整体拷贝一遍，
-// 每条响应多一份全量 body 拷贝。生成式结果携带完整 Layer profile + result TypeRef
-// 绑定，后续发送、缓存和重放均只能用于同一精确 profile；package 测试保留的 legacy
-// handler 也必须先绑定 generated admitted call，生产路径不存在旧转码桥。
+// encodeRPCResult encodes rpc_result. The inner object and the rpc_result header
+// (type_id + req_msg_id) are encoded into the same buffer in one pass—the old
+// implementation encoded the inner object first and then copied the whole thing
+// again via proto.Result.Encode, adding one full-body copy per response. Generated
+// results carry a full Layer profile + result TypeRef binding, so later sending,
+// caching and replay can only use the same exact profile; the legacy handler kept
+// by package tests must also first bind the generated admitted call, and no
+// transcoding bridge exists on the production path.
 func (s *Server) encodeRPCResult(c *Conn, reqMsgID int64, result bin.Encoder) (*encodedOutboundMessage, error) {
 	return s.encodeRPCResultContext(context.Background(), c, reqMsgID, result)
 }
@@ -1409,7 +1432,7 @@ func (s *Server) completeRPCResult(c *Conn, reqMsgID int64, encoded *encodedOutb
 	s.rpcResults.Complete(c.authKeyID, c.sessionID, reqMsgID, encoded, replayable)
 }
 
-// sendPong 回复 mt.PingRequest / mt.PingDelayDisconnectRequest。
+// sendPong replies to mt.PingRequest / mt.PingDelayDisconnectRequest.
 func (s *Server) sendPong(ctx context.Context, c *Conn, reqMsgID, pingID int64) error {
 	// Telegram iOS keeps the account in its connection-context "updating" state
 	// until the initial actualization ping receives its matching pong. A pong is
@@ -1419,10 +1442,11 @@ func (s *Server) sendPong(ctx context.Context, c *Conn, reqMsgID, pingID int64) 
 	return c.SendRequiredControl(ctx, proto.MessageServerResponse, &mt.Pong{MsgID: reqMsgID, PingID: pingID})
 }
 
-// sendFutureSalts 回复 MTProto get_future_salts。
+// sendFutureSalts replies to MTProto get_future_salts.
 //
-// 第一阶段只维护当前 auth key 的权威 server_salt，因此返回当前 salt 的有效窗口。
-// 后续如引入 salt rotation，可在这里扩展为多条未来 salt。
+// The first stage only maintains the current auth key's authoritative
+// server_salt, so it returns the validity window of the current salt. If salt
+// rotation is introduced later, this can be extended to multiple future salts.
 func (s *Server) sendFutureSalts(ctx context.Context, c *Conn, reqMsgID int64, num int) error {
 	if num < 0 {
 		num = 0
@@ -1449,10 +1473,12 @@ func (s *Server) sendFutureSalts(ctx context.Context, c *Conn, reqMsgID int64, n
 	})
 }
 
-// sendNewSessionCreated 在连接首个加密消息后通知客户端新 session 已建立。
-// unique_id 必须每个 server session 实例独立：客户端按 unique_id 去重，
-// 复用同一值会让断线重连后的 new_session_created 被吞掉，错过的差分补拉
-// （Android 收到后才调 getDifference）随之丢失。
+// sendNewSessionCreated notifies the client that a new session has been
+// established after the connection's first encrypted message.
+// unique_id must be independent for each server session instance: clients dedup
+// by unique_id, so reusing the same value would make the new_session_created
+// after a reconnect be swallowed, and the missed difference catch-up (Android
+// only calls getDifference after receiving it) is lost with it.
 func (s *Server) sendNewSessionCreated(ctx context.Context, c *Conn, firstMsgID int64) error {
 	// This notification changes the client's request map and update recovery
 	// state. Unlike best-effort ack traffic, it must be written successfully
@@ -1472,12 +1498,12 @@ func (s *Server) newServerSessionUID() int64 {
 	return s.clock.Now().UnixNano()
 }
 
-// sendAck 确认收到客户端 content-related 消息。
+// sendAck acknowledges receipt of client content-related messages.
 func (s *Server) sendAck(ctx context.Context, c *Conn, ids ...int64) error {
 	return c.SendAsync(ctx, proto.MessageFromServer, &mt.MsgsAck{MsgIDs: ids})
 }
 
-// sendMsgsStateInfo 回复 msgs_state_req/msg_resend_req。
+// sendMsgsStateInfo replies to msgs_state_req/msg_resend_req.
 func (s *Server) sendMsgsStateInfo(ctx context.Context, c *Conn, reqMsgID int64, info []byte) error {
 	// msgs_state_info terminates the client's resend service. Do not acknowledge
 	// the request locally and then silently discard its answer from a full queue.
@@ -1504,7 +1530,7 @@ func (s *Server) sendDestroySession(ctx context.Context, c *Conn, sessionID int6
 	return c.Send(ctx, proto.MessageServerResponse, &mt.DestroySessionNone{SessionID: sessionID})
 }
 
-// sendBadMsg 通知客户端消息存在协议层错误（msg_id/seqno 非法）。
+// sendBadMsg notifies the client of a protocol-level message error (invalid msg_id/seqno).
 func (s *Server) sendBadMsg(ctx context.Context, c *Conn, badMsgID int64, badSeqno int32, code int) error {
 	return c.SendAsync(ctx, proto.MessageFromServer, &mt.BadMsgNotification{
 		BadMsgID:    badMsgID,
@@ -1513,7 +1539,7 @@ func (s *Server) sendBadMsg(ctx context.Context, c *Conn, badMsgID int64, badSeq
 	})
 }
 
-// sendBadServerSalt 通知客户端修正 server_salt（error_code 48）。
+// sendBadServerSalt notifies the client to correct server_salt (error_code 48).
 func (s *Server) sendBadServerSalt(ctx context.Context, c *Conn, badMsgID int64, badSeqno int32, newSalt int64) error {
 	return c.SendRequiredControl(ctx, proto.MessageFromServer, &mt.BadServerSalt{
 		BadMsgID:      badMsgID,
@@ -1523,7 +1549,7 @@ func (s *Server) sendBadServerSalt(ctx context.Context, c *Conn, badMsgID int64,
 	})
 }
 
-// typeName 返回 TL TypeID 的可读名称，未知时回退到 hex。
+// typeName returns a readable name for a TL TypeID, falling back to hex when unknown.
 func (s *Server) typeName(id uint32) string {
 	if name := s.types.Get(id); name != "" {
 		return name
@@ -1634,8 +1660,10 @@ func (cs *connState) validateSeq(msgID int64, seqNo int32, content bool) int {
 	if !content {
 		return 0
 	}
-	// 快路径：msg_id 与 seq_no 都严格高于已接受 content 高水位时，任何已见记录都不可能
-	// 与本条构成 too_low/too_high 反转，免去 O(len(seen)) 全扫描（正常客户端恒命中）。
+	// Fast path: when both msg_id and seq_no are strictly above the accepted
+	// content high-water marks, no seen record can form a too_low/too_high
+	// inversion with this one, avoiding the O(len(seen)) full scan (always hit by
+	// well-behaved clients).
 	if msgID > cs.maxContentMsgID && seqNo > cs.maxContentSeqNo {
 		return 0
 	}

@@ -1,8 +1,8 @@
 package domain
 
-// PhoneChangeRequest 是账号改号的持久化命令。updateUserPhone 不携带 PTS，
-// 因此该命令只维护号码事实；Exclude* 保留在 DTO 中用于兼容调用边界，在线
-// 非 PTS 通知由 RPC 层按发起设备排除。
+// PhoneChangeRequest is the persisted command for an account phone change. updateUserPhone carries no PTS,
+// so this command only maintains the phone fact; the Exclude* fields remain in the DTO for call-boundary compatibility,
+// while online non-PTS notifications are excluded by the RPC layer per originating device.
 type PhoneChangeRequest struct {
 	UserID           int64
 	Phone            string

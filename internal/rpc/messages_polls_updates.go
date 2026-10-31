@@ -11,13 +11,17 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件是 poll 链路的响应/推送/事件辅助，与 reaction（messages_reactions_send.go）同构：
-//   - 私聊：双方各记一条 message_poll durable event（无 pts 的 updateMessagePoll + aux pts 簿记），
-//     离线端经 getDifference 拿到消息快照与最新 poll 状态；
-//   - 频道：实时 fan-out 给在线 viewer（作者进 explicit 收件人），无 durable event——
-//     与 channel reaction 现状一致（离线缺口见 compatibility-matrix.md，客户端靠 getPollResults 刷新）。
+// This file holds the response/push/event helpers for the poll pipeline,
+// isomorphic to reactions (messages_reactions_send.go):
+//   - Private: each side records one message_poll durable event (an
+//     updateMessagePoll without pts + aux pts bookkeeping), and offline devices
+//     get the message snapshot and latest poll state via getDifference;
+//   - Channel: real-time fan-out to online viewers (the author goes into the
+//     explicit recipients), with no durable event -- matching the current channel
+//     reaction state (see compatibility-matrix.md for the offline gap; clients
+//     refresh via getPollResults).
 
-// pollMutationErr 把 poll/消息域错误映射为 RPC error。
+// pollMutationErr maps poll/message domain errors to RPC errors.
 func pollMutationErr(err error) error {
 	switch {
 	case err == nil:
@@ -37,7 +41,7 @@ func pollMutationErr(err error) error {
 	}
 }
 
-// loadMessagePoll 按 viewer 视角加载消息上的 poll（已 enrich）。
+// loadMessagePoll loads the poll on a message from the viewer's perspective (already enriched).
 func (r *Router) loadMessagePoll(ctx context.Context, userID int64, peer domain.Peer, msgID int) (*domain.MessagePoll, domain.Peer, bool) {
 	switch peer.Type {
 	case domain.PeerTypeChannel:
@@ -70,10 +74,13 @@ func (r *Router) loadMessagePoll(ctx context.Context, userID int64, peer domain.
 	return nil, peer, false
 }
 
-// pollUpdateRefs 收集 updateMessagePoll 响应需要的 users/chats（recent voters 头像 + channel 实体）。
-// channel 由调用方传入（频道 poll 用结果里的 res.Channel；私聊传零值）：与 reaction fan-out 同款用
-// 单个 channel 一次性投影 tgChannels，避免频道 poll fan-out 每 viewer 一次 GetChannel 的 DB N+1
-// （poll 聚合 N+1 已由 ChannelPollFanoutViews 消除，这是 poll fan-out 残留的 per-viewer DB 调用）。
+// pollUpdateRefs collects the users/chats an updateMessagePoll response needs
+// (recent voters' avatars + channel entity). The channel is passed in by the
+// caller (channel polls use res.Channel from the result; private passes the zero
+// value): like the reaction fan-out, a single channel is projected to tgChannels
+// in one shot, avoiding a per-viewer GetChannel DB N+1 in channel poll fan-out
+// (the poll aggregate N+1 was already eliminated by ChannelPollFanoutViews; this
+// is the residual per-viewer DB call in poll fan-out).
 func (r *Router) pollUpdateRefs(ctx context.Context, viewerUserID int64, peer domain.Peer, poll *domain.MessagePoll, channel domain.Channel) ([]tg.UserClass, []tg.ChatClass) {
 	userIDs := make([]int64, 0, domain.MaxPollRecentVoters)
 	if poll != nil && poll.Results != nil {
@@ -83,10 +90,12 @@ func (r *Router) pollUpdateRefs(ctx context.Context, viewerUserID int64, peer do
 	chats := []tg.ChatClass{}
 	if peer.Type == domain.PeerTypeChannel {
 		if channel.ID != 0 {
-			// fan-out 路径：调用方已带 channel，一次性投影（同 reaction），免 per-viewer GetChannel。
+			// fan-out path: the caller passes the channel, projected in one shot
+			// (like reactions), avoiding a per-viewer GetChannel.
 			chats = tgChannels(viewerUserID, []domain.Channel{channel})
 		} else if r.deps.Channels != nil {
-			// 非 fan-out 单 viewer 路径（getPollResults）：channel 未带，保持原 GetChannel 行为不变。
+			// Non-fan-out single-viewer path (getPollResults): no channel is
+			// passed, keeping the original GetChannel behavior unchanged.
 			if view, err := r.deps.Channels.GetChannel(ctx, viewerUserID, peer.ID); err == nil && view.Channel.ID != 0 {
 				chats = []tg.ChatClass{tgChannelChatForView(viewerUserID, view)}
 			}
@@ -95,7 +104,8 @@ func (r *Router) pollUpdateRefs(ctx context.Context, viewerUserID int64, peer do
 	return users, chats
 }
 
-// privatePollUpdates 记录双方 durable event、推送双方在线 session，并返回投票者视角响应。
+// privatePollUpdates records durable events for both sides, pushes to both
+// sides' online sessions, and returns the voter-view response.
 func (r *Router) privatePollUpdates(ctx context.Context, requestUserID int64, res domain.PrivateMessagePollResult) tg.UpdatesClass {
 	recordedEvents := r.recordPrivateMessagePollEvents(ctx, requestUserID, res)
 	var requesterUpdates *tg.Updates
@@ -114,7 +124,8 @@ func (r *Router) privatePollUpdates(ctx context.Context, requestUserID int64, re
 			Chats:   chats,
 			Date:    int(r.clock.Now().Unix()),
 		}
-		// message_poll 事件占账号 pts 但 updateMessagePoll 无 pts 字段，附 aux 簿记推水位。
+		// The message_poll event consumes account pts but updateMessagePoll has no
+		// pts field, so aux bookkeeping is attached to advance the watermark.
 		updates.Updates = appendAuxPtsBookkeeping(updates.Updates, recordedEvents[msg.OwnerUserID])
 		if msg.OwnerUserID == requestUserID {
 			requesterUpdates = updates
@@ -155,8 +166,9 @@ func (r *Router) recordPrivateMessagePollEvents(ctx context.Context, requestUser
 	return events
 }
 
-// onEditMessageClosePoll 处理 editMessage + InputMediaPoll：当前唯一支持的 poll 编辑是
-// 关闭（closed=true，仅 poll 创建者）；改题/改选项无官方客户端路径，显式拒绝。
+// onEditMessageClosePoll handles editMessage + InputMediaPoll: the only poll edit
+// supported today is closing (closed=true, poll creator only); changing the
+// question/options has no official client path and is explicitly rejected.
 func (r *Router) onEditMessageClosePoll(ctx context.Context, req *tg.MessagesEditMessageRequest, media *tg.InputMediaPoll) (tg.UpdatesClass, error) {
 	if req.ID <= 0 || req.ID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
@@ -203,12 +215,17 @@ func (r *Router) onEditMessageClosePoll(ctx context.Context, req *tg.MessagesEdi
 	}
 }
 
-// channelPollUpdates 组装投票者视角响应；push 为 true 时按 viewer 重建并 fan-out 给在线成员。
+// channelPollUpdates assembles the voter-view response; when push is true it
+// rebuilds per viewer and fans out to online members.
 //
-// Phase 4 模板化：fan-out 前一次性批量加载所有收件人的 per-viewer poll 投影（ChannelPollFanoutViews
-// 把 viewer-invariant 聚合只算一次 + 批量 viewerOptions/可见性），消除原先每 viewer 一次 GetMessages
-// 的 N+1。dispatch 仍同步（poll 是 viewer-only 无 durable event，改异步丢队列即永久漏）。预取未覆盖
-// 的 viewer 回退逐 viewer loadMessagePoll 保正确（与旧路径字节同源）。actor echo 仍用 res poll（旧行为）。
+// Phase 4 templating: before fan-out, batch-load all recipients' per-viewer poll
+// projections in one pass (ChannelPollFanoutViews computes the viewer-invariant
+// aggregate once + batch viewerOptions/visibility), eliminating the previous
+// per-viewer GetMessages N+1. dispatch stays synchronous (a poll is viewer-only
+// with no durable event, so making it async would permanently lose queued items).
+// Viewers not covered by the prefetch fall back to per-viewer loadMessagePoll to
+// stay correct (byte-identical to the old path). The actor echo still uses the
+// res poll (old behavior).
 func (r *Router) channelPollUpdates(ctx context.Context, userID int64, peer domain.Peer, msgID int, res domain.ChannelMessagePollResult, push bool) tg.UpdatesClass {
 	var batched map[int64]*domain.MessagePoll
 	if push && peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
@@ -226,14 +243,16 @@ func (r *Router) channelPollUpdates(ctx context.Context, userID int64, peer doma
 	build := func(viewerUserID int64) *tg.Updates {
 		poll := res.Message.Media.Poll
 		if viewerUserID != userID {
-			// 其它 viewer 的 chosen/correct/solution 门控不同，按其视角取投影。
+			// Other viewers have different chosen/correct/solution gating, so take
+			// the projection for their view.
 			if p, evaluated := batched[viewerUserID]; evaluated {
 				if p == nil {
-					return nil // 预取已判定该 viewer 不可见
+					return nil // prefetch already determined this viewer cannot see it
 				}
 				poll = p
 			} else {
-				// 预取未覆盖（极少：并发/收件人集漂移）→ 回退逐 viewer 重载。
+				// Not covered by the prefetch (rare: concurrency/recipient-set
+				// drift) -> fall back to a per-viewer reload.
 				reloaded, _, found := r.loadMessagePoll(ctx, viewerUserID, peer, msgID)
 				if !found {
 					return nil

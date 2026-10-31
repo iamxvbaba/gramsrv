@@ -15,8 +15,9 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// 回归：云草稿变更必须可被离线设备经 updates.getDifference 恢复（draft_message
-// durable 事件，重放时按 peer 重载当前权威态）。
+// Regression: cloud draft changes must be recoverable by offline devices via
+// updates.getDifference (draft_message durable event, reloading the current
+// authoritative state per peer on replay).
 
 func newDraftDifferenceTestRouter(t *testing.T) (*Router, domain.User, domain.User) {
 	t.Helper()
@@ -55,13 +56,14 @@ func TestDraftMessageDifferenceReplay(t *testing.T) {
 	ownerCtx := WithUserID(ctx, owner.ID)
 	peer := &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash}
 
-	// 设备 A 存草稿。
+	// Device A saves a draft.
 	saveReq := &tg.MessagesSaveDraftRequest{Peer: peer, Message: "typing offline sync"}
 	if _, err := r.onMessagesSaveDraft(ownerCtx, saveReq); err != nil {
 		t.Fatalf("saveDraft: %v", err)
 	}
 
-	// 离线设备从 pts=0 拉差分：必须拿到 updateDraftMessage（内容为当前权威草稿）。
+	// An offline device pulls the difference from pts=0: it must get
+	// updateDraftMessage (carrying the current authoritative draft).
 	diff, err := r.onUpdatesGetDifference(ownerCtx, &tg.UpdatesGetDifferenceRequest{Pts: 0})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)
@@ -86,7 +88,7 @@ func TestDraftMessageDifferenceReplay(t *testing.T) {
 	}
 	ptsAfterSave := full.State.Pts
 
-	// 清空草稿（空 saveDraft）→ 差分重放变为 draftMessageEmpty。
+	// Clear the draft (empty saveDraft) -> difference replay becomes draftMessageEmpty.
 	if _, err := r.onMessagesSaveDraft(ownerCtx, &tg.MessagesSaveDraftRequest{Peer: peer}); err != nil {
 		t.Fatalf("clear draft: %v", err)
 	}
@@ -102,7 +104,8 @@ func TestDraftMessageDifferenceReplay(t *testing.T) {
 		t.Fatalf("difference draft after clear = %T, want DraftMessageEmpty", drafts[0].Draft)
 	}
 
-	// 历史事件重放也按"当前权威态"渲染：从 0 重拉，两条事件都应是 empty（草稿已删）。
+	// Historical event replay also renders from the "current authoritative state":
+	// re-pull from 0 and both events should be empty (the draft was deleted).
 	diff, err = r.onUpdatesGetDifference(ownerCtx, &tg.UpdatesGetDifferenceRequest{Pts: 0})
 	if err != nil {
 		t.Fatalf("getDifference replay: %v", err)

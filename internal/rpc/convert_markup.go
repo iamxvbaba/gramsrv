@@ -120,13 +120,13 @@ func (r *Router) prepareTelegramLoginMarkup(ctx context.Context, senderBotID int
 	return domain.ValidateReplyMarkup(markup)
 }
 
-// P3 reply_markup 错误码（对齐官方）。
+// P3 reply_markup error codes (aligned with official).
 func buttonDataInvalidErr() error { return tgerr.New(400, "BUTTON_DATA_INVALID") }
 func buttonInvalidErr() error     { return tgerr.New(400, "BUTTON_INVALID") }
 func buttonTypeInvalidErr() error { return tgerr.New(400, "BUTTON_TYPE_INVALID") }
 func buttonURLInvalidErr() error  { return tgerr.New(400, "BUTTON_URL_INVALID") }
 
-// replyMarkupErr 把 domain 校验错误映射为客户端错误码。
+// replyMarkupErr maps a domain validation error to a client error code.
 func replyMarkupErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrButtonDataInvalid):
@@ -142,15 +142,20 @@ func replyMarkupErr(err error) error {
 	}
 }
 
-// domainReplyMarkupForSender 解析只能携带 inline keyboard 的入站 reply_markup（inline
-// result / edit 路径）。普通消息发送使用 domainOutgoingReplyMarkupForSender。
-// 语义：
-//   - 仅 bot 账号下发的 markup 被接受；非 bot 一律丢弃（返回 nil，不报错——对齐
-//     官方「普通用户 markup 无效」，I1）。
-//   - 仅 ReplyInlineMarkup 被处理；bot 的 reply keyboard 家族在这些上下文中显式拒绝。
-//   - inline 行内按钮仅 callback / url；其它按钮类型（webview/game/url_auth/
-//     request_* 等）→ ErrButtonTypeInvalid（拒绝整条发送，绝不半实现下发）。
-//   - data≤64B、行/按钮上限、url https 由 domain.ValidateReplyMarkup 校验。
+// domainReplyMarkupForSender parses inbound reply_markup that can only carry an
+// inline keyboard (the inline result / edit path). Plain message sends use
+// domainOutgoingReplyMarkupForSender.
+// Semantics:
+//   - Only markup issued by a bot account is accepted; non-bots are always dropped
+//     (return nil, no error -- aligned with the official "markup is invalid for a
+//     regular user", I1).
+//   - Only ReplyInlineMarkup is handled; a bot's reply keyboard family is explicitly
+//     rejected in these contexts.
+//   - Inline row buttons are callback / url only; other button types (webview/game/
+//     url_auth/request_* etc.) → ErrButtonTypeInvalid (reject the whole send, never
+//     deliver a half-implemented markup).
+//   - data≤64B, row/button limits and https url are validated by
+//     domain.ValidateReplyMarkup.
 func domainReplyMarkupForSender(markup tg.ReplyMarkupClass, senderIsBot bool) (*domain.MessageReplyMarkup, error) {
 	if markup == nil || !senderIsBot {
 		return nil, nil
@@ -172,9 +177,11 @@ func domainReplyMarkupForSender(markup tg.ReplyMarkupClass, senderIsBot bool) (*
 	return parsed, nil
 }
 
-// domainOutgoingReplyMarkupForSender 解析普通 sendMessage/sendMedia 的完整 reply markup。
-// 非 bot 携带 markup 仍按官方权限边界静默丢弃；bot 的未知/未实现按钮则拒绝整条消息，
-// 避免客户端看到一个被服务端悄悄改形的键盘。
+// domainOutgoingReplyMarkupForSender parses the full reply markup of a plain
+// sendMessage/sendMedia. A non-bot carrying markup is still silently dropped per
+// the official permission boundary; an unknown/unimplemented button from a bot
+// rejects the whole message, avoiding a keyboard the client sees quietly reshaped
+// by the server.
 func domainOutgoingReplyMarkupForSender(markup tg.ReplyMarkupClass, senderIsBot bool) (*domain.MessageReplyMarkup, error) {
 	if markup == nil || !senderIsBot {
 		return nil, nil
@@ -332,7 +339,7 @@ func domainMarkupButton(btn tg.KeyboardInlineButton, buttonID int) (domain.Marku
 	case *tg.InlineButtonTypeCopy:
 		return domain.MarkupButton{Type: domain.MarkupButtonCopy, Text: btn.Text, CopyText: b.CopyText, Style: style, IconCustomEmojiID: icon}, nil
 	default:
-		// webview/game/url_auth/request_*/switch_inline/buy 等 P3 未实现按钮类型。
+		// P3 button types not yet implemented: webview/game/url_auth/request_*/switch_inline/buy.
 		return domain.MarkupButton{}, domain.ErrButtonTypeInvalid
 	}
 }
@@ -381,7 +388,7 @@ func tgMarkupButtonStyle(btn domain.MarkupButton) (tg.KeyboardButtonStyle, bool)
 	return out, btn.Style != "" || btn.IconCustomEmojiID > 0
 }
 
-// tgReplyMarkup 把存储的协议中立快照还原为对应 ReplyMarkup constructor。
+// tgReplyMarkup restores the stored protocol-neutral snapshot into the matching ReplyMarkup constructor.
 func tgReplyMarkup(m *domain.MessageReplyMarkup) tg.ReplyMarkupClass {
 	if m.IsZero() {
 		return nil

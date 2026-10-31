@@ -23,7 +23,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// 登录错误。
+// Login errors.
 var (
 	ErrCodeExpired             = errors.New("phone code expired or not found")
 	ErrCodeInvalid             = errors.New("phone code invalid")
@@ -32,19 +32,20 @@ var (
 	ErrTempAuthKeyEmpty        = errors.New("temporary auth key missing or expired")
 	ErrTempAuthKeyAlreadyBound = errors.New("temporary auth key already bound")
 	ErrAuthKeyPermEmpty        = errors.New("permanent auth key required")
-	// ErrLoginCodeDeliveryUnavailable 表示已有账号的 app-code 没有可用的
-	// durable message/event/outbox 投递边界。这是服务端配置错误，不能降级成
-	// “继续返回 sentCode，等 signIn 后补发”。
+	// ErrLoginCodeDeliveryUnavailable indicates that an existing account's app-code has no available
+	// durable message/event/outbox delivery boundary. This is a server misconfiguration and must not
+	// degrade into "keep returning sentCode and resend after signIn".
 	ErrLoginCodeDeliveryUnavailable = errors.New("login code durable delivery unavailable")
-	// ErrLoginCodeDeliveryFailed 表示 durable 投递未成功。SendCode/ResendCode
-	// 必须同时撤销刚写入的 CodeStore hash，防止客户拿到无法送达的码。
+	// ErrLoginCodeDeliveryFailed indicates durable delivery did not succeed. SendCode/ResendCode
+	// must also revoke the CodeStore hash just written, so the client does not receive an undeliverable code.
 	ErrLoginCodeDeliveryFailed = errors.New("login code durable delivery failed")
-	// ErrPhoneNumberInvalid 表示手机号为空或非纯数字/长度越界。
-	// 0090 把 users.phone 唯一约束改为忽略空串的部分索引（bot 行 phone=''），
-	// 因此 phone 校验必须前移到 auth 入口，否则 sendCode/signUp 可无限铸造
-	// phone='' 的幽灵人类账号（且因 ByPhone('') 短路永远无法再登录）。
+	// ErrPhoneNumberInvalid indicates the phone number is empty, non-numeric, or out of range.
+	// 0090 changed the users.phone unique constraint to a partial index ignoring empty strings (bot rows
+	// have phone=''), so phone validation must be moved up to the auth entry point; otherwise
+	// sendCode/signUp could mint unlimited ghost human accounts with phone='' (and, because
+	// ByPhone('') short-circuits, they could never log in again).
 	ErrPhoneNumberInvalid = errors.New("phone number invalid")
-	// ErrSystemUserLoginForbidden 表示内置系统账号被尝试绑定为普通业务会话。
+	// ErrSystemUserLoginForbidden indicates a built-in system account was attempted to be bound as a normal business session.
 	ErrSystemUserLoginForbidden = errors.New("system user login forbidden")
 )
 
@@ -56,9 +57,10 @@ const (
 	loginCodeRollbackTimeout      = 2 * time.Second
 )
 
-// validPhone 校验规范化后的手机号：5-32 位纯数字（上限对齐 users.phone 列宽）。
-// 核心目的是拒绝空/非数字 phone（防 0090 partial index 下无限铸造幽灵账号），
-// 长度上限从宽，不强求 E.164 精确位数（测试常用更长的唯一 phone）。
+// validPhone validates a normalized phone number: 5-32 digits (upper bound aligned with the users.phone column
+// width). The core purpose is to reject empty/non-numeric phones (preventing unlimited ghost-account minting
+// under the 0090 partial index). The length cap is lenient; exact E.164 digit counts are not required (tests
+// often use longer unique phones).
 func validPhone(phone string) bool {
 	return domain.ValidPhone(phone)
 }
@@ -75,9 +77,10 @@ func systemLoginPhoneForbidden(phone string) bool {
 	return ok
 }
 
-// Service 实现登录/注册业务。默认保留开发固定码；配置外部 provider
-// 后生成随机验证码并通过 otpdelivery 投递。已有账号的外部投递是 durable
-// 777000 App-code 的附加渠道，不能替换或削弱原有消息事实。
+// Service implements login/sign-up business logic. By default it keeps the fixed development code; once an
+// external provider is configured it generates a random verification code and delivers it via otpdelivery.
+// External delivery for existing accounts is an additional channel to the durable 777000 App-code and must
+// not replace or weaken the original message fact.
 type Service struct {
 	users                  store.UserStore
 	auths                  store.AuthorizationStore
@@ -101,20 +104,20 @@ type Service struct {
 	loginEmailEnabled      bool
 	loginEmailRequireSetup bool
 	loginEmailCodeLength   int
-	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
+	// premiumGrantMonths is the number of Premium months granted by default to newly registered accounts; 0 disables the grant.
 	premiumGrantMonths int
-	// welcomeMessageIdentity 是 identity.Store 的共享实例，recordWelcomeMessage
-	// 每次调用都重新读取（不缓存），使管理面板对登录通知模板的修改无需重启即可
-	// 生效——与 identity 包自身的设计契约一致。nil 时该来源被跳过，直接落到
-	// welcomeMessage{Phone,Email}Default。
+	// welcomeMessageIdentity is the shared identity.Store instance; recordWelcomeMessage re-reads it on
+	// every call (never cached), so admin panel edits to the login notification template take effect
+	// without a restart -- consistent with the identity package's own design contract. When nil this
+	// source is skipped and it falls through to welcomeMessage{Phone,Email}Default.
 	welcomeMessageIdentity     *identity.Store
 	welcomeMessagePhoneDefault string
 	welcomeMessageEmailDefault string
-	// loginCodeMessageIdentity/loginCodeMessageEnvDefault 与
-	// welcomeMessageIdentity/welcomeMessage{Phone,Email}Default 同构，不过针对
-	// 777000 登录码投递消息而非登录成功后的欢迎通知——见
-	// WithLoginCodeMessageTemplate 与 resolveLoginCodeMessageTemplate。登录码消息
-	// 不分渠道，故只有一份 env 默认值（而非每渠道一份）。
+	// loginCodeMessageIdentity/loginCodeMessageEnvDefault mirror
+	// welcomeMessageIdentity/welcomeMessage{Phone,Email}Default, but for the 777000 login-code delivery
+	// message rather than the post-login welcome notification -- see WithLoginCodeMessageTemplate and
+	// resolveLoginCodeMessageTemplate. The login-code message is not per-channel, so there is only one
+	// env default (rather than one per channel).
 	loginCodeMessageIdentity   *identity.Store
 	loginCodeMessageEnvDefault string
 }
@@ -137,12 +140,12 @@ type authorizationRevoker interface {
 	RevokeByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error)
 }
 
-// Option 调整登录服务的可选依赖。
+// Option adjusts the login service's optional dependencies.
 type Option func(*Service)
 
-// WithLoginMessages 在新用户注册成功后写入官方系统账号的首条登录消息与会话摘要。
-// 已有账号的 app 验证码必须在 auth.sendCode/resendCode 阶段通过
-// WithLoginCodeDelivery 持久化，禁止在 signIn 成功后补发。
+// WithLoginMessages writes the official system account's first login message and dialog summary after a new
+// user successfully registers. An existing account's app verification code must be persisted during the
+// auth.sendCode/resendCode stage via WithLoginCodeDelivery, and must not be resent after signIn succeeds.
 func WithLoginMessages(messages store.MessageStore, dialogs store.DialogStore) Option {
 	return func(s *Service) {
 		s.messages = messages
@@ -150,11 +153,11 @@ func WithLoginMessages(messages store.MessageStore, dialogs store.DialogStore) O
 	}
 }
 
-// WithLoginWelcomeMessages 配置 777000 登录通知消息模板正文的解析链（见
-// domain.ResolveWelcomeMessageTemplate）：store 在每次 recordWelcomeMessage 调用时
-// 实时读取（绝不缓存，管理面板的修改无需重启即可生效），phoneDefault/emailDefault 是
-// 配置提供的环境变量回退（Config.WelcomeMessage{Phone,Email}Template），只在面板未设
-// 覆盖时使用。nil store 直接跳过该来源。
+// WithLoginWelcomeMessages configures the resolution chain for the 777000 login notification message template
+// body (see domain.ResolveWelcomeMessageTemplate): the store is read in real time on every recordWelcomeMessage
+// call (never cached, so admin panel edits take effect without a restart); phoneDefault/emailDefault are the
+// environment variable fallbacks provided by config (Config.WelcomeMessage{Phone,Email}Template), used only when
+// the panel has no override. A nil store skips this source entirely.
 func WithLoginWelcomeMessages(store *identity.Store, phoneDefault, emailDefault string) Option {
 	return func(s *Service) {
 		s.welcomeMessageIdentity = store
@@ -163,12 +166,12 @@ func WithLoginWelcomeMessages(store *identity.Store, phoneDefault, emailDefault 
 	}
 }
 
-// WithLoginCodeMessageTemplate 配置 777000 登录码投递消息模板正文的解析链（见
-// domain.ResolveLoginCodeMessageTemplate）：store 在每次 deliverLoginCode/
-// recordLoginMessage 调用时实时读取（绝不缓存，管理面板的修改无需重启即可生效），
-// envDefault 是配置提供的环境变量回退（Config.LoginCodeMessageTemplate），只在面板
-// 未设覆盖时使用。nil store 直接跳过该来源。调用方通常传入与 WithLoginWelcomeMessages
-// 同一个 *identity.Store 实例，两者读写的是同一个 identity.json。
+// WithLoginCodeMessageTemplate configures the resolution chain for the 777000 login-code delivery message
+// template body (see domain.ResolveLoginCodeMessageTemplate): the store is read in real time on every
+// deliverLoginCode/recordLoginMessage call (never cached, so admin panel edits take effect without a restart);
+// envDefault is the environment variable fallback provided by config (Config.LoginCodeMessageTemplate), used
+// only when the panel has no override. A nil store skips this source entirely. Callers usually pass the same
+// *identity.Store instance as WithLoginWelcomeMessages; both read and write the same identity.json.
 func WithLoginCodeMessageTemplate(store *identity.Store, envDefault string) Option {
 	return func(s *Service) {
 		s.loginCodeMessageIdentity = store
@@ -176,10 +179,10 @@ func WithLoginCodeMessageTemplate(store *identity.Store, envDefault string) Opti
 	}
 }
 
-// resolveLoginCodeMessageTemplate 每次调用都实时解析 777000 登录码消息模板（绝不
-// 缓存），与 recordWelcomeMessage 的「总是现读」契约一致，使管理面板的编辑无需重启
-// 即可生效。本 service 内所有走 domain.OfficialLoginCodeMessage 的调用都必须经过
-// 这里，而不是各自硬编码模板副本。
+// resolveLoginCodeMessageTemplate resolves the 777000 login-code message template in real time on every call
+// (never cached), consistent with recordWelcomeMessage's "always read fresh" contract, so admin panel edits
+// take effect without a restart. Every call in this service that goes through
+// domain.OfficialLoginCodeMessage must go through here rather than hard-coding its own template copy.
 func (s *Service) resolveLoginCodeMessageTemplate() string {
 	panelOverride := ""
 	if s.loginCodeMessageIdentity != nil {
@@ -190,9 +193,9 @@ func (s *Service) resolveLoginCodeMessageTemplate() string {
 	return domain.ResolveLoginCodeMessageTemplate(panelOverride, s.loginCodeMessageEnvDefault)
 }
 
-// WithLoginCodeDelivery 注入已有账号 app-code 的 durable 投递边界。
-// 实现必须以 user_id + phone_code_hash 幂等，并原子写入 777000
-// message/dialog/user update event/dispatch outbox。
+// WithLoginCodeDelivery injects the durable delivery boundary for an existing account's app-code. The
+// implementation must be idempotent on user_id + phone_code_hash and atomically write the 777000
+// message/dialog/user update event/dispatch outbox.
 func WithLoginCodeDelivery(delivery store.LoginCodeDeliveryStore) Option {
 	return func(s *Service) {
 		s.loginCodeDelivery = delivery
@@ -212,15 +215,15 @@ func WithPasswords(passwords store.PasswordStore) Option {
 	}
 }
 
-// WithBotLogin 启用 auth.importBotAuthorization 的 bot token 登录。
+// WithBotLogin enables bot token login for auth.importBotAuthorization.
 func WithBotLogin(bots store.BotStore) Option {
 	return func(s *Service) {
 		s.bots = bots
 	}
 }
 
-// WithPremiumGrant 让新注册账号默认获得 months 个月会员（0 = 关闭赠送）。
-// 存量账号的同等赠送由迁移 0094 一次性 backfill。
+// WithPremiumGrant gives newly registered accounts months of Premium by default (0 = disable the grant).
+// The equivalent grant for existing accounts is backfilled once by migration 0094.
 func WithPremiumGrant(months int) Option {
 	return func(s *Service) {
 		s.premiumGrantMonths = months
@@ -278,7 +281,7 @@ func WithOTPDeliveryFailureObserver(observer func(context.Context, otpdelivery.R
 	}
 }
 
-// NewService 创建登录服务。fixedCode 为开发固定验证码。
+// NewService creates the login service. fixedCode is the fixed development verification code.
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
 	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6, phoneCodeLength: 5}
 	if linker, ok := auths.(store.AuthKeyAuthorityLinker); ok && authKeys != nil {
@@ -290,7 +293,7 @@ func NewService(users store.UserStore, auths store.AuthorizationStore, codes sto
 	return s
 }
 
-// BindTempAuthKey 校验并记录 TDesktop PFS temp→perm auth key 绑定。
+// BindTempAuthKey validates and records the TDesktop PFS temp->perm auth key binding.
 func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error) {
 	var validated domain.TempAuthKeyBindingResult
 	if s.authKeys != nil {
@@ -328,12 +331,14 @@ func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding 
 	return result, nil
 }
 
-// ResolveAuthKey 将已绑定的 temp auth_key 解析为对应 perm auth_key。
+// ResolveAuthKey resolves a bound temp auth_key to its corresponding perm auth_key.
 //
-// temp→perm 是握手/绑定形成的协议身份关系，与 perm 当前是否登录完全无关。即使
-// auth.logOut 已删除 authorization，只要绑定仍存在，后续登录 RPC 也必须继续落到同一
-// perm key，绝不能把 raw temp key 当成新的业务身份。协议过期由 mtprotoedge 在解密/RPC
-// 之前返回 -404 并关闭连接；这里不再用 authorization 状态猜测 key 类型。
+// temp->perm is a protocol identity relationship formed by the handshake/binding, entirely independent of
+// whether perm is currently logged in. Even if auth.logOut has deleted the authorization, as long as the
+// binding still exists, subsequent login RPCs must continue to land on the same perm key; the raw temp key
+// must never be treated as a new business identity. Protocol expiry is handled by mtprotoedge, which returns
+// -404 and closes the connection before decryption/RPC; here we no longer guess the key type from the
+// authorization state.
 func (s *Service) ResolveAuthKey(ctx context.Context, authKeyID [8]byte) ([8]byte, bool, error) {
 	if s == nil || s.tempKeys == nil {
 		return [8]byte{}, false, nil
@@ -345,7 +350,7 @@ func (s *Service) ResolveAuthKey(ctx context.Context, authKeyID [8]byte) ([8]byt
 	return authKeyIDFromInt64(binding.PermAuthKeyID), true, nil
 }
 
-// UserID 返回 auth_key 当前绑定的用户。未登录、或两步验证未完成时 found=false。
+// UserID returns the user the auth_key is currently bound to. found=false when not logged in or when two-step verification is incomplete.
 func (s *Service) UserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error) {
 	if s == nil || s.auths == nil || s.users == nil {
 		return 0, false, nil
@@ -355,7 +360,7 @@ func (s *Service) UserID(ctx context.Context, authKeyID [8]byte) (int64, bool, e
 		return 0, found, err
 	}
 	if a.PasswordPending {
-		// 两步验证未完成：业务鉴权视为未登录，仅允许 auth.checkPassword 继续。
+		// Two-step verification incomplete: business authorization is treated as not logged in, and only auth.checkPassword may continue.
 		return 0, false, nil
 	}
 	u, userFound, err := s.users.ByID(ctx, a.UserID)
@@ -371,8 +376,8 @@ func (s *Service) UserID(ctx context.Context, authKeyID [8]byte) (int64, bool, e
 	return a.UserID, true, nil
 }
 
-// PendingPasswordUserID 返回处于"待两步验证"状态的 auth_key 对应的用户。
-// UserID 对 password_pending 的 auth_key 返回未登录，auth.checkPassword 借此仍能定位待验证用户。
+// PendingPasswordUserID returns the user for an auth_key in the "awaiting two-step verification" state.
+// UserID returns not-logged-in for a password_pending auth_key, so auth.checkPassword can still locate the user awaiting verification.
 func (s *Service) PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error) {
 	if s == nil || s.auths == nil || s.users == nil {
 		return 0, false, nil
@@ -392,7 +397,7 @@ func (s *Service) PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) 
 	return a.UserID, true, nil
 }
 
-// CompletePasswordSignIn 在两步验证通过后清除 password_pending，使 auth_key 转为完全授权。
+// CompletePasswordSignIn clears password_pending after two-step verification passes, turning the auth_key into fully authorized.
 func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte, expectedUserID int64) error {
 	if s == nil || s.auths == nil {
 		return nil
@@ -411,16 +416,16 @@ func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte,
 	} else if !found || userID != expectedUserID {
 		return ErrSystemUserLoginForbidden
 	}
-	// 这是 2FA 账号真正完成登录的收尾（finishSignIn 在 password_pending 时刻意
-	// 跳过欢迎消息）——补发欢迎通知。
+	// This is the finishing step that truly completes login for a 2FA account (finishSignIn deliberately
+	// skips the welcome message while password_pending) -- resend the welcome notification.
 	if u, found, err := s.users.ByID(ctx, expectedUserID); err == nil && found {
 		s.recordWelcomeMessage(ctx, u)
 	}
 	return nil
 }
 
-// SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code
-// 或登录邮箱 setup-required 状态，返回 hash。
+// SendCode generates a phone_code_hash for phone and, per configuration, selects the development app code,
+// the login email code, or the login-email setup-required state, returning the hash.
 func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	phone = normalizePhone(phone)
 	if !validPhone(phone) {
@@ -557,8 +562,8 @@ func (s *Service) createPhoneCode(ctx context.Context, phone string, existingUse
 		}
 		return hash, nil
 	}
-	// 新手机号还没有 owner/dialog，不能在签发阶段创建 777000 消息；
-	// 已有账号的 App-code 已在上面的 provider 分支之前 durable 提交。
+	// A new phone number has no owner/dialog yet, so a 777000 message cannot be created at the issuance
+	// stage; an existing account's App-code was already durably committed before the provider branch above.
 	return hash, nil
 }
 
@@ -758,8 +763,8 @@ func (s *Service) ResendCode(ctx context.Context, phone, phoneCodeHash string) (
 	return s.resendCode(ctx, [8]byte{}, phone, phoneCodeHash)
 }
 
-// ResendCodeForAuthKey 对已登录敏感操作额外校验发起 auth key；普通登录码
-// 没有 AuthKeyID 作用域，行为与 ResendCode 相同。
+// ResendCodeForAuthKey additionally validates the initiating auth key for sensitive operations by a
+// logged-in user; an ordinary login code has no AuthKeyID scope and behaves the same as ResendCode.
 func (s *Service) ResendCodeForAuthKey(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) (string, error) {
 	return s.resendCode(ctx, authKeyID, phone, phoneCodeHash)
 }
@@ -877,7 +882,7 @@ func (s *Service) CancelCode(ctx context.Context, phone, phoneCodeHash string) e
 	return s.cancelCode(ctx, [8]byte{}, phone, phoneCodeHash)
 }
 
-// CancelCodeForAuthKey 是 ResendCodeForAuthKey 对应的取消路径。
+// CancelCodeForAuthKey is the cancellation path corresponding to ResendCodeForAuthKey.
 func (s *Service) CancelCodeForAuthKey(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) error {
 	return s.cancelCode(ctx, authKeyID, phone, phoneCodeHash)
 }
@@ -1009,8 +1014,9 @@ func (s *Service) cancelCode(ctx context.Context, authKeyID [8]byte, phone, phon
 	return nil
 }
 
-// SignIn 校验验证码并尝试登录。
-// needSignUp=true 表示验证码正确但用户不存在，调用方应引导注册（此时不删验证码，留给 SignUp）。
+// SignIn validates the verification code and attempts to log in.
+// needSignUp=true means the code is correct but the user does not exist; the caller should prompt
+// registration (the code is not deleted in this case, left for SignUp).
 func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, code string) (u domain.User, loginMessage domain.Message, needSignUp bool, err error) {
 	phone = normalizePhone(phone)
 	if systemLoginPhoneForbidden(phone) {
@@ -1026,11 +1032,11 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 	return s.finishSignIn(ctx, auth, existing)
 }
 
-// SignInWithEmail 处理带 email_verification 的 auth.signIn。它与 SignIn
-// 共享同一个登录凭证状态机：TDesktop/Android 把邮箱码放在
-// email_verification，WebK 把同一邮箱码放在 phone_code；TL 字段只是 proof
-// carrier，服务端签发记录的 channel 才表示实际投递渠道。所有渠道都必须精确
-// 匹配签发码，并共用 owner 绑定、原子尝试计数、一次性消费与 2FA 门控。
+// SignInWithEmail handles auth.signIn carrying email_verification. It shares the same login credential
+// state machine as SignIn: TDesktop/Android put the email code in email_verification, WebK puts the same
+// email code in phone_code; the TL field is only the proof carrier, and the channel recorded at issuance
+// indicates the actual delivery channel. All channels must exactly match the issued code and share the
+// owner binding, atomic attempt counting, one-time consumption, and 2FA gating.
 func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, code string) (domain.User, domain.Message, bool, error) {
 	phone = normalizePhone(phone)
 	if systemLoginPhoneForbidden(phone) {
@@ -1140,17 +1146,19 @@ func (s *Service) verifyLoginCode(ctx context.Context, phone, phoneCodeHash, cod
 	}
 }
 
-// finishSignIn 是短信/邮箱两条登录路径在「验证码已通过、用户已存在」之后的共用收尾：
-// 验证码已由 VerifyLogin 原子消费；这里只处理 2FA password_pending 绑定。已有账号的 app-code 消息已在
-// SendCode/ResendCode 返回前持久化与入 outbox，这里绝不能再创建或补发；
-// 否则未完成登录/2FA 的真实验证码反而不会及时到达旧设备。
+// finishSignIn is the shared finish for both the SMS and email login paths after "code passed, user exists":
+// the code has already been atomically consumed by VerifyLogin; here we only handle the 2FA password_pending
+// binding. An existing account's app-code message was already persisted and enqueued to the outbox before
+// SendCode/ResendCode returned, so it must never be created or resent here; otherwise the real verification
+// code for an unfinished login/2FA would fail to reach the old device in time.
 func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, existing domain.User) (domain.User, domain.Message, bool, error) {
 	if systemUserLoginForbidden(existing) {
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
 	}
-	// 开启两步验证的账号：把授权标记为 password_pending 再写入，业务鉴权据此拒绝该 auth_key，
-	// 直到 auth.checkPassword 通过。绝不能先以完全授权写入再返回 SESSION_PASSWORD_NEEDED，
-	// 否则客户端忽略该错误即可直接调用业务 RPC 绕过两步验证。
+	// For an account with two-step verification: mark the authorization as password_pending before
+	// writing, so business authorization rejects that auth_key until auth.checkPassword passes. Never
+	// write it as fully authorized first and then return SESSION_PASSWORD_NEEDED; otherwise the client
+	// could ignore the error and call business RPCs directly to bypass two-step verification.
 	passwordNeeded, err := s.passwordNeeded(ctx, existing.ID)
 	if err != nil {
 		// Password state is part of the authentication decision. Treat store
@@ -1164,15 +1172,15 @@ func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, e
 	if passwordNeeded {
 		return existing, domain.Message{}, false, domain.ErrSessionPasswordNeeded
 	}
-	// 2FA 账号的真正完成在 CompletePasswordSignIn（checkPassword 通过时）；这里若
-	// 也发欢迎消息，会把未真正通过密码校验的尝试也通知出来。
+	// A 2FA account truly completes at CompletePasswordSignIn (when checkPassword passes); sending the
+	// welcome message here too would also notify attempts that never actually passed the password check.
 	s.recordWelcomeMessage(ctx, existing)
 	return existing, domain.Message{}, false, nil
 }
 
-// SignUp 在 SignIn 判定需注册后创建用户并绑定授权。
-// signUp 的 TL 请求不带验证码，因此只消费由正确 SignIn/email setup 原子
-// 标记过的 hash。直接 SendCode→SignUp 永远不能创建账号。
+// SignUp creates the user and binds the authorization after SignIn determines registration is needed.
+// The signUp TL request carries no verification code, so it only consumes a hash atomically marked by a
+// correct SignIn/email setup. A direct SendCode->SignUp can never create an account.
 func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, firstName, lastName string) (domain.User, domain.Message, error) {
 	phone = normalizePhone(phone)
 	if !validPhone(phone) {
@@ -1246,8 +1254,9 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		FirstName:  firstName,
 		LastName:   lastName,
 	}
-	// 新账号默认赠送会员：到期时间 = 注册时刻 + N 个月（与迁移 0094 对存量
-	// 账号的 backfill 同一语义）。premium 状态由下发路径按该时间即时派生。
+	// New accounts are granted Premium by default: expiry = registration time + N months (same semantics
+	// as migration 0094's backfill for existing accounts). The premium state is derived on the fly by the
+	// delivery path from that time.
 	if s.premiumGrantMonths > 0 {
 		newUser.PremiumUntil = int(time.Now().AddDate(0, s.premiumGrantMonths, 0).Unix())
 	}
@@ -1277,10 +1286,11 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	return u, loginMessage, nil
 }
 
-// SignInBot 处理 auth.importBotAuthorization：校验 bot token 并把当前 auth_key
-// 绑定到 bot 账号。token 校验必须先于 bind（bind 即授权生效）；bot 无 2FA，
-// PasswordPending 恒 false；不写登录消息、不推 signIn 通知（手机登录语义）。
-// 任何校验失败统一返回 domain.ErrBotTokenInvalid，不区分原因避免泄漏存在性。
+// SignInBot handles auth.importBotAuthorization: validates the bot token and binds the current auth_key to
+// the bot account. Token validation must precede bind (bind makes the authorization effective); bots have
+// no 2FA, so PasswordPending is always false; no login message is written and no signIn notification is
+// pushed (phone-login semantics). Any validation failure uniformly returns domain.ErrBotTokenInvalid,
+// without distinguishing the reason, to avoid leaking existence.
 func (s *Service) SignInBot(ctx context.Context, auth domain.Authorization, token string) (domain.User, error) {
 	if s == nil || s.bots == nil || s.users == nil {
 		return domain.User{}, domain.ErrBotTokenInvalid
@@ -1293,7 +1303,7 @@ func (s *Service) SignInBot(ctx context.Context, auth domain.Authorization, toke
 	if err != nil {
 		return domain.User{}, err
 	}
-	// 空 secret（内置 BotFather）永不可登录；比较走常数时间。
+	// An empty secret (the built-in BotFather) can never log in; the comparison is constant-time.
 	if !found || profile.TokenSecret == "" ||
 		subtle.ConstantTimeCompare([]byte(profile.TokenSecret), []byte(secret)) != 1 {
 		return domain.User{}, domain.ErrBotTokenInvalid
@@ -1312,10 +1322,11 @@ func (s *Service) SignInBot(ctx context.Context, auth domain.Authorization, toke
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, err
 	}
-	// check-bind-recheck：SignInBot 的「校验 secret → bind」非原子，并发 /revoke
-	// 可能在两步之间换 secret 并删除已有 authorization。此处 bind 写入的新行不会被
-	// 那次删除覆盖（删除发生在 bind 之前），会逃过 session 撤销。bind 后复核 secret：
-	// 若已被换掉，撤销刚写入的授权并拒登，闭合竞态窗口。
+	// check-bind-recheck: SignInBot's "validate secret -> bind" is not atomic, and a concurrent /revoke
+	// could swap the secret between the two steps and delete the existing authorization. A new row written
+	// by this bind would not be overwritten by that deletion (the deletion happened before the bind) and
+	// would escape session revocation. Re-check the secret after bind: if it was swapped, revoke the
+	// authorization just written and deny the login, closing the race window.
 	if again, found, err := s.bots.GetBot(ctx, botUserID); err != nil {
 		_ = s.auths.Delete(ctx, auth.AuthKeyID)
 		return domain.User{}, err
@@ -1327,9 +1338,11 @@ func (s *Service) SignInBot(ctx context.Context, auth domain.Authorization, toke
 	return u, nil
 }
 
-// BindVerifiedLogin 把当前 auth_key 绑定到一个已由外部强因子(如 passkey)验证过身份的
-// 用户,直接完成授权。passkey 是独立强因子,不再叠加 2FA password(PasswordPending=false),
-// 与官方"passkey 登录跳过密码步骤"一致。校验已发生在调用方(passkey 断言验证),此处只负责绑定。
+// BindVerifiedLogin binds the current auth_key to a user whose identity has already been verified by an
+// external strong factor (such as a passkey), completing authorization directly. A passkey is an
+// independent strong factor, so no 2FA password is layered on top (PasswordPending=false), consistent with
+// the official "passkey login skips the password step". Verification already happened in the caller
+// (passkey assertion verification); here we only bind.
 func (s *Service) BindVerifiedLogin(ctx context.Context, auth domain.Authorization, userID int64) (domain.User, error) {
 	if s == nil || s.users == nil || userID == 0 {
 		return domain.User{}, domain.ErrPasskeyInvalid
@@ -1352,7 +1365,7 @@ func (s *Service) BindVerifiedLogin(ctx context.Context, auth domain.Authorizati
 	return u, nil
 }
 
-// AcceptLoginToken 把 QR 登录请求方的 auth_key 绑定到扫码确认的 user。
+// AcceptLoginToken binds the QR login requester's auth_key to the user confirmed by scanning.
 func (s *Service) AcceptLoginToken(ctx context.Context, auth domain.Authorization, userID int64) (domain.Authorization, error) {
 	if s == nil || s.auths == nil || userID == 0 || auth.AuthKeyID == ([8]byte{}) {
 		return domain.Authorization{}, fmt.Errorf("accept login token: invalid authorization")
@@ -1375,7 +1388,7 @@ func (s *Service) AcceptLoginToken(ctx context.Context, auth domain.Authorizatio
 	return auth, nil
 }
 
-// LogOut 解绑当前 auth_key 的授权。
+// LogOut unbinds the current auth_key's authorization.
 func (s *Service) LogOut(ctx context.Context, authKeyID [8]byte) error {
 	return s.auths.Delete(ctx, authKeyID)
 }
@@ -1494,9 +1507,10 @@ func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID in
 		}
 	}
 	auth.UserID = userID
-	// Bind 是授权切换的持久化状态边界：生产 store 会先清同 auth key 的旧用户
-	// update state，再原子建立新用户 baseline。RPC 层不得在 Bind 成功后清整个 key，
-	// 否则会把刚建立的 retained-floor checkpoint 一并删除。
+	// Bind is the persistence state boundary for authorization switching: the production store first clears
+	// the same auth key's old user update state, then atomically establishes the new user baseline. The RPC
+	// layer must not clear the entire key after a successful Bind, otherwise it would also delete the
+	// just-established retained-floor checkpoint.
 	if err := s.auths.Bind(ctx, auth); err != nil {
 		if errors.Is(err, store.ErrAuthKeyNotPermanent) {
 			return ErrAuthKeyPermEmpty
@@ -1520,12 +1534,12 @@ func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error
 	return found && settings.HasPassword, nil
 }
 
-// recordLoginMessage 为「新手机号渠道账号」的 bootstrap 路径（SignUp 的
-// rec.Channel == codeChannelPhone 分支）写入 777000 登录码消息——该路径还没有
-// owner/dialog，无法走 WithLoginCodeDelivery 的 durable 幂等投递。它和
-// deliverLoginCode 一样、经由 domain.OfficialLoginCodeMessage 与刚解析的模板
-// （见 resolveLoginCodeMessageTemplate）构造消息，而不是各自维护一份模板/实体逻辑
-// 副本，这样管理面板的模板编辑与 {{code}} 占位符实体偏移修复在这里同样生效。
+// recordLoginMessage writes the 777000 login-code message for the "new phone-number channel account"
+// bootstrap path (the rec.Channel == codeChannelPhone branch of SignUp) -- that path has no owner/dialog
+// yet and cannot use WithLoginCodeDelivery's durable idempotent delivery. Like deliverLoginCode, it
+// constructs the message via domain.OfficialLoginCodeMessage and the freshly resolved template (see
+// resolveLoginCodeMessageTemplate), rather than each maintaining its own copy of the template/entity
+// logic, so admin panel template edits and {{code}} placeholder entity offset fixes take effect here too.
 func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code string) (domain.Message, error) {
 	if s.messages == nil || s.dialogs == nil {
 		return domain.Message{}, nil
@@ -1548,12 +1562,13 @@ func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code str
 	return msg, nil
 }
 
-// recordWelcomeMessage 为每次登录成功（SignUp 与后续每次 SignIn/SignInWithEmail/
-// 2FA 完成/passkey 绑定）写入一条无条件的「欢迎回来」777000 消息，与渠道无关。
-// 尽力而为：失败绝不能使登录本身失败——与 recordLoginMessage 不同，它不携带调用方
-// 需要的任何机密。模板正文每次实时解析（见 ResolveWelcomeMessageTemplate），使管理
-// 面板的修改无需重启即可生效。登录方式由账号已确认的登录邮箱判断（见
-// SignInMethodLabel）：邮箱账号 → 用邮箱模板，其余 → 手机号模板。
+// recordWelcomeMessage writes an unconditional "welcome back" 777000 message on every successful login
+// (SignUp and every subsequent SignIn/SignInWithEmail/2FA completion/passkey binding), regardless of
+// channel. Best-effort: a failure must never fail the login itself -- unlike recordLoginMessage, it
+// carries no secret the caller needs. The template body is resolved in real time on every call (see
+// ResolveWelcomeMessageTemplate), so admin panel edits take effect without a restart. The login method is
+// determined by the account's confirmed login email (see SignInMethodLabel): email account -> email
+// template, otherwise -> phone template.
 func (s *Service) recordWelcomeMessage(ctx context.Context, u domain.User) {
 	if s == nil || s.messages == nil || s.dialogs == nil {
 		return

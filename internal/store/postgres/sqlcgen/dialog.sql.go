@@ -135,7 +135,7 @@ type CountArchiveUnreadDialogsRow struct {
 	UnreadMessages int32
 }
 
-// 归档（folder_id=1）未读聚合：有未读或手动标记未读的会话数 + 未读消息总数。
+// Archive (folder_id=1) unread aggregate: the number of dialogs with unread messages or a manual unread mark + the total unread message count.
 func (q *Queries) CountArchiveUnreadDialogs(ctx context.Context, userID int64) (CountArchiveUnreadDialogsRow, error) {
 	row := q.db.QueryRow(ctx, countArchiveUnreadDialogs, userID)
 	var i CountArchiveUnreadDialogsRow
@@ -145,7 +145,7 @@ func (q *Queries) CountArchiveUnreadDialogs(ctx context.Context, userID int64) (
 
 const deleteDialogByPeer = `-- name: DeleteDialogByPeer :exec
 WITH dropped_drafts AS (
-    -- 删除会话同时丢弃该 peer 的云草稿，避免对端重建会话后旧草稿复活。
+    -- Deleting a dialog also discards the peer's cloud draft, so an old draft does not come back to life after the peer recreates the dialog.
     DELETE FROM dialog_drafts dd
     WHERE dd.user_id = $1::bigint
       AND dd.peer_type = $2::text
@@ -252,8 +252,8 @@ type EditDialogPeerFoldersParams struct {
 	FolderIds []int32
 }
 
-// 换 folder 时清 pinned：TDesktop History::setFolderPointer 在归档/还原时
-// 本地无条件 unpin，服务端保留旧 pin 会在下次 getDialogs 时把状态漂移回来。
+// Clear pinned when changing folder: TDesktop's History::setFolderPointer unconditionally unpins
+// locally on archive/unarchive, and keeping the old pin server-side would drift the state back on the next getDialogs.
 func (q *Queries) EditDialogPeerFolders(ctx context.Context, arg EditDialogPeerFoldersParams) error {
 	_, err := q.db.Exec(ctx, editDialogPeerFolders,
 		arg.UserID,
@@ -1099,8 +1099,8 @@ WITH base AS (
   LEFT JOIN message_boxes m ON m.owner_user_id = d.user_id AND m.box_id = d.top_message_id AND NOT m.deleted
   WHERE d.user_id = $1
     AND (
-      -- 不带 folder_id flag 视为主列表（folder 0）：官方语义下归档对话只以
-      -- dialogFolder 聚合条目出现在主列表，DrKLO Android 主列表请求不设 flag。
+      -- No folder_id flag is treated as the main list (folder 0): officially, archived dialogs appear
+      -- in the main list only as the dialogFolder aggregate entry, and DrKLO Android's main-list request sets no flag.
       (NOT $3::boolean AND d.folder_id = 0)
       OR (
         $3::boolean
@@ -1674,8 +1674,8 @@ WITH requested AS (
   WHERE i <= cardinality($3::text[])
 ),
 deduped AS (
-  -- 请求数组首位是置顶区最顶部；统一编码为"值越大越靠前"，与频道
-  -- reorder、toggle 的 MAX+1 分配以及合并层排序方向一致。
+  -- The first element of the request array is the top of the pinned region; uniformly encoded as
+  -- "larger value sorts first", consistent with the channel reorder, the toggle's MAX+1 allocation and the merge layer's sort direction.
   SELECT DISTINCT ON (peer_type, peer_id)
     peer_type,
     peer_id,
@@ -1734,8 +1734,8 @@ type SetDialogArchivePinnedParams struct {
 	UserID int64
 }
 
-// archive folder 行本身的置顶状态（toggleDialogPin(inputDialogPeerFolder)）。
-// 无行时官方默认视为 pinned=true，所以这里总是落一行显式值。
+// The pin state of the archive folder row itself (toggleDialogPin(inputDialogPeerFolder)).
+// Officially the default is treated as pinned=true when no row exists, so an explicit value is always written here.
 func (q *Queries) SetDialogArchivePinned(ctx context.Context, arg SetDialogArchivePinnedParams) (bool, error) {
 	row := q.db.QueryRow(ctx, setDialogArchivePinned, arg.Pinned, arg.UserID)
 	var changed bool
@@ -1775,8 +1775,8 @@ WITH target AS (
     AND d.peer_id = $3::bigint
 ),
 next_order AS (
-  -- order 空间跨 dialogs/channel_dialogs 两表统一（合并层按 pinned_order
-  -- 全局排序），但仅在目标会话所在 folder 内取最大值。
+  -- The order space is unified across the dialogs/channel_dialogs tables (the merge layer sorts
+  -- globally by pinned_order), but the maximum is taken only within the target dialog's folder.
   SELECT GREATEST(
     COALESCE((
       SELECT MAX(d.pinned_order)
@@ -1826,8 +1826,8 @@ type SetDialogPinnedRow struct {
 	FolderID int32
 }
 
-// 置顶顺序在 dialog 当前 folder（0 主列表/1 归档）内独立分配，
-// 返回 folder_id 供 updateDialogPinned.folder_id 使用。
+// The pin order is allocated independently within the dialog's current folder (0 main list / 1 archive),
+// returning folder_id for updateDialogPinned.folder_id.
 func (q *Queries) SetDialogPinned(ctx context.Context, arg SetDialogPinnedParams) (SetDialogPinnedRow, error) {
 	row := q.db.QueryRow(ctx, setDialogPinned,
 		arg.UserID,
@@ -1861,8 +1861,8 @@ type SetDialogUnreadMarkParams struct {
 	PeerID   int64
 }
 
-// 值守卫 IS DISTINCT FROM：重复标记同一值不应算 changed，否则上层会记一条
-// 幽灵 durable 未读标事件并多推一次 update（对齐频道侧 SetChannelDialogUnreadMark）。
+// Value guard IS DISTINCT FROM: re-marking the same value must not count as changed, otherwise the
+// layer above records a ghost durable unread-mark event and pushes one extra update (aligned with the channel-side SetChannelDialogUnreadMark).
 func (q *Queries) SetDialogUnreadMark(ctx context.Context, arg SetDialogUnreadMarkParams) (bool, error) {
 	row := q.db.QueryRow(ctx, setDialogUnreadMark,
 		arg.Unread,
@@ -2123,8 +2123,8 @@ type UpsertOutboxDialogParams struct {
 	TopMessageDate int32
 }
 
-// 发送方向该会话发出消息即视为已知晓内容：清除手动未读标记，
-// 与 channel 发送路径、readHistory 清除语义对齐。
+// Sending a message to the dialog from the sender is treated as knowing the content: clear the manual
+// unread mark, aligned with the channel send path and readHistory clearing semantics.
 func (q *Queries) UpsertOutboxDialog(ctx context.Context, arg UpsertOutboxDialogParams) error {
 	_, err := q.db.Exec(ctx, upsertOutboxDialog,
 		arg.UserID,

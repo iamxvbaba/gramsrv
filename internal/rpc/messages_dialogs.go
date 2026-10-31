@@ -39,8 +39,9 @@ func (r *Router) onMessagesSaveDraft(ctx context.Context, req *tg.MessagesSaveDr
 		if !changed {
 			return true, nil
 		}
-		// durable 事件：草稿是绝对状态，事件只记 peer(+top_msg_id) 标记，
-		// difference/outbox 重放时按 peer 重载当前值（见 enrichDraftMessageEvent）。
+		// durable event: a draft is absolute state, so the event records only a
+		// peer (+top_msg_id) marker, and difference/outbox replay reloads the
+		// current value per peer (see enrichDraftMessageEvent).
 		recorded = r.recordDraftMessageEvent(ctx, userID, peer, draft.TopMessageID, &date)
 	}
 	update := &tg.UpdateDraftMessage{
@@ -63,8 +64,10 @@ func (r *Router) onMessagesSaveDraft(ctx context.Context, req *tg.MessagesSaveDr
 	return true, nil
 }
 
-// recordDraftMessageEvent 记录 draft_message durable 事件（占账号 pts，无 wire pts），
-// 经 outbox dispatcher 推给其它在线 session；Updates 服务缺席时返回零值（退化为直推）。
+// recordDraftMessageEvent records a draft_message durable event (consuming account
+// pts, no wire pts) and pushes it to other online sessions via the outbox
+// dispatcher; when the Updates service is absent it returns the zero value
+// (degrading to a direct push).
 func (r *Router) recordDraftMessageEvent(ctx context.Context, userID int64, peer domain.Peer, topMsgID int, date *int) domain.UpdateEvent {
 	if r.deps.Updates == nil {
 		return domain.UpdateEvent{}
@@ -458,11 +461,13 @@ func (r *Router) onMessagesUpdateDialogFilter(ctx context.Context, req *tg.Messa
 			return false, internalErr()
 		}
 	}
-	// 顺序约定：先 Save（durable 真值）后 Record（增量通知）。Record 失败时
-	// RPC 返回错误，但真值已落库——其它设备丢的只是即时 update，重启/重拉
-	// getDialogFilters 即收敛，不会产生持久漂移；反向顺序（先 Record）失败
-	// 会让其它设备应用 update 内嵌的新 filter 而 store 仍是旧值，重拉后回退
-	// 抖动，故不可取。
+	// Ordering convention: Save first (durable truth), then Record (incremental
+	// notification). If Record fails the RPC returns an error, but the truth is
+	// already persisted -- the only thing other devices lose is the immediate
+	// update, and a restart/re-pull of getDialogFilters converges with no durable
+	// drift. The reverse order (Record first) failing would let other devices apply
+	// the new filter embedded in the update while the store still holds the old
+	// value, then flap back on re-pull, so it is not acceptable.
 	event := domain.UpdateEvent{
 		Type:         domain.UpdateEventDialogFilter,
 		FilterID:     req.ID,
@@ -602,7 +607,7 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return false, internalErr()
 	}
-	// archive folder 行自身的置顶（TDesktop 归档行右键 Pin/Unpin）。
+	// Pinning of the archive folder row itself (TDesktop right-click Pin/Unpin on the archive row).
 	if folderPeer, ok := req.Peer.(*tg.InputDialogPeerFolder); ok {
 		return r.toggleArchiveFolderPin(ctx, userID, folderPeer.FolderID, req.GetPinned())
 	}
@@ -722,9 +727,10 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 	return true, nil
 }
 
-// toggleArchiveFolderPin 处理 toggleDialogPin(inputDialogPeerFolder)：置顶/
-// 取消置顶 archive folder 行本身。事件 peer 用 PeerTypeFolder 表达，生成的
-// updateDialogPinned 携带 dialogPeerFolder 且不带 folder_id flag。
+// toggleArchiveFolderPin handles toggleDialogPin(inputDialogPeerFolder):
+// pin/unpin the archive folder row itself. The event peer is expressed as
+// PeerTypeFolder, and the generated updateDialogPinned carries dialogPeerFolder
+// without a folder_id flag.
 func (r *Router) toggleArchiveFolderPin(ctx context.Context, userID int64, folderID int, pinned bool) (bool, error) {
 	if folderID != domain.DialogArchiveFolderID {
 		return false, folderIDInvalidErr()
@@ -769,8 +775,8 @@ func (r *Router) onMessagesReorderPinnedDialogs(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return false, internalErr()
 	}
-	// 官方允许在主列表（0）与归档（1）内分别重排置顶；自定义 filter 没有
-	// 服务器侧置顶顺序。
+	// The official server allows reordering pins separately in the main list (0)
+	// and the archive (1); custom filters have no server-side pin order.
 	if req.FolderID != 0 && req.FolderID != domain.DialogArchiveFolderID {
 		return false, folderIDInvalidErr()
 	}
@@ -1035,8 +1041,9 @@ func (r *Router) dialogPeersFromInput(ctx context.Context, userID int64, items [
 				return nil, folderIDInvalidErr()
 			}
 			hasFolder = true
-			// 第一阶段不维护 archived/folder 会话。若请求同时包含普通 peer，
-			// 按 Telegram 企业版路径优先返回普通 peer；纯 folder 请求返回空摘要。
+			// Phase one does not maintain archived/folder dialogs. If the request
+			// also contains ordinary peers, return ordinary peers preferentially per
+			// the Telegram Business path; a pure folder request returns an empty summary.
 		default:
 			return nil, inputConstructorInvalidErr()
 		}
@@ -1071,9 +1078,10 @@ func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, f
 		}
 		emoticon, hasEmoticon := f.GetEmoticon()
 		color, hasColor := f.GetColor()
-		// 官方要求 filter 至少一个 include 条件（类别开关或 include/pinned
-		// peer），否则永不匹配任何会话；TDesktop UI 不会发空 filter，这里
-		// 兜底拒绝（FILTER_INCLUDE_EMPTY）。
+		// The official server requires a filter to have at least one include
+		// condition (a category switch or an include/pinned peer), otherwise it
+		// never matches any dialog; the TDesktop UI never sends an empty filter, so
+		// this is a fallback rejection (FILTER_INCLUDE_EMPTY).
 		if !f.Contacts && !f.NonContacts && !f.Groups && !f.Broadcasts && !f.Bots &&
 			len(include) == 0 && len(pinned) == 0 {
 			return domain.DialogFolder{}, filterIncludeEmptyErr()

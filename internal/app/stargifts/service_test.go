@@ -27,7 +27,7 @@ func TestCatalogCachedAndHash(t *testing.T) {
 	if err != nil || len(got) != 2 {
 		t.Fatalf("catalog = %d err %v, want 2", len(got), err)
 	}
-	// 再取一次命中进程内目录缓存。
+	// A second call hits the in-process catalog cache.
 	if _, err := svc.Catalog(ctx); err != nil {
 		t.Fatalf("catalog#2: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSavedGiftLifecycle(t *testing.T) {
 		t.Fatalf("single page next_offset = %q, want empty", page.NextOffset)
 	}
 
-	// 隐藏（unsave=true）→ excludeUnsaved 列表为空。
+	// Hidden (unsave=true) → the excludeUnsaved list is empty.
 	ref := domain.SavedStarGiftRef{Owner: owner, MsgID: 50}
 	if ok, err := svc.ToggleSaved(ctx, ref, true); err != nil || !ok {
 		t.Fatalf("ToggleSaved hide = %v err %v", ok, err)
@@ -76,13 +76,13 @@ func TestSavedGiftLifecycle(t *testing.T) {
 	if len(hidden.Gifts) != 0 {
 		t.Fatalf("excludeUnsaved list = %d, want 0 after hide", len(hidden.Gifts))
 	}
-	// 不带 exclude 仍能看到。
+	// Without exclude it is still visible.
 	all, _ := svc.ListSaved(ctx, owner, false, "", 100)
 	if len(all.Gifts) != 1 {
 		t.Fatalf("full list = %d, want 1 (hidden still listed)", len(all.Gifts))
 	}
 
-	// 转换回 Stars → 标记 converted，从列表消失。
+	// Converted back to Stars → marked converted and gone from the list.
 	saved, err := svc.Convert(ctx, ref)
 	if err != nil || saved.ConvertStars != 15 {
 		t.Fatalf("Convert = %+v err %v, want ConvertStars 15", saved, err)
@@ -96,7 +96,7 @@ func TestSavedGiftLifecycle(t *testing.T) {
 		collections[0].Hash != domain.StarGiftCollectionHash("Inbox", nil) {
 		t.Fatalf("collection after convert = %+v err %v, want empty membership and refreshed hash", collections, err)
 	}
-	// 重复转换被拒。
+	// A repeat conversion is rejected.
 	if _, err := svc.Convert(ctx, ref); !errors.Is(err, domain.ErrStarGiftAlreadyConverted) {
 		t.Fatalf("double convert err = %v, want ErrStarGiftAlreadyConverted", err)
 	}

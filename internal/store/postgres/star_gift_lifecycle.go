@@ -120,10 +120,11 @@ func (s *StarGiftLifecycleStore) ConvertStarGift(ctx context.Context, req domain
 		if !saved.LifecycleStatus.Live() || saved.UniqueGiftID != 0 {
 			return domain.ErrStarGiftAlreadyUpgraded
 		}
-		// convert_stars 是转换资格的单一事实来源：机器人送出的礼物在购买事务里
-		// 被归零，历史遗留礼物由 0217 迁移统一归零，目录中本来就没有转换价的
-		// 礼物也归 0。为 0 即不可转换——拒绝而不是默默归档，旧客户端如果还显示
-		// 按钮，点下去会得到明确错误而不是把礼物白白抹掉。
+		// convert_stars is the single source of truth for conversion eligibility: gifts sent by a bot
+		// are zeroed in the purchase transaction, legacy gifts are uniformly zeroed by migration 0217,
+		// and gifts that never had a conversion price in the catalog are 0 too. Zero means
+		// non-convertible -- reject rather than silently archive, so an old client that still shows
+		// the button gets a clear error instead of quietly erasing the gift.
 		if err := ensureStarGiftConvertible(ctx, tx, saved); err != nil {
 			return err
 		}
@@ -550,11 +551,10 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftResaleUnavailable
 	}
 	seller := unique.Owner
-	// Как и при переводе: ключ покупки привязываем к эпохе владения, иначе
-	// покупка того же коллекционного после круга туда-обратно выглядит как
-	// реплей предыдущей сделки (та же карточка, тот же random_id) и проходит
-	// без перехода владения. Считаем до проверки реплея, чтобы она и запись
-	// команды использовали один и тот же ключ.
+	// As with a transfer: the purchase key is bound to the ownership epoch, otherwise buying the
+	// same collectible after a round trip looks like a replay of the previous trade (same card, same
+	// random_id) and goes through without transferring ownership. Compute it before the replay check
+	// so that the check and the command record use the same key.
 	current, currentFound, err := savedStarGiftByUniqueID(ctx, s.db, unique.ID)
 	if err != nil {
 		return domain.StarGiftTransferResult{}, err
@@ -583,11 +583,10 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 	} else if !validLifecyclePeer(unique.Owner) || unique.Owner == req.To {
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftResaleUnavailable
 	}
-	// Маркет меняет только владельца: подарок «отправляет» покупатель, а не
-	// продавец. Отправляя сервисное сообщение от продавца, получатель видел
-	// «продавец отправил вам подарок» вместо «покупатель отправил вам подарок».
-	// Остальные пути (покупка каталога, перевод, аукцион, оффер) уже отправляют
-	// сообщение от того, кто распоряжался подарком.
+	// The market only changes the owner: the gift is "sent" by the buyer, not the seller. Sending the
+	// service message from the seller made the recipient see "the seller sent you a gift" instead of
+	// "the buyer sent you a gift". The other paths (catalog purchase, transfer, auction, offer)
+	// already send the message from whoever disposed of the gift.
 	messageSenderID := req.BuyerUserID
 	messageRecipientID := req.BuyerUserID
 	if req.To.Type == domain.PeerTypeUser {
@@ -609,11 +608,9 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			var listingCurrency, sellerType string
 			var listingAmount, sellerID, uniqueID int64
 			var sellerFrozen bool
-			// suspended отсекает листинг, снятый с продажи заморозкой
-			// продавца, а frozen в том же SELECT — независимый запрет на
-			// покупку у замороженного продавца (снимок чтения, без
-			// блокировок, поэтому не меняет порядок захвата ликов в этой
-			// транзакции).
+			// suspended filters out a listing taken off sale by the seller's freeze, while frozen in
+			// the same SELECT is an independent ban on buying from a frozen seller (a read snapshot
+			// with no locks, so it does not change the lock-acquisition order in this transaction).
 			// deleted is the deletion-side twin of frozen: a tombstone seller is
 			// pulled off the marketplace exactly like a frozen one, so a listing
 			// that slipped through before the deletion cannot be bought.
@@ -687,8 +684,8 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			if req.To.Type == domain.PeerTypeChannel {
 				msgID, savedID = 0, result.Saved.ID
 			} else if msgID <= 0 {
-				// Покупка себе: сервисное сообщение лежит только в Saved Messages
-				// покупателя, копии в его же входящем боксе нет.
+				// Buying for oneself: the service message lives only in the buyer's Saved Messages,
+				// with no copy in their own incoming box.
 				msgID = sent.SenderMessage.ID
 			}
 			if req.To.Type == domain.PeerTypeUser && msgID <= 0 {
@@ -708,8 +705,8 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			} else {
 				notificationMessageID := sent.RecipientMessage.ID
 				if notificationMessageID <= 0 {
-					// Подарок куплен в канал: уведомление лежит в боксе покупателя,
-					// который совпадает с боксом отправителя.
+					// The gift was bought into a channel: the notification lives in the buyer's box,
+					// which coincides with the sender's box.
 					notificationMessageID = sent.SenderMessage.ID
 				}
 				if notificationMessageID <= 0 {
@@ -844,10 +841,10 @@ func (s *StarGiftLifecycleStore) SendStarGiftOffer(ctx context.Context, req doma
 			if err != nil || !found || gift.Owner != req.Owner || gift.Burned || gift.OwnerAddress != "" || gift.OfferMinStars <= 0 {
 				return domain.ErrStarGiftOfferInvalid
 			}
-			// 已删除/已冻结账号的收藏品不能再被下单：两者都作为 deleted 墓碑下发
-			// 给其它用户，但 unique 行与账号限制仍然保留，市场不应继续对买家开放。
-			// FOR SHARE 与删除事务对 users 行的 FOR UPDATE 互斥，避免下单与删除
-			// 并发时的 TOCTOU。
+			// Collectibles of a deleted/frozen account can no longer be ordered: both are delivered to
+			// other users as a deleted tombstone, but the unique row and the account restriction remain,
+			// and the market should not stay open to buyers. FOR SHARE is mutually exclusive with the
+			// deletion transaction's FOR UPDATE on the users row, avoiding a TOCTOU between ordering and deletion.
 			var activeOwner bool
 			if err := tx.QueryRow(ctx, `SELECT deleted_at IS NULL FROM users WHERE id=$1 FOR SHARE`, req.Owner.ID).Scan(&activeOwner); err != nil {
 				return err
@@ -1623,8 +1620,9 @@ func (s *StarGiftLifecycleStore) DeleteStarGift(ctx context.Context, req domain.
 	}
 	result := domain.StarGiftDeleteResult{}
 	err := withTx(ctx, s.db, "delete star gift", func(tx pgx.Tx) error {
-		// 与 convert/burn/transfer/export 一致：先拿 owner 的集合锁，再改成员关系，
-		// 否则 removeSavedGiftFromCollections 重算的 hash 会和并发更新互相覆盖。
+		// Consistent with convert/burn/transfer/export: take the owner's collection lock first, then
+		// change the membership, otherwise removeSavedGiftFromCollections' recomputed hash and a
+		// concurrent update would overwrite each other.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, starGiftCollectionLockKey(req.Ref.Owner)); err != nil {
 			return fmt.Errorf("lock star gift owner collections: %w", err)
 		}

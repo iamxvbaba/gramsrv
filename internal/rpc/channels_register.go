@@ -7,8 +7,9 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
-// registerChannels 注册超级群/频道相关 RPC。messages.createChat 在这里注册，
-// 因为 telesrv 将普通群创建直接实现为 megagroup。
+// registerChannels registers supergroup/channel-related RPCs. messages.createChat
+// is registered here because telesrv implements plain group creation directly as
+// a megagroup.
 func (r *Router) registerChannels(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesCreateChatRequest](d, tlprofile.SemanticMethodMessagesCreateChat, func(ctx context.Context, layerRequest *tg.MessagesCreateChatRequest) (any, error) {
 		return r.onMessagesCreateChat(ctx, layerRequest)

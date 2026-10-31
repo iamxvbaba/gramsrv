@@ -292,8 +292,8 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		return domain.SendChannelMessageResult{}, err
 	}
 	mentionTargets := req.MentionUserIDs
-	// 回复某人 = 隐式 mention 该消息作者（官方语义：被回复者收到 @ 角标
-	// 且通知穿透群静音）。
+	// Replying to someone = implicitly mentioning that message's author (official semantics: the replied-to user gets an @ badge
+	// and the notification pierces the group mute).
 	if replyTo != nil && replyTo.MessageID > 0 {
 		if target, err := s.getChannelMessage(ctx, tx, req.ChannelID, replyTo.MessageID); err == nil &&
 			target.SenderUserID != 0 && target.SenderUserID != req.UserID {
@@ -301,8 +301,8 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		}
 	}
 	if channel.Broadcast && !channel.Megagroup {
-		// broadcast 没有 @ 角标/readMentions UI，写入只会造成永远清不掉的
-		// 提及角标；讨论组联动消息走 megagroup 路径。
+		// A broadcast has no @ badge/readMentions UI, so writing one would only create an unclearable
+		// mention badge; linked discussion group messages go through the megagroup path.
 		mentionTargets = nil
 	}
 	if err := insertChannelUnreadMentionsTx(ctx, tx, req.ChannelID, msg, req.UserID, mentionTargets); err != nil {
@@ -325,8 +325,8 @@ SET slowmode_last_send_date = $3,
 WHERE channel_id = $1 AND user_id = $2`, req.ChannelID, req.UserID, req.Date, msgID); err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("update channel member slowmode send date: %w", err)
 	}
-	// channel_dialogs.unread_mark 非 NULL 时会在读取路径遮蔽 members 的值
-	// （COALESCE(d.unread_mark, m.unread_mark)），发送清除必须双表同步。
+	// A non-NULL channel_dialogs.unread_mark masks the members value on the read path
+	// (COALESCE(d.unread_mark, m.unread_mark)), so clearing on send must be synced across both tables.
 	if _, err := tx.Exec(ctx, `
 UPDATE channel_dialogs
 SET unread_mark = false, updated_at = now()
@@ -663,14 +663,14 @@ INSERT INTO channel_messages (
 		forward, discussionChannelID, discussionMessageID, action, msg.Pts, msg.Deleted, media, replyMarkup, richMessage, msg.TTLPeriod, msg.ExpiresAt, msg.PostAuthor, msg.ViaBotID, msg.FromBoostsApplied, msg.GroupedID, string(msg.SavedPeer.Type), msg.SavedPeer.ID, msg.PaidMessageStars, suggestedPost, sendSnapshot, requestFingerprint, msg.ShowMessageSender); err != nil {
 		return fmt.Errorf("insert channel message: %w", err)
 	}
-	// 共享媒体索引(迁移 0118):创建即按媒体类别建索引行,供 messages.search 媒体标签页。
+	// Shared media index (migration 0118): build index rows by media kind on creation, for the messages.search media tabs.
 	if err := insertChannelMediaIndexTx(ctx, tx, msg.ChannelID, msg.ID, msg.Date, msg.Media, msg.Entities); err != nil {
 		return err
 	}
 	return nil
 }
 
-// channelPostAuthor 仅在 signatures 开启的 broadcast post 上保留作者签名。
+// channelPostAuthor keeps the author signature only on a broadcast post with signatures enabled.
 func channelPostAuthor(channel domain.Channel, author string) string {
 	if !channel.Broadcast || !channel.Signatures || channel.SignatureProfiles {
 		return ""

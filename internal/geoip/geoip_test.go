@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// testConfig 是一份可用配置。TTL 都给得比默认短,好让测试能断言缓存行为而不是
-// 依赖真实时钟。
+// testConfig is a usable config. The TTLs are shorter than the defaults so tests
+// can assert cache behavior without depending on the real clock.
 func testConfig(endpoints ...string) Config {
 	return Config{
 		Endpoints:         endpoints,
@@ -28,7 +28,7 @@ func testConfig(endpoints ...string) Config {
 	}
 }
 
-// lookupServer 是可控的假后端。handler 按 IP 返回预设响应,没预设的一律 404。
+// lookupServer is a controllable fake backend. handler returns a preset response per IP; anything without a preset returns 404.
 type lookupServer struct {
 	*httptest.Server
 	mu       sync.Mutex
@@ -40,7 +40,7 @@ func newLookupServer(t *testing.T, handler func(ip string) (int, string)) *looku
 	t.Helper()
 	s := &lookupServer{handler: handler}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 端点形如 /json/{ip},取最后一段即可。
+		// The endpoint looks like /json/{ip}; taking the last segment is enough.
 		ip := r.URL.Path
 		if idx := strings.LastIndexByte(ip, '/'); idx >= 0 {
 			ip = ip[idx+1:]
@@ -87,8 +87,8 @@ func mustResolve(t *testing.T, resolver Resolver, ips ...string) map[string]Loca
 	return resolver.Resolve(context.Background(), ips)
 }
 
-// 未配置 endpoint 时返回 nil Resolver,这不是错误——上层正是靠 nil 回落到
-// "Unknown" 占位文案。
+// With no endpoint configured it returns a nil Resolver, which is not an error
+// -- the caller relies on that nil to fall back to the "Unknown" placeholder.
 func TestNewWithoutEndpointDisablesResolver(t *testing.T) {
 	resolver, err := New(Config{}, nil)
 	if err != nil {
@@ -97,9 +97,10 @@ func TestNewWithoutEndpointDisablesResolver(t *testing.T) {
 	if resolver != nil {
 		t.Fatalf("New with empty endpoint = %v, want nil Resolver", resolver)
 	}
-	// 上层必须先判 nil 再调用(见 rpc.resolveAuthorizationLocations);这里只确认
-	// 返回的是真正的 nil 接口而不是装着 nil 指针的接口,否则 deps 校验会当成
-	// typed nil 拒绝启动。
+	// The caller must check for nil before calling (see
+	// rpc.resolveAuthorizationLocations); here we only confirm the return is a
+	// true nil interface rather than an interface holding a nil pointer, or the
+	// deps validation would reject startup as a typed nil.
 	if resolver != nil && reflect.ValueOf(resolver).Kind() == reflect.Ptr && reflect.ValueOf(resolver).IsNil() {
 		t.Fatal("New with empty endpoint returned a typed-nil Resolver, want untyped nil")
 	}
@@ -124,7 +125,7 @@ func TestNewRejectsInvalidEndpoint(t *testing.T) {
 	}
 }
 
-// publicAddr 决定哪些地址会离开本机,这里逐类钉死。
+// publicAddr decides which addresses leave the machine; each class is pinned down here.
 func TestPublicAddrNormalizesAndRejects(t *testing.T) {
 	cases := []struct {
 		raw  string
@@ -135,9 +136,9 @@ func TestPublicAddrNormalizesAndRejects(t *testing.T) {
 		{raw: "  8.8.8.7  ", want: "8.8.8.7", ok: true},
 		{raw: "2606:4700:4700::1", want: "2606:4700:4700::1", ok: true},
 		{raw: "2606:4700:4700::1%eth0", want: "2606:4700:4700::1", ok: true},
-		// 双栈 listener 上最常见的形态:不 unmap 就一定在后端查不到。
+		// The most common form on a dual-stack listener: without unmapping, the backend can never find it.
 		{raw: "::ffff:8.8.8.7", want: "8.8.8.7", ok: true},
-		// 下面这些既没有地理归属,也不该被送到第三方。
+		// The following have no geographic identity and must not be sent to third parties.
 		{raw: ""},
 		{raw: "   "},
 		{raw: "not-an-ip"},
@@ -208,7 +209,7 @@ func TestPublicAddrNormalizesAndRejects(t *testing.T) {
 	}
 }
 
-// 城市 -> 州/省 -> 时区 是有意设计的降级链:俄罗斯 IP 常有经纬度却没有 city。
+// city -> state/province -> timezone is a deliberate degradation chain: Russian IPs often have lat/long but no city.
 func TestReallyFreeGeoIPFallsBackThroughCityRegionTimezone(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -239,7 +240,8 @@ func TestReallyFreeGeoIPFallsBackThroughCityRegionTimezone(t *testing.T) {
 			wantOutcome: parseOK,
 		},
 		{
-			// 没有国家名就没有可信归属:宁可回落到占位文案,也不拿时区拼一个国家。
+			// No country name means no trustworthy identity: better to fall back
+			// to the placeholder than to piece a country together from a timezone.
 			name:        "timezone alone is not a country",
 			body:        `{"time_zone":"Europe/Berlin","region_name":"Berlin","city":"Berlin"}`,
 			wantOutcome: parseNotFound,
@@ -250,7 +252,7 @@ func TestReallyFreeGeoIPFallsBackThroughCityRegionTimezone(t *testing.T) {
 			wantOutcome: parseNotFound,
 		},
 		{
-			// 实测 reallyfreegeoip.org 对查不到的 IP 就是这么回的:200 + 全空。
+			// Measured: this is exactly how reallyfreegeoip.org responds for an IP it cannot find: 200 + all empty.
 			name:        "all blank fields",
 			body:        `{"ip":"8.8.8.7","country_code":"","country_name":"","region_name":"","city":"","time_zone":""}`,
 			wantOutcome: parseNotFound,
@@ -293,7 +295,7 @@ func TestResolveReturnsCountryAndRegion(t *testing.T) {
 	}
 }
 
-// 一次会话列表里多台设备常共享出口 IP,归一后必须去重,否则凭空多打上游。
+// Multiple devices in one session list often share an egress IP; after normalization they must be deduplicated, otherwise the upstream is hit needlessly.
 func TestResolveDeduplicatesEquivalentAddressesAndCachesResults(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusOK, `{"country_name":"Iceland","city":"Reykjavik"}`
@@ -304,7 +306,8 @@ func TestResolveDeduplicatesEquivalentAddressesAndCachesResults(t *testing.T) {
 	if calls := srv.calls(); calls != 1 {
 		t.Fatalf("first Resolve made %d requests, want 1 (deduplicated)", calls)
 	}
-	// 结果必须映射回调用方传入的原始字符串,上层是直接拿 authorization.ip 索引的。
+	// Results must map back to the original strings the caller passed in; the
+	// caller indexes directly by authorization.ip.
 	for _, raw := range []string{"8.8.8.7", "::ffff:8.8.8.7", " 8.8.8.7 "} {
 		if loc, ok := first[raw]; !ok || loc.Country != "Iceland" {
 			t.Fatalf("Resolve[%q] = %+v, %v; want Iceland", raw, loc, ok)
@@ -320,8 +323,9 @@ func TestResolveDeduplicatesEquivalentAddressesAndCachesResults(t *testing.T) {
 	}
 }
 
-// 后端对查不到的 IP 会反复返回同样的空结果,不记负缓存就等于每次打开会话列表都
-// 重付一遍往返延迟,而这些请求又会把限流窗口续得更久。
+// A backend repeatedly returns the same empty result for an IP it cannot find;
+// without a negative cache, every session-list open re-pays the round-trip
+// latency, and those requests extend the rate-limit window even further.
 func TestResolveNegativeCachesMissingAddresses(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusNotFound, `{"error":"not found"}`
@@ -339,8 +343,9 @@ func TestResolveNegativeCachesMissingAddresses(t *testing.T) {
 	}
 }
 
-// 后端返回 200 但 country_name 为空是常态(实测 1.1.1.1 连国家名都没有),
-// 那属于"没查到",必须回落到占位文案,不能拿时区之类硬凑一个地名。
+// A backend returning 200 with an empty country_name is the norm (measured:
+// 1.1.1.1 has not even a country name); that counts as "not found" and must fall
+// back to the placeholder rather than piecing a place name from a timezone.
 func TestResolveTreatsEmptyCountryAsUnresolved(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusOK, `{"ip":"1.1.1.1","time_zone":"Australia/Sydney","region_name":"New South Wales"}`
@@ -355,7 +360,7 @@ func TestResolveTreatsEmptyCountryAsUnresolved(t *testing.T) {
 	}
 }
 
-// 私网/回环地址没有地理归属,更重要的是不该被送到第三方。
+// Private/loopback addresses have no geographic identity and, more importantly, must not be sent to third parties.
 func TestResolveNeverQueriesNonRoutablePeers(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusOK, `{"country_name":"Never"}`
@@ -375,7 +380,7 @@ func TestResolveNeverQueriesNonRoutablePeers(t *testing.T) {
 	}
 }
 
-// 熔断的全部意义在于冷却期内一个请求都不发:继续打只会把 429 窗口一直续着。
+// The entire point of the breaker is to send no requests during the cooldown: hammering on only extends the 429 window.
 func TestBreakerOpensOnConsecutiveRateLimitsAndSuppressesRequests(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusTooManyRequests, `{"error":"rate limited"}`
@@ -393,7 +398,7 @@ func TestBreakerOpensOnConsecutiveRateLimitsAndSuppressesRequests(t *testing.T) 
 		t.Fatalf("breaker = %+v, want an open rate_limit window", state)
 	}
 
-	// 冷却期内的新 IP 同样不该出网,并应立刻进负缓存。
+	// A new IP during the cooldown must also not go to the network, and should immediately enter the negative cache.
 	if got := mustResolve(t, resolver, "8.8.8.4"); len(got) != 0 {
 		t.Fatalf("Resolve during cooldown = %+v, want nil", got)
 	}
@@ -406,7 +411,7 @@ func TestBreakerOpensOnConsecutiveRateLimitsAndSuppressesRequests(t *testing.T) 
 	}
 }
 
-// 冷却结束后自动闭合,并给下一轮限流留出完整阈值。
+// It closes automatically once the cooldown ends, and gives the next rate-limit round the full threshold.
 func TestBreakerClosesAfterCooldown(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusTooManyRequests, `{"error":"rate limited"}`
@@ -429,8 +434,9 @@ func TestBreakerClosesAfterCooldown(t *testing.T) {
 	}
 }
 
-// 超时和 5xx 走的是另一条独立的、明显更短的不可达窗口:后端可能只是抖了一下,
-// 不该因为一次网络故障就离线比配额窗口还久。
+// Timeouts and 5xx go through a separate, distinctly shorter unreachable window:
+// the backend may have only hiccuped, and one network failure should not take it
+// offline longer than the quota window.
 func TestBreakerTracksDownFailuresSeparatelyFromRateLimits(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusInternalServerError, `{"error":"boom"}`
@@ -453,7 +459,7 @@ func TestBreakerTracksDownFailuresSeparatelyFromRateLimits(t *testing.T) {
 	if !state.Open || state.Reason != "down" {
 		t.Fatalf("breaker = %+v, want an open down window", state)
 	}
-	// 不可达窗口必须比限流窗口短:短暂抖动不该让后端离线两分钟。
+	// The unreachable window must be shorter than the rate-limit window: a brief hiccup must not keep a backend offline for two minutes.
 	if state.Remaining >= cfg.RateLimitCooldown {
 		t.Fatalf("down window = %v, want shorter than rate limit cooldown %v", state.Remaining, cfg.RateLimitCooldown)
 	}
@@ -464,8 +470,8 @@ func TestBreakerTracksDownFailuresSeparatelyFromRateLimits(t *testing.T) {
 	}
 }
 
-// "没这条 IP"是后端给出的确定答复,不是故障:不能因此熔断,否则一批冷门地址能把
-// 一个健康的后端下线。
+// "No such IP" is a definite answer from the backend, not a fault: it must not
+// trip the breaker, or a batch of obscure addresses could take a healthy backend offline.
 func TestBreakerIgnoresNotFound(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusNotFound, `{"error":"not found"}`
@@ -484,7 +490,7 @@ func TestBreakerIgnoresNotFound(t *testing.T) {
 	}
 }
 
-// 单请求超时必须收敛成"查不到",而不是把整批 RPC 拖住。
+// A single-request timeout must converge to "not found" rather than holding up the whole RPC batch.
 func TestResolveHonorsPerRequestTimeout(t *testing.T) {
 	release := make(chan struct{})
 	srv := newLookupServer(t, func(string) (int, string) {
@@ -506,7 +512,7 @@ func TestResolveHonorsPerRequestTimeout(t *testing.T) {
 	}
 }
 
-// 响应体被劫持或改写时不能让内存吃光。
+// A hijacked or rewritten response body must not exhaust memory.
 func TestResolveRejectsOversizedResponse(t *testing.T) {
 	srv := newLookupServer(t, func(string) (int, string) {
 		return http.StatusOK, `{"country_name":"` + strings.Repeat("A", 4*maxResponseBytes) + `"}`
@@ -528,8 +534,9 @@ func TestResolveIsSafeOnNilReceiver(t *testing.T) {
 	}
 }
 
-// 缓存必须有确定的内存上界。会话 IP 基数随在线用户增长,超限后允许整体清空,
-// 下一次请求重查一次即可。
+// The cache must have a deterministic memory bound. Session IP cardinality grows
+// with online users, and clearing everything when the limit is exceeded is fine:
+// the next request simply re-queries once.
 func TestCacheEvictionKeepsBoundedSize(t *testing.T) {
 	c := newCache(cacheConfig{ttl: time.Hour, negTTL: time.Minute, maxSize: 2})
 	for i := 1; i <= 5; i++ {
@@ -540,7 +547,8 @@ func TestCacheEvictionKeepsBoundedSize(t *testing.T) {
 	}
 }
 
-// 正文缓存用长 TTL、负缓存用短 TTL 是两件不同的事,分别钉死。
+// Positive cache with a long TTL and negative cache with a short TTL are two
+// different things, pinned down separately.
 func TestCacheExpiresEntries(t *testing.T) {
 	c := newCache(cacheConfig{ttl: time.Minute, negTTL: time.Second, maxSize: 8})
 	now := time.Now()
@@ -551,7 +559,7 @@ func TestCacheExpiresEntries(t *testing.T) {
 	if entry, found := c.get(hit); !found || !entry.resolved || entry.location.Country != "Finland" {
 		t.Fatalf("get = %+v, %v; want live positive entry", entry, found)
 	}
-	// 单个 IP 的地理归属几乎不变,一个短 TTL 也不该让正缓存提前失效。
+	// A single IP's geographic identity barely changes, so a short TTL must not let the positive entry expire early.
 	now = now.Add(30 * time.Second)
 	if entry, found := c.get(hit); !found || !entry.resolved {
 		t.Fatalf("get = %+v, %v; want positive entry alive before CacheTTL", entry, found)
@@ -562,7 +570,7 @@ func TestCacheExpiresEntries(t *testing.T) {
 	if entry, found := c.get(miss); !found || entry.resolved {
 		t.Fatalf("get = %+v, %v; want live negative entry", entry, found)
 	}
-	// 负缓存必须很快过期,否则一次限流会把该 IP 锁到第二天。
+	// The negative cache must expire quickly, otherwise one rate limit locks the IP out until the next day.
 	now = now.Add(2 * time.Second)
 	if _, found := c.get(miss); found {
 		t.Fatal("get found negative entry after NegativeTTL, want miss so the IP is retried")
@@ -574,7 +582,7 @@ func TestCacheExpiresEntries(t *testing.T) {
 	}
 }
 
-// 续期侧:后端恢复后同一个 IP 能被重新解析,不会永久卡在负缓存上。
+// Renewal side: once the backend recovers, the same IP can be resolved again and is not stuck on the negative cache forever.
 func TestResolveRetriesAfterNegativeCacheExpires(t *testing.T) {
 	var rateLimited atomic.Bool
 	rateLimited.Store(true)
@@ -596,7 +604,7 @@ func TestResolveRetriesAfterNegativeCacheExpires(t *testing.T) {
 	}
 
 	rateLimited.Store(false)
-	now = now.Add(10 * time.Minute) // 越过负缓存与熔断冷却
+	now = now.Add(10 * time.Minute) // past the negative cache and breaker cooldowns
 
 	got := mustResolve(t, resolver, "8.8.8.7")
 	if loc := got["8.8.8.7"]; loc.Country != "Kenya" || loc.Region != "Nairobi" {

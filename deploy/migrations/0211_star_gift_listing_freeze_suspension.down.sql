@@ -1,4 +1,4 @@
--- Возвращает guard из 0095: без колонки suspended он больше не нужен.
+-- Restores the guard from 0095: without the suspended column it is no longer needed.
 CREATE OR REPLACE FUNCTION public.telesrv_guard_star_gift_listing() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     gift_owner_type text;

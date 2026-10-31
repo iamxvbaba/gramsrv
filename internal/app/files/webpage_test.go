@@ -12,7 +12,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// newWebpageTestService 构造一个带 loopback-allowed 抓取器的 Service（生产恒禁 loopback）。
+// newWebpageTestService builds a Service with a loopback-allowed fetcher (production always blocks loopback).
 func newWebpageTestService(t *testing.T, allowPrivate bool) *Service {
 	t.Helper()
 	media := newFakeMediaStore()
@@ -66,13 +66,13 @@ func TestResolveWebPageDoneCardWithImage(t *testing.T) {
 	if page.Photo == nil || page.Photo.ID == 0 || len(page.Photo.Sizes) == 0 {
 		t.Fatalf("expected minted preview photo, got %+v", page.Photo)
 	}
-	// id == url_hash（保证 pending↔done 关联）。
+	// id == url_hash (ensuring the pending↔done association).
 	normalized, _ := domain.NormalizeWebPageURL(pageURL)
 	if page.ID != domain.WebPageURLHash(normalized) {
 		t.Fatalf("webPage id %d != url_hash %d", page.ID, domain.WebPageURLHash(normalized))
 	}
 
-	// 第二次解析命中 L1 缓存（singleflight/LRU），不再打上游。
+	// The second resolution hits the L1 cache (singleflight/LRU) and no longer hits upstream.
 	if _, err := svc.ResolveWebPage(ctx, pageURL); err != nil {
 		t.Fatalf("second ResolveWebPage: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestResolveWebPageDoneCardWithImage(t *testing.T) {
 	}
 }
 
-// TestWebPageMaybeRefreshStale 验证超龄卡片触发后台 stale-while-revalidate 刷新（写回 done）。
+// TestWebPageMaybeRefreshStale verifies that an over-age card triggers a background stale-while-revalidate refresh (writing back done).
 func TestWebPageMaybeRefreshStale(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/article", func(w http.ResponseWriter, _ *http.Request) {
@@ -99,10 +99,10 @@ func TestWebPageMaybeRefreshStale(t *testing.T) {
 	normalized, _ := domain.NormalizeWebPageURL(srv.URL + "/article")
 	urlHash := domain.WebPageURLHash(normalized)
 
-	// 触发刷新（refreshedAt=1 → 远超 TTL）。
+	// Trigger refresh (refreshedAt=1 → far beyond the TTL).
 	svc.webpage.maybeRefresh(svc, normalized, urlHash, 1)
 
-	// 轮询直到刷新写回 done 卡片。
+	// Poll until the refresh writes back the done card.
 	var ok bool
 	for i := 0; i < 100; i++ {
 		if page, _, found, err := svc.media.GetWebPageByURLHash(ctx, urlHash); err == nil && found && page.State == domain.MessageWebPageStateDone && page.Title == "Fresh" {
@@ -115,13 +115,14 @@ func TestWebPageMaybeRefreshStale(t *testing.T) {
 		t.Fatalf("stale refresh did not write fresh done card")
 	}
 
-	// refreshedAt=0 或新鲜 → 不刷新（不 panic、立即返回）。
+	// refreshedAt=0 or fresh → no refresh (no panic, returns immediately).
 	svc.webpage.maybeRefresh(svc, normalized, urlHash, 0)
 	svc.webpage.maybeRefresh(svc, normalized, urlHash, int(time.Now().Unix()))
 }
 
-// TestResolveWebPageTerminalFailureNegativeCached 验证 4xx（终态）解析为空预览并负缓存——
-// 第二次不再打上游（否则每次按键/发送重复抓取坏 URL）。
+// TestResolveWebPageTerminalFailureNegativeCached verifies that a 4xx (terminal) resolves to an empty
+// preview and is negatively cached — the second time no longer hits upstream (otherwise a bad URL is
+// re-fetched on every keystroke/send).
 func TestResolveWebPageTerminalFailureNegativeCached(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -147,7 +148,7 @@ func TestResolveWebPageTerminalFailureNegativeCached(t *testing.T) {
 	}
 }
 
-// TestResolveWebPageTransientFailureNotCached 验证 5xx（瞬时）返回 error 且不缓存——可重试。
+// TestResolveWebPageTransientFailureNotCached verifies that a 5xx (transient) returns an error and is not cached — retryable.
 func TestResolveWebPageTransientFailureNotCached(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -201,8 +202,8 @@ func TestResolveWebPageNonHTMLIsEmpty(t *testing.T) {
 	}
 }
 
-// TestResolveWebPageSSRFBlocksLoopback 验证生产配置（allowPrivate=false）拦截指向 loopback 的 URL，
-// 并把该确定性失败收敛为空预览。
+// TestResolveWebPageSSRFBlocksLoopback verifies that the production config (allowPrivate=false)
+// blocks a URL pointing at loopback and converges that deterministic failure to an empty preview.
 func TestResolveWebPageSSRFBlocksLoopback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -210,7 +211,7 @@ func TestResolveWebPageSSRFBlocksLoopback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	svc := newWebpageTestService(t, false) // 生产口径：禁 loopback
+	svc := newWebpageTestService(t, false) // production posture: loopback disabled
 	page, err := svc.ResolveWebPage(context.Background(), srv.URL+"/x")
 	if err != nil {
 		t.Fatalf("SSRF guard should resolve as terminal-empty: %v", err)
@@ -226,7 +227,7 @@ func TestResolveWebPageDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalFS: %v", err)
 	}
-	svc := NewService(media, blobs, 2) // 未启用 webpage 抓取
+	svc := NewService(media, blobs, 2) // webpage fetching not enabled
 	if _, err := svc.ResolveWebPage(context.Background(), "https://example.com"); err == nil {
 		t.Fatalf("expected ErrWebPagePreviewDisabled")
 	}

@@ -56,7 +56,7 @@ func TestValidateReplyMarkup(t *testing.T) {
 }
 
 func TestValidateReplyMarkupLimits(t *testing.T) {
-	// 行数上限。
+	// Row count limit.
 	tooManyRows := &MessageReplyMarkup{Inline: make([][]MarkupButton, MaxMarkupRows+1)}
 	for i := range tooManyRows.Inline {
 		tooManyRows.Inline[i] = []MarkupButton{cb("x", []byte("d"))}
@@ -64,7 +64,7 @@ func TestValidateReplyMarkupLimits(t *testing.T) {
 	if err := ValidateReplyMarkup(tooManyRows); !errors.Is(err, ErrButtonInvalid) {
 		t.Fatalf("rows over limit = %v, want ErrButtonInvalid", err)
 	}
-	// 单行按钮数上限。
+	// Per-row button count limit.
 	wideRow := make([]MarkupButton, MaxMarkupButtonsPerRow+1)
 	for i := range wideRow {
 		wideRow[i] = cb("x", []byte("d"))
@@ -72,7 +72,7 @@ func TestValidateReplyMarkupLimits(t *testing.T) {
 	if err := ValidateReplyMarkup(&MessageReplyMarkup{Inline: [][]MarkupButton{wideRow}}); !errors.Is(err, ErrButtonInvalid) {
 		t.Fatalf("row width over limit = %v, want ErrButtonInvalid", err)
 	}
-	// 文本长度上限。
+	// Text length limit.
 	longText := strings.Repeat("a", MaxMarkupButtonTextLen+1)
 	if err := ValidateReplyMarkup(&MessageReplyMarkup{Inline: [][]MarkupButton{{cb(longText, []byte("d"))}}}); !errors.Is(err, ErrButtonInvalid) {
 		t.Fatalf("text over limit = %v, want ErrButtonInvalid", err)

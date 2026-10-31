@@ -7,8 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelMediaIndexSearch 端到端验证频道共享媒体索引(迁移 0118):发送各类媒体消息 →
-// 写路径建索引 → SearchChannelMedia 按标签页类别返回正确消息。门控于 TELESRV_TEST_POSTGRES_DSN。
+// TestChannelMediaIndexSearch verifies the channel shared media index end to end (migration 0118):
+// sending various media messages → the write path builds the index → SearchChannelMedia returns
+// the right messages by tab category. Gated on TELESRV_TEST_POSTGRES_DSN.
 func TestChannelMediaIndexSearch(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -53,7 +54,7 @@ func TestChannelMediaIndexSearch(t *testing.T) {
 	videoID := send(3, "vid", docMedia(domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: 1, H: 1}), nil)
 	urlID := send(4, "see https://x.test", nil, []domain.MessageEntity{{Type: domain.MessageEntityURL, Offset: 4, Length: 14}})
 	musicID := send(6, "song", docMedia(domain.DocumentAttribute{Kind: domain.DocAttrAudio, Title: "song"}), nil)
-	_ = send(5, "plain text only", nil, nil) // 不进任何标签页
+	_ = send(5, "plain text only", nil, nil) // does not go into any tab
 
 	search := func(cats ...domain.MediaCategory) domain.ChannelHistory {
 		h, err := channels.SearchChannelMedia(ctx, owner.ID, channelID, domain.MediaSearchRequest{Categories: cats, Limit: 50})
@@ -121,7 +122,8 @@ func TestChannelMediaIndexSearch(t *testing.T) {
 	wantCount("initial", counts, domain.MediaCategoryURL, 1)
 	wantCount("initial", counts, domain.MediaCategoryVoice, 0)
 
-	// 编辑把视频消息换成语音 → 索引类别应随之迁移(video 标签页不再含它,voice 含它)。
+	// An edit changes the video message into voice → the index category should migrate accordingly
+	// (the video tab no longer contains it, voice does).
 	if _, err := channels.EditChannelMessage(ctx, domain.EditChannelMessageRequest{
 		UserID: owner.ID, ChannelID: channelID, ID: videoID, Message: "now voice", EditDate: 1700002999,
 		Media: docMedia(domain.DocumentAttribute{Kind: domain.DocAttrAudio, Voice: true}),

@@ -12,13 +12,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// LangPackStore 用 PostgreSQL 实现 store.LangPackStore。
+// LangPackStore implements store.LangPackStore with PostgreSQL.
 type LangPackStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewLangPackStore 基于 pgx 连接池（或事务）创建 LangPackStore。
+// NewLangPackStore creates a LangPackStore backed by a pgx pool (or transaction).
 func NewLangPackStore(db sqlcgen.DBTX) *LangPackStore {
 	return &LangPackStore{db: db, q: sqlcgen.New(db)}
 }
@@ -131,8 +131,9 @@ func (s *LangPackStore) ReconcileSeed(ctx context.Context, seed domain.LangPackS
 	return written, nil
 }
 
-// PutSeedCatalog 只覆盖目录清单快照，供“内容 hash 未变但文件 stat 元数据需要
-// 刷新”的启动路径使用，避免为补写大小/mtime 跑完整的 ReconcileSeed。
+// PutSeedCatalog only overwrites the catalog manifest snapshot, for the startup path where "the
+// content hash is unchanged but the file stat metadata needs refreshing", avoiding a full
+// ReconcileSeed just to rewrite the size/mtime.
 func (s *LangPackStore) PutSeedCatalog(ctx context.Context, catalog domain.LangPackSeedCatalog) error {
 	if catalog.Catalog == "" {
 		catalog.Catalog = "default"

@@ -9,10 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 中标者必须拿到自己赢下的发行号。旧实现按"谁先点升级"发号（issued+1），于是以
-// 高价拿下 #1 的人升级后变成 #16，而 #109 的中标者拿到了 #1。这里同时钉住三条
-// 相邻的不变量：中标号被预留（普通购买与管理员发放都要跳过它）、预留号耗尽库存
-// 时普通升级得到干净的 sold out、中标者最终拿到自己的号码并写进服务消息快照。
+// A winner must receive the issue number they won. The old implementation issued numbers by "who
+// clicked upgrade first" (issued+1), so the person who paid a high price for #1 became #16 after
+// upgrading, while the winner of #109 got #1. This pins three adjacent invariants at once: the winning
+// number is reserved (both normal purchases and admin grants must skip it), a normal upgrade against a
+// supply with only a reserved number left gets a clean sold out, and the winner ultimately receives
+// their own number written into the service message snapshot.
 func TestStarGiftAuctionWinnerKeepsWonCollectibleNumberPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -89,8 +91,8 @@ func TestStarGiftAuctionWinnerKeepsWonCollectibleNumberPostgres(t *testing.T) {
 		}
 	}
 
-	// 拍卖结算把赢到的号码盖在礼物上（peer_star_gifts.gift_num）。它此刻还没铸造
-	// 成藏品，所以必须对其他铸造路径可见地"占位"。
+	// Auction settlement stamps the won number onto the gift (peer_star_gifts.gift_num). It is not
+	// minted into a collectible yet, so it must visibly "reserve" the number for the other minting paths.
 	wonSaved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
 		Owner: winnerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
 		Date: now, ConvertStars: 25, GiftNum: 1, Message: "auction award",
@@ -107,7 +109,7 @@ func TestStarGiftAuctionWinnerKeepsWonCollectibleNumberPostgres(t *testing.T) {
 		Date: now + 2, ConvertStars: 25, Message: "late purchase",
 	})
 
-	// 管理员发放走的是另一条铸造路径，同样不许抢走中标号。
+	// The admin grant takes a different minting path and must likewise not take the winning number.
 	granted, err := upgrades.GrantUniqueStarGift(ctx, domain.AdminStarGiftGrant{
 		SenderID: domain.OfficialSystemUserID, Recipient: domain.Peer{Type: domain.PeerTypeUser, ID: grantee.ID},
 		GiftID: entry.Gift.ID, Upgrade: true, CommandKey: "auction-num-grant-" + suffix, Date: now,
@@ -132,8 +134,8 @@ func TestStarGiftAuctionWinnerKeepsWonCollectibleNumberPostgres(t *testing.T) {
 		t.Fatalf("regular upgrade took a reserved auction number: num=%d slug=%s", bought.Unique.Num, bought.Unique.Slug)
 	}
 
-	// 只剩下被中标者预留的 #1：普通升级必须干净地拿到 sold out，而不是抢号，也不是
-	// 撞上唯一索引后返回内部错误。
+	// Only the winner-reserved #1 is left: a normal upgrade must get a clean sold out, neither
+	// grabbing the number nor hitting the unique index and returning an internal error.
 	if _, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
 		UserID: latecomer.ID, Ref: domain.SavedStarGiftRef{Owner: latecomerPeer, MsgID: lateSaved.MsgID},
 		ChargeStars: 100, FormID: 9972, CommandKey: "auction-num-late-" + suffix, Date: now + 4,

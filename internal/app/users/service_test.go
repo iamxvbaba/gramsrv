@@ -294,7 +294,7 @@ func TestServiceUpdateBirthday(t *testing.T) {
 	}
 	svc := NewService(store)
 
-	// 设置带年份的生日。
+	// Set a birthday with a year.
 	u, err := svc.UpdateBirthday(ctx, owner.ID, domain.Birthday{Day: 14, Month: 2, Year: 1990})
 	if err != nil {
 		t.Fatalf("UpdateBirthday: %v", err)
@@ -302,11 +302,11 @@ func TestServiceUpdateBirthday(t *testing.T) {
 	if u.Birthday != (domain.Birthday{Day: 14, Month: 2, Year: 1990}) {
 		t.Fatalf("birthday = %+v, want 14/2/1990", u.Birthday)
 	}
-	// 非法月份被拒。
+	// An invalid month is refused.
 	if _, err := svc.UpdateBirthday(ctx, owner.ID, domain.Birthday{Day: 1, Month: 13}); !errors.Is(err, domain.ErrBirthdayInvalid) {
 		t.Fatalf("invalid month err = %v, want birthday invalid", err)
 	}
-	// 清除（零值）后 IsSet=false。
+	// After clearing (zero value), IsSet=false.
 	u, err = svc.UpdateBirthday(ctx, owner.ID, domain.Birthday{})
 	if err != nil {
 		t.Fatalf("clear birthday: %v", err)
@@ -725,14 +725,14 @@ func TestFrozenAccountUsernamesHiddenFromResolutionButStayOccupied(t *testing.T)
 	}}
 	svc := NewService(store, WithAccountFreezeProvider(freeze))
 
-	// 冻结期：常规 + NFT 都不再解析。
+	// During the freeze: both the regular and NFT usernames stop resolving.
 	if _, found, err := svc.ResolveUsername(ctx, claimer.ID, "frozen_name"); err != nil || found {
 		t.Fatalf("frozen editable resolve found=%v err=%v, want hidden", found, err)
 	}
 	if _, found, err := svc.ResolveUsername(ctx, claimer.ID, "frozen_nft"); err != nil || found {
 		t.Fatalf("frozen NFT resolve found=%v err=%v, want hidden", found, err)
 	}
-	// 冻结期：占用检查保持占住（不是被释放成可用）。
+	// During the freeze: the occupancy check stays occupied (not released as available).
 	if ok, err := svc.CheckUsername(ctx, claimer.ID, "frozen_name"); err != nil || ok {
 		t.Fatalf("frozen editable check ok=%v err=%v, want occupied", ok, err)
 	}
@@ -740,7 +740,7 @@ func TestFrozenAccountUsernamesHiddenFromResolutionButStayOccupied(t *testing.T)
 		t.Fatalf("claim frozen editable err=%v, want username occupied", err)
 	}
 
-	// 解冻即恢复：无数据回写，全部 username 重新可解析。
+	// Unfreezing restores it: no data write-back, and all usernames resolve again.
 	delete(freeze.items, owner.ID)
 	resolved, found, err := svc.ResolveUsername(ctx, claimer.ID, "frozen_name")
 	if err != nil || !found || resolved.ID != owner.ID {

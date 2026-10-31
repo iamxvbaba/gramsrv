@@ -9,12 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelFactCheckSurvivesReadPaths 验证 Layer 231 事实核查标签
-// 存在 channel_messages.factcheck 列里，并且：
-//   - 作者可以写入结论，非作者普通成员不行；
-//   - 读路径（GetChannelMessages）带回标签；
-//   - 批量读取（GetFactChecks）返回同一条结论；
-//   - 删除后标签消失。
+// TestChannelFactCheckSurvivesReadPaths verifies the Layer 231 fact-check label
+// lives in the channel_messages.factcheck column, and that:
+//   - the author can write the verdict, an ordinary non-author cannot;
+//   - the read path (GetChannelMessages) carries the label back;
+//   - batch reading (GetFactChecks) returns the same verdict;
+//   - the label disappears after deletion.
 func TestChannelFactCheckSurvivesReadPaths(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -60,14 +60,14 @@ func TestChannelFactCheckSurvivesReadPaths(t *testing.T) {
 		t.Fatalf("join member: %v", err)
 	}
 
-	// 非作者普通成员不能写事实核查。
+	// An ordinary non-author member cannot write a fact check.
 	if _, err := channels.EditFactCheck(ctx, domain.EditFactCheckRequest{
 		UserID: member.ID, ChannelID: channelID, MessageID: post.Message.ID, Text: "not allowed", Date: 1_700_100_300,
 	}); !errors.Is(err, domain.ErrFactCheckForbidden) {
 		t.Fatalf("member editFactCheck error = %v, want ErrFactCheckForbidden", err)
 	}
 
-	// 作者写入结论。
+	// The author writes the verdict.
 	res, err := channels.EditFactCheck(ctx, domain.EditFactCheckRequest{
 		UserID: owner.ID, ChannelID: channelID, MessageID: post.Message.ID,
 		Text: "The claim is false.", Country: "DE", Date: 1_700_100_400,
@@ -82,7 +82,7 @@ func TestChannelFactCheckSurvivesReadPaths(t *testing.T) {
 		t.Fatal("fact check hash is zero")
 	}
 
-	// 读路径带回标签。
+	// The read path carries the label back.
 	history, err := channels.GetChannelMessages(ctx, owner.ID, channelID, []int{post.Message.ID})
 	if err != nil {
 		t.Fatalf("get channel messages: %v", err)
@@ -101,7 +101,7 @@ func TestChannelFactCheckSurvivesReadPaths(t *testing.T) {
 		t.Fatalf("fact check hash = %d, want %d", got.Hash, res.FactCheck.Hash)
 	}
 
-	// 批量读取返回同一条结论。
+	// Batch reading returns the same verdict.
 	list, err := appchannels.NewService(channels).GetFactChecks(ctx, owner.ID, channelID, []int{post.Message.ID})
 	if err != nil {
 		t.Fatalf("getFactChecks: %v", err)
@@ -126,7 +126,7 @@ func TestChannelFactCheckSurvivesReadPaths(t *testing.T) {
 		t.Fatalf("other viewer lost verdict: %+v, %v", ownerRead, err)
 	}
 
-	// 删除后标签消失。
+	// The label disappears after deletion.
 	if _, err := channels.EditFactCheck(ctx, domain.EditFactCheckRequest{
 		UserID: owner.ID, ChannelID: channelID, MessageID: post.Message.ID, Text: "", Date: 1_700_100_500,
 	}); err != nil {

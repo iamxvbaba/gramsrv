@@ -258,7 +258,7 @@ func TestScheduledPrivateMessageFireGateUsesStoredAllowance(t *testing.T) {
 	}
 	scheduled := stub.scheduled[0]
 
-	// 价格上涨：fire 必须失败且释放 消息，不得发送/记账。
+	// Price rose: fire must fail and release the message, and must not send/charge.
 	if _, err := account.SetGlobalPrivacy(ctx, bob.ID, domain.GlobalPrivacy{NoncontactPeersPaidStars: 12}); err != nil {
 		t.Fatalf("raise Bob paid requirement: %v", err)
 	}
@@ -273,7 +273,8 @@ func TestScheduledPrivateMessageFireGateUsesStoredAllowance(t *testing.T) {
 		t.Fatalf("raised-price fire must not charge, got %d", stub.sendReq.PaidStars)
 	}
 
-	// 价格回落到计划时的一致值：fire 使用 stored allowance 重试成功。
+	// Price fell back to the value consistent with scheduling: fire retries with the
+	// stored allowance and succeeds.
 	if _, err := account.SetGlobalPrivacy(ctx, bob.ID, domain.GlobalPrivacy{NoncontactPeersPaidStars: 7}); err != nil {
 		t.Fatalf("restore Bob paid requirement: %v", err)
 	}

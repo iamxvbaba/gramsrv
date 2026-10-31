@@ -8,11 +8,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// staleChannelIDAllocator 模拟落后的 channel id 计数器：从 start 起按 1
-// 步进，必然撞上已存在的 channel 主键。
+// staleChannelIDAllocator simulates a lagging channel id counter: it steps by
+// 1 from start, inevitably colliding with an existing channel primary key.
 type staleChannelIDAllocator struct {
 	next    atomic.Int64
-	atLeast atomic.Int64 // 记录 NextChannelIDAtLeast 被调用时的 floor
+	atLeast atomic.Int64 // records the floor when NextChannelIDAtLeast is called
 }
 
 func (a *staleChannelIDAllocator) NextChannelID(_ context.Context) (int64, error) {
@@ -36,9 +36,9 @@ func (a *staleChannelIDAllocator) NextChannelIDAtLeast(_ context.Context, floor 
 	}
 }
 
-// TestChannelStoreCreateChannelRecoversFromStaleIDCounter 验证计数器落后
-// （Redis 快照回退 / 测试 fallback 分配器绕过 Redis 直写同一库）时，
-// CreateChannel 经预检自愈拿到空闲 id，而非撞主键 500。
+// TestChannelStoreCreateChannelRecoversFromStaleIDCounter verifies that when the counter lags
+// (Redis snapshot rollback / the test fallback allocator bypassing Redis and writing directly to the same DB),
+// CreateChannel self-heals through the pre-check to get a free id, instead of a primary-key 500.
 func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -53,7 +53,7 @@ func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", creator.ID)
 	})
 
-	// 先用默认 PG fallback 分配器造一个真实 channel（占住 max id）。
+	// First create a real channel with the default PG fallback allocator (occupying the max id).
 	seedStore := NewChannelStore(pool)
 	seed, err := seedStore.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: creator.ID,
@@ -65,11 +65,11 @@ func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
 		t.Fatalf("seed channel: %v", err)
 	}
 
-	// 落后计数器从 seed id 之前很远处开始（模拟回退），首次分配必撞。
+	// The lagging counter starts far before the seed id (simulating a rollback); the first allocation must collide.
 	stale := &staleChannelIDAllocator{}
 	stale.next.Store(seed.Channel.ID - 3)
 	staleStore := NewChannelStore(pool, WithChannelAllocators(stale, nil))
-	// msgIDs 传 nil 会被 fallback 覆盖；channel pts 由 PG 事务直接维护。
+	// Passing nil msgIDs gets overridden by the fallback; channel pts is maintained directly by the PG transaction.
 	created, err := staleStore.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: creator.ID,
 		Title:         "StaleRecovered " + suffix,
@@ -83,6 +83,6 @@ func TestChannelStoreCreateChannelRecoversFromStaleIDCounter(t *testing.T) {
 		t.Fatalf("recovered channel id = %d, want > seed id %d", created.Channel.ID, seed.Channel.ID)
 	}
 	if stale.atLeast.Load() < seed.Channel.ID {
-		t.Fatalf("NextChannelIDAtLeast floor = %d, want >= seed id %d（应按表内最大 id 对账）", stale.atLeast.Load(), seed.Channel.ID)
+		t.Fatalf("NextChannelIDAtLeast floor = %d, want >= seed id %d (should reconcile to the table's max id)", stale.atLeast.Load(), seed.Channel.ID)
 	}
 }

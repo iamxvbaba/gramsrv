@@ -41,22 +41,26 @@ type userBaseValue struct {
 	CountryCode string `json:"country_code"`
 	Verified    bool   `json:"verified"`
 	Support     bool   `json:"support"`
-	// scam / fake 同理必须随缓存往返：丢失会让缓存命中路径把带标记的账号输出成
-	// 普通账号，导致资料页 SCAM/FAKE 标记随缓存命中/未命中间歇性消失（与 bot 列同坑）。
+	// scam / fake likewise must round-trip through the cache: losing them makes the cache-hit
+	// path emit flagged accounts as ordinary accounts, causing the profile SCAM/FAKE flags to
+	// intermittently disappear depending on cache hit/miss (same pitfall as the bot field).
 	Scam bool `json:"scam,omitempty"`
 	Fake bool `json:"fake,omitempty"`
-	// bot 字段必须随缓存往返：丢失会让缓存命中路径把 bot 输出成普通用户，
-	// 污染客户端本地缓存（TDesktop 的 bot 标记不可逆）。
+	// The bot field must round-trip through the cache: losing it makes the cache-hit path emit
+	// a bot as an ordinary user, polluting the client's local cache (TDesktop's bot flag is
+	// irreversible).
 	Bot            bool `json:"bot,omitempty"`
 	BotInfoVersion int  `json:"bot_info_version,omitempty"`
-	// premium / emoji status 同理必须随缓存往返：丢失会让缓存命中路径把
-	// 会员输出成非会员，跨路径状态漂移（与 bot 列同一坑位）。
+	// premium / emoji status likewise must round-trip through the cache: losing them makes the
+	// cache-hit path emit a Premium user as non-Premium, drifting state across paths (same
+	// pitfall as the bot field).
 	PremiumUntil           int                           `json:"premium_until,omitempty"`
 	EmojiStatusDocumentID  int64                         `json:"emoji_status_document_id,omitempty"`
 	EmojiStatusUntil       int                           `json:"emoji_status_until,omitempty"`
 	EmojiStatusCollectible domain.EmojiStatusCollectible `json:"emoji_status_collectible,omitempty"`
-	// birthday / personal channel 同理必须随缓存往返：缓存命中路径丢失会让刚保存的
-	// 生日 / 个人频道在重新打开资料时归零（与 bot/premium 列同一坑位）。
+	// birthday / personal channel likewise must round-trip through the cache: losing them on
+	// the cache-hit path makes a just-saved birthday / personal channel revert to zero when the
+	// profile is reopened (same pitfall as the bot/premium fields).
 	BirthdayDay                   int   `json:"birthday_day,omitempty"`
 	BirthdayMonth                 int   `json:"birthday_month,omitempty"`
 	BirthdayYear                  int   `json:"birthday_year,omitempty"`
@@ -68,10 +72,11 @@ type userBaseValue struct {
 	ProfileColor                  int   `json:"profile_color,omitempty"`
 	ProfileColorBackgroundEmojiID int64 `json:"profile_color_background_emoji_id,omitempty"`
 	LastSeenAt                    int   `json:"last_seen_at"`
-	// deleted 必须随缓存往返，与上面的 bot/premium/scam 同一坑位：账号删除后第一
-	// 次读会把墓碑写进缓存，若该位丢失，之后每次命中都把墓碑还原成"名字为空、
-	// LastSeenAt 为 0 的活用户"，客户端随即渲染成"最近上线"的陌生账号而不是
-	// Deleted Account。DeletionSource/Reason 同理是审计字段。
+	// deleted must round-trip through the cache, the same pitfall as the bot/premium/scam fields
+	// above: the first read after account deletion writes the tombstone into the cache, and if
+	// that bit is lost, every subsequent hit turns the tombstone back into "a live user with an
+	// empty name and LastSeenAt 0", and the client then renders it as a "recently online" stranger
+	// instead of a Deleted Account. DeletionSource/Reason are likewise audit fields.
 	Deleted        bool   `json:"deleted,omitempty"`
 	DeletedAt      int64  `json:"deleted_at,omitempty"`
 	DeletionSource string `json:"deletion_source,omitempty"`

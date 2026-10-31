@@ -446,8 +446,9 @@ func TestChannelsDeleteHistoryForEveryoneDrainsBatchesAndKeepsDialogVisible(t *t
 	if !ok || len(updates.Updates) != 1 {
 		t.Fatalf("clear response = %T %+v, want final delete batch updates", cleared, cleared)
 	}
-	// 最后一批删除 invite 服务消息与剩余文本；id=1 建群服务消息保留为
-	// 会话兜底 top message，不进入删除批次。
+	// The last batch deletes the invite service message and the remaining text; the id=1
+	// group-creation service message is kept as the conversation's fallback top message and is not
+	// part of the delete batches.
 	deleteUpdate, ok := updates.Updates[0].(*tg.UpdateDeleteChannelMessages)
 	if !ok || deleteUpdate.ChannelID != channel.ID || deleteUpdate.PtsCount != len(deleteUpdate.Messages) || len(deleteUpdate.Messages) == 0 {
 		t.Fatalf("final batch update = %#v, want trailing delete batch sparing the creation service message", updates.Updates[0])
@@ -457,7 +458,7 @@ func TestChannelsDeleteHistoryForEveryoneDrainsBatchesAndKeepsDialogVisible(t *t
 			t.Fatalf("final batch deleted id %d, creation service message must be spared", id)
 		}
 	}
-	// 两批（1000+1）删除，每批向 owner 和 friend 各推送一次。
+	// Two batches (1000+1) of deletion, each pushing once to owner and friend.
 	if pushedAfter := len(sessions.pushedUserIDs()); pushedAfter-pushedBefore != 4 {
 		t.Fatalf("pushed fanout count = %d, want 4 (two batches to both members)", pushedAfter-pushedBefore)
 	}

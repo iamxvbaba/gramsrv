@@ -21,10 +21,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// devCodeLength 是开发固定验证码长度，写入 auth.sentCode 的 type.length。
+// devCodeLength is the fixed development verification-code length, written into auth.sentCode's type.length.
 const devCodeLength = 5
 
-// registerAuth 注册 auth.* RPC handler。
+// registerAuth registers the auth.* RPC handlers.
 func (r *Router) registerAuth(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.AuthBindTempAuthKeyRequest](d, tlprofile.SemanticMethodAuthBindTempAuthKey, func(ctx context.Context, layerRequest *tg.AuthBindTempAuthKeyRequest) (any, error) {
 		return r.onAuthBindTempAuthKey(ctx, layerRequest)
@@ -102,7 +102,7 @@ func (r *Router) registerAuth(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.AuthCheckRecoveryPasswordRequest](d, tlprofile.SemanticMethodAuthCheckRecoveryPassword, func(ctx context.Context, layerRequest *tg.AuthCheckRecoveryPasswordRequest) (
 
-		// onAuthBindTempAuthKey 记录 TDesktop 的 PFS temp→perm auth key 绑定。
+		// onAuthBindTempAuthKey records TDesktop's PFS temp->perm auth key binding.
 		any, error) {
 		return r.onAuthCheckRecoveryPassword(ctx, layerRequest.
 			Code)
@@ -253,8 +253,8 @@ func (r *Router) cacheBoundAuthKeyLayerResolution(
 	return outcome.layer, outcome.layerBlocked || outcome.layerBlockedByAuthKey, nil
 }
 
-// onAuthExportLoginToken 给 QR 登录请求方返回短期 token；扫码端接受后，同一目标
-// session 后续 export 会升级为 auth.loginTokenSuccess。
+// onAuthExportLoginToken returns a short-lived token to the QR login requester; once the scanning
+// side accepts it, subsequent exports for the same target session upgrade to auth.loginTokenSuccess.
 func (r *Router) onAuthExportLoginToken(ctx context.Context, req *tg.AuthExportLoginTokenRequest) (tg.AuthLoginTokenClass, error) {
 	target, ok := loginTokenTargetFromContext(ctx)
 	if !ok {
@@ -326,9 +326,9 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 	r.setAuthUserCache(bound.AuthKeyID, userID, true)
 	r.bindLoginTokenTarget(accept.target, userID)
 	r.pushLoginTokenAccepted(ctx, accept.target)
-	// 扫码登录的 acceptLoginToken 也会立刻回一条授权给客户端展示,和
-	// account.getAuthorizations 走同一套地理归属解析;只有这一条记录,单元素
-	// 批量即可。
+	// The acceptLoginToken of QR login also immediately returns an authorization for the client to
+	// display, and it goes through the same geo-attribution resolution as account.getAuthorizations;
+	// there is only this one record, so a single-element batch suffices.
 	boundLocations := r.resolveAuthorizationLocations(ctx, []domain.Authorization{bound})
 	out := r.tgAuthorization(boundLocations[bound.IP], bound, scannerAuthKeyID, int(now.Unix()))
 	return &out, nil
@@ -394,9 +394,10 @@ func (r *Router) pushLoginTokenAccepted(ctx context.Context, target loginTokenTa
 	}
 }
 
-// onAuthSendCode 处理 auth.sendCode：生成 phone_code_hash 并返回 sentCode。
-// 若该手机号账号设置了登录邮箱，验证码改投递到邮箱，返回 sentCodeTypeEmailCode
-// （客户端据此进入"输入邮箱验证码"界面，随后用 auth.signIn 的 email_verification 完成登录）。
+// onAuthSendCode handles auth.sendCode: it generates phone_code_hash and returns sentCode. If the
+// account with this phone number has a login email set, the code is delivered to the email instead
+// and sentCodeTypeEmailCode is returned (the client then enters the "enter the email code" screen
+// and later completes login via auth.signIn's email_verification).
 func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest) (tg.AuthSentCodeClass, error) {
 	if err := r.checkAuthCodeRateLimit(ctx, req.PhoneNumber); err != nil {
 		return nil, err
@@ -541,8 +542,9 @@ func (r *Router) tgSentCodeForHash(ctx context.Context, hash string) (tg.AuthSen
 	}
 }
 
-// onAuthSignIn 处理 auth.signIn：校验验证码；用户不存在时返回 SignUpRequired。
-// 带 email_verification 时走登录邮箱路径（验证码来自邮箱而非短信）。
+// onAuthSignIn handles auth.signIn: validates the verification code; returns SignUpRequired when
+// the user does not exist. With email_verification it takes the login-email path (the code comes
+// from the email rather than SMS).
 func (r *Router) onAuthSignIn(ctx context.Context, req *tg.AuthSignInRequest) (tg.AuthAuthorizationClass, error) {
 	var (
 		u          domain.User
@@ -560,9 +562,10 @@ func (r *Router) onAuthSignIn(ctx context.Context, req *tg.AuthSignInRequest) (t
 func (r *Router) finishAuthSignIn(ctx context.Context, u domain.User, needSignUp bool, err error) (tg.AuthAuthorizationClass, error) {
 	if err != nil {
 		if errors.Is(err, domain.ErrSessionPasswordNeeded) && u.ID != 0 {
-			// 两步验证未完成：绝不能把 auth_key/session 标记为已登录，否则客户端忽略
-			// SESSION_PASSWORD_NEEDED、直接调用业务 RPC 即可绕过 2FA。失效缓存并把 session
-			// 置为未授权，让后续鉴权重新读到 password_pending 并拒绝；待 checkPassword 通过后再授权。
+			// Two-step verification incomplete: never mark auth_key/session as logged in, otherwise
+			// the client ignores SESSION_PASSWORD_NEEDED and can bypass 2FA by calling business RPCs
+			// directly. Invalidate the cache and mark the session unauthorized, so subsequent auth
+			// re-reads password_pending and rejects; authorize again after checkPassword passes.
 			if id, ok := AuthKeyIDFrom(ctx); ok {
 				r.invalidateAuthUserCache(id)
 			}
@@ -655,8 +658,9 @@ func (r *Router) onAuthResetAuthorizations(ctx context.Context) (bool, error) {
 	for _, a := range deleted {
 		r.revokeAuthKeySessions(a.AuthKeyID)
 		_ = r.clearAuthKeyState(ctx, a.AuthKeyID)
-		// 撤销其它会话会删除其业务 authorization；协议 key 保留用于让客户端
-		// 重连后取得 AUTH_KEY_UNREGISTERED。密聊仍按设备授权边界 discard 并通知对端。
+		// Revoking the other sessions deletes their business authorization; the protocol key is kept
+		// so the client gets AUTH_KEY_UNREGISTERED after reconnecting. Secret chats are still
+		// discarded along the device-authorization boundary and the peer is notified.
 		r.discardSecretChatsForAuthKey(ctx, businessAuthKeyInt64(a.AuthKeyID), userID)
 	}
 	return true, nil
@@ -677,7 +681,7 @@ func (r *Router) onAuthCheckPassword(ctx context.Context, password tg.InputCheck
 	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(password)); err != nil {
 		return nil, passwordErr(err)
 	}
-	// 两步验证通过：清除 password_pending 并把 auth_key/session 提升为完全授权。
+	// Two-step verification passed: clear password_pending and promote auth_key/session to fully authorized.
 	if pending {
 		if err := r.completePendingPasswordSignIn(ctx, authKeyID, userID); err != nil {
 			return nil, internalErr()
@@ -781,8 +785,9 @@ func (r *Router) completePendingPasswordSignIn(ctx context.Context, authKeyID [8
 	return nil
 }
 
-// onAuthResetLoginEmail 处理 auth.resetLoginEmail：用户登录设备时无法访问登录邮箱时
-// 清除登录邮箱，改回手机验证码登录，返回一个新的手机 sentCode 供其继续。
+// onAuthResetLoginEmail handles auth.resetLoginEmail: when the user cannot access the login email
+// on the logging-in device, it clears the login email, switches back to phone-code login, and
+// returns a new phone sentCode for the user to continue.
 type loginEmailResetConsumer interface {
 	ConsumeLoginEmailReset(ctx context.Context, phone, phoneCodeHash string) (userID int64, err error)
 	SendPhoneCodeAfterLoginEmailReset(ctx context.Context, phone string, expectedUserID int64) (string, error)
@@ -820,10 +825,12 @@ func (r *Router) onAuthResetLoginEmail(ctx context.Context, req *tg.AuthResetLog
 	return r.tgSentCodeForHash(ctx, hash)
 }
 
-// emailVerificationCode 从 emailVerification 取出可校验的字符串（验证码 / Google·Apple
-// 令牌）；最终必须由 auth service 对签发记录精确校验。
-// onAuthInitPasskeyLogin 处理 auth.initPasskeyLogin：生成一次性断言挑战（discoverable），
-// 以 DataJSON（顶层含 publicKey）返回。免授权（登录前）。
+// emailVerificationCode extracts the verifiable string from an emailVerification (the verification
+// code / a Google·Apple token); ultimately it must be precisely validated by the auth service
+// against the issued record.
+// onAuthInitPasskeyLogin handles auth.initPasskeyLogin: generates a one-time assertion challenge
+// (discoverable) and returns it as DataJSON (with publicKey at the top level). No authorization
+// required (before login).
 func (r *Router) onAuthInitPasskeyLogin(ctx context.Context, req *tg.AuthInitPasskeyLoginRequest) (*tg.AuthPasskeyLoginOptions, error) {
 	if r.deps.Passkey == nil {
 		return &tg.AuthPasskeyLoginOptions{Options: tg.DataJSON{Data: "{}"}}, nil
@@ -835,10 +842,11 @@ func (r *Router) onAuthInitPasskeyLogin(ctx context.Context, req *tg.AuthInitPas
 	return &tg.AuthPasskeyLoginOptions{Options: tg.DataJSON{Data: string(options)}}, nil
 }
 
-// onAuthFinishPasskeyLogin 处理 auth.finishPasskeyLogin：验证登录断言并绑定 auth_key。
-// 收尾与 signIn 同构（Bind 原子切换 update baseline → 授权缓存 → session 绑定）；
-// passkey 是强因子，直接完全授权
-// （不走 SESSION_PASSWORD_NEEDED）。FromDCID/FromAuthKeyID 为多 DC 重路由用，本单 DC 忽略。
+// onAuthFinishPasskeyLogin handles auth.finishPasskeyLogin: validates the login assertion and binds
+// the auth_key. The wrap-up is isomorphic with signIn (Bind atomically switches the update baseline
+// -> authorization cache -> session binding); a passkey is a strong factor and directly fully
+// authorizes (without SESSION_PASSWORD_NEEDED). FromDCID/FromAuthKeyID are for multi-DC rerouting
+// and are ignored in this single-DC setup.
 func (r *Router) onAuthFinishPasskeyLogin(ctx context.Context, req *tg.AuthFinishPasskeyLoginRequest) (tg.AuthAuthorizationClass, error) {
 	if r.deps.Passkey == nil || r.deps.Auth == nil {
 		return nil, internalErr()
@@ -874,10 +882,11 @@ func emailVerificationCode(v tg.EmailVerificationClass) string {
 	return ""
 }
 
-// onAuthImportBotAuthorization 处理 auth.importBotAuthorization：bot 程序凭 token
-// 登录为 bot 账号。api_id/api_hash 与现有 sendCode 行为一致不校验（无 app 注册表）。
-// 收尾与 signIn 同构（Bind 原子切换 update baseline → 授权缓存 → session 绑定），但不写登录消息、不推
-// signIn 服务通知——那是手机登录语义。
+// onAuthImportBotAuthorization handles auth.importBotAuthorization: a bot program logs in as a bot
+// account using a token. api_id/api_hash are, consistent with the existing sendCode behavior, not
+// validated (there is no app registry). The wrap-up is isomorphic with signIn (Bind atomically
+// switches the update baseline -> authorization cache -> session binding), but it writes no login
+// message and pushes no signIn service notification -- those are phone-login semantics.
 func (r *Router) onAuthImportBotAuthorization(ctx context.Context, req *tg.AuthImportBotAuthorizationRequest) (tg.AuthAuthorizationClass, error) {
 	if r.deps.Auth == nil {
 		return nil, accessTokenInvalidErr()
@@ -893,7 +902,7 @@ func (r *Router) onAuthImportBotAuthorization(ctx context.Context, req *tg.AuthI
 	return &tg.AuthAuthorization{User: r.tgSelfUserWithUsernames(ctx, u)}, nil
 }
 
-// onAuthSignUp 处理 auth.signUp：创建用户并绑定授权。
+// onAuthSignUp handles auth.signUp: creates the user and binds the authorization.
 func (r *Router) onAuthSignUp(ctx context.Context, req *tg.AuthSignUpRequest) (tg.AuthAuthorizationClass, error) {
 	u, loginMessage, err := r.deps.Auth.SignUp(ctx, r.authzFromCtx(ctx), req.PhoneNumber, req.PhoneCodeHash, req.FirstName, req.LastName)
 	if err != nil {
@@ -907,7 +916,7 @@ func (r *Router) onAuthSignUp(ctx context.Context, req *tg.AuthSignUpRequest) (t
 	return &tg.AuthAuthorization{User: r.tgSelfUserWithUsernames(ctx, u)}, nil
 }
 
-// onAuthLogOut 处理 auth.logOut：解绑当前 auth_key 的授权。
+// onAuthLogOut handles auth.logOut: unbinds the current auth_key's authorization.
 func (r *Router) onAuthLogOut(ctx context.Context) (*tg.AuthLoggedOut, error) {
 	id, _ := AuthKeyIDFrom(ctx)
 	userID, authorized, userErr := r.currentUserID(ctx)
@@ -916,19 +925,22 @@ func (r *Router) onAuthLogOut(ctx context.Context) (*tg.AuthLoggedOut, error) {
 	}
 	r.invalidateAuthUserCache(id)
 	r.unbindAuthKey(id)
-	// bot 登出不广播 offline（bot 无 presence 语义，与登录路径对称）。
+	// A bot logout does not broadcast offline (bots have no presence semantics, symmetric with the login path).
 	if userErr == nil && authorized && userID != 0 && !r.userIsBot(ctx, userID) {
 		status, _ := r.setPresenceFromContext(ctx, userID, true, presencePersistSync)
 		r.pushUserStatus(ctx, userID, status)
-		// 登出后主动清掉本 session 的 presence 条目：连接通常不断开（客户端回登录页），
-		// 上面 unbindAuthKey 已把连接 userID 清 0，TCP 真正断开时 SessionOffline 因 userID=0
-		// 提前返回、不再清 presence，条目会以 offline 态滞留泄露。这里随登出一并清除。
+		// After logout, proactively clear this session's presence entry: the connection usually does
+		// not close (the client returns to the login page), and unbindAuthKey above already cleared
+		// the connection's userID to 0, so when TCP actually disconnects SessionOffline returns early
+		// due to userID=0 and no longer clears presence, leaving the entry leaked in the offline
+		// state. Clear it along with the logout here.
 		if key, ok := presenceSessionKeyFromContext(ctx); ok {
 			r.presence.clearSession(key)
 		}
 	}
-	// 登出撤销本设备 authorization 后，级联 discard 其绑定的活跃密聊并通知对端
-	//（否则对端继续往已退出设备投递成静默死链）。best-effort，不阻断登出。
+	// After logout revokes this device's authorization, cascade-discard the active secret chats it is
+	// bound to and notify the peer (otherwise the peer would keep delivering to the exited device as
+	// a silent dead link). Best-effort, does not block logout.
 	if userErr == nil && userID != 0 {
 		r.discardSecretChatsForAuthKey(ctx, businessAuthKeyInt64(id), userID)
 	}
@@ -964,17 +976,22 @@ func (r *Router) unbindAuthKey(authKeyID [8]byte) {
 	r.deps.Sessions.UnbindAuthKey(authKeyID)
 }
 
-// revokeAuthKeySessions 是授权撤销（被踢设备）的完整失效闭环：清 Router 授权缓存、
-// 清 temp→perm 短缓存、强制断开在线连接、再兜底解绑。断开不可省略——出站推送用
-// 连接持有的密钥加密、不回查授权表，perm-key 连接的授权缓存也只有重连才会重新回查；
-// 不断开的话被踢设备仍能持续收到推送并以缓存身份继续发请求。重连后回查 store 即得
-// 未授权（401）。
+// revokeAuthKeySessions is the full invalidation loop for an authorization revocation (a kicked
+// device): clear the Router authorization cache, clear the temp->perm short cache, force-disconnect
+// online connections, and finally unbind as a fallback. Disconnecting is not optional -- outbound
+// pushes are encrypted with the key held by the connection and do not re-query the authorization
+// table, and a perm-key connection's authorization cache is only re-queried on reconnect; without
+// disconnecting, the kicked device would keep receiving pushes and keep sending requests as its
+// cached identity. After reconnecting, re-querying the store yields unauthorized (401).
 //
-// 顺序关键：先 CloseSessionsForBusinessAuthKey 再 unbindAuthKey。Close 内部 removeLocked
-// 读取连接当前 userID 生成 SessionOffline 事件（驱动 presence 清理与 offline 广播）；
-// 若先 unbind 把 userID 清成 0，事件就退化为 userID=0，被踢设备的 presence 条目不被
-// 清理、好友侧最长一个在线 TTL 仍显示其在线。Close 已把连接移出索引，随后的 unbind
-// 对未实现 SessionTerminator 的 Sessions 才有意义（生产实现走 Close 即可，unbind 是 no-op）。
+// Order matters: CloseSessionsForBusinessAuthKey before unbindAuthKey. Close internally does
+// removeLocked, reading the connection's current userID to generate the SessionOffline event
+// (driving presence cleanup and the offline broadcast); if unbind came first and cleared userID to
+// 0, the event would degrade to userID=0, the kicked device's presence entry would not be cleaned,
+// and the friend side would show it online for up to one online TTL. Close has already removed the
+// connection from the index, so the subsequent unbind only matters for Sessions implementations
+// that do not implement SessionTerminator (production implementations just need Close; unbind is a
+// no-op).
 func (r *Router) revokeAuthKeySessions(authKeyID [8]byte) {
 	r.invalidateAuthUserCache(authKeyID)
 	rawTempAuthKeyIDs := r.invalidateTempAuthKeyCacheForPerm(authKeyID)

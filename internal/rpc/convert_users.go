@@ -7,7 +7,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// tgSelfUser 把 domain.User 转为 self 标记的 tg.User（optional 字段由 Encode 自动 SetFlags）。
+// tgSelfUser converts domain.User into a self-marked tg.User (optional fields are SetFlags'd automatically by Encode).
 func tgSelfUser(u domain.User) *tg.User {
 	u = officialSystemUserPresentation(u)
 	if u.Deleted {
@@ -125,10 +125,12 @@ func applyTgUserRestrictionFields(out *tg.User, u domain.User) {
 	out.SetRestrictionReason(reasons)
 }
 
-// applyTgUserPremiumFields 由到期时间即时派生 premium flag（bit28，独立位）与
-// emoji status。判断用真实时钟：premium 的权威来源是 premium_expires_at 本身，
-// 到期即停发，正确性不依赖后台 sweeper（它只负责清理与 updateUser 通知）；
-// bot 永不带 premium（PremiumActiveAt 内排除）。
+// applyTgUserPremiumFields derives the premium flag (bit28, an independent bit) and
+// emoji status live from the expiry time. The check uses the real clock: the
+// authoritative source of premium is premium_expires_at itself, so it stops sending
+// at expiry and correctness does not depend on a background sweeper (which only
+// handles cleanup and updateUser notification); a bot is never Premium (excluded
+// inside PremiumActiveAt).
 func applyTgUserPremiumFields(out *tg.User, u domain.User) {
 	now := time.Now().Unix()
 	if !u.PremiumActiveAt(now) {
@@ -140,9 +142,10 @@ func applyTgUserPremiumFields(out *tg.User, u domain.User) {
 	}
 }
 
-// tgUserEmojiStatus 把用户 emoji status 转为 TL：未设置/已失效返回
-// emojiStatusEmpty（updateUserEmojiStatus 清除语义用）。user TL 内联输出仍由
-// applyTgUserPremiumFields 控制（无状态时直接省略字段，对齐官方 user 编码）。
+// tgUserEmojiStatus converts a user emoji status into TL: unset/expired returns
+// emojiStatusEmpty (used for updateUserEmojiStatus clear semantics). Whether it is
+// inlined in the user TL is still controlled by applyTgUserPremiumFields (the field
+// is omitted entirely when there is no status, matching the official user encoding).
 func tgUserEmojiStatus(u domain.User, now int64) tg.EmojiStatusClass {
 	if !u.EmojiStatusActiveAt(now) {
 		return &tg.EmojiStatusEmpty{}
@@ -203,11 +206,11 @@ func tgUserPeerColor(color domain.PeerColor) tg.PeerColorClass {
 	return out
 }
 
-// applyTgUserBotFields 应用 bot/普通用户的互斥输出：
-//   - bot：必须同时置 bot flag 与 bot_info_version（Layer 225 两者共用 flags
-//     bit14，TDesktop 只认 bot_info_version 字段是否存在）；无 phone、无 status
-//     （客户端显示 "bot" 而非 last seen）。
-//   - 普通用户：照常输出 presence status。
+// applyTgUserBotFields applies the mutually exclusive output for bot/regular users:
+//   - bot: must set both the bot flag and bot_info_version (in Layer 225 both share
+//     flags bit14; TDesktop only recognizes whether the bot_info_version field is
+//     present); no phone, no status (the client shows "bot" instead of last seen).
+//   - regular user: emit the presence status as usual.
 func applyTgUserBotFields(out *tg.User, u domain.User) {
 	if !u.Bot {
 		out.Status = tgUserStatus(u.Status)
@@ -225,7 +228,7 @@ func applyTgUserBotFields(out *tg.User, u domain.User) {
 	out.Phone = ""
 }
 
-// isSystemUserID 报告 id 是否为内置系统账号（777000 / BotFather）。
+// isSystemUserID reports whether id is a built-in system account (777000 / BotFather).
 func isSystemUserID(id int64) bool {
 	_, ok := domain.SystemUserByID(id)
 	return ok
@@ -261,7 +264,7 @@ func tgDeletedUser(u domain.User) *tg.User {
 	return out
 }
 
-// tgUserProfilePhoto 由 domain.User 反范式头像字段构造 UserProfilePhoto；无头像返回 nil（Encode 时为 empty）。
+// tgUserProfilePhoto builds a UserProfilePhoto from the denormalized avatar fields of domain.User; returns nil when there is no avatar (encoded as empty).
 func tgUserProfilePhoto(u domain.User) tg.UserProfilePhotoClass {
 	if u.PhotoID == 0 {
 		return nil
@@ -437,8 +440,9 @@ func addUsers(out *tg.UpdatesDifference, seen map[int64]struct{}, viewerUserID i
 			continue
 		}
 		seen[u.ID] = struct{}{}
-		// difference 里自己的 user 必须带 self 标志：客户端会用该对象
-		// 持久覆盖当前账号资料，self=false 会破坏 Saved Messages 语义。
+		// The viewer's own user in a difference must carry the self flag: the client
+		// persistently overwrites the current account profile with that object, and
+		// self=false would break Saved Messages semantics.
 		if viewerUserID != 0 && u.ID == viewerUserID {
 			out.Users = append(out.Users, tgSelfUser(u))
 			continue

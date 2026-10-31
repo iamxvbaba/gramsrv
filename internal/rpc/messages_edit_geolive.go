@@ -8,10 +8,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件实现 live location 的续报与停止：editMessage + InputMediaGeoLive。
-// DrKLO Android 用它周期性上报新坐标；stopped=true 表示停止共享。
-// 停止语义：把 Period 改写为「已逝时长」，所有客户端按 message.date + period
-// 判定立即过期，服务端不需要后台到点任务。
+// This file implements live location updates and stopping: editMessage +
+// InputMediaGeoLive. DrKLO Android uses it to periodically report new
+// coordinates; stopped=true means sharing is stopped.
+// Stop semantics: rewrite Period to the "elapsed duration", so every client
+// treats it as immediately expired based on message.date + period and the server
+// needs no background expiry task.
 
 func (r *Router) onEditMessageLiveLocation(ctx context.Context, req *tg.MessagesEditMessageRequest, media *tg.InputMediaGeoLive) (tg.UpdatesClass, error) {
 	if req.ID <= 0 || req.ID > domain.MaxMessageBoxID {
@@ -35,7 +37,8 @@ func (r *Router) onEditMessageLiveLocation(ctx context.Context, req *tg.Messages
 	now := int(r.clock.Now().Unix())
 	next := *current.media.GeoLive
 	if media.Stopped {
-		// 立即过期：elapsed 至少 1 秒；forever 共享停止后同样按 elapsed 收口。
+		// Expire immediately: elapsed is at least 1 second; stopping a forever
+		// share is likewise collapsed to elapsed.
 		elapsed := now - current.date
 		if elapsed < 1 {
 			elapsed = 1
@@ -46,7 +49,8 @@ func (r *Router) onEditMessageLiveLocation(ctx context.Context, req *tg.Messages
 		if err != nil {
 			return nil, err
 		}
-		// 保留首发 access_hash：客户端可能继续用旧 hash 拉地图缩略。
+		// Keep the original access_hash: clients may keep fetching the map
+		// thumbnail with the old hash.
 		geo.AccessHash = next.Geo.AccessHash
 		next.Geo = *geo
 		if heading, ok := media.GetHeading(); ok {
@@ -124,7 +128,8 @@ type liveLocationTarget struct {
 	date     int
 }
 
-// loadLiveLocationMessage 加载目标消息并校验它是一条 live location。
+// loadLiveLocationMessage loads the target message and checks that it is a live
+// location.
 func (r *Router) loadLiveLocationMessage(ctx context.Context, userID int64, peer domain.Peer, msgID int) (liveLocationTarget, bool) {
 	switch peer.Type {
 	case domain.PeerTypeChannel:

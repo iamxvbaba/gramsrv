@@ -6,12 +6,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TranscriptionStore 持久化 voice→text 转写，使结果跨调用、跨进程重启复用。
+// TranscriptionStore persists voice->text transcriptions so results are reused across calls and process restarts.
 type TranscriptionStore interface {
 	GetTranscription(ctx context.Context, documentID int64) (domain.MessageTranscription, bool, error)
-	// CreateTranscriptionPending 仅在无行时插入；created=false 表示已存在（由调用方重读分流）。
+	// CreateTranscriptionPending inserts only when no row exists; created=false means it already existed (the caller re-reads to branch).
 	CreateTranscriptionPending(ctx context.Context, req domain.PendingTranscriptionRequest) (domain.MessageTranscription, bool, error)
-	// ResetTranscriptionPending 把 failed 行改回 pending 并登记新的请求方；仅 failed 可重置。
+	// ResetTranscriptionPending changes a failed row back to pending and records the new requester; only failed rows can be reset.
 	ResetTranscriptionPending(ctx context.Context, req domain.PendingTranscriptionRequest) (domain.MessageTranscription, bool, error)
 	MarkTranscriptionDone(ctx context.Context, documentID int64, text string) error
 	MarkTranscriptionFailed(ctx context.Context, documentID int64, failure string) error

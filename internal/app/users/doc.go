@@ -1,3 +1,3 @@
-// Package users 是用户应用服务：用户资料、用户名、头像、在线状态。
-// 第一阶段先支持 users.getUsers 返回自身。
+// Package users is the user application service: user profiles, usernames, photos and
+// online status. The first phase supports users.getUsers returning oneself.
 package users

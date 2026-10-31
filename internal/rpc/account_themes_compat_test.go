@@ -21,8 +21,8 @@ const (
 	legacyGetThemeID     = 0x8d9d742b
 )
 
-// TestLegacyThemeWireDispatch 验证 DrKLO theme 构造器经过 Router.Dispatch 的完整链路：
-// generated static overlay -> canonical request -> gotd dispatcher -> 现有 handler。
+// TestLegacyThemeWireDispatch verifies the full path of DrKLO theme constructors through
+// Router.Dispatch: generated static overlay -> canonical request -> gotd dispatcher -> existing handler.
 func TestLegacyThemeWireDispatch(t *testing.T) {
 	const userID = 1000010
 	ctx := WithUserID(context.Background(), userID)
@@ -82,7 +82,7 @@ func TestLegacyThemeWireDispatch(t *testing.T) {
 		t.Fatalf("updateTheme legacy result = %#v, want updated title", enc)
 	}
 
-	// getTheme 0x8d9d742b:format + InputThemeSlug + document_id(被忽略)。
+	// getTheme 0x8d9d742b: format + InputThemeSlug + document_id (ignored).
 	var gb bin.Buffer
 	gb.PutID(legacyGetThemeID)
 	gb.PutString("android")
@@ -120,8 +120,8 @@ func TestLegacyThemeWireDispatch(t *testing.T) {
 		t.Fatalf("installTheme legacy wire id = %#x err=%v, want boolTrue", id, err)
 	}
 
-	// 同一 legacy overlay 必须接受 account.getThemes 下发的静态默认主题，
-	// 且不能要求该引用存在于自定义主题 store。
+	// The same legacy overlay must accept the static default theme sent by account.getThemes,
+	// and must not require that reference to exist in the custom theme store.
 	defaultTheme := tdesktop.DefaultThemeList()[0]
 	var defaultIB bin.Buffer
 	defaultIB.PutID(legacyInstallThemeID)
@@ -140,7 +140,7 @@ func TestLegacyThemeWireDispatch(t *testing.T) {
 		t.Fatalf("installTheme legacy default wire id = %#x err=%v, want boolTrue", id, err)
 	}
 
-	// 已声明 legacy 方法仍必须由静态 decoder 精确消费完整结构。
+	// A declared legacy method must still have its full structure consumed exactly by the static decoder.
 	var malformed bin.Buffer
 	malformed.PutID(legacyCreateThemeID)
 	malformed.PutInt32(0)

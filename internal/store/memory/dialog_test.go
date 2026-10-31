@@ -276,19 +276,19 @@ func TestDialogStoreSetUnreadMarkOnlyReportsRealChanges(t *testing.T) {
 		t.Fatalf("SaveList: %v", err)
 	}
 
-	// 首次置位为真变化。
+	// Setting it the first time is a real change.
 	if changed, err := store.SetUnreadMark(ctx, userID, peer, true); err != nil || !changed {
 		t.Fatalf("first mark = (%v, %v), want (true, nil)", changed, err)
 	}
-	// 重复标记同值不应算 changed（值守卫；否则上层记幽灵 durable 事件 + 多推 update）。
+	// Re-marking the same value must not count as changed (value guard; otherwise the caller records a ghost durable event and pushes an extra update).
 	if changed, err := store.SetUnreadMark(ctx, userID, peer, true); err != nil || changed {
 		t.Fatalf("repeat same value = (%v, %v), want (false, nil)", changed, err)
 	}
-	// 改回相反值是真变化。
+	// Flipping back to the opposite value is a real change.
 	if changed, err := store.SetUnreadMark(ctx, userID, peer, false); err != nil || !changed {
 		t.Fatalf("flip value = (%v, %v), want (true, nil)", changed, err)
 	}
-	// 不存在的会话行无法标记。
+	// A non-existent dialog row cannot be marked.
 	if changed, err := store.SetUnreadMark(ctx, userID, missing, true); err != nil || changed {
 		t.Fatalf("missing peer = (%v, %v), want (false, nil)", changed, err)
 	}

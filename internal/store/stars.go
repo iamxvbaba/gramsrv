@@ -6,20 +6,23 @@ import (
 	"telesrv/internal/domain"
 )
 
-// StarsStore 持久化 Stars 本地账本：per-user 余额 + 交易流水。
-// 借记/贷记/授予必须各自在单个事务内原子完成（余额与流水不漂移）。
+// StarsStore persists the local Stars ledger: per-user balance + transaction journal.
+// Debit/credit/grant must each complete atomically in a single transaction (balance and
+// journal must not drift).
 type StarsStore interface {
-	// GetBalance 返回账号当前余额；无行时返回零值（Balance 0, Granted false）。
+	// GetBalance returns the account's current balance; with no row it returns zero values (Balance 0, Granted false).
 	GetBalance(ctx context.Context, userID int64) (domain.StarsBalance, error)
-	// EnsureGrant 幂等地应用一次起始授予：仅当从未授予时贷记 amount 并置 granted=true、
-	// 写一条 grant 流水，全在单事务内完成。返回最新余额 + 本次是否实际授予。
+	// EnsureGrant idempotently applies a one-time starting grant: only when never granted does it
+	// credit amount, set granted=true, and write one grant journal entry, all in a single
+	// transaction. Returns the latest balance + whether this call actually granted.
 	EnsureGrant(ctx context.Context, userID, amount int64, date int) (domain.StarsBalance, bool, error)
-	// Credit 在单事务内为账号入账（amount>0）并写流水（amount=+x）；余额行不存在则创建。
+	// Credit credits the account (amount>0) and writes the journal entry (amount=+x) in a single transaction; the balance row is created if absent.
 	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, date int, title, desc string) (domain.StarsBalance, error)
-	// Debit 在单事务内做 SELECT ... FOR UPDATE 充足性检查后扣款（amount>0），写流水（amount=-x）。
-	// 余额不足返回 domain.ErrStarsInsufficient。
+	// Debit debits (amount>0) after a SELECT ... FOR UPDATE sufficiency check in a single
+	// transaction, and writes the journal entry (amount=-x). Insufficient balance returns
+	// domain.ErrStarsInsufficient.
 	Debit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, date int, title, desc string) (domain.StarsBalance, error)
-	// ListTransactions 按方向与顺序做 keyset 分页，返回一页流水 + 当前余额。
+	// ListTransactions paginates by keyset over direction and order, returning one page of the journal + the current balance.
 	ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error)
 }
 
@@ -37,13 +40,14 @@ type StarsGiveawayStore interface {
 	GetStarsGiveawayInfo(context.Context, int64, int64, int, int) (domain.StarsGiveawayInfo, error)
 }
 
-// StarsAirdropStore 是批量贷记「所有真实用户」的可选能力（admin 的 GrantStarsAll）。
-// 只有 postgres 后端实现；内存后端用于快速 RPC 测试、无需模拟全量 users 表。
+// StarsAirdropStore is the optional capability to bulk-credit "all real users" (the admin's
+// GrantStarsAll). Only the postgres backend implements it; the in-memory backend is used for
+// fast RPC tests and need not simulate a full users table.
 type StarsAirdropStore interface {
-	// CountCreditAllUsers 返回批量贷记的候选账号数（users 表 is_bot=false、排除系统账号）。
+	// CountCreditAllUsers returns the number of candidate accounts for bulk crediting (users table is_bot=false, excluding system accounts).
 	CountCreditAllUsers(ctx context.Context) (int64, error)
-	// CreditAll 在单个事务内给所有真实用户贷记 amount（新账号建行 granted=true、
-	// 已有账号余额累加并同样置 granted=true 以吸收起始授予），每人写一条流水；
-	// 返回受影响账号数。
+	// CreditAll credits amount to all real users in a single transaction (new accounts get a row
+	// with granted=true; existing accounts accumulate and also set granted=true to absorb the
+	// starting grant), writing one journal entry per person; returns the affected account count.
 	CreditAll(ctx context.Context, amount int64, reason domain.StarsTransactionReason, date int, title, desc string) (int64, error)
 }

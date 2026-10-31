@@ -337,8 +337,8 @@ func TestChannelAdminAndBanDoNotAdvanceChannelPts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("edit banned kick: %v", err)
 	}
-	// megagroup 踢人产生可见 "X removed Y" 服务消息并占 channel pts；
-	// participant update 本身仍不占 pts。
+	// Kicking in a megagroup produces a visible "X removed Y" service message and consumes
+	// channel pts; the participant update itself still does not consume pts.
 	if kicked.Event.Pts != 0 || kicked.Event.PtsCount != 0 {
 		t.Fatalf("kick participant event = (%d,%d), must stay transient", kicked.Event.Pts, kicked.Event.PtsCount)
 	}
@@ -368,8 +368,9 @@ func TestChannelStoreGetMessagesNonMemberPublicPreview(t *testing.T) {
 	store := NewChannelStore()
 	const owner, outsider int64 = 1, 99
 
-	// 公开广播频道：非成员可读取消息（查看他人资料里的公开「个人频道」时，DrKLO 经
-	// channels.getMessages 拉最新一帖依赖此；否则资料页个人频道整块不显示）。
+	// Public broadcast channel: non-members can read messages (DrKLO's channels.getMessages
+	// fetching the latest post when viewing a public "personal channel" in someone else's
+	// profile relies on this; otherwise the personal-channel block in the profile does not render).
 	pub, err := store.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "public", Broadcast: true, Date: 1_700_000_000})
 	if err != nil {
 		t.Fatalf("create public: %v", err)
@@ -389,7 +390,7 @@ func TestChannelStoreGetMessagesNonMemberPublicPreview(t *testing.T) {
 		t.Fatalf("non-member should read public channel message, got %+v", got.Messages)
 	}
 
-	// 私有广播频道（无 username）：非成员仍被拒（ErrChannelPrivate）。
+	// Private broadcast channel (no username): non-members are still rejected (ErrChannelPrivate).
 	priv, err := store.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: owner, Title: "private", Broadcast: true, Date: 1_700_000_002})
 	if err != nil {
 		t.Fatalf("create private: %v", err)

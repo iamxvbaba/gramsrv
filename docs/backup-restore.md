@@ -209,7 +209,7 @@ cp bin/gramsrv bin/gramsrv.previous
 go build -o bin/gramsrv ./cmd/telesrv
 go build -o bin/gramsrv-admin ./cmd/telesrv-admin
 systemctl restart gramsrv gramsrv-admin
-journalctl -u gramsrv -f | grep 服务就绪
+journalctl -u gramsrv -f | grep 'server ready'
 ```
 
 Start the server only through its service manager. Running the binary by hand

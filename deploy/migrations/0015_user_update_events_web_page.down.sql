@@ -1,4 +1,4 @@
--- 回退：从白名单移除 'web_page'（与 0003 形态一致）。
+-- Rollback: remove 'web_page' from the allowlist (same shape as 0003).
 ALTER TABLE public.user_update_events DROP CONSTRAINT IF EXISTS user_update_events_type_check;
 ALTER TABLE public.user_update_events ADD CONSTRAINT user_update_events_type_check CHECK (
     (event_type)::text = ANY (ARRAY[
