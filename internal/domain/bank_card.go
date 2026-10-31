@@ -5,6 +5,41 @@ import (
 	"unicode/utf8"
 )
 
+// MinBankCardDigits 是卡号最少的数字位数（TDLib match_bank_card_numbers 的下限）。
+const MinBankCardDigits = 13
+
+// MayContainBankCardNumber 报告文本里的 ASCII 数字是否够组成一个卡号。自动实体识别的快速
+// 路径用它跳过绝大多数只含少量数字（时间、金额、编号）的消息。
+func MayContainBankCardNumber(message string) bool {
+	count := 0
+	for i := 0; i < len(message); i++ {
+		if c := message[i]; c >= '0' && c <= '9' {
+			count++
+			if count >= MinBankCardDigits {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// BankCardDigits 去掉卡号里的分组空格和连字符（识别出的卡号实体只含这两种分隔符），
+// 出现其它字符时返回 false。客户端点击卡号实体时把实体原文发给 payments.getBankCardData，
+// 例如 Android ChatActivity.didLongPressCard 发的是 "4242 4242 4242 4242"。
+func BankCardDigits(number string) (string, bool) {
+	digits := make([]byte, 0, len(number))
+	for i := 0; i < len(number); i++ {
+		switch c := number[i]; {
+		case c >= '0' && c <= '9':
+			digits = append(digits, c)
+		case c == ' ' || c == '-':
+		default:
+			return "", false
+		}
+	}
+	return string(digits), true
+}
+
 // BankCardLuhnValid 报告纯数字卡号是否通过 Luhn 校验。
 func BankCardLuhnValid(digits string) bool {
 	if digits == "" {
@@ -80,6 +115,9 @@ func bankCardEntityValid(digits string) bool {
 // 字母或 -_；连续 16–19 位数字后的空格结束卡号。官方服务端下发 messageEntityBankCard，
 // TDLib 对收到的消息不再自行识别（MessagesManager.cpp get_message_text skip_new_entities）。
 func detectBankCardMessageEntities(message string) []MessageEntity {
+	if !MayContainBankCardNumber(message) {
+		return nil
+	}
 	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
 	var out []MessageEntity
 	i, n := 0, len(message)

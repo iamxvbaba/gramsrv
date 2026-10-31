@@ -74,3 +74,34 @@ func TestBankCardSchemeAndLuhn(t *testing.T) {
 		}
 	}
 }
+
+func TestMayContainBankCardNumberNeedsThirteenDigits(t *testing.T) {
+	for text, want := range map[string]bool{
+		"":                          false,
+		"10:30 in room 7, call 555": false,
+		"123456789012":              false,
+		"1234 5678 9012 3":          true,
+		"4111111111111111":          true,
+	} {
+		if got := MayContainBankCardNumber(text); got != want {
+			t.Fatalf("MayContainBankCardNumber(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
+func TestBankCardDigitsStripsOnlyGrouping(t *testing.T) {
+	for in, want := range map[string]string{
+		"4111 1111 1111 1111": "4111111111111111",
+		"4111-1111-1111-1111": "4111111111111111",
+		"4111111111111111":    "4111111111111111",
+	} {
+		if got, ok := BankCardDigits(in); !ok || got != want {
+			t.Fatalf("BankCardDigits(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"4111_1111", "4111.1111", "4111 1111 1111 111a"} {
+		if _, ok := BankCardDigits(in); ok {
+			t.Fatalf("BankCardDigits(%q) accepted a non-grouping character", in)
+		}
+	}
+}

@@ -30,10 +30,10 @@ import (
 func augmentAutoEntities(message string, entities []tg.MessageEntityClass, appLinks links.AppLinkBuilder) []tg.MessageEntityClass {
 	// 快路径:绝大多数消息不含任何可自动识别的触发字符。单次 ContainsAny 扫描即短路返回,
 	// 跳过下面各检测器对全文的扫描与区间分配(纯文本发送零额外开销)。裸域名 URL 只需
-	// 一个 '.' 即可触发（如 github.com），进入检测后仍会做 TLD/边界校验；银行卡号以数字
-	// 触发（TDLib 不识别收到消息里的卡号，官方由服务端下发 messageEntityBankCard）；
+	// 一个 '.' 即可触发（如 github.com），进入检测后仍会做 TLD/边界校验；银行卡号要至少
+	// 13 个数字才触发（TDLib 不识别收到消息里的卡号，官方由服务端下发 messageEntityBankCard）；
 	// email/phone 未实现故不在触发集内。
-	if message == "" || !strings.ContainsAny(message, "@#$/.0123456789") {
+	if message == "" || (!strings.ContainsAny(message, "@#$/.") && !domain.MayContainBankCardNumber(message)) {
 		return entities
 	}
 	type interval struct{ start, end int }

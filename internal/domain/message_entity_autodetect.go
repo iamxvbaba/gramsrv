@@ -22,7 +22,7 @@ type MessageEntitySpan struct {
 // not become misleading mention entities even when URL projection is handled
 // by a different boundary.
 func DetectAutomaticMessageEntities(message string, occupied []MessageEntitySpan) []MessageEntity {
-	if message == "" || !strings.ContainsAny(message, "@#$/0123456789") {
+	if message == "" || (!strings.ContainsAny(message, "@#$/") && !MayContainBankCardNumber(message)) {
 		return nil
 	}
 	type interval struct{ start, end int }
