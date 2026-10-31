@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,95 @@ func TestCatalogVerifiesSelectedDocument(t *testing.T) {
 	}
 	if _, err := catalog.Bundle(context.Background(), 1, false); err == nil {
 		t.Fatal("tampered document was accepted")
+	}
+}
+
+// permille 为 0 的属性合法（存在于池中但不会被抽到），只有越界权重才应被拒绝。
+func TestValidRarityPermilleRange(t *testing.T) {
+	weight := func(value int) *int { return &value }
+	cases := []struct {
+		name     string
+		rarity   Rarity
+		crafted  bool
+		expected bool
+	}{
+		{"zero weight", Rarity{Kind: "permille", Permille: weight(0)}, false, true},
+		{"single permille", Rarity{Kind: "permille", Permille: weight(1)}, false, true},
+		{"full weight", Rarity{Kind: "permille", Permille: weight(1000)}, false, true},
+		{"above range", Rarity{Kind: "permille", Permille: weight(1001)}, false, false},
+		{"negative", Rarity{Kind: "permille", Permille: weight(-1)}, false, false},
+		{"missing weight", Rarity{Kind: "permille"}, false, false},
+		{"crafted permille", Rarity{Kind: "permille", Permille: weight(10)}, true, false},
+		{"named rarity", Rarity{Kind: "legendary"}, true, true},
+	}
+	for _, tc := range cases {
+		if got := validRarity(tc.rarity, tc.crafted); got != tc.expected {
+			t.Errorf("%s: validRarity=%v want %v", tc.name, got, tc.expected)
+		}
+	}
+}
+
+// 售罄限定礼物的池子里会有一批 permille 为 0 的旧变体；加载器必须整池接受，
+// 否则整个官方快照都会因为一个礼物而不可用。
+func TestCatalogAcceptsZeroPermilleAttributes(t *testing.T) {
+	root := t.TempDir()
+	write := func(id int64, data string) fileArtifact {
+		path := filepath.Join("documents", fmt.Sprintf("%d.tgs", id))
+		if err := os.MkdirAll(filepath.Join(root, "documents"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte(data))
+		return fileArtifact{Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}
+	}
+	weight := func(value int) *int { return &value }
+
+	value := manifest{
+		Schema:    manifestSchema,
+		GiftCount: 1,
+		Gifts: []giftManifest{{Index: 0, Kind: "regular", ID: 1, Title: "Sold Out Gift",
+			Stars: 500, UpgradeStars: 452018, SoldOut: true, DocumentIDs: []int64{10}}},
+		UpgradeAttributeSets: []collectibleManifest{{
+			GiftID64:       1,
+			AttributeCount: 4,
+			Models: []modelManifest{
+				{Name: "Retired Variant", DocumentID: 11, Rarity: Rarity{Kind: "permille", Permille: weight(0)}},
+				{Name: "Drawn Variant", DocumentID: 12, Rarity: Rarity{Kind: "permille", Permille: weight(1000)}},
+			},
+			Patterns:  []patternManifest{{Name: "Coin", DocumentID: 13, Rarity: Rarity{Kind: "permille", Permille: weight(1000)}}},
+			Backdrops: []backdropManifest{{Name: "Neon Blue", BackdropID: 1, Rarity: Rarity{Kind: "permille", Permille: weight(1000)}}},
+		}},
+		Documents: []documentManifest{
+			{ID64: 10, FileName: "gift.tgs", File: write(10, "official-tgs")},
+			{ID64: 11, FileName: "AnimatedSticker.tgs", File: write(11, "retired-model")},
+			{ID64: 12, FileName: "AnimatedSticker.tgs", File: write(12, "drawn-model")},
+			{ID64: 13, FileName: "AnimatedSticker.tgs", File: write(13, "pattern")},
+		},
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "manifest.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog := New(root)
+	items, err := catalog.List(context.Background())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%+v err=%v", items, err)
+	}
+	bundle, err := catalog.Bundle(context.Background(), 1, true)
+	if err != nil {
+		t.Fatalf("bundle: %v", err)
+	}
+	if bundle.Collectible == nil || len(bundle.Collectible.Models) != 2 {
+		t.Fatalf("collectible=%+v", bundle.Collectible)
+	}
+	if got := bundle.Collectible.Models[0].Rarity.Permille; got == nil || *got != 0 {
+		t.Fatalf("zero-weight model rarity=%v", got)
 	}
 }
 

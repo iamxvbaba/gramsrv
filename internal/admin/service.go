@@ -4291,7 +4291,8 @@ func officialRarity(value officialgifts.Rarity) (domain.StarGiftAttributeRarityK
 		return "", 0, domain.ErrStarGiftCollectibleInvalid
 	}
 	if kind == domain.StarGiftRarityPermille {
-		if value.Permille == nil || *value.Permille <= 0 || *value.Permille > 1000 {
+		// permille 0 是合法权重（属性在池中但不会被抽到），与官方快照保持一致。
+		if value.Permille == nil || *value.Permille < 0 || *value.Permille > 1000 {
 			return "", 0, domain.ErrStarGiftCollectibleInvalid
 		}
 		return kind, *value.Permille, nil

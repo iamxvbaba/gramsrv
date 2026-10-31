@@ -89,6 +89,57 @@ func TestValidateStarGiftCollectibleDraftOfficialProvenance(t *testing.T) {
 	}
 }
 
+// Telegram 会对售罄限定礼物下发 permille=0 的属性（在池中但永不抽取）：它必须能通过
+// 校验，但整池都是 0 权重时仍然非法，因为没有任何可抽取项。
+func TestValidateStarGiftCollectibleDraftAcceptsZeroPermille(t *testing.T) {
+	write := validCollectibleDraft()
+	write.Models[0].RarityPermille = 0
+	write.Patterns[0].RarityPermille = 0
+	write.Backdrops = append(write.Backdrops, StarGiftCollectibleAttribute{Kind: StarGiftCollectibleBackdrop,
+		Name: "Retired Backdrop", BackdropID: 2, RarityKind: StarGiftRarityPermille, RarityPermille: 0})
+	if err := ValidateStarGiftCollectibleDraft(write); err != nil {
+		t.Fatalf("zero-weight attributes: %v", err)
+	}
+
+	zeroOnly := validCollectibleDraft()
+	for i := range zeroOnly.Models {
+		if zeroOnly.Models[i].RarityKind == StarGiftRarityPermille {
+			zeroOnly.Models[i].RarityPermille = 0
+		}
+	}
+	if err := ValidateStarGiftCollectibleDraft(zeroOnly); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("all-zero model pool err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+
+	negative := validCollectibleDraft()
+	negative.Patterns[0].RarityPermille = -1
+	if err := ValidateStarGiftCollectibleDraft(negative); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("negative permille err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+}
+
+// 升级预览只采样权重 > 0 的属性：0 权重背景不能凑出预览所需的两个背景，否则预览里只剩
+// 一个背景，TDesktop 的升级动画停不下来；但 0 权重背景仍参与 backdrop_id 去重。
+func TestValidateStarGiftCollectibleDraftCountsOnlyDrawableBackdrops(t *testing.T) {
+	retired := StarGiftCollectibleAttribute{Kind: StarGiftCollectibleBackdrop, Name: "Retired Backdrop",
+		BackdropID: 2, RarityKind: StarGiftRarityPermille, RarityPermille: 0}
+
+	oneDrawable := validCollectibleDraft()
+	oneDrawable.Backdrops[1].RarityPermille = 0
+	oneDrawable.Backdrops = append(oneDrawable.Backdrops, retired)
+	if err := ValidateStarGiftCollectibleDraft(oneDrawable); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("one drawable backdrop err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+
+	duplicate := validCollectibleDraft()
+	duplicateRetired := retired
+	duplicateRetired.BackdropID = duplicate.Backdrops[0].BackdropID
+	duplicate.Backdrops = append(duplicate.Backdrops, duplicateRetired)
+	if err := ValidateStarGiftCollectibleDraft(duplicate); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("zero-weight backdrop reusing a backdrop_id err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+}
+
 func TestValidateStarGiftCollectibleDraftRejectsImplicitRarity(t *testing.T) {
 	write := validCollectibleDraft()
 	write.Models[0].RarityKind = ""
