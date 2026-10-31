@@ -14,15 +14,15 @@ type MessageEntitySpan struct {
 }
 
 // DetectAutomaticMessageEntities derives the server-recognized lexical
-// entities that do not require user intent: mentions, hashtags, cashtags and
-// bot commands. Offsets and lengths use Telegram's UTF-16 code-unit indexing.
+// entities that do not require user intent: mentions, hashtags, cashtags, bot
+// commands and bank card numbers. Offsets and lengths use Telegram's UTF-16 code-unit indexing.
 //
 // occupied ranges win over derived entities. URL-like tokens are also treated
 // as occupied for lexical triggers, so strings such as https://t.me/@name do
 // not become misleading mention entities even when URL projection is handled
 // by a different boundary.
 func DetectAutomaticMessageEntities(message string, occupied []MessageEntitySpan) []MessageEntity {
-	if message == "" || !strings.ContainsAny(message, "@#$/") {
+	if message == "" || !strings.ContainsAny(message, "@#$/0123456789") {
 		return nil
 	}
 	type interval struct{ start, end int }
@@ -63,6 +63,9 @@ func DetectAutomaticMessageEntities(message string, occupied []MessageEntitySpan
 		accept(entity)
 	}
 	for _, entity := range detectBotCommandMessageEntities(message) {
+		accept(entity)
+	}
+	for _, entity := range detectBankCardMessageEntities(message) {
 		accept(entity)
 	}
 	return out

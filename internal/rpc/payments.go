@@ -28,6 +28,9 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 			{Currency: "USD", Rate: domain.TonUSDRate},
 		}}, nil
 	})
+	registerRPC[*tg.PaymentsGetBankCardDataRequest](d, tlprofile.SemanticMethodPaymentsGetBankCardData, func(ctx context.Context, req *tg.PaymentsGetBankCardDataRequest) (any, error) {
+		return bankCardData(req.Number)
+	})
 	registerRPC[*tg.PaymentsAssignPlayMarketTransactionRequest](d, tlprofile.SemanticMethodPaymentsAssignPlayMarketTransaction, func(ctx context.Context, req *tg.PaymentsAssignPlayMarketTransactionRequest) (any, error) {
 		return r.onPaymentsAssignPlayMarketTransaction(ctx, req)
 	})

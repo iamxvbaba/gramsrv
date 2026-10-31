@@ -9,7 +9,7 @@ import (
 	"telesrv/internal/links"
 )
 
-// 服务端自动实体检测：@mention / #hashtag / $cashtag / bot command。
+// 服务端自动实体检测：@mention / #hashtag / $cashtag / bot command / 银行卡号。
 //
 // 官方 Telegram 服务端会对消息原文检测这些「可自动识别」实体并写入 message.entities；
 // 客户端发 sendMessage 时只发「用户意图」类实体(bold/italic/code/textUrl/customEmoji/
@@ -30,9 +30,10 @@ import (
 func augmentAutoEntities(message string, entities []tg.MessageEntityClass, appLinks links.AppLinkBuilder) []tg.MessageEntityClass {
 	// 快路径:绝大多数消息不含任何可自动识别的触发字符。单次 ContainsAny 扫描即短路返回,
 	// 跳过下面各检测器对全文的扫描与区间分配(纯文本发送零额外开销)。裸域名 URL 只需
-	// 一个 '.' 即可触发（如 github.com），进入检测后仍会做 TLD/边界校验；email/phone
-	// 未实现故不在触发集内。
-	if message == "" || !strings.ContainsAny(message, "@#$/.") {
+	// 一个 '.' 即可触发（如 github.com），进入检测后仍会做 TLD/边界校验；银行卡号以数字
+	// 触发（TDLib 不识别收到消息里的卡号，官方由服务端下发 messageEntityBankCard）；
+	// email/phone 未实现故不在触发集内。
+	if message == "" || !strings.ContainsAny(message, "@#$/.0123456789") {
 		return entities
 	}
 	type interval struct{ start, end int }
