@@ -23,6 +23,9 @@ import (
 
 // fakeFiles 是 FilesService 的最小测试替身：贴纸文档可解析，上传图片返回固定 Photo。
 type fakeFiles struct {
+	// lastDocumentSpec is the spec of the latest CreateDocumentFromUpload or
+	// CreateDocumentFromBytes call.
+	lastDocumentSpec   domain.DocumentSpec
 	docs               map[int64]domain.Document
 	photos             map[int64]domain.Photo
 	profile            map[fakeProfilePhotoKey]int64
@@ -576,9 +579,11 @@ func fakeAvatarStaticSizes() []domain.PhotoSize {
 }
 func (f *fakeFiles) CreateDocumentFromUpload(_ context.Context, _ domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error) {
 	f.createUploadCalls++
+	f.lastDocumentSpec = spec
 	return domain.Document{ID: 888, AccessHash: 8, DCID: 2, MimeType: spec.MimeType, Attributes: spec.Attributes}, nil
 }
 func (f *fakeFiles) CreateDocumentFromBytes(_ context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error) {
+	f.lastDocumentSpec = spec
 	doc := domain.Document{
 		ID:         8400 + int64(len(f.docs)),
 		AccessHash: 84,

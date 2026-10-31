@@ -2944,7 +2944,7 @@ func (r *Router) resolveStoryInputMedia(ctx context.Context, userID int64, input
 	if err := validateStoryInputMediaClass(input); err != nil {
 		return nil, err
 	}
-	media, err := r.resolveInputMedia(ctx, userID, input)
+	media, err := r.resolveInputMedia(ctx, userID, storyInputMediaKeepsVideo(input))
 	if err != nil {
 		return nil, err
 	}
@@ -2957,6 +2957,21 @@ func (r *Router) resolveStoryInputMedia(ctx context.Context, userID int64, input
 	default:
 		return nil, mediaTypeInvalidErr()
 	}
+}
+
+// storyInputMediaKeepsVideo marks an uploaded story document nosound_video so a
+// story video stays a video. TDLib always sets the flag for story videos, but
+// Android sets it only for muted clips; an unmuted clip without an audio track
+// would otherwise be stored as a GIF by the silent-MP4 rule, and Android's
+// story viewer does not play an animated document as a video.
+func storyInputMediaKeepsVideo(input tg.InputMediaClass) tg.InputMediaClass {
+	uploaded, ok := input.(*tg.InputMediaUploadedDocument)
+	if !ok || uploaded == nil || uploaded.NosoundVideo {
+		return input
+	}
+	clone := *uploaded
+	clone.NosoundVideo = true
+	return &clone
 }
 
 func validateStoryInputMediaClass(input tg.InputMediaClass) error {
