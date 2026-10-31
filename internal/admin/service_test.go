@@ -1736,6 +1736,23 @@ func TestPublishStarGiftCollectiblesAllowsDeterministicModelAndPattern(t *testin
 	}
 }
 
+// 官方快照会给售罄限定礼物下发 permille=0 的属性，导入时必须接受；负权重仍然非法。
+func TestOfficialRarityAcceptsZeroPermille(t *testing.T) {
+	zero := 0
+	kind, permille, err := officialRarity(officialgifts.Rarity{Kind: "permille", Permille: &zero})
+	if err != nil || kind != domain.StarGiftRarityPermille || permille != 0 {
+		t.Fatalf("zero permille = (%q, %d, %v)", kind, permille, err)
+	}
+	negative := -1
+	if _, _, err := officialRarity(officialgifts.Rarity{Kind: "permille", Permille: &negative}); err == nil {
+		t.Fatal("negative permille was accepted")
+	}
+	missing := officialgifts.Rarity{Kind: "permille"}
+	if _, _, err := officialRarity(missing); err == nil {
+		t.Fatal("missing permille was accepted")
+	}
+}
+
 func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testing.T) {
 	permille := 922
 	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{

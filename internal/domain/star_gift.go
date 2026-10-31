@@ -1406,10 +1406,14 @@ func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind 
 			return ErrStarGiftCollectibleInvalid
 		}
 		if rarityKind == StarGiftRarityPermille {
-			if attribute.RarityPermille <= 0 || attribute.RarityPermille > 1000 || attribute.Crafted {
+			if attribute.RarityPermille < 0 || attribute.RarityPermille > 1000 || attribute.Crafted {
 				return ErrStarGiftCollectibleInvalid
 			}
-			selectable++
+			// permille 0 是合法权重：属性仍在池中（需要保留以渲染已有藏品），
+			// 但永远不会被随机抽到，因此不计入可抽取数量。
+			if attribute.RarityPermille > 0 {
+				selectable++
+			}
 		} else if attribute.RarityPermille != 0 || !attribute.Crafted || kind != StarGiftCollectibleModel {
 			return ErrStarGiftCollectibleInvalid
 		}
