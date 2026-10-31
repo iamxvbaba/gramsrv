@@ -58,8 +58,8 @@ ON CONFLICT (user_id, channel_id) DO UPDATE SET
 	); err != nil {
 		return domain.ChannelView{}, fmt.Errorf("save channel default send as: %w", err)
 	}
-	// 连接池写后立即失效本进程缓存，保证下面的 getChannelDialog 读到刚写入的值
-	// (dialog_light NOTIFY 仅异步失效其它实例，本实例的 read-your-write 必须同步兜住)。
+	// Invalidate this process's cache right after the pool write, so the getChannelDialog below reads the just-written value
+	// (dialog_light NOTIFY only asynchronously invalidates other instances; this instance's read-your-write must be covered synchronously).
 	if s.dialogCacheActive(s.db) {
 		s.dialogCache.delete(req.UserID, req.ChannelID)
 	}
@@ -107,15 +107,15 @@ func (s *ChannelStore) DeleteChannel(ctx context.Context, req domain.DeleteChann
 	}
 	channel.Deleted = true
 	channel.Username = ""
-	// 连带软删关联 monoforum(频道私信容器)。仅当 counterpart 本身是 monoforum 时才级联——这样删母广播
-	// 频道会清掉其虚拟 mono,而(防御性地)绝不会因删 mono 反向把真实母频道也删掉。不级联会留下
-	// monoforum=true 指向已删父频道的孤儿(客户端渲染崩 + DB 垃圾随删除累积)。
+	// Also soft-delete the linked monoforum (the channel direct-messages container). Cascade only when the counterpart is
+	// itself a monoforum—so deleting a parent broadcast channel clears its virtual mono, while (defensively) deleting a mono never
+	// reverse-deletes the real parent channel. Not cascading would leave an orphan with monoforum=true pointing at a deleted parent (client render crash + DB garbage accumulating with each delete).
 	var linkedMono *domain.Channel
 	if channel.LinkedMonoforumID != 0 {
 		mono, err := getChannelByID(ctx, tx, channel.LinkedMonoforumID)
 		switch {
 		case errors.Is(err, domain.ErrChannelInvalid):
-			// 关联 mono 已不存在/已删,无需级联。
+			// The linked mono no longer exists/is already deleted; no cascade needed.
 		case err != nil:
 			return domain.DeleteChannelResult{}, fmt.Errorf("load linked monoforum: %w", err)
 		case mono.Monoforum:
@@ -531,8 +531,8 @@ func getChannelByID(ctx context.Context, db sqlcgen.DBTX, channelID int64) (doma
 	return ch, err
 }
 
-// channelByID 是 getChannelByID 的缓存读穿版本，仅在连接池句柄上消费缓存(事务内绕过)。
-// 命中即返回缓存的频道行；未命中查 PG 并回填。失效由 ReadModelChangeListener 实时驱动。
+// channelByID is the cache read-through version of getChannelByID, consuming the cache only on a pool handle (bypassed inside transactions).
+// A hit returns the cached channel row; a miss queries PG and backfills. Invalidation is driven in real time by ReadModelChangeListener.
 func (s *ChannelStore) channelByID(ctx context.Context, db sqlcgen.DBTX, channelID int64) (domain.Channel, error) {
 	if s.cacheActive(db) {
 		return s.rowCache.getOrLoad(ctx, channelID, func() (domain.Channel, error) {
@@ -674,8 +674,8 @@ func (s *ChannelStore) populateForumTopicViewerCounters(ctx context.Context, vie
 	if len(roots) == 0 {
 		return nil
 	}
-	// per-topic 已读水位：每个话题用各自的 read_inbox_max_id 现算未读，并下发真实已读位（消除死列），
-	// 消除频道级单一水位串扰。
+	// per-topic read watermark: each topic computes unread from its own read_inbox_max_id and sends down the real read positions (removing the dead column),
+	// eliminating channel-level single-watermark crosstalk.
 	waters, err := s.channelTopicReadBatch(ctx, channelID, viewerUserID, roots, availableMinID)
 	if err != nil {
 		return err
@@ -700,7 +700,7 @@ func (s *ChannelStore) populateForumTopicViewerCounters(ctx context.Context, vie
 }
 
 func (s *ChannelStore) populateForumTopicUnreadCounts(ctx context.Context, channelID int64, roots []int32, viewerUserID int64, waters map[int]int, indexes map[int][]int, topics []domain.ChannelForumTopic) error {
-	// 每个 root 配对各自的 per-topic 已读水位，unnest 配对后按 topic 各自门槛 COUNT。
+	// Pair each root with its own per-topic read watermark; after unnesting the pairs, COUNT per topic by its own threshold.
 	readMaxes := make([]int32, len(roots))
 	for i, r := range roots {
 		readMaxes[i] = int32(waters[int(r)])
@@ -920,16 +920,16 @@ WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	// inputReplyToMessage.top_msg_id 不是回复有效性的判据。按 TL 构造器定义,它"只在回复
-	// 非 General 的论坛话题消息时携带 topic id;若被回复消息在方法执行前被删除,服务端用
-	// 该值把消息送进正确话题"——即它是话题落点的提示,不是需要与服务端推导值对齐的校验位。
-	// reply_to_msg_id 已经唯一指向一条存在且可见的消息,线程根也由服务端从目标消息推导,
-	// 因此客户端带一个无关的 top_msg_id 不足以拒绝整个回复:官方客户端在非论坛频道发送
-	// 媒体回复时就会带 top_msg_id(实测 TDesktop 7.0.2 layer 228 下发 top_msg_id=1),
-	// 旧实现据此硬失败,使"回复照片"(走 sendMedia,该字段被下发)恒定 400
-	// REPLY_MESSAGE_ID_INVALID,而同一回复走 sendMessage(不带该字段)却能成功。
+	// inputReplyToMessage.top_msg_id is not a criterion for reply validity. Per the TL constructor definition, it "carries
+	// the topic id only when replying to a forum topic message other than General; if the replied-to message is deleted before the method executes, the server uses
+	// this value to route the message into the correct topic"—that is, it is a hint for the topic landing spot, not a validation field that must match the server-derived value.
+	// reply_to_msg_id already uniquely points to an existing and visible message, and the thread root is also derived by the server from the target message,
+	// so a client sending an unrelated top_msg_id is not enough to reject the whole reply: official clients send
+	// top_msg_id when replying with media in a non-forum channel (measured: TDesktop 7.0.2 layer 228 sends top_msg_id=1),
+	// and the old implementation hard-failed on it, making "reply with photo" (via sendMedia, where the field is sent) consistently return 400
+	// REPLY_MESSAGE_ID_INVALID, while the same reply via sendMessage (which omits the field) succeeded.
 	if req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
-		s.log.Info("channel reply 采纳服务端推导的 top_msg_id,忽略客户端提示值",
+		s.log.Info("channel reply adopts the server-derived top_msg_id, ignoring the client hint value",
 			zap.Int64("channel_id", req.ChannelID),
 			zap.Int("client_top_msg_id", req.ReplyTo.TopMessageID),
 			zap.Int("computed_top_msg_id", reply.TopMessageID),

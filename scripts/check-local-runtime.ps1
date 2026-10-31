@@ -203,7 +203,7 @@ $lines = @(Read-SharedLogLines)
 if ($lines.Count -eq 0) {
     Add-Failure "server log is missing or empty"
 } else {
-    $readyLines = @($lines | Where-Object { $_ -like "*telesrv 服务就绪*" })
+    $readyLines = @($lines | Where-Object { $_ -like "*telesrv server ready*" })
     if ($readyLines.Count -gt 0) {
         $ready = @($readyLines)[-1]
         Write-Host $ready
@@ -219,7 +219,7 @@ if ($lines.Count -eq 0) {
             Write-Ok "runtime commit matches HEAD"
         }
     } else {
-        Add-Failure "server log has no 'telesrv 服务就绪' line"
+        Add-Failure "server log has no 'telesrv server ready' line"
     }
     $recent = @($lines | Select-Object -Last $RecentLogLines)
     $bad = @($recent | Where-Object {

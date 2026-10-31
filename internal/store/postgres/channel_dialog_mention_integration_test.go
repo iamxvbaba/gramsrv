@@ -7,10 +7,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelDialogTopMessageCarriesMentionFlags 复现 @ 角标重启回潮：
-// getDialogs 的 channel top message 必须按 viewer 携带 mentioned/media_unread，
-// 否则 TDesktop 先入缓存的残缺版永不触发 contents-read，服务端 unread
-// 提及挂死、每次冷启动 unread_mentions_count 把 @ 角标带回来。
+// TestChannelDialogTopMessageCarriesMentionFlags reproduces the @ badge returning after restart:
+// getDialogs' channel top message must carry mentioned/media_unread per viewer,
+// otherwise the incomplete version TDesktop caches first never triggers contents-read, the server's unread
+// mention stays stuck, and every cold start brings the @ badge back via unread_mentions_count.
 func TestChannelDialogTopMessageCarriesMentionFlags(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -61,7 +61,7 @@ func TestChannelDialogTopMessageCarriesMentionFlags(t *testing.T) {
 			}
 			found = true
 			if !msg.Mentioned || !msg.MediaUnread {
-				t.Fatalf("%s top message flags = mentioned %v media_unread %v, want both true（缺失会让 @ 角标重启回潮）", name, msg.Mentioned, msg.MediaUnread)
+				t.Fatalf("%s top message flags = mentioned %v media_unread %v, want both true (missing them makes the @ badge return after restart)", name, msg.Mentioned, msg.MediaUnread)
 			}
 		}
 		if !found {
@@ -81,7 +81,7 @@ func TestChannelDialogTopMessageCarriesMentionFlags(t *testing.T) {
 	}
 	assertFlags("GetChannelDialogs", got)
 
-	// 提及读掉后：mentioned 永久保留、media_unread 翻为 false。
+	// After the mention is read: mentioned is permanently kept, media_unread flips to false.
 	if _, err := channels.ReadChannelMentions(ctx, domain.ReadChannelMentionsRequest{
 		UserID:    member.ID,
 		ChannelID: created.Channel.ID,

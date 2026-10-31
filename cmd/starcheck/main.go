@@ -1,13 +1,15 @@
-// Command starcheck 是 Stars 付费 reaction 端到端验证工具（开发用，非生产组件）。
+// Command starcheck is an end-to-end verification tool for Stars paid reactions
+// (development use, not a production component).
 //
-// 它以用户身份（开发码 12345）登录本地 telesrv，验证 Stars 本地账本与付费 reaction：
-//  1. payments.getStarsStatus —— 打印当前余额（Phase 1：惰性首读授予后应 >0）。
-//  2. 自动从 dialogs 找一个广播频道 + 其顶部消息（或用 -channel-id/-access-hash/-msg-id 指定）。
-//  3. messages.sendPaidReaction —— 发付费 reaction，打印返回的 Updates 结构
-//     （Phase 2 崩溃约束：必须是 *tg.Updates，应含 updateMessageReactions + updateStarsBalance）。
-//  4. payments.getStarsStatus —— 再次打印余额，验证已扣 -count。
+// It logs in to the local telesrv as a user (development code 12345) and verifies
+// the Stars local ledger and paid reactions:
+//  1. payments.getStarsStatus -- print the current balance (Phase 1: after the lazy first-read grant it should be >0).
+//  2. Auto-find a broadcast channel + its top message from dialogs (or specify with -channel-id/-access-hash/-msg-id).
+//  3. messages.sendPaidReaction -- send a paid reaction and print the returned Updates structure
+//     (Phase 2 crash constraint: must be *tg.Updates and should contain updateMessageReactions + updateStarsBalance).
+//  4. payments.getStarsStatus -- print the balance again to verify -count was charged.
 //
-// 用法：
+// Usage:
 //
 //	go run ./cmd/starcheck -phone "+8618800000001" -count 50
 package main
@@ -78,21 +80,21 @@ func (r obfuscatedResolver) CDN(ctx context.Context, dc int, _ dcs.List) (transp
 }
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:2398", "telesrv MTProto 地址")
+	addr := flag.String("addr", "127.0.0.1:2398", "telesrv MTProto address")
 	dcID := flag.Int("dc", 2, "DC id")
-	rsaPath := flag.String("rsa", "data/server_rsa.pem", "server RSA key 路径")
+	rsaPath := flag.String("rsa", "data/server_rsa.pem", "server RSA key path")
 	apiID := flag.Int("api-id", 1, "api_id")
 	apiHash := flag.String("api-hash", "hash", "api_hash")
-	phone := flag.String("phone", "", "登录手机号，如 +8618800000001")
-	code := flag.String("code", "12345", "开发登录码")
-	count := flag.Int("count", 50, "付费 reaction 星数")
-	channelID := flag.Int64("channel-id", 0, "指定频道 id（0=自动从 dialogs 找广播频道）")
-	accessHash := flag.Int64("access-hash", 0, "指定频道 access_hash")
-	msgID := flag.Int("msg-id", 0, "指定消息 id（0=用频道顶部消息）")
+	phone := flag.String("phone", "", "login phone number, e.g. +8618800000001")
+	code := flag.String("code", "12345", "development login code")
+	count := flag.Int("count", 50, "number of stars for the paid reaction")
+	channelID := flag.Int64("channel-id", 0, "channel id to use (0 = auto-find a broadcast channel from dialogs)")
+	accessHash := flag.Int64("access-hash", 0, "channel access_hash to use")
+	msgID := flag.Int("msg-id", 0, "message id to use (0 = use the channel's top message)")
 	flag.Parse()
 
 	if *phone == "" {
-		fmt.Fprintln(os.Stderr, "缺少 -phone")
+		fmt.Fprintln(os.Stderr, "missing -phone")
 		os.Exit(2)
 	}
 
@@ -101,11 +103,11 @@ func main() {
 
 	priv, err := mtprotoedge.LoadOrGenerateRSAKey(*rsaPath)
 	if err != nil {
-		logger.Fatal("加载 RSA key 失败", zap.Error(err))
+		logger.Fatal("failed to load RSA key", zap.Error(err))
 	}
 	host, portStr, err := net.SplitHostPort(*addr)
 	if err != nil {
-		logger.Fatal("解析地址失败", zap.Error(err))
+		logger.Fatal("failed to parse address", zap.Error(err))
 	}
 	port, _ := strconv.Atoi(portStr)
 
@@ -124,7 +126,7 @@ func main() {
 	if err := client.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(client)
 
-		// 1. 用户登录（开发码）。
+		// 1. User login (development code).
 		sent, err := raw.AuthSendCode(ctx, &tg.AuthSendCodeRequest{
 			PhoneNumber: *phone, APIID: *apiID, APIHash: *apiHash,
 			Settings: tg.CodeSettings{},
@@ -134,7 +136,7 @@ func main() {
 		}
 		sentCode, ok := sent.(*tg.AuthSentCode)
 		if !ok {
-			return fmt.Errorf("sentCode 类型 = %T", sent)
+			return fmt.Errorf("sentCode type = %T", sent)
 		}
 		authz, err := raw.AuthSignIn(ctx, &tg.AuthSignInRequest{
 			PhoneNumber: *phone, PhoneCodeHash: sentCode.PhoneCodeHash, PhoneCode: *code,
@@ -144,15 +146,15 @@ func main() {
 		}
 		a, ok := authz.(*tg.AuthAuthorization)
 		if !ok {
-			return fmt.Errorf("authorization 类型 = %T", authz)
+			return fmt.Errorf("authorization type = %T", authz)
 		}
 		self, _ := a.User.(*tg.User)
-		fmt.Printf("==== 登录成功: id=%d name=%q phone=%s ====\n", self.ID, self.FirstName, *phone)
+		fmt.Printf("==== login successful: id=%d name=%q phone=%s ====\n", self.ID, self.FirstName, *phone)
 
-		// 2. 余额（before）。
-		balBefore := printStarsBalance(ctx, raw, "扣费前")
+		// 2. Balance (before).
+		balBefore := printStarsBalance(ctx, raw, "before charge")
 
-		// 3. 解析目标频道 + 消息。
+		// 3. Resolve the target channel + message.
 		var peer *tg.InputPeerChannel
 		mid := *msgID
 		if *channelID != 0 {
@@ -166,13 +168,13 @@ func main() {
 			if mid == 0 {
 				mid = topMsg
 			}
-			fmt.Printf("  目标频道: id=%d title=%q access_hash=%d top_msg=%d\n", ch.ID, ch.Title, ch.AccessHash, mid)
+			fmt.Printf("  target channel: id=%d title=%q access_hash=%d top_msg=%d\n", ch.ID, ch.Title, ch.AccessHash, mid)
 		}
 		if mid == 0 {
-			return fmt.Errorf("无可用消息 id（频道无消息？用 -msg-id 指定）")
+			return fmt.Errorf("no usable message id (channel has no messages? specify with -msg-id)")
 		}
 
-		// 4. 发付费 reaction。
+		// 4. Send the paid reaction.
 		rid, _ := randInt64()
 		fmt.Printf(">> sendPaidReaction: channel=%d msg=%d count=%d\n", peer.ChannelID, mid, *count)
 		res, err := raw.MessagesSendPaidReaction(ctx, &tg.MessagesSendPaidReactionRequest{
@@ -183,24 +185,24 @@ func main() {
 		}
 		inspectPaidReactionUpdates(res)
 
-		// 5. 余额（after）。
-		balAfter := printStarsBalance(ctx, raw, "扣费后")
-		fmt.Printf("==== 扣费校验: %d -> %d，差 %d（期望 -%d）====\n", balBefore, balAfter, balBefore-balAfter, *count)
+		// 5. Balance (after).
+		balAfter := printStarsBalance(ctx, raw, "after charge")
+		fmt.Printf("==== charge check: %d -> %d, diff %d (expected -%d) ====\n", balBefore, balAfter, balBefore-balAfter, *count)
 		if balBefore-balAfter == int64(*count) {
-			fmt.Println("==== ✅ PASS：付费 reaction 扣费正确 ====")
+			fmt.Println("==== ✅ PASS: paid reaction charge correct ====")
 		} else {
-			fmt.Println("==== ❌ FAIL：扣费金额不符 ====")
+			fmt.Println("==== ❌ FAIL: charge amount mismatch ====")
 		}
 		return nil
 	}); err != nil {
-		logger.Fatal("运行失败", zap.Error(err))
+		logger.Fatal("run failed", zap.Error(err))
 	}
 }
 
 func printStarsBalance(ctx context.Context, raw *tg.Client, label string) int64 {
 	status, err := raw.PaymentsGetStarsStatus(ctx, &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerSelf{}})
 	if err != nil {
-		fmt.Printf("  [%s] getStarsStatus 失败: %v\n", label, err)
+		fmt.Printf("  [%s] getStarsStatus failed: %v\n", label, err)
 		return -1
 	}
 	amount, _ := status.Balance.(*tg.StarsAmount)
@@ -208,11 +210,11 @@ func printStarsBalance(ctx context.Context, raw *tg.Client, label string) int64 
 	if amount != nil {
 		bal = amount.Amount
 	}
-	fmt.Printf("  [%s] 余额=%d stars (balance 类型=%T, chats=%d users=%d)\n", label, bal, status.Balance, len(status.Chats), len(status.Users))
+	fmt.Printf("  [%s] balance=%d stars (balance type=%T, chats=%d users=%d)\n", label, bal, status.Balance, len(status.Chats), len(status.Users))
 	return bal
 }
 
-// findBroadcastChannel 从 dialogs 找第一个广播频道 + 其顶部消息 id。
+// findBroadcastChannel finds the first broadcast channel in dialogs + its top message id.
 func findBroadcastChannel(ctx context.Context, raw *tg.Client) (*tg.Channel, int, error) {
 	dlgs, err := raw.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
 		OffsetPeer: &tg.InputPeerEmpty{}, Limit: 100,
@@ -228,7 +230,7 @@ func findBroadcastChannel(ctx context.Context, raw *tg.Client) (*tg.Channel, int
 	case *tg.MessagesDialogsSlice:
 		chats, dialogs = v.Chats, v.Dialogs
 	default:
-		return nil, 0, fmt.Errorf("dialogs 类型 = %T", dlgs)
+		return nil, 0, fmt.Errorf("dialogs type = %T", dlgs)
 	}
 	topByChannel := make(map[int64]int)
 	for _, d := range dialogs {
@@ -247,12 +249,12 @@ func findBroadcastChannel(ctx context.Context, raw *tg.Client) (*tg.Channel, int
 		}
 		return ch, topByChannel[ch.ID], nil
 	}
-	return nil, 0, fmt.Errorf("dialogs 中无广播频道")
+	return nil, 0, fmt.Errorf("no broadcast channel in dialogs")
 }
 
-// inspectPaidReactionUpdates 检查返回的 Updates 是否合法且含 updateMessageReactions/updateStarsBalance。
+// inspectPaidReactionUpdates checks whether the returned Updates is valid and contains updateMessageReactions/updateStarsBalance.
 func inspectPaidReactionUpdates(res tg.UpdatesClass) {
-	fmt.Printf("  返回类型=%T\n", res)
+	fmt.Printf("  return type=%T\n", res)
 	var ups []tg.UpdateClass
 	switch v := res.(type) {
 	case *tg.Updates:
@@ -262,7 +264,7 @@ func inspectPaidReactionUpdates(res tg.UpdatesClass) {
 	case *tg.UpdateShort:
 		ups = []tg.UpdateClass{v.Update}
 	default:
-		fmt.Printf("  [警告] 返回非 Updates 子类型（DrKLO 会 ClassCastException 崩溃）\n")
+		fmt.Printf("  [warning] returned a non-Updates subtype (DrKLO will crash with ClassCastException)\n")
 		return
 	}
 	hasReactions, hasBalance := false, false
@@ -288,7 +290,7 @@ func inspectPaidReactionUpdates(res tg.UpdatesClass) {
 			fmt.Printf("    updateStarsBalance: balance=%d\n", b)
 		}
 	}
-	fmt.Printf("  合法 Updates=true, 含 updateMessageReactions=%v, 含 updateStarsBalance=%v\n", hasReactions, hasBalance)
+	fmt.Printf("  valid Updates=true, has updateMessageReactions=%v, has updateStarsBalance=%v\n", hasReactions, hasBalance)
 }
 
 func randInt64() (int64, error) {

@@ -12,8 +12,9 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// 私聊消息 poll 投票/关闭：消息可见性在 message_boxes 校验（与 reaction 同款 SELECT FOR
-// UPDATE 定位），poll 级语义委托 poll.go 的共享 SQL（polls 行 FOR UPDATE 防 quiz 并发双投）。
+// Private message poll voting/closing: message visibility is checked on message_boxes (located
+// with the same SELECT FOR UPDATE as reactions), and poll-level semantics are delegated to the
+// shared SQL in poll.go (the polls row FOR UPDATE prevents a concurrent double vote on a quiz).
 
 func (s *MessageStore) VoteMessagePoll(ctx context.Context, req domain.VotePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error) {
 	return s.mutateMessagePoll(ctx, req.UserID, req.Peer, req.MessageID, req.Date, func(ctx context.Context, tx pgx.Tx, def domain.PollDefinition, date int) error {
@@ -111,7 +112,7 @@ LIMIT 1`, userID, int32(messageID), string(peer.Type), peer.ID).Scan(&target.pri
 		}
 		res.Messages = append(res.Messages, msg)
 	}
-	// poll enrichment（按各 box owner 视角）由 enrichPrivateMessageReactions 统一挂载。
+	// Poll enrichment (from each box owner's viewpoint) is attached uniformly by enrichPrivateMessageReactions.
 	if err := s.enrichPrivateMessageReactions(ctx, tx, userID, res.Messages); err != nil {
 		return domain.PrivateMessagePollResult{}, err
 	}
@@ -122,8 +123,9 @@ LIMIT 1`, userID, int32(messageID), string(peer.Type), peer.ID).Scan(&target.pri
 	return res, nil
 }
 
-// enrichPrivateMessagePolls 把页内全部 poll media 按各消息 owner 视角 enrich；
-// 由 enrichPrivateMessageReactions 统一挂载（所有私聊读路径共用一个 choke point）。
+// enrichPrivateMessagePolls enriches all poll media in the page from each message owner's
+// viewpoint; attached uniformly by enrichPrivateMessageReactions (all private read paths share one
+// choke point).
 func (s *MessageStore) enrichPrivateMessagePolls(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, messages []domain.Message) error {
 	refs := make([]pollMediaRef, 0, 2)
 	for i := range messages {

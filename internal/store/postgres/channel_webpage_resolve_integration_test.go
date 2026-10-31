@@ -8,9 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelStoreResolveWebPageIntegration 对 live Postgres 验证频道 WebPageResolve 分支：
-// media 就地换 done、body/edit_date 不变、durable channel_web_page 事件被白名单接受（迁移0016）、
-// 历史读回 done、幂等。需 TELESRV_TEST_POSTGRES_DSN。
+// TestChannelStoreResolveWebPageIntegration verifies the channel WebPageResolve branch against live Postgres:
+// media replaced in place with done, body/edit_date unchanged, the durable channel_web_page event accepted by the whitelist (migration 0016),
+// history read back as done, and idempotency. Requires TELESRV_TEST_POSTGRES_DSN.
 func TestChannelStoreResolveWebPageIntegration(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -62,7 +62,7 @@ func TestChannelStoreResolveWebPageIntegration(t *testing.T) {
 		t.Fatalf("body/edit_date changed: body=%q edit_date=%d", res.Message.Body, res.Message.EditDate)
 	}
 
-	// durable 事件被白名单接受（迁移0016）+ 类型正确。
+	// The durable event is accepted by the whitelist (migration 0016) + the type is correct.
 	var eventType string
 	if err := pool.QueryRow(ctx, `SELECT event_type FROM channel_update_events WHERE channel_id = $1 ORDER BY pts DESC LIMIT 1`, channelID).Scan(&eventType); err != nil {
 		t.Fatalf("read latest channel event: %v", err)
@@ -71,7 +71,7 @@ func TestChannelStoreResolveWebPageIntegration(t *testing.T) {
 		t.Fatalf("latest channel event type = %q, want channel_web_page", eventType)
 	}
 
-	// 历史读回 media=done，body/edit_date 不变。
+	// History reads back media=done, body/edit_date unchanged.
 	hist, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{ChannelID: channelID, Limit: 10})
 	if err != nil {
 		t.Fatalf("list channel history: %v", err)
@@ -92,7 +92,7 @@ func TestChannelStoreResolveWebPageIntegration(t *testing.T) {
 		t.Fatalf("message %d not in history", sent.Message.ID)
 	}
 
-	// 幂等。
+	// Idempotent.
 	if _, err := channels.EditChannelMessage(ctx, resolveReq); !errors.Is(err, domain.ErrMessageNotModified) {
 		t.Fatalf("re-resolve err = %v, want ErrMessageNotModified", err)
 	}

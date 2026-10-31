@@ -14,9 +14,9 @@ type channelReactionMessageKey struct {
 	messageID int
 }
 
-// channelMessagePairs 把 {channelID: [messageID...]} 摊平成两条等长并行数组，供
+// channelMessagePairs flattens {channelID: [messageID...]} into two parallel equal-length arrays, for the
 // `WHERE (channel_id, message_id) IN (SELECT * FROM unnest($a::bigint[], $b::int[]))`
-// 跨频道一次批量取，消除「每频道一条 SQL」的 N+1。
+// cross-channel single batch fetch, removing the "one SQL per channel" N+1.
 func channelMessagePairs(idsByChannel map[int64][]int32) ([]int64, []int32) {
 	var channels []int64
 	var messages []int32
@@ -61,7 +61,7 @@ func (s *ChannelStore) populateChannelMessagesReactionsWhere(
 	if len(messages) == 0 {
 		return nil
 	}
-	// poll enrichment 与 reactions 同点位挂载：所有频道消息读路径都经过本函数（见 channel_polls.go）。
+	// poll enrichment is mounted at the same point as reactions: all channel message read paths go through this function (see channel_polls.go).
 	if err := s.populateChannelMessagesPolls(ctx, db, viewerUserID, messages); err != nil {
 		return err
 	}
@@ -94,8 +94,8 @@ func (s *ChannelStore) populateChannelMessagesReactionsWhere(
 	if len(idsByChannel) == 0 {
 		return nil
 	}
-	// 缺失的频道元数据一次批量补齐（emptyChannelMessageReactions 需要 Broadcast/Megagroup），
-	// 替代原来「每个未知频道一条 getChannelByID」的 N+1。
+	// Missing channel metadata is bulk-filled at once (emptyChannelMessageReactions needs Broadcast/Megagroup),
+	// replacing the previous "one getChannelByID per unknown channel" N+1.
 	var missing []int64
 	for channelID := range idsByChannel {
 		if _, ok := channelsByID[channelID]; !ok {
@@ -111,8 +111,8 @@ func (s *ChannelStore) populateChannelMessagesReactionsWhere(
 			channelsByID[ch.ID] = ch
 		}
 	}
-	// 跨频道 (channel, message) 对；recent 反应仅对「非广播或超级群」频道下发（广播 reaction
-	// 匿名，与官方一致只给计数，不暴露反应者身份）。
+	// Cross-channel (channel, message) pairs; recent reactions are sent down only for "non-broadcast or supergroup" channels (broadcast reactions are
+	// anonymous, so consistent with official only counts are given, without exposing reactor identity).
 	pairChannels, pairMessages := channelMessagePairs(idsByChannel)
 	var recentChannels []int64
 	var recentMessages []int32
@@ -127,7 +127,7 @@ func (s *ChannelStore) populateChannelMessagesReactionsWhere(
 		}
 	}
 
-	// 1) 反应计数：跨频道一次 GROUP BY。
+	// 1) Reaction counts: one cross-channel GROUP BY.
 	countRows, err := db.Query(ctx, `
 SELECT channel_id, message_id, reaction_type, reaction_value, COUNT(*)::int,
        COALESCE(MAX(CASE WHEN reacted_user_id = $1 THEN chosen_order ELSE 0 END), 0)::int,
@@ -173,7 +173,7 @@ ORDER BY channel_id ASC, message_id ASC, COUNT(*) DESC, COALESCE(MAX(reaction_da
 	}
 	countRows.Close()
 
-	// 2) recent 反应（仅超级群/非广播）：跨频道一次 window 查询，PARTITION BY (channel,message)。
+	// 2) recent reactions (supergroup/non-broadcast only): one cross-channel window query, PARTITION BY (channel,message).
 	if len(recentChannels) > 0 {
 		recentRows, err := db.Query(ctx, `
 SELECT channel_id, message_id, reacted_user_id, sender_user_id, reaction_type, reaction_value,
@@ -216,9 +216,9 @@ ORDER BY channel_id ASC, message_id ASC, reaction_date DESC, reacted_user_id DES
 		recentRows.Close()
 	}
 
-	// 3) 付费 reaction（Stars）：跨频道一次取所有 reactor 行，Go 内按 (channel,message) 聚合
-	//    总星数 + viewer 自身 + top reactors，挂到 message.Reactions.Paid（tg 转换注入 ReactionPaid）。
-	//    绝大多数消息无付费 reaction（索引扫描即返回空）；总星数须含全部 reactor 故取全行。
+	// 3) Paid reactions (Stars): fetch all reactor rows cross-channel at once, aggregate in Go by (channel,message)
+	//    total stars + the viewer's own + top reactors, and attach to message.Reactions.Paid (the tg conversion injects ReactionPaid).
+	//    The vast majority of messages have no paid reactions (the index scan returns empty); the total star count must include all reactors, so all rows are fetched.
 	if err := populateChannelMessagesPaidReactions(ctx, db, viewerUserID, channelsByID, indexes, messages, pairChannels, pairMessages); err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ ORDER BY channel_id ASC, message_id ASC, stars DESC, reactor_user_id ASC`, pairC
 			agg.MyStars = r.Stars
 			agg.MyAnonymous = r.Anonymous
 		}
-		// top reactors 取前 N（已按 stars DESC）；viewer 自身若不在前 N 也补一条（始终在列）。
+		// Top reactors take the first N (already ordered by stars DESC); if the viewer is not in the top N, add them too (always listed).
 		if len(agg.TopReactors) < domain.MaxPaidReactionTopReactors {
 			agg.TopReactors = append(agg.TopReactors, r)
 		} else if r.My {

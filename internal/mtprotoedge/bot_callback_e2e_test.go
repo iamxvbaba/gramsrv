@@ -34,7 +34,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// botCallbackEnv 搭建一套内存 server，供 P3 callback / startBot / markup e2e 复用。
+// botCallbackEnv sets up an in-memory server, shared by the P3 callback / startBot / markup e2e tests.
 type botCallbackEnv struct {
 	rsaKey  *rsa.PrivateKey
 	addr    *net.TCPAddr
@@ -171,10 +171,12 @@ func updatesFromClass(u tg.UpdatesClass) []tg.UpdateClass {
 	}
 }
 
-// TestBotInlineKeyboardCallbackFlow 验证 P3 callback 全链路（真实 gotd 双客户端并发）：
-// bot 发带 inline callback markup 的消息 → owner getHistory 见 markup → owner
-// getBotCallbackAnswer 挂起 → bot 经 updateBotCallbackQuery 收到 query → setBotCallbackAnswer
-// → owner 收到 answer；并验证 bot 不应答 → BOT_RESPONSE_TIMEOUT；data 字节级保真。
+// TestBotInlineKeyboardCallbackFlow verifies the full P3 callback chain (with real
+// concurrent gotd dual clients): the bot sends a message with inline callback
+// markup → owner sees the markup in getHistory → owner's getBotCallbackAnswer
+// suspends → bot receives the query via updateBotCallbackQuery → setBotCallbackAnswer
+// → owner receives the answer; it also verifies that a bot not answering →
+// BOT_RESPONSE_TIMEOUT; and that data is byte-exact.
 func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -185,7 +187,7 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 		t.Fatalf("create bot: %v", err)
 	}
 
-	// 含 0x00 与高位字节的 callback data：验证字节级 round-trip（I2）。
+	// Callback data containing 0x00 and high bytes: verify a byte-exact round-trip (I2).
 	callbackData := []byte{0x00, 0x01, 0xFF, 0x80, 'a', 'b'}
 	const noAnswerText = "ignore"
 
@@ -193,7 +195,7 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 	botStop := make(chan struct{})
 	botErr := make(chan error, 1)
 
-	// bot 在后台保持在线，update handler 把收到的 callback query 转交应答 goroutine。
+	// The bot stays online in the background, and the update handler hands received callback queries to the answering goroutine.
 	cbCh := make(chan *tg.UpdateBotCallbackQuery, 8)
 	botHandler := telegram.UpdateHandlerFunc(func(_ context.Context, u tg.UpdatesClass) error {
 		for _, upd := range updatesFromClass(u) {
@@ -213,20 +215,22 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 			if _, err := raw.AuthImportBotAuthorization(ctx, &tg.AuthImportBotAuthorizationRequest{APIID: 1, APIHash: "hash", BotAuthToken: botToken}); err != nil {
 				return err
 			}
-			// 裸 RPC 置 receivesUpdates，使 push 可达（热恢复同步修复后语义）。
+			// A bare RPC sets receivesUpdates, making push reachable (semantics after the hot-recovery sync fix).
 			if _, err := raw.UpdatesGetState(ctx); err != nil {
 				return err
 			}
-			// 解析 owner 资料拿到 bot 视角的 access_hash（access_hash=0 跳过校验，
-			// 与既有 bot e2e 同款），再发带 inline callback+url keyboard 的消息。
+			// Resolve the owner's profile to get the access_hash from the bot's
+			// perspective (access_hash=0 skips validation, same as the existing bot
+			// e2e), then send a message with an inline callback+url keyboard.
 			got, err := raw.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUser{UserID: owner.ID}})
 			if err != nil {
 				return err
 			}
 			if len(got) != 1 {
-				// 该回调由 go func() 启动并经 botErr channel 上报；在此 goroutine 直接
-				// t.Fatalf 会在错误的 goroutine 上 Goexit（go1.26 vet testinggoroutine 亦报），
-				// 故返回 error 让测试主 goroutine 经 botErr 失败。
+				// This callback is started by go func() and reported via the botErr
+				// channel; calling t.Fatalf directly on this goroutine would Goexit on
+				// the wrong goroutine (go1.26 vet testinggoroutine also flags it), so
+				// return an error and let the test's main goroutine fail via botErr.
 				return fmt.Errorf("bot getUsers(owner) = %d, want 1", len(got))
 			}
 			ownerSeen := got[0].(*tg.User)
@@ -243,14 +247,14 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 			if _, err := raw.MessagesSendMessage(ctx, req); err != nil {
 				return err
 			}
-			// 应答 goroutine：除 noAnswerText 外，对每个 query 回 setBotCallbackAnswer。
+			// Answering goroutine: reply setBotCallbackAnswer for every query except noAnswerText.
 			go func() {
 				for {
 					select {
 					case q := <-cbCh:
 						data, _ := q.GetData()
 						if string(data) == noAnswerText {
-							continue // 制造超时分支
+							continue // produce the timeout branch
 						}
 						_, _ = raw.MessagesSetBotCallbackAnswer(ctx, &tg.MessagesSetBotCallbackAnswerRequest{
 							QueryID: q.QueryID,
@@ -282,7 +286,7 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 	ownerClient := env.newCliH(ownerStorage)
 	if err := ownerClient.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(ownerClient)
-		// owner 解析 bot 拿到自己视角的 access_hash（公开 username 冷启动解析）。
+		// The owner resolves the bot to get the access_hash from its own perspective (cold-start resolution via the public username).
 		resolved, err := raw.ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: "cb_test_bot"})
 		if err != nil {
 			return err
@@ -291,7 +295,7 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 		botPeer := &tg.InputPeerUser{UserID: seenBot.ID, AccessHash: seenBot.AccessHash}
 		_ = botUser
 
-		// 轮询 getHistory 直到 bot 的 markup 消息到达。
+		// Poll getHistory until the bot's markup message arrives.
 		var msgID int
 		deadline := time.Now().Add(15 * time.Second)
 		for {
@@ -333,7 +337,7 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 		}
 
-		// 按下 callback 按钮：getBotCallbackAnswer 挂起直到 bot 应答。
+		// Press the callback button: getBotCallbackAnswer suspends until the bot answers.
 		ans, err := raw.MessagesGetBotCallbackAnswer(ctx, &tg.MessagesGetBotCallbackAnswerRequest{
 			Peer:  botPeer,
 			MsgID: msgID,
@@ -346,8 +350,9 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 			t.Fatalf("callback answer = alert:%v msg:%q, want alert:true msg:%q", ans.Alert, ans.Message, "ok:"+string(callbackData))
 		}
 
-		// 超时分支：bot 收到但不应答（noAnswerText）→ BOT_RESPONSE_TIMEOUT。
-		// 用短 ctx 触发客户端侧超时，避免等满 25s 服务端窗口。
+		// Timeout branch: the bot receives it but does not answer (noAnswerText) →
+		// BOT_RESPONSE_TIMEOUT. Use a short ctx to trigger the client-side timeout,
+		// avoiding waiting out the full 25s server window.
 		toCtx, toCancel := context.WithTimeout(ctx, 3*time.Second)
 		defer toCancel()
 		_, err = raw.MessagesGetBotCallbackAnswer(toCtx, &tg.MessagesGetBotCallbackAnswerRequest{
@@ -370,7 +375,7 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 	}
 }
 
-// TestBotStartBotFlow 验证 messages.startBot 产生可见 "/start <param>" 消息（I7）。
+// TestBotStartBotFlow verifies that messages.startBot produces a visible "/start <param>" message (I7).
 func TestBotStartBotFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -381,7 +386,7 @@ func TestBotStartBotFlow(t *testing.T) {
 		t.Fatalf("create bot: %v", err)
 	}
 
-	// owner 调 startBot(bot, payload)。先经公开 username 解析 bot 拿 access_hash。
+	// The owner calls startBot(bot, payload). First resolve the bot via its public username to get the access_hash.
 	ownerClient := env.newCliH(ownerStorage)
 	if err := ownerClient.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(ownerClient)
@@ -401,7 +406,7 @@ func TestBotStartBotFlow(t *testing.T) {
 		t.Fatalf("owner startBot: %v", err)
 	}
 
-	// bot 登录后 getHistory(peer=owner) 应见到 "/start ref123"。
+	// After the bot logs in, getHistory(peer=owner) should show "/start ref123".
 	botClient := env.newCliH(&session.StorageMemory{})
 	if err := botClient.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(botClient)

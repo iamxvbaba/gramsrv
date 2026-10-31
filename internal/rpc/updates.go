@@ -10,16 +10,20 @@ import (
 	"telesrv/internal/domain"
 )
 
-// registerUpdates 注册 updates.* RPC handler。
+// registerUpdates registers the updates.* RPC handlers.
 func (r *Router) registerUpdates(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.UpdatesGetStateRequest](d, tlprofile.SemanticMethodUpdatesGetState, func(ctx context.Context, layerRequest *tg.UpdatesGetStateRequest) (
 
-		// onUpdatesGetState 处理 updates.getState。TDesktop 与 DrKLO 的启动路径把它当作
-		// 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位，并且只在 rpc_result
-		// 物理交付后原子推进该设备 confirmed + observed。对尚未审计 baseline 语义的客户端
-		// 仍返回同一 current state，但交付后只推进 confirmed；这保留 observed/durable
-		// difference tail，避免把 TDesktop/DrKLO 的兼容例外扩散成所有客户端都能跨过未实际
-		// 确认事件的 retention 后门。
+		// onUpdatesGetState handles updates.getState. The startup paths of TDesktop and
+		// DrKLO treat it as an explicit "start syncing from the current snapshot"
+		// baseline: it returns the account's current contiguous watermark, and only after
+		// the rpc_result is physically delivered does it atomically advance that
+		// device's confirmed + observed. For clients whose baseline semantics have not
+		// been audited it still returns the same current state, but after delivery only
+		// advances confirmed; this preserves the observed/durable difference tail and
+		// keeps the TDesktop/DrKLO compatibility exception from spreading into a
+		// retention back door through which every client could skip unacknowledged
+		// events.
 		any, error) {
 		return r.onUpdatesGetState(ctx)
 	})
@@ -52,7 +56,9 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 	if err != nil {
 		return nil, internalErr()
 	}
-	// 密聊 qts 是设备级、独立于账号级 pts 引擎：注入当前设备已分配的 qts（无密聊设备为 0）。
+	// Secret-chat qts is device-level and independent of the account-level pts engine:
+	// inject the qts already assigned to the current device (0 for a device with no
+	// secret chats).
 	st.Qts = r.deviceEncryptedQts(ctx)
 	r.stageUpdatesBaselineAfterDelivery(ctx, userID, &st, mode, nil, true)
 	out := tgUpdateState(st)
@@ -87,9 +93,10 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	if err != nil {
 		return nil, internalErr()
 	}
-	// pts_total_limit 是客户端显式请求的 fast-skip：差距超限时返回
-	// differenceTooLong{pts}，客户端据此整体重置会话列表而不是串行翻
-	// 上千页 slice。不传该参数的客户端（TDesktop）永远不会收到 tooLong。
+	// pts_total_limit is the client's explicit fast-skip request: when the gap exceeds
+	// the limit it returns differenceTooLong{pts}, and the client resets the whole dialog
+	// list instead of serially paging through thousands of slices. A client that does
+	// not send it (TDesktop) never receives tooLong.
 	if limit, ok := req.GetPtsTotalLimit(); ok && limit > 0 && req.Pts > 0 {
 		current, err := r.deps.Updates.CurrentState(ctx, userID)
 		if err == nil && current.Pts-from.Pts > limit {
@@ -122,26 +129,31 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 			break
 		}
 	}
-	// 密聊设备级 qts 消息（独立于账号级 pts 事件）：按当前设备 req.Qts 补回。
+	// Secret-chat device-level qts messages (independent of account-level pts events):
+	// backfilled per the current device's req.Qts.
 	encMsgs, newQts, encryptedPartial, err := r.encryptedDifference(ctx, req.Qts)
 	if err != nil {
 		r.log.Error("load secret chat qts difference", zap.Error(err))
 		return nil, internalErr()
 	}
-	// 密聊握手/已读状态事件（无 qts）：按未投递标记补回 OtherUpdates。
+	// Secret-chat handshake/read-state events (no qts): backfilled into OtherUpdates
+	// from the undelivered markers.
 	stateUpdates, statePeerUserIDs, stateEventIDs, encryptedStatePartial, err := r.encryptedStateUpdates(ctx, userID)
 	if err != nil {
 		r.log.Error("load secret chat state difference", zap.Error(err))
 		return nil, internalErr()
 	}
-	// 账号 pts、设备 qts 和无序号状态事件任一被截断，都必须返回 differenceSlice。
+	// If any of the account pts, device qts or sequence-less state events is truncated,
+	// a differenceSlice must be returned.
 	st.Partial = st.Partial || encryptedPartial || encryptedStatePartial
 	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
 		// differenceEmpty carries no pts/qts. Both audited clients retain their
 		// request cursor, so only that normalized cursor is proven delivered.
 		emptyCursor := domain.UpdateState{Pts: from.Pts, Qts: from.Qts, Date: st.State.Date, Seq: st.State.Seq}
-		// 账号级密聊邀请在 accept 后对获胜 auth key 是可确认但无可见 update 的收敛事件；
-		// 即使返回 differenceEmpty，也必须在 rpc_result 成功投递后登记这些 event id。
+		// An account-level secret-chat invite, after accept, is a convergence event for
+		// the winning auth key that is acknowledgeable but has no visible update; even
+		// when differenceEmpty is returned, these event ids must still be registered
+		// after the rpc_result is successfully delivered.
 		r.stageUpdatesBaselineAfterDelivery(ctx, userID, &emptyCursor, domain.UpdateStateCommitDeliveredOnly, stateEventIDs, true)
 		return &tg.UpdatesDifferenceEmpty{Date: st.State.Date, Seq: st.State.Seq}, nil
 	}
@@ -172,8 +184,9 @@ func (r *Router) accountChannelDifferenceNudges(ctx context.Context, userID int6
 	if r.deps.Channels == nil || userID == 0 || sinceDate <= 0 {
 		return nil
 	}
-	// 按 channel_id 翻页注入全部 dirty channel 的 nudge（仍有总量硬上限），
-	// 避免加入超过一页活跃频道的账号在长离线恢复时漏掉 channel_id 较大的频道。
+	// Inject nudges for every dirty channel, paged by channel_id (still with a hard
+	// total cap), so an account in more than one page of active channels does not miss
+	// channels with larger channel_ids when recovering from a long offline period.
 	const maxNudges = 500
 	out := make([]domain.ChannelDifferenceNudge, 0, domain.MaxChannelDifferenceLimit)
 	afterChannelID := int64(0)
@@ -227,11 +240,14 @@ func (r *Router) accountChannelDifferenceNudges(ctx context.Context, userID int6
 	return out
 }
 
-// maybeMarkSessionReceivesUpdates 把已登录连接发出的裸 RPC（未包 invokeWithoutUpdates）
-// 视为该 session 的 updates 接收声明，对齐官方语义：客户端只在主连接上发裸请求，
-// media/temp 连接一律带 invokeWithoutUpdates 包装。这里只登记交付计划；membership
-// sync、SetReceivesUpdates 与 pending flush 必须等成功 rpc_result 物理交付后才执行。
-// 已在接收的 session 直接短路，避免每条 RPC 重复同步 channel membership。
+// maybeMarkSessionReceivesUpdates treats a plain RPC sent by a logged-in connection
+// (not wrapped in invokeWithoutUpdates) as that session's declaration of receiving
+// updates, matching official semantics: the client sends plain requests only on the
+// main connection, while media/temp connections always carry the invokeWithoutUpdates
+// wrapper. Only the delivery plan is registered here; membership sync,
+// SetReceivesUpdates and the pending flush must wait until the successful rpc_result is
+// physically delivered. A session already receiving is short-circuited, avoiding a
+// channel-membership sync on every RPC.
 func (r *Router) maybeMarkSessionReceivesUpdates(ctx context.Context) {
 	if invokeWithoutUpdatesFrom(ctx) {
 		return

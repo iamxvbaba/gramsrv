@@ -12,8 +12,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件把 reaction / sticker 资源 RPC 接到真实 seed 数据（documents / sticker_sets /
-// available_reactions）；Files 服务缺失或资源未导入时回退到 tdesktop 兼容 stub。
+// This file wires the reaction / sticker resource RPCs to real seed data (documents /
+// sticker_sets / available_reactions); when the Files service is missing or the
+// resources are not imported, it falls back to the tdesktop compatibility stub.
 
 func (r *Router) onMessagesGetAvailableReactions(ctx context.Context, hash int) (tg.MessagesAvailableReactionsClass, error) {
 	if r.deps.Files == nil {
@@ -38,8 +39,10 @@ func (r *Router) onMessagesGetAvailableReactions(ctx context.Context, hash int) 
 	return tgAvailableReactions(reactions, docByID, catalogHash), nil
 }
 
-// onMessagesGetAvailableEffects 返回消息发送特效目录(全局静态,seed 进内存)。镜像
-// getAvailableReactions:文档批量预加载后由 tgAvailableEffects 组装,hash 命中回 NotModified。
+// onMessagesGetAvailableEffects returns the message-effects catalog (global static,
+// seeded into memory). It mirrors getAvailableReactions: documents are batch
+// preloaded and assembled by tgAvailableEffects, and a hash match returns
+// NotModified.
 func (r *Router) onMessagesGetAvailableEffects(ctx context.Context, hash int) (tg.MessagesAvailableEffectsClass, error) {
 	empty := func() *tg.MessagesAvailableEffects {
 		return &tg.MessagesAvailableEffects{Hash: 0, Effects: []tg.AvailableEffect{}, Documents: []tg.DocumentClass{}}
@@ -54,8 +57,8 @@ func (r *Router) onMessagesGetAvailableEffects(ctx context.Context, hash int) (t
 	if len(effects) == 0 {
 		return empty(), nil
 	}
-	// catalogHash 在 seed 时算好(全局静态),命中即零查库返回 NotModified——必须在
-	// GetDocuments(唯一打 PG 的点)之前。
+	// catalogHash is computed at seed time (global static); a hit returns NotModified
+	// with zero DB queries - and must come before GetDocuments (the only PG hit).
 	if hash == catalogHash {
 		return &tg.MessagesAvailableEffectsNotModified{}, nil
 	}
@@ -78,8 +81,10 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 	if err != nil {
 		return nil, internalErr()
 	}
-	// 观测：量化客户端反复请求哪些集（同集重试 vs 大量不同集）。未 seed 集走 stub，
-	// 由 ResolveStickerSet 的负缓存短路 PG；这里只记 ref 与命中情况。
+	// Observability: measure which sets clients repeatedly request (retries of the same
+	// set vs many distinct sets). Unseeded sets go to the stub, with
+	// ResolveStickerSet's negative cache short-circuiting PG; here we only log the
+	// ref and the hit outcome.
 	if r.log != nil {
 		r.log.Debug("getStickerSet",
 			zap.String("ref_kind", string(ref.Kind)),
@@ -108,7 +113,8 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 			}
 			return tgMessagesStickerSet(fallbackSet, fallbackDocs), nil
 		}
-		// 未 seed 的系统集 / 未知短名：回退兼容 stub，避免破坏客户端。
+		// Unseeded system set / unknown short name: fall back to the compatibility
+		// stub to avoid breaking clients.
 		return tdesktop.StickerSet(req), nil
 	}
 	if req.Hash != 0 && req.Hash == set.Hash {
@@ -146,8 +152,9 @@ func (r *Router) resolvePlaceholderStickerSet(ctx context.Context, ref domain.St
 
 const androidPlaceholderStickerDocumentLimit = 7
 
-// Android 的两个内建 placeholder 名称没有独立 seed。兼容投影使用稳定的独立
-// identity，避免复用 AnimatedEmoji 的 set id/hash 后与真正的 598 文档缓存互相覆盖。
+// Android's two built-in placeholder names have no dedicated seed. The compatibility
+// projection uses a stable, distinct identity so that reusing AnimatedEmoji's set
+// id/hash does not make it overwrite the real 598-document cache.
 var clientPlaceholderStickerSets = []domain.StickerSet{
 	{
 		ID:         7_776_100_000_000_001,
@@ -319,7 +326,8 @@ func (r *Router) allStickersForKind(ctx context.Context, hash int64, kind domain
 		return nil, err
 	}
 	if !handled {
-		// 兼容无 per-user 安装态的测试/旧内存路径：从目录缓存读全局 installed 标志。
+		// Compatibility for tests / the old in-memory path without per-user install
+		// state: read the global installed flag from the catalog cache.
 		sets = installedGlobalStickerSets(r.stickerCatalogSets(ctx, kind))
 	}
 	if len(sets) == 0 {
@@ -433,7 +441,8 @@ func installedGlobalStickerSets(sets []domain.StickerSet) []domain.StickerSet {
 	return out
 }
 
-// featuredCoversPerSet 限制每个 featured 集解析的封面贴纸数量（trending 预览用）。
+// featuredCoversPerSet bounds the number of cover stickers resolved per featured set
+// (for the trending preview).
 const featuredCoversPerSet = 5
 
 func (r *Router) onMessagesGetFeaturedStickers(ctx context.Context, hash int64) (tg.MessagesFeaturedStickersClass, error) {
@@ -473,11 +482,13 @@ func (r *Router) onMessagesGetOldFeaturedStickers(ctx context.Context, req *tg.M
 	return featured, nil
 }
 
-// featuredStickersForKind 把已 seed 的（未归档）贴纸/emoji 集作为 trending 呈现。
-// 性能：先用集目录 hash 比对，命中即返回 *NotModified——封面文档解析只在 cache-miss
-// 时发生（一次批量 GetDocuments），避免每次请求都解析封面。
+// featuredStickersForKind presents the seeded (non-archived) sticker/emoji sets as
+// trending. Performance: first compare the set-catalog hash; a hit returns
+// *NotModified, and cover-document resolution only happens on a cache miss (one
+// batch GetDocuments), avoiding resolving covers on every request.
 func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind domain.StickerSetKind) (tg.MessagesFeaturedStickersClass, error) {
-	// perf：从目录缓存读集（TTL 内 hash 命中不打 PG，封面仅 cache-miss 解析）。
+	// perf: read the sets from the catalog cache (a hash hit within the TTL avoids PG,
+	// and covers are resolved only on a cache miss).
 	sets, err := r.loadStickerCatalogSets(ctx, kind)
 	if err != nil {
 		return nil, internalErr()
@@ -492,7 +503,8 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 	}
 	catalogHash := featuredStickerSetsHash(visible)
 	if hash != 0 && hash == catalogHash {
-		// 关键 perf 短路：目录未变直接返回，不解析任何封面文档。
+		// Critical perf short-circuit: the catalog is unchanged, so return directly
+		// without resolving any cover documents.
 		return &tg.MessagesFeaturedStickersNotModified{Count: len(visible)}, nil
 	}
 	covers, err := r.resolveFeaturedCovers(ctx, visible)
@@ -511,7 +523,8 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 	}, nil
 }
 
-// resolveFeaturedCovers 批量解析所有 featured 集的前若干封面文档（一次查询）。
+// resolveFeaturedCovers batch-resolves the first few cover documents of every
+// featured set (one query).
 func (r *Router) resolveFeaturedCovers(ctx context.Context, sets []domain.StickerSet) (map[int64]domain.Document, error) {
 	ids := make([]int64, 0, len(sets)*featuredCoversPerSet)
 	for _, s := range sets {
@@ -534,7 +547,8 @@ func (r *Router) resolveFeaturedCovers(ctx context.Context, sets []domain.Sticke
 	return documentsByID(docs), nil
 }
 
-// featuredCoveredSet 用已解析的封面构造 covered set；无封面时回退 noCovered。
+// featuredCoveredSet builds a covered set from the resolved covers; falls back to
+// noCovered when there are none.
 func featuredCoveredSet(s domain.StickerSet, covers map[int64]domain.Document) tg.StickerSetCoveredClass {
 	out := make([]tg.DocumentClass, 0, featuredCoversPerSet)
 	for i, id := range s.DocumentIDs {

@@ -253,8 +253,9 @@ func TestMessagesSendMessageRejectsHugeReplyQuoteOffset(t *testing.T) {
 	}
 }
 
-// story 回复（评论）：reply_to=inputReplyToStory 必须被接受并投影为 messageReplyStoryHeader，
-// 而非旧的 STORY_ID_INVALID 拒绝（真机暴露：Alice 回复 Bob story 时评论消息发送失败）。
+// story reply (comment): reply_to=inputReplyToStory must be accepted and projected as
+// messageReplyStoryHeader rather than the old STORY_ID_INVALID rejection (found on a real device:
+// comment sends failed when Alice replied to Bob's story).
 func TestMessageReplyFromInputStorySucceedsAndProjectsStoryHeader(t *testing.T) {
 	sender := domain.User{ID: 1000000001, AccessHash: 11, FirstName: "Sender"}
 	recipient := domain.User{ID: 1000000002, AccessHash: 22, FirstName: "Recipient"}
@@ -267,7 +268,7 @@ func TestMessageReplyFromInputStorySucceedsAndProjectsStoryHeader(t *testing.T) 
 
 	reply, err := r.messageReplyFromInput(ctx, sender.ID, peer, input)
 	if err != nil {
-		t.Fatalf("story reply err = %v, want nil（story 回复应被接受）", err)
+		t.Fatalf("story reply err = %v, want nil (story reply should be accepted)", err)
 	}
 	if reply == nil || reply.StoryID != 7 || reply.Peer != peer {
 		t.Fatalf("reply = %+v, want StoryID=7 peer=recipient", reply)
@@ -285,7 +286,7 @@ func TestMessageReplyFromInputStorySucceedsAndProjectsStoryHeader(t *testing.T) 
 		t.Fatalf("header peer = %#v, want recipient story owner", sh.Peer)
 	}
 
-	// 回复非会话对端的 story（peer 不匹配）仍被拒。
+	// Replying to a story of a non-dialog peer (peer mismatch) is still rejected.
 	wrongPeer := domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}
 	if _, err := r.messageReplyFromInput(ctx, sender.ID, wrongPeer, input); err == nil || !strings.Contains(err.Error(), "STORY_ID_INVALID") {
 		t.Fatalf("mismatched story owner err = %v, want STORY_ID_INVALID", err)

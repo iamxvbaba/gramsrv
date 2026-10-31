@@ -11,7 +11,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestTgWebPageUpdateFromEvent 验证 web_page 事件投影为 updateWebPage（携带已解析 webPage + pts）。
+// TestTgWebPageUpdateFromEvent verifies a web_page event projects to updateWebPage
+// (carrying the resolved webPage + pts).
 func TestTgWebPageUpdateFromEvent(t *testing.T) {
 	urlHash := domain.WebPageURLHash("https://example.com/x")
 	event := domain.UpdateEvent{
@@ -44,7 +45,8 @@ func TestTgWebPageUpdateFromEvent(t *testing.T) {
 	}
 }
 
-// TestTgChannelWebPageUpdateFromEvent 验证频道 web_page 事件投影为 updateChannelWebPage。
+// TestTgChannelWebPageUpdateFromEvent verifies a channel web_page event projects to
+// updateChannelWebPage.
 func TestTgChannelWebPageUpdateFromEvent(t *testing.T) {
 	urlHash := domain.WebPageURLHash("https://example.com/c")
 	event := domain.ChannelUpdateEvent{
@@ -74,7 +76,8 @@ func TestTgChannelWebPageUpdateFromEvent(t *testing.T) {
 	}
 }
 
-// TestResolvePendingWebPageSwapsCard 验证 resolver glue：发送→解析→消息 media 就地变为 done 卡片。
+// TestResolvePendingWebPageSwapsCard verifies the resolver glue: send -> resolve ->
+// message media becomes a done card in place.
 func TestResolvePendingWebPageSwapsCard(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -96,14 +99,15 @@ func TestResolvePendingWebPageSwapsCard(t *testing.T) {
 		t.Fatalf("sendMessage: %v", err)
 	}
 	msg := newMessageFromUpdates(t, updates)
-	// echo 同步反映 pending 占位。
+	// The echo reflects the pending placeholder synchronously.
 	if wrap, ok := msg.Media.(*tg.MessageMediaWebPage); !ok {
 		t.Fatalf("echo media = %T, want pending webpage", msg.Media)
 	} else if _, ok := wrap.Webpage.(*tg.WebPagePending); !ok {
 		t.Fatalf("echo webpage = %T, want pending", wrap.Webpage)
 	}
 
-	// 同步解析（异步路径也会跑，但幂等收敛到同一 done 终态）。
+	// Synchronous resolve (the async path also runs, but converges idempotently to the
+	// same done terminal state).
 	job := webPageResolveJob{
 		senderID:   owner.ID,
 		peer:       domain.Peer{Type: domain.PeerTypeUser, ID: friend.ID},
@@ -115,7 +119,7 @@ func TestResolvePendingWebPageSwapsCard(t *testing.T) {
 		t.Fatalf("resolvePendingWebPage: %v", err)
 	}
 
-	// 发送方消息 media 已就地替换为 done。
+	// The sender's message media has been replaced in place with done.
 	got, found, err := r.lookupOwnerMessage(ctx, owner.ID, msg.ID)
 	if err != nil || !found {
 		t.Fatalf("lookupOwnerMessage: found=%v err=%v", found, err)

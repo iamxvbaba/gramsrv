@@ -7,33 +7,33 @@ import (
 	"strings"
 )
 
-// FactCheck 是事实核查标签（factCheck）。该构造器与 messages.editFactCheck /
-// messages.deleteFactCheck / messages.getFactCheck 在 Layer 225 起就已存在于协议里，
-// 只是此前没有服务端实现。
+// FactCheck is a fact-check tag (factCheck). The constructor together with messages.editFactCheck /
+// messages.deleteFactCheck / messages.getFactCheck has existed in the protocol since Layer 225;
+// it merely had no server implementation before.
 //
-// 客户端只在广播频道（broadcast channel）的媒体消息上提供编辑入口，且入口是否
-// 出现由 app config 的 can_edit_factcheck 全局开关决定；具体能不能写由服务端按
-// 频道权限裁决。标签挂在消息本身，因此同一消息在所有订阅者视角下是同一份事实。
+// The client offers an edit entry only on media messages in a broadcast channel, and whether that entry
+// appears is decided by the app config's global can_edit_factcheck switch; whether a write is allowed is adjudicated
+// server-side per channel permission. The tag hangs on the message itself, so the same message is the same fact from every subscriber's view.
 type FactCheck struct {
-	// NeedCheck 表示该消息尚未核查（客户端渲染为“待核查”状态）。
+	// NeedCheck means the message has not been checked yet (the client renders a "pending check" state).
 	NeedCheck bool
-	// Country 是核查机构所在国家，ISO 3166-1 alpha-2；未知时为空。
+	// Country is the country of the fact-checking organization, ISO 3166-1 alpha-2; empty when unknown.
 	Country string
-	// Text 是核查结论文本。
+	// Text is the verdict text.
 	Text string
-	// Entities 是 Text 的富文本实体（text_url/mention/...）。
+	// Entities are the rich-text entities of Text (text_url/mention/...).
 	Entities []MessageEntity
-	// Hash 是稳定标识：同一条消息的同一份完整结论始终得到同一个 hash，
-	// 客户端用它识别“这条事实核查是不是已经改过”。
+	// Hash is a stable identifier: the same full verdict on the same message always gets the same hash,
+	// which the client uses to tell "has this fact check been changed".
 	Hash int64
 }
 
-// MaxFactCheckTextLength 是核查结论的字符上限，与客户端
-// factcheck_length_limit 的默认值一致。
+// MaxFactCheckTextLength is the character limit of the verdict text, matching the client's
+// default factcheck_length_limit.
 const MaxFactCheckTextLength = 1024
 
-// ValidateFactCheck 校验一份事实核查标签是否可以落库。
-// 空文本表示删除，不允许作为保存动作。
+// ValidateFactCheck checks whether a fact-check tag can be persisted.
+// An empty text means deletion and is not allowed as a save action.
 func ValidateFactCheck(check FactCheck) error {
 	if strings.TrimSpace(check.Text) == "" {
 		return ErrFactCheckInvalid
@@ -94,12 +94,12 @@ func FactChecksEqual(a, b *FactCheck) bool {
 	return true
 }
 
-// EditFactCheckRequest 是写一条事实核查的业务请求。
+// EditFactCheckRequest is the business request to write one fact check.
 type EditFactCheckRequest struct {
 	UserID    int64
 	ChannelID int64
 	MessageID int
-	// Text 为空表示删除事实核查。
+	// An empty Text means delete the fact check.
 	Text      string
 	Entities  []MessageEntity
 	NeedCheck bool
@@ -107,7 +107,7 @@ type EditFactCheckRequest struct {
 	Date      int
 }
 
-// EditFactCheckResult 返回写完之后的消息快照与标签。
+// EditFactCheckResult returns the message snapshot and tag after the write.
 type EditFactCheckResult struct {
 	Channel    Channel
 	Message    ChannelMessage
@@ -116,7 +116,7 @@ type EditFactCheckResult struct {
 	Recipients []int64
 }
 
-// FactCheckList 是 messages.getFactCheck 的返回集合，顺序与请求一致。
+// FactCheckList is the result set of messages.getFactCheck, in request order.
 type FactCheckList struct {
 	FactChecks []FactCheck
 }

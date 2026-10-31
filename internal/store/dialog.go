@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// DialogStore 持久化用户会话摘要。
+// DialogStore persists per-user dialog summaries.
 type DialogStore interface {
 	ListByUser(ctx context.Context, userID int64, filter domain.DialogFilter) (domain.DialogList, error)
 	ListByPeers(ctx context.Context, userID int64, peers []domain.Peer) (domain.DialogList, error)
@@ -21,11 +21,11 @@ type DialogStore interface {
 	ListDraftsByPeers(ctx context.Context, userID int64, peers []domain.Peer) ([]domain.DialogDraft, error)
 	ClearDrafts(ctx context.Context, userID int64, limit int) ([]domain.DialogDraft, error)
 	MarkRead(ctx context.Context, userID int64, peer domain.Peer, maxID int) (domain.ReadHistoryResult, error)
-	// SetPinned 置顶/取消置顶一条会话；order 在会话当前 folder 内分配，
-	// 返回 (changed, 该会话所在 folder_id)。
+	// SetPinned pins/unpins a dialog; order is assigned within the dialog's current
+	// folder, returning (changed, the folder_id the dialog belongs to).
 	SetPinned(ctx context.Context, userID int64, peer domain.Peer, pinned bool) (bool, int, error)
-	// ReorderPinned 重排指定 folder（0 主列表/1 归档）内的置顶顺序；
-	// force 只清除该 folder 内不在 order 中的置顶。
+	// ReorderPinned reorders pins within the given folder (0 main list/1 archived);
+	// force only clears pins in that folder that are not in order.
 	ReorderPinned(ctx context.Context, userID int64, folderID int, order []domain.Peer, force bool) (bool, error)
 	SetUnreadMark(ctx context.Context, userID int64, peer domain.Peer, unread bool) (bool, error)
 	ListUnreadMarked(ctx context.Context, userID int64) ([]domain.Peer, error)
@@ -43,12 +43,13 @@ type DialogStore interface {
 	ReorderFolders(ctx context.Context, userID int64, order []int) error
 	SetFolderTagsEnabled(ctx context.Context, userID int64, enabled bool) error
 	EditPeerFolders(ctx context.Context, userID int64, peers []domain.FolderPeerUpdate) error
-	// CountArchiveUnread 统计归档（folder_id=1）中有未读（含手动标记）的
-	// 会话数与未读消息总数，供主列表 dialogFolder 条目聚合。
+	// CountArchiveUnread counts dialogs with unread (including manually marked) and the
+	// total unread message count in the archive (folder_id=1), for main-list dialogFolder
+	// entry aggregation.
 	CountArchiveUnread(ctx context.Context, userID int64) (peers int, messages int, err error)
-	// SetArchivePinned 设置 archive folder 行本身的置顶状态
-	// （toggleDialogPin(inputDialogPeerFolder)），返回是否发生变化。
+	// SetArchivePinned sets the pin state of the archive folder row itself
+	// (toggleDialogPin(inputDialogPeerFolder)) and returns whether it changed.
 	SetArchivePinned(ctx context.Context, userID int64, pinned bool) (bool, error)
-	// ArchivePinned 返回 archive folder 行置顶状态；从未设置过时官方默认 true。
+	// ArchivePinned returns the archive folder row pin state; the official default is true when never set.
 	ArchivePinned(ctx context.Context, userID int64) (bool, error)
 }

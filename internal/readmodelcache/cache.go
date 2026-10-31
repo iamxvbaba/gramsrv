@@ -1,19 +1,27 @@
-// Package readmodelcache provides telesrv 统一的进程内 read-model 缓存原语。
+// Package readmodelcache provides telesrv's unified in-process read-model cache primitive.
 //
-// 它是 ~21 个手搓 read-model 缓存(map + mutex + TTL + 整表 flush + 偶尔 singleflight +
-// 偶尔 epoch)收敛后的唯一实现。它**不是**通用响应缓存:Telegram 响应对 viewer 敏感,
-// 可缓存单元仍是 docs/read-model-architecture.md 定义的 per-viewer 事实/投影。本类型只是
-// 机制——键、TTL、版本 token 仍是各缓存自己的策略。
+// It is the single implementation that ~21 hand-rolled read-model caches
+// (map + mutex + TTL + whole-table flush + occasional singleflight + occasional
+// epoch) converged to. It is **not** a general-purpose response cache: Telegram
+// responses are viewer-sensitive, and the cacheable unit remains the per-viewer
+// fact/projection defined in docs/read-model-architecture.md. This type is just
+// the mechanism -- keys, TTL and version tokens remain each cache's own policy.
 //
-// 它替每个使用方免费保证(正是 2026-06-17 缓存审计发现的整类 bug):
-//   - 有界:LRU 单条驱逐,绝不整表 flush(避免 thundering-herd 重载悬崖);
-//   - 一致:跨越一次失效的 load 不会把陈旧值写回(epoch 守卫)——曾钉死版本脊与
-//     ChannelMemberCache 的 lost-update;
-//   - 去重:同键并发 miss 收敛为一次 load(singleflight);
-//   - 可选版本闸门:仅当 storedHash == currentHash 时复用缓存项。
+// For every user it guarantees for free (exactly the class of bugs the
+// 2026-06-17 cache audit found):
+//   - bounded: LRU evicts single entries, never flushes the whole table
+//     (avoiding a thundering-herd reload cliff);
+//   - consistent: a load that spans an invalidation will not write a stale
+//     value back (epoch guard) -- this once nailed down the version ridge and
+//     ChannelMemberCache lost-updates;
+//   - deduplicated: concurrent misses on the same key converge into one load
+//     (singleflight);
+//   - optional version gate: reuse a cache entry only when storedHash == currentHash.
 //
-// epoch 刻意是**进程内**的:它只关掉进程内 load-vs-invalidate 竞态。跨实例新鲜度由
-// NOTIFY 监听器(以及尚未落地的 durable 失效层)负责,本原语不改变跨进程契约。
+// The epoch is deliberately **in-process**: it only closes in-process
+// load-vs-invalidate races. Cross-instance freshness is the responsibility of
+// the NOTIFY listener (and a durable invalidation layer that has not landed
+// yet); this primitive does not change the cross-process contract.
 package readmodelcache
 
 import (
@@ -27,29 +35,38 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Config 配置一个 Cache 实例。MaxEntries 是强制的:不允许构造无界缓存。
+// Config configures a Cache instance. MaxEntries is mandatory: unbounded caches
+// cannot be constructed.
 type Config[K comparable, V any] struct {
-	// MaxEntries 是 LRU 上界。<=0 时 New 返回 nil(等价"禁用缓存",沿用各处
-	// New*Cache(max<=0)->nil 的惯例;所有方法对 nil 安全,退化为直接 load)。
+	// MaxEntries is the LRU upper bound. When <=0, New returns nil (equivalent to
+	// "caching disabled", following the New*Cache(max<=0)->nil convention used
+	// everywhere; all methods are nil-safe and degrade to a direct load).
 	MaxEntries int
-	// MaxWeight 是可选的第二容量边界。>0 时每个值由 Weight 计算权重，缓存同时
-	// 满足 MaxEntries 与 MaxWeight；单项超过上限时本次仍可返回但不驻留。
+	// MaxWeight is an optional second capacity bound. When >0 each value's weight
+	// is computed by Weight, and the cache satisfies both MaxEntries and MaxWeight;
+	// a single item over the limit is still returned this time but is not retained.
 	MaxWeight int64
-	// Weight 计算一个缓存值的相对占用；仅 MaxWeight>0 时使用。nil 时每项权重为 1。
+	// Weight computes the relative footprint of a cached value; used only when
+	// MaxWeight>0. When nil each item has weight 1.
 	Weight func(V) int64
-	// TTL 仅作安全兜底(漏掉的带外写)。0 = 纯事件驱动,无时间过期。
+	// TTL is only a safety fallback (out-of-band writes that were missed).
+	// 0 = purely event-driven, no time-based expiry.
 	TTL time.Duration
-	// Clone 在 store 与返回两个边界上对值做深拷贝,隔离调用方与缓存项的别名突变。
-	// nil = 值本身 copy-safe(标量/扁平结构),不拷贝。
+	// Clone deep-copies the value at both the store and return boundaries,
+	// isolating the caller from aliasing mutations of the cache entry.
+	// nil = the value is itself copy-safe (scalar/flat struct) and is not copied.
 	Clone func(V) V
-	// KeyString 生成 singleflight 键;nil 时默认 fmt.Sprint(K)。仅当 K 的 fmt 表示
-	// 有歧义(可能两个不同键打印相同)时才需要自定义。
+	// KeyString produces the singleflight key; when nil it defaults to
+	// fmt.Sprint(K). A custom one is needed only when K's fmt representation is
+	// ambiguous (two different keys may print the same).
 	KeyString func(K) string
-	// Now 注入时钟,仅用于 TTL 过期判断;nil 时默认 time.Now。生产一律留空,
-	// 测试可注入假时钟以确定地推进 TTL。
+	// Now injects a clock, used only for TTL expiry checks; when nil it defaults to
+	// time.Now. Production always leaves it empty; tests may inject a fake clock to
+	// advance TTL deterministically.
 	Now func() time.Time
-	// OnStore/OnRemove 供依赖倒排索引同步生命周期。回调在缓存锁内执行，
-	// 不得回调本 Cache 或阻塞；收到的 value 是缓存持有的 immutable clone。
+	// OnStore/OnRemove let dependent inverted indexes stay in sync over the
+	// lifecycle. The callbacks run under the cache lock, so they must not call back
+	// into this Cache or block; the value received is the immutable clone the cache holds.
 	OnStore  func(K, V)
 	OnRemove func(K, V)
 }
@@ -58,15 +75,16 @@ type lruEntry[K comparable, V any] struct {
 	key      K
 	value    V
 	hash     int64
-	expireAt time.Time // 零值 = 不过期
+	expireAt time.Time // zero value = no expiry
 	weight   int64
 }
 
-// Cache 是泛型 read-model 缓存。零值不可用,必须经 New 构造。nil *Cache 合法:
-// 所有方法对 nil 安全,GetOrLoad 退化为直接调用 load。
+// Cache is the generic read-model cache. The zero value is unusable and it must
+// be constructed via New. A nil *Cache is legal: all methods are nil-safe and
+// GetOrLoad degrades to calling load directly.
 type Cache[K comparable, V any] struct {
 	mu        sync.Mutex
-	ll        *list.List // LRU 顺序,Front=最近使用
+	ll        *list.List // LRU order, Front = most recently used
 	items     map[K]*list.Element
 	cap       int
 	maxWeight int64
@@ -104,7 +122,8 @@ type batchFlight[V any] struct {
 	retry bool
 }
 
-// New 构造一个 Cache。MaxEntries<=0 时返回 nil(禁用缓存,沿用既有惯例)。
+// New constructs a Cache. When MaxEntries<=0 it returns nil (caching disabled,
+// following the existing convention).
 func New[K comparable, V any](cfg Config[K, V]) *Cache[K, V] {
 	if cfg.MaxEntries <= 0 {
 		return nil
@@ -145,16 +164,19 @@ type loadResult[V any] struct {
 	stored bool
 }
 
-// GetOrLoad 命中即返回,否则经 singleflight 调 load。load 受 epoch 守卫:
-// 在 load 前快照 epoch,若 load 期间发生过任何 Invalidate/Flush,则**拒绝**把这次
-// load 的结果写回缓存,并重查/重载以取最新值(避免 lost-update 把陈旧值钉进缓存)。
+// GetOrLoad returns on a hit, otherwise calls load through singleflight. The
+// load is epoch-guarded: the epoch is snapshotted before the load, and if any
+// Invalidate/Flush happened during the load, writing this load's result back to
+// the cache is **refused**, and the cache is re-checked/reloaded to get the
+// latest value (avoiding a lost-update pinning a stale value into the cache).
 func (c *Cache[K, V]) GetOrLoad(ctx context.Context, key K, load func() (V, error)) (V, error) {
 	return c.getOrLoad(ctx, key, 0, false, load)
 }
 
-// GetOrLoadVersioned 在 GetOrLoad 基础上加版本闸门:仅当缓存项的 storedHash ==
-// currentHash 时复用,否则重载。currentHash==0 表示"版本未知/绕过版本闸门"
-// (与既有 snap.hash==currentHash 检查的语义一致)。
+// GetOrLoadVersioned adds a version gate on top of GetOrLoad: it reuses a cache
+// entry only when storedHash == currentHash, otherwise it reloads.
+// currentHash==0 means "version unknown / bypass the version gate" (matching the
+// semantics of the existing snap.hash==currentHash check).
 func (c *Cache[K, V]) GetOrLoadVersioned(ctx context.Context, key K, currentHash int64, load func() (V, error)) (V, error) {
 	return c.getOrLoad(ctx, key, currentHash, true, load)
 }
@@ -168,7 +190,7 @@ func (c *Cache[K, V]) getOrLoad(ctx context.Context, key K, currentHash int64, v
 			return v, nil
 		}
 		res, err, _ := c.sf.Do(c.singleflightKey(key, currentHash, versioned), func() (any, error) {
-			// 进入 singleflight 后再查一次:可能有并发者刚写入。
+			// Look up once more after entering singleflight: a concurrent caller may have just written.
 			if v, ok := c.lookup(key, currentHash, versioned); ok {
 				return loadResult[V]{value: v, stored: true}, nil
 			}
@@ -188,8 +210,10 @@ func (c *Cache[K, V]) getOrLoad(ctx context.Context, key K, currentHash int64, v
 		if result.stored {
 			return result.value, nil
 		}
-		// store 被 epoch 守卫拒绝(load 期间发生过失效):本次 load 的值可能已陈旧。
-		// 重查缓存——若有更新值(warm/后续 load)直接用,否则重新 load 取 DB 最新态。
+		// The store was refused by the epoch guard (an invalidation happened during
+		// the load): this load's value may be stale. Re-check the cache -- use a
+		// newer value (warm/subsequent load) if present, otherwise reload to get the
+		// DB's latest state.
 		if err := ctx.Err(); err != nil {
 			var zero V
 			return zero, err
@@ -207,8 +231,9 @@ func (c *Cache[K, V]) lookup(key K, currentHash int64, versioned bool) (V, bool)
 	}
 	ent := el.Value.(*lruEntry[K, V])
 	if c.expired(ent) {
-		// 被动 TTL 过期:纯 per-key 删除,**不**自增 epoch——否则会误杀此刻在飞的
-		// 不相关 load(epoch 是全局的),造成 thrash。
+		// Passive TTL expiry: a pure per-key delete that does **not** bump the
+		// epoch -- doing so would wrongly kill an unrelated in-flight load (the
+		// epoch is global), causing thrash.
 		c.removeElement(el)
 		return zero, false
 	}
@@ -219,7 +244,8 @@ func (c *Cache[K, V]) lookup(key K, currentHash int64, versioned bool) (V, bool)
 	return c.cloneValue(ent.value), true
 }
 
-// storeIfEpoch 仅在 epoch 未变(load 期间无失效)时写入,返回是否写入。
+// storeIfEpoch writes only when the epoch is unchanged (no invalidation during
+// the load), returning whether it wrote.
 func (c *Cache[K, V]) storeIfEpoch(key K, v V, hash int64, loadEpoch uint64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -265,8 +291,9 @@ func (c *Cache[K, V]) storeLocked(key K, v V, hash int64) {
 	c.evictOverflow()
 }
 
-// Store 把一个已在手的值写入缓存(warm-from-list 路径)。不自增 epoch:它不是失效,
-// 不应取消其它在飞 load。
+// Store writes an already-in-hand value into the cache (warm-from-list path). It
+// does not bump the epoch: it is not an invalidation and should not cancel other
+// in-flight loads.
 func (c *Cache[K, V]) Store(key K, v V) {
 	if c == nil {
 		return
@@ -276,8 +303,10 @@ func (c *Cache[K, V]) Store(key K, v V) {
 	c.mu.Unlock()
 }
 
-// LoadEpoch 在「外部构建值再写回」模式下,于构建前快照 epoch;之后用 StoreIfEpoch 写回。
-// 适用于值在缓存之外构建(需要 ctx、多次往返)、无法套进 GetOrLoad 的调用方(如 RPC 投影)。
+// LoadEpoch, in "build the value externally then write it back" mode, snapshots
+// the epoch before building; the value is then written back with StoreIfEpoch.
+// It is for callers whose value is built outside the cache (needs a ctx, multiple
+// round trips) and cannot fit into GetOrLoad (such as RPC projections).
 func (c *Cache[K, V]) LoadEpoch() uint64 {
 	if c == nil {
 		return 0
@@ -285,8 +314,9 @@ func (c *Cache[K, V]) LoadEpoch() uint64 {
 	return c.cacheEpoch()
 }
 
-// StoreIfEpoch 仅在 epoch 自 loadEpoch 以来未变(构建期间没有失效)时写回外部构建的值。
-// 与 LoadEpoch 配对,把 GetOrLoad 内建的 epoch 守卫开放给外部构建路径。
+// StoreIfEpoch writes an externally built value back only when the epoch has not
+// changed since loadEpoch (no invalidation during the build). Paired with
+// LoadEpoch, it opens GetOrLoad's built-in epoch guard to the external-build path.
 func (c *Cache[K, V]) StoreIfEpoch(key K, v V, loadEpoch uint64) {
 	if c == nil {
 		return
@@ -294,7 +324,8 @@ func (c *Cache[K, V]) StoreIfEpoch(key K, v V, loadEpoch uint64) {
 	c.storeIfEpoch(key, v, 0, loadEpoch)
 }
 
-// StoreVersioned 同 Store,但带版本 hash(供版本闸门缓存的 warm 路径使用)。
+// StoreVersioned is like Store but carries a version hash (for the warm path of
+// version-gated caches).
 func (c *Cache[K, V]) StoreVersioned(key K, hash int64, v V) {
 	if c == nil {
 		return
@@ -304,18 +335,26 @@ func (c *Cache[K, V]) StoreVersioned(key K, hash int64, v V) {
 	c.mu.Unlock()
 }
 
-// GetOrLoadBatch 一趟解析多个键:per-key 命中(TTL + 可选版本闸门)→ 把所有 miss 一次性
-// 批量 load → per-key epoch 守卫写回。服务那些「按键查缓存、把 miss 合批打一次后端」的缓存
-// (dialog-peer / privacy / photo / bot profile),避免单键 GetOrLoad 把一次批量 DB 退化成 N 次。
+// GetOrLoadBatch resolves several keys in one pass: per-key hits (TTL + optional
+// version gate) -> all misses loaded in a single batch -> per-key epoch-guarded
+// writes. It serves caches that "look up by key and batch all misses into one
+// backend call" (dialog-peer / privacy / photo / bot profile), avoiding a
+// single-key GetOrLoad degenerating one batch DB call into N calls.
 //
-//   - versionOf(key) 返回 (hash, cacheable):cacheable=false 表示该键绕过缓存(永远重载、不写回,
-//     如 dialog-peer 中 version 缺失的 peer);hash!=0 启用版本闸门(仅当 stored hash 匹配才复用);
-//     hash==0 且 cacheable 表示纯 TTL 缓存(无版本,如 photo/privacy/bot)。
-//   - loadMissing 必须为它收到的**每个** key 返回一个值(含「查过但不存在」的负缓存哨兵),
-//     这样负结果也会被缓存,杜绝无结果键反复打后端。
+//   - versionOf(key) returns (hash, cacheable): cacheable=false means the key
+//     bypasses the cache (always reloaded, never written back, such as a peer
+//     with a missing version in dialog-peer); hash!=0 enables the version gate
+//     (reuse only when the stored hash matches); hash==0 with cacheable means a
+//     pure TTL cache (no version, such as photo/privacy/bot).
+//   - loadMissing must return a value for **every** key it receives (including a
+//     negative-cache sentinel for "looked up but does not exist"), so negative
+//     results are cached too and keys with no result do not repeatedly hit the
+//     backend.
 //
-// 若一次失效在批量 load 期间到达(epoch 变更),整趟重试,确保 pre-invalidation 的批量数据
-// 不会遮蔽这次失效(比各缓存原先「静默拒绝写回但仍返回旧批数据」更强;ctx 取消兜底防自旋)。
+// If an invalidation arrives during the batch load (epoch change), the whole pass
+// is retried, ensuring pre-invalidation batch data does not mask the invalidation
+// (stronger than the caches' previous "silently refuse the write but still return
+// the old batch data"; ctx cancellation is the fallback against spinning).
 func (c *Cache[K, V]) GetOrLoadBatch(
 	ctx context.Context,
 	keys []K,
@@ -331,9 +370,11 @@ func (c *Cache[K, V]) GetOrLoadBatch(
 	for {
 		out := make(map[K]V, len(keys))
 		loadEpoch := c.cacheEpoch()
-		// 在查阶段就把每个 miss 的 (hash, cacheable) 快照下来,写回时复用同一份——绝不在写回
-		// 时重算 versionOf:否则一个版本在查与写之间变更的 key,会把按旧 hash 加载的值以新 hash
-		// 戳入缓存,随后被当作新版数据命中(stale-as-fresh,旁路版本闸门)。
+		// Snapshot each miss's (hash, cacheable) at lookup time and reuse the same
+		// copy on write-back -- never recompute versionOf on write-back: otherwise a
+		// key whose version changes between lookup and write would stamp a value
+		// loaded under the old hash into the cache with the new hash, and it would
+		// then be hit as fresh data (stale-as-fresh, bypassing the version gate).
 		missing := make([]batchMiss[K], 0, len(keys))
 		seen := make(map[K]struct{}, len(keys))
 		for _, key := range keys {
@@ -398,8 +439,9 @@ func (c *Cache[K, V]) GetOrLoadBatch(
 			}
 		}
 		if retry {
-			// 失效在任一 owner 的批量 load 期间到达:所有参与者重查，
-			// 不让 pre-invalidation 的共享 flight 值越过 epoch 边界。
+			// An invalidation arrived during any owner's batch load: all
+			// participants re-check, so the pre-invalidation shared flight value
+			// does not cross the epoch boundary.
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
@@ -498,8 +540,9 @@ func dedupeKeys[K comparable](keys []K) []K {
 	return out
 }
 
-// Peek 直接读,不触发 load、不算 LRU touch(warm/测试路径)。过期项报 miss 但不删除
-// (保持 Peek 无副作用)。
+// Peek reads directly without triggering a load and without an LRU touch
+// (warm/test path). An expired entry reports a miss but is not deleted (keeping
+// Peek side-effect free).
 func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	var zero V
 	if c == nil {
@@ -518,7 +561,8 @@ func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	return c.cloneValue(ent.value), true
 }
 
-// Invalidate 删除指定键并自增 epoch(关掉任何此刻在飞 load 的写回)。
+// Invalidate deletes the given keys and bumps the epoch (closing off the
+// write-back of any in-flight load).
 func (c *Cache[K, V]) Invalidate(keys ...K) {
 	if c == nil || len(keys) == 0 {
 		return
@@ -533,8 +577,9 @@ func (c *Cache[K, V]) Invalidate(keys ...K) {
 	c.mu.Unlock()
 }
 
-// InvalidateWhere 删除所有满足 pred 的键并自增 epoch(viewer/channel 维度扇出失效,
-// 取代各缓存手写的 deleteChannel/InvalidateViewer 遍历)。
+// InvalidateWhere deletes all keys satisfying pred and bumps the epoch
+// (viewer/channel-dimension fan-out invalidation, replacing the hand-written
+// deleteChannel/InvalidateViewer loops in each cache).
 func (c *Cache[K, V]) InvalidateWhere(pred func(K) bool) {
 	if c == nil || pred == nil {
 		return
@@ -569,7 +614,8 @@ func (c *Cache[K, V]) InvalidateWhereValue(pred func(K, V) bool) {
 	c.mu.Unlock()
 }
 
-// Flush 清空缓存并自增 epoch(监听器断线重连兜底)。
+// Flush empties the cache and bumps the epoch (fallback for the listener
+// reconnecting after a disconnect).
 func (c *Cache[K, V]) Flush() {
 	if c == nil {
 		return
@@ -588,7 +634,7 @@ func (c *Cache[K, V]) Flush() {
 	c.mu.Unlock()
 }
 
-// Len 返回当前缓存项数(测试/指标用)。
+// Len returns the current number of cache entries (for tests/metrics).
 func (c *Cache[K, V]) Len() int {
 	if c == nil {
 		return 0

@@ -10,21 +10,23 @@ import (
 	"time"
 )
 
-// Star gift（payments.sendStarsForm + inputInvoiceStarGift）领域模型。目录和不可变版本
-// 持久化在 star_gift_catalog(_revisions)；peer 收到的礼物实例落 peer_star_gifts。
-// 与 Stars 账本配合：发礼 Debit、转换回 Stars 时 Credit。
+// Star gift (payments.sendStarsForm + inputInvoiceStarGift) domain model. The catalog and
+// immutable revisions persist in star_gift_catalog(_revisions); gift instances received by
+// a peer land in peer_star_gifts. Works with the Stars ledger: sending a gift debits,
+// converting back to Stars credits.
 
-// StarGift 是一个可购买礼物目录项。RevisionID 标识不可变的标题/价格/动画快照。
+// StarGift is a purchasable gift catalog entry. RevisionID identifies the immutable
+// title/price/animation snapshot.
 type StarGift struct {
 	ID            int64
 	RevisionID    int64
-	Stars         int64    // 购买价（Stars）
-	ConvertStars  int64    // 收礼人可转换回的 Stars
-	UpgradeStars  int64    // 升级为唯一礼物所需 Stars；0 表示当前不可升级
-	UpgradeTotal  int      // 当前已发布属性池允许发行的唯一礼物总量
-	UpgradeIssued int      // 当前已发行数量
-	Title         string   // 可选标题
-	Sticker       Document // 礼物贴纸快照（tg 投影必须是带 sticker 属性的有效 Document，否则客户端丢弃）
+	Stars         int64    // purchase price (Stars)
+	ConvertStars  int64    // Stars the recipient can convert back
+	UpgradeStars  int64    // Stars required to upgrade to a unique gift; 0 means not currently upgradable
+	UpgradeTotal  int      // total unique gifts the currently published attribute pool may issue
+	UpgradeIssued int      // number currently issued
+	Title         string   // optional title
+	Sticker       Document // gift sticker snapshot (the tg projection must be a valid Document with a sticker attribute, or clients drop it)
 
 	// Layer 228 regular-gift shape. Static release facts live in the immutable
 	// catalog revision; AvailabilityRemains/AvailabilityResale are the current
@@ -63,37 +65,37 @@ type StarGiftBackground struct {
 	TextColor   int
 }
 
-// SavedStarGift 是一条已收到的礼物实例（peer_star_gifts 一行）。
+// SavedStarGift is one received gift instance (a peer_star_gifts row).
 type SavedStarGift struct {
 	ID                       int64
-	Owner                    Peer  // 收礼 peer（user/channel）
-	FromUserID               int64 // 送礼人（匿名也保留真实值供账本，下发时按 NameHidden 决定是否暴露）
+	Owner                    Peer  // recipient peer (user/channel)
+	FromUserID               int64 // sender (the real value is kept for the ledger even when anonymous; dispatch decides visibility by NameHidden)
 	GiftID                   int64 // → StarGift.ID
-	RevisionID               int64 // → star_gift_catalog_revisions.id，历史查询必须按此版本投影
-	MsgID                    int   // 用户礼物的私聊 msg_id；频道礼物不进历史，固定为 0
-	SavedID                  int64 // 频道礼物 inputSavedStarGiftChat.saved_id；用户礼物为 0
-	Date                     int   // 收到时刻 Unix 秒
-	NameHidden               bool  // 送礼人请求隐藏姓名
-	Unsaved                  bool  // 未展示在个人资料（saveStarGift 切换）
-	Converted                bool  // 已转换回 Stars（终态，从列表排除）
+	RevisionID               int64 // → star_gift_catalog_revisions.id; historical queries must project by this revision
+	MsgID                    int   // private-chat msg_id for user gifts; channel gifts do not enter history and are fixed at 0
+	SavedID                  int64 // inputSavedStarGiftChat.saved_id for channel gifts; 0 for user gifts
+	Date                     int   // receive time, Unix seconds
+	NameHidden               bool  // sender requested the name be hidden
+	Unsaved                  bool  // not shown on the profile (toggled by saveStarGift)
+	Converted                bool  // converted back to Stars (terminal; excluded from lists)
 	LifecycleStatus          StarGiftLifecycleStatus
-	ConvertStars             int64  // 转换可退回的 Stars
-	PrepaidUpgradeStars      int64  // 送礼人随礼物预付的唯一礼物升级额
-	PrepaidUpgradeHash       string // 第三方单独代付升级的一次性 entitlement
+	ConvertStars             int64  // Stars refundable by conversion
+	PrepaidUpgradeStars      int64  // unique-gift upgrade amount the sender prepaid with the gift
+	PrepaidUpgradeHash       string // one-time entitlement for a third party paying for an upgrade separately
 	GiftNum                  int    // auction-acquired release number for regular gifts
-	PaidStars                int64  // 实际成交价（拍卖中标价）；0 表示按目录 revision 价投影
-	Message                  string // 附言（可选）
+	PaidStars                int64  // actual transaction price (auction winning bid); 0 means project at the catalog revision price
+	Message                  string // attached message (optional)
 	MessageEntities          []MessageEntity
-	UniqueGiftID             int64 // 非 0 表示已升级为唯一礼物；与 Converted 互斥
+	UniqueGiftID             int64 // non-zero means upgraded to a unique gift; mutually exclusive with Converted
 	TransferStars            int64
 	CanExportAt              int
 	CanTransferAt            int
 	CanResellAt              int
 	DropOriginalDetailsStars int64
 	CanCraftAt               int
-	UpgradeMsgID             int   // 当前 owner 侧承载 messageActionStarGiftUnique 的消息 id；所有权转移时随新消息更新
-	PinnedOrder              int   // >0 表示资料页置顶顺序
-	CollectionIDs            []int // 当前所属集合；按集合顺序稳定返回
+	UpgradeMsgID             int   // id of the current owner-side message carrying messageActionStarGiftUnique; updated with the new message on ownership transfer
+	PinnedOrder              int   // >0 means profile pin order
+	CollectionIDs            []int // collections it currently belongs to; returned stably in collection order
 	Unique                   *UniqueStarGift
 }
 
@@ -104,8 +106,9 @@ const (
 	StarGiftLifecycleConverted StarGiftLifecycleStatus = "converted"
 	StarGiftLifecycleBurned    StarGiftLifecycleStatus = "burned"
 	StarGiftLifecycleExported  StarGiftLifecycleStatus = "exported"
-	// StarGiftLifecycleDeleted 是 payments.deleteStarGift 的终态：礼物离开资料页，
-	// 但历史行仍然保留（升级命令、报价、转账记录都引用它，不能硬删）。
+	// StarGiftLifecycleDeleted is the terminal state of payments.deleteStarGift: the gift
+	// leaves the profile page, but the history row is retained (upgrade commands, offers
+	// and transfer records all reference it, so it cannot be hard-deleted).
 	StarGiftLifecycleDeleted StarGiftLifecycleStatus = "deleted"
 )
 
@@ -113,7 +116,7 @@ func (s StarGiftLifecycleStatus) Live() bool {
 	return s == StarGiftLifecycleActive
 }
 
-// StarGiftCollectibleAttributeKind 是唯一礼物三个必选属性槽位。
+// StarGiftCollectibleAttributeKind is the three required attribute slots of a unique gift.
 type StarGiftCollectibleAttributeKind string
 
 const (
@@ -145,9 +148,11 @@ func (k StarGiftAttributeRarityKind) Valid() bool {
 	}
 }
 
-// StarGiftCollectibleAttribute 是已发布属性池的一项。RarityKind/RarityPermille
-// 是客户端展示事实；普通升级把非 crafted 的 permille 值当相对权重，不要求合计为 1000。
-// 每类仍必须提供至少两个客户端可区分的普通升级属性，否则 TDesktop 的升级滚动无法结束。
+// StarGiftCollectibleAttribute is one entry of the published attribute pool. RarityKind/
+// RarityPermille are client-visible facts; a regular upgrade treats non-crafted permille
+// values as relative weights and does not require them to sum to 1000. Each kind must still
+// provide at least two client-distinguishable regular upgrade attributes, or TDesktop's
+// upgrade spinning cannot finish.
 type StarGiftCollectibleAttribute struct {
 	ID                    int64
 	CollectibleRevisionID int64
@@ -168,7 +173,7 @@ type StarGiftCollectibleAttribute struct {
 	Blob                  *FileBlob
 }
 
-// StarGiftCollectibleRevision 是某普通礼物的一份不可变、可发布属性池。
+// StarGiftCollectibleRevision is an immutable, publishable attribute pool for one regular gift.
 type StarGiftCollectibleRevision struct {
 	ID                   int64
 	GiftID               int64
@@ -188,7 +193,7 @@ type StarGiftCollectibleRevision struct {
 	SourceManifestSHA256 []byte
 }
 
-// StarGiftCollectibleWrite 是后台创建/发布属性池的协议无关输入。
+// StarGiftCollectibleWrite is the protocol-agnostic input for creating/publishing an attribute pool from the backend.
 type StarGiftCollectibleWrite struct {
 	GiftID               int64
 	UpgradeStars         int64
@@ -203,7 +208,7 @@ type StarGiftCollectibleWrite struct {
 	SourceManifestSHA256 []byte
 }
 
-// UniqueStarGift 是一份已经发行的唯一礼物。属性、编号与 slug 一经创建永久不变。
+// UniqueStarGift is one already-issued unique gift. Its attributes, number and slug are permanent once created.
 type UniqueStarGift struct {
 	ID                      int64
 	GiftID                  int64
@@ -373,7 +378,7 @@ func (a StarGiftAmount) Valid() bool {
 	}
 }
 
-// StarGiftUpgradePreview 是客户端升级弹窗所需的当前价格和属性样例。
+// StarGiftUpgradePreview is the current price and sample attributes needed by the client's upgrade dialog.
 type StarGiftUpgradePreview struct {
 	GiftID       int64
 	Revision     int
@@ -829,16 +834,17 @@ type StarGiftWithdrawalRequest struct {
 	Date   int
 }
 
-// StarGiftDeleteRequest 是 payments.deleteStarGift 的输入：调用者要删掉自己
-// 收到的那份普通礼物。已升级的藏品、限量/拍卖礼物以及仍带 Stars 的礼物不可删除。
+// StarGiftDeleteRequest is the input of payments.deleteStarGift: the caller wants to delete
+// the regular gift they received. Upgraded collectibles, limited/auction gifts and gifts
+// that still carry Stars cannot be deleted.
 type StarGiftDeleteRequest struct {
 	UserID int64
 	Ref    SavedStarGiftRef
 	Date   int
 }
 
-// StarGiftDeleteResult 报告删除结果。已升级成藏品（NFT）的礼物不可删除，
-// 所以 UniqueGiftID 恒为 0。
+// StarGiftDeleteResult reports the deletion result. A gift upgraded to a collectible (NFT)
+// cannot be deleted, so UniqueGiftID is always 0.
 type StarGiftDeleteResult struct {
 	SavedGiftID  int64
 	UniqueGiftID int64
@@ -929,19 +935,19 @@ type ChannelRevenueWithdrawal struct {
 	UserBalanceAfter     int64
 }
 
-// StarGiftCollection 是 peer 资料页中的礼物集合；一份礼物可属于多个集合。
+// StarGiftCollection is a gift collection on a peer's profile; a gift may belong to several collections.
 type StarGiftCollection struct {
 	Owner        Peer
 	CollectionID int
 	Title        string
-	GiftIDs      []int64 // peer_star_gifts.id，按集合内顺序
+	GiftIDs      []int64 // peer_star_gifts.id, in collection order
 	Hash         int64
 	SortOrder    int
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
-// StarGiftCollectionPatch 描述 updateStarGiftCollection 的局部更新。
+// StarGiftCollectionPatch describes a partial update of updateStarGiftCollection.
 type StarGiftCollectionPatch struct {
 	Title     *string
 	DeleteIDs []int64
@@ -949,7 +955,7 @@ type StarGiftCollectionPatch struct {
 	Order     []int64
 }
 
-// StarGiftAnimationFormat 是后台导入源格式。服务端最终总是存储规范化 TGS。
+// StarGiftAnimationFormat is the backend import source format. The server always stores normalized TGS.
 type StarGiftAnimationFormat string
 
 const (
@@ -957,7 +963,7 @@ const (
 	StarGiftAnimationLottie StarGiftAnimationFormat = "lottie"
 )
 
-// StarGiftAnimation 是已规范化并验证的动画。JSON 用于后台播放，TGS 用于客户端。
+// StarGiftAnimation is a normalized and validated animation. JSON is used for backend playback, TGS for clients.
 type StarGiftAnimation struct {
 	SourceName   string
 	SourceFormat StarGiftAnimationFormat
@@ -971,9 +977,9 @@ type StarGiftAnimation struct {
 	OutPoint     float64
 }
 
-// StarGiftCatalogWrite 是 store 原子创建目录版本所需的协议无关数据。
+// StarGiftCatalogWrite is the protocol-agnostic data the store needs to atomically create a catalog revision.
 type StarGiftCatalogWrite struct {
-	GiftID               int64 // 0 创建新礼物；非 0 为该礼物创建新 revision
+	GiftID               int64 // 0 creates a new gift; non-zero creates a new revision for that gift
 	Title                string
 	Stars                int64
 	ConvertStars         int64
@@ -1131,7 +1137,7 @@ type StarGiftCatalogBundleResult struct {
 	Collectible *StarGiftCollectibleRevision
 }
 
-// StarGiftCatalogEntry 是管理后台目录视图。
+// StarGiftCatalogEntry is the admin backend catalog view.
 type StarGiftCatalogEntry struct {
 	Gift          StarGift
 	Enabled       bool
@@ -1149,9 +1155,11 @@ type StarGiftCatalogEntry struct {
 	UpdatedAt     time.Time
 }
 
-// SavedStarGiftRef 是 payments.getSavedStarGift/saveStarGift/convertStarGift 的协议中立引用。
-// 用户礼物使用 inputSavedStarGiftUser.msg_id；频道礼物使用 inputSavedStarGiftChat.peer + saved_id；
-// 已升级的唯一礼物也可使用官方 inputSavedStarGiftSlug.slug。三种身份必须互斥。
+// SavedStarGiftRef is the protocol-neutral reference for
+// payments.getSavedStarGift/saveStarGift/convertStarGift. User gifts use
+// inputSavedStarGiftUser.msg_id; channel gifts use inputSavedStarGiftChat.peer + saved_id;
+// an upgraded unique gift may also use the official inputSavedStarGiftSlug.slug. The three
+// identities must be mutually exclusive.
 type SavedStarGiftRef struct {
 	Owner   Peer
 	MsgID   int
@@ -1173,11 +1181,11 @@ func (r SavedStarGiftRef) Valid() bool {
 	}
 }
 
-// SavedStarGiftPage 是一页已收到礼物 + keyset 分页游标。
+// SavedStarGiftPage is one page of received gifts plus a keyset pagination cursor.
 type SavedStarGiftPage struct {
 	Gifts      []SavedStarGift
-	NextOffset string // 空 = 无更多页（末页必须省略，客户端据此停止翻页）
-	Count      int    // 总数（未转换、按 excludeUnsaved 过滤后）
+	NextOffset string // empty = no more pages (must be omitted on the last page; clients stop paging on it)
+	Count      int    // total (unconverted, after excludeUnsaved filtering)
 }
 
 // SavedStarGiftListCursor is the composite keyset cursor for the profile gift
@@ -1202,35 +1210,38 @@ type SavedStarGiftFilter struct {
 	ExcludeUnique       bool
 	ExcludeUpgradable   bool
 	ExcludeUnupgradable bool
-	// ExcludeHosted 对应 exclude_hosted：只保留 peer 自己拥有/收到的礼物，
-	// 排除 host 在资料上的链上收藏品。
+	// ExcludeHosted corresponds to exclude_hosted: keep only gifts a peer owns/received
+	// itself, excluding collectibles hosted on-chain on the profile by a host.
 	ExcludeHosted bool
-	// SortByValue 对应 sort_by_value：按价格而不是接收时间排序。
+	// SortByValue corresponds to sort_by_value: sort by price rather than receive time.
 	SortByValue bool
-	// PeerColorAvailable 对应 peer_color_available：只返回调色板可用作
-	// 收藏品消息调色板的收藏品。
+	// PeerColorAvailable corresponds to peer_color_available: return only collectibles
+	// whose palette can be used as the collectible-message palette.
 	PeerColorAvailable bool
 	CollectionID       int
 	Offset             string
 	Limit              int
 }
 
-// Star gift 边界常量。
+// Star gift boundary constants.
 const (
-	// MaxSavedStarGiftsLimit 是 getSavedStarGifts 单页上限。
+	// MaxSavedStarGiftsLimit is the per-page cap of getSavedStarGifts.
 	MaxSavedStarGiftsLimit = 100
-	// MaxStarGiftMessageRunes 限制附言长度（对齐 stargifts_message_length_max 量级）。
+	// MaxStarGiftMessageRunes bounds the attached-message length (aligned with the
+	// stargifts_message_length_max magnitude).
 	MaxStarGiftMessageRunes = 255
-	// MaxStarGiftsOffsetBytes 是 keyset 游标字符串长度上限。
+	// MaxStarGiftsOffsetBytes is the maximum length of a keyset cursor string.
 	MaxStarGiftsOffsetBytes = 64
-	// MaxStarGiftTGSBytes 限制后台导入的压缩动画，避免管理面上传成为容量旁路。
+	// MaxStarGiftTGSBytes bounds compressed animations imported from the backend, so an
+	// admin-panel upload cannot become a capacity bypass.
 	MaxStarGiftTGSBytes int64 = 512 << 10
-	// MaxStarGiftLottieBytes 限制解压后的 Lottie JSON。
+	// MaxStarGiftLottieBytes bounds the decompressed Lottie JSON.
 	MaxStarGiftLottieBytes int64 = 4 << 20
-	// MaxStarGiftAnimationFrameRate / Seconds 限制管理后台播放器和客户端动画时间轴。
+	// MaxStarGiftAnimationFrameRate / Seconds bound the admin backend player and the
+	// client animation timeline.
 	MaxStarGiftAnimationFrameRate = 120
 	MaxStarGiftAnimationSeconds   = 30
-	// MaxStarGiftCatalogSize 是当前普通礼物目录的有界上限。
+	// MaxStarGiftCatalogSize is the bounded cap of the current regular gift catalog.
 	MaxStarGiftCatalogSize                  = 500
 	MaxStarGiftTitleRunes                   = 128
 	MaxStarGiftSlugBytes                    = 255
@@ -1248,13 +1259,14 @@ const (
 	MinStarGiftResaleStars int64 = 125
 )
 
-// Star gift 哨兵错误（rpc 层 errors.Is 映射为 tgerr）。
+// Star gift sentinel errors (the rpc layer maps them to tgerr via errors.Is).
 var (
-	// ErrStarGiftInvalid 表示礼物 id 不在目录里。
+	// ErrStarGiftInvalid means the gift id is not in the catalog.
 	ErrStarGiftInvalid = errors.New("stargift: invalid gift id")
-	// ErrStarGiftNotFound 表示找不到该已收到礼物实例。
+	// ErrStarGiftNotFound means the received gift instance could not be found.
 	ErrStarGiftNotFound = errors.New("stargift: saved gift not found")
-	// ErrStarGiftAlreadyConverted 表示礼物已转换回 Stars（不可重复转换）。
+	// ErrStarGiftAlreadyConverted means the gift was already converted back to Stars
+	// (it cannot be converted again).
 	ErrStarGiftAlreadyConverted       = errors.New("stargift: already converted")
 	ErrStarGiftFileInvalid            = errors.New("stargift: invalid animation file")
 	ErrStarGiftCatalogFull            = errors.New("stargift: catalog full")
@@ -1269,19 +1281,21 @@ var (
 	ErrStarGiftOwnerInvalid           = errors.New("stargift: owner invalid")
 	ErrStarGiftTransferUnavailable    = errors.New("stargift: transfer unavailable")
 	ErrStarGiftResaleUnavailable      = errors.New("stargift: resale unavailable")
-	// ErrStarGiftDeleteUnavailable 表示这份礼物当前不可删除：已转换、已导出、
-	// 已升级成藏品、限量或拍卖礼物、仍带转换价或预付升级 Stars、已被删除。
+	// ErrStarGiftDeleteUnavailable means this gift cannot currently be deleted: converted,
+	// exported, upgraded to a collectible, limited or auction gift, still carrying a
+	// conversion price or prepaid upgrade Stars, or already deleted.
 	ErrStarGiftDeleteUnavailable = errors.New("stargift: delete unavailable")
 	ErrStarGiftOfferInvalid      = errors.New("stargift: offer invalid")
 	ErrStarGiftOfferExpired      = errors.New("stargift: offer expired")
-	// ErrStarGiftRecipientUnavailable 表示收礼人对其它用户呈 deleted 墓碑
-	// （冻结账号），礼物不能再被送出。
+	// ErrStarGiftRecipientUnavailable means the recipient appears as a deleted tombstone
+	// to other users (a frozen account), so the gift can no longer be sent.
 	ErrStarGiftRecipientUnavailable  = errors.New("stargift: recipient account unavailable")
 	ErrStarGiftCraftUnavailable      = errors.New("stargift: craft unavailable")
 	ErrStarGiftAuctionUnavailable    = errors.New("stargift: auction unavailable")
 	ErrStarGiftWithdrawalUnavailable = errors.New("stargift: withdrawal provider unavailable")
-	// ErrStarGiftExportCooldown 表示 can_export_at 尚未到期：服务端时钟未到
-	// 可导出时刻，客户端无法用任何输入提前触发 withdrawal。
+	// ErrStarGiftExportCooldown means can_export_at has not yet elapsed: the server clock
+	// has not reached the exportable moment, and no client input can trigger the
+	// withdrawal early.
 	ErrStarGiftExportCooldown              = errors.New("stargift: export cooldown active")
 	ErrChannelRevenueWithdrawalInvalid     = errors.New("channel revenue: withdrawal invalid")
 	ErrChannelRevenueWithdrawalExpired     = errors.New("channel revenue: withdrawal expired")
@@ -1413,8 +1427,9 @@ func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind 
 			if attribute.RarityPermille < 0 || attribute.RarityPermille > 1000 || attribute.Crafted {
 				return ErrStarGiftCollectibleInvalid
 			}
-			// permille 0 是合法权重：属性仍在池中（需要保留以渲染已有藏品），
-			// 但永远不会被随机抽到，因此不计入可抽取数量。
+			// permille 0 is a legal weight: the attribute stays in the pool (it must be
+			// retained to render existing collectibles) but is never drawn at random, so
+			// it does not count toward the selectable total.
 			if attribute.RarityPermille > 0 {
 				selectable++
 			}
@@ -1487,7 +1502,7 @@ func validStarGiftCollectibleDocument(document Document, kind StarGiftCollectibl
 	return false
 }
 
-// StarGiftCatalogHash 由客户端可见目录字段折叠出稳定 hash，供 getStarGifts NotModified。
+// StarGiftCatalogHash folds the client-visible catalog fields into a stable hash for getStarGifts NotModified.
 func StarGiftCatalogHash(catalog []StarGift) int {
 	var h uint64
 	for _, g := range catalog {
@@ -1507,7 +1522,7 @@ func StarGiftCatalogHash(catalog []StarGift) int {
 	return int(h & 0x7fffffff)
 }
 
-// StarGiftCollectionsHash 按服务端返回顺序折叠每个集合自己的稳定 hash。
+// StarGiftCollectionsHash folds each collection's own stable hash in the server's return order.
 func StarGiftCollectionsHash(collections []StarGiftCollection) int64 {
 	var h uint64
 	for _, collection := range collections {
@@ -1568,8 +1583,8 @@ func DecodeSavedStarGiftListCursor(s string) (SavedStarGiftListCursor, bool) {
 	return SavedStarGiftListCursor{PinnedOrder: int(order), Date: int(date), ID: id}, true
 }
 
-// EncodeSavedStarGiftPriceCursor 编码 sort_by_value 排序的 keyset 游标
-// （价格降序、同价按实例 id 降序）。价格允许为 0，因此只校验 id。
+// EncodeSavedStarGiftPriceCursor encodes the keyset cursor for sort_by_value ordering
+// (price descending, ties by instance id descending). Price may be 0, so only id is validated.
 func EncodeSavedStarGiftPriceCursor(price, id int64) string {
 	if id <= 0 {
 		return ""
@@ -1578,7 +1593,7 @@ func EncodeSavedStarGiftPriceCursor(price, id int64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-// DecodeSavedStarGiftPriceCursor 反解价格游标；无法解析（含过期的 v1 游标）返回 ok=false。
+// DecodeSavedStarGiftPriceCursor decodes a price cursor; returns ok=false when it cannot be parsed (including stale v1 cursors).
 func DecodeSavedStarGiftPriceCursor(s string) (price int64, id int64, ok bool) {
 	if s == "" {
 		return 0, 0, false
@@ -1608,7 +1623,7 @@ func EncodeStarGiftCursor(id int64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(id, 10)))
 }
 
-// DecodeStarGiftCursor 反解游标；无法解析（含空串）返回 ok=false（调用方从首页开始）。
+// DecodeStarGiftCursor decodes a cursor; returns ok=false when it cannot be parsed (including the empty string), and the caller starts from the first page.
 func DecodeStarGiftCursor(s string) (int64, bool) {
 	if s == "" {
 		return 0, false

@@ -11,19 +11,24 @@ import (
 	"telesrv/internal/domain"
 )
 
-// preCheckoutTimeout 是客户端挂起等待应答的窗口。与 preCheckoutTimeoutSeconds 是同一
-// 个 10 秒要求，写成 time.Duration 只为直接交给 time.NewTimer。
+// preCheckoutTimeout is the window during which the client suspends waiting for
+// an answer. It is the same 10 second requirement as preCheckoutTimeoutSeconds,
+// written as a time.Duration only to hand directly to time.NewTimer.
 //
-// 超时即视为 bot 没有批准这笔支付，付款失败，绝不降级为直接扣款——那正是 pre-checkout
-// 要防的事。
+// A timeout means the bot did not approve this payment, the payment fails, and it
+// is never downgraded to a direct charge - which is exactly what pre-checkout is
+// meant to prevent.
 const preCheckoutTimeout = preCheckoutTimeoutSeconds * time.Second
 
-// preCheckoutRegistry 持有一次挂起的 pre-checkout 询问及其应答通道。
+// preCheckoutRegistry holds one pending pre-checkout query and its answer channel.
 //
-// 与 callbackRegistry 的差别在于时效：callback 允许 25s 且超时只影响按钮动画，
-// 而 pre-checkout 是付款前的闸门，窗口固定 10s，超时必须让付款失败。因此这里不
-// 共享 store —— 询问的生命周期只有一次 RPC 调用，跨节点共享它反而会引入一个
-// "等待者已超时、答案迟到"的写入路径。注册表只活在进程内，随 RPC 一起生死。
+// The difference from callbackRegistry is the timing: a callback allows 25s and a
+// timeout only affects the button animation, whereas pre-checkout is a gate before
+// payment, the window is a fixed 10s, and a timeout must fail the payment. So this
+// does not share a store - the query's lifetime is a single RPC call, and sharing
+// it across nodes would instead introduce a write path for "the waiter already
+// timed out, the answer arrives late". The registry lives only in-process and its
+// lifetime is bound to the RPC.
 type preCheckoutRegistry struct {
 	mu      chan struct{}
 	pending map[int64]*pendingPreCheckout
@@ -40,8 +45,9 @@ func newPreCheckoutRegistry() *preCheckoutRegistry {
 	return &preCheckoutRegistry{mu: make(chan struct{}, 1), pending: make(map[int64]*pendingPreCheckout)}
 }
 
-// register 登记一次挂起的询问，返回 query_id 与接收通道。调用方必须 defer
-// deregister，无论是否等到应答，否则表和 goroutine 都会泄漏。
+// register records one pending query and returns the query_id and the receive
+// channel. The caller must defer deregister, whether or not an answer arrives,
+// otherwise both the table and a goroutine leak.
 func (p *preCheckoutRegistry) register(botUserID, userID int64) (int64, *pendingPreCheckout) {
 	entry := &pendingPreCheckout{
 		answer:    make(chan domain.BotPreCheckoutAnswer, 1),
@@ -69,7 +75,8 @@ func (p *preCheckoutRegistry) deregister(queryID int64) {
 	<-p.mu
 }
 
-// resolve 只接受属主 bot 的应答：其它 bot 拿到 query_id 也无法代答付款闸门。
+// resolve only accepts the owning bot's answer: another bot that obtains the
+// query_id still cannot answer for the payment gate.
 func (p *preCheckoutRegistry) resolve(callerBotID, queryID int64, ans domain.BotPreCheckoutAnswer) bool {
 	p.mu <- struct{}{}
 	entry, ok := p.pending[queryID]
@@ -82,8 +89,9 @@ func (p *preCheckoutRegistry) resolve(callerBotID, queryID int64, ans domain.Bot
 	if !ok {
 		return false
 	}
-	// answer 带 1 容量缓冲且非阻塞投递：等待方若已超时离开，缓冲随 entry 回收，
-	// resolve 不会卡在发送上。
+	// answer has a capacity-1 buffer and is delivered non-blockingly: if the waiter
+	// has already timed out and left, the buffer is reclaimed with the entry and
+	// resolve will not block on the send.
 	select {
 	case entry.answer <- ans:
 	default:
@@ -92,7 +100,8 @@ func (p *preCheckoutRegistry) resolve(callerBotID, queryID int64, ans domain.Bot
 	return true
 }
 
-// pendingSnapshot 返回当前挂起询问的 query_id，供测试断言"有没有被问过"。
+// pendingSnapshot returns the query_ids of the currently pending queries, so a
+// test can assert whether a question was asked.
 func (p *preCheckoutRegistry) pendingSnapshot() []int64 {
 	p.mu <- struct{}{}
 	defer func() { <-p.mu }()
@@ -109,11 +118,13 @@ func (p *preCheckoutRegistry) size() int {
 	return len(p.pending)
 }
 
-// await 阻塞到 bot 应答、10s 超时，或调用方 ctx 取消。三者中先到者胜出；超时与
-// 取消都会先 deregister，保证不会有迟到的应答投递到已离开的等待者。
+// await blocks until the bot answers, the 10s timeout fires, or the caller's ctx is
+// cancelled. Whichever comes first wins; both timeout and cancellation deregister
+// first, guaranteeing that no late answer is delivered to a waiter that has left.
 //
-// 返回的 answered 为 false 时，调用方必须让付款失败——把"没有批准"降级成"直接
-// 扣款"正是 pre-checkout 要防的事。
+// When the returned answered is false, the caller must fail the payment - degrading
+// "not approved" into "direct charge" is exactly what pre-checkout is meant to
+// prevent.
 func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *pendingPreCheckout) (domain.BotPreCheckoutAnswer, bool) {
 	timer := time.NewTimer(preCheckoutTimeout)
 	defer timer.Stop()
@@ -125,7 +136,8 @@ func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *p
 	case <-timer.C:
 		return domain.BotPreCheckoutAnswer{}, false
 	case <-entry.done:
-		// resolve 已经投递过答案，答案就在缓冲里；这里只是被 close 唤醒。
+		// resolve already delivered the answer and it is in the buffer; this was
+		// just woken by the close.
 		select {
 		case ans := <-entry.answer:
 			return ans, true
@@ -137,9 +149,11 @@ func (p *preCheckoutRegistry) await(ctx context.Context, queryID int64, entry *p
 	}
 }
 
-// awaitBotPreCheckout 走完整链路：投递 update（Bot API 队列 + MTProto push），然后挂起
-// 最多 10 秒等应答。Bot 不应答即视为拒绝——这正是 Telegram 的约定：10 秒内不答 = 这笔
-// 支付不成立，所以超时绝不能降级成直接扣款。
+// awaitBotPreCheckout runs the full path: deliver the update (Bot API queue +
+// MTProto push), then suspend for up to 10 seconds waiting for an answer. A bot
+// that does not answer is taken as a refusal - this is Telegram's contract: no
+// answer within 10 seconds means the payment does not stand, so a timeout must
+// never degrade into a direct charge.
 func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {
 	query := domain.BotPreCheckoutQuery{
 		BotUserID: botUserID, UserID: payerUserID,
@@ -197,7 +211,7 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 
 	reply, answered := r.preCheckouts.await(ctx, queryID, entry)
 	if !answered {
-		// 超时即失败：没有批准就没有付款。
+		// A timeout is a failure: no approval, no payment.
 		return preCheckoutFailedErr()
 	}
 	if reply.OK {
@@ -206,32 +220,38 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 	return preCheckoutDeclinedErr(reply.Error)
 }
 
-// serviceBotPreCheckout 让内置 service bot 同步回答 pre-checkout。它们没有 MTProto
-// 会话也没有 Bot API 消费者，若走"投递 update + 挂起 10 秒"必然每次都超时付款。
+// serviceBotPreCheckout lets a built-in service bot answer pre-checkout
+// synchronously. They have no MTProto session and no Bot API consumer, so going
+// through "deliver the update + suspend 10 seconds" would inevitably time out and
+// fail the payment every time.
 //
-// 它是可选能力（type-assert）而非 ServiceBotCallbacks 的成员：绝大多数内置 bot 都不卖
-// 东西，强迫它们实现一个用不到的方法没有意义。
+// It is an optional capability (a type assertion) rather than a member of
+// ServiceBotCallbacks: the vast majority of built-in bots sell nothing, and forcing
+// them to implement a method they do not use is pointless.
 type serviceBotPreCheckout interface {
 	ServiceBotCallbacks
 	OnPreCheckoutQuery(ctx context.Context, query domain.BotPreCheckoutQuery) (domain.BotPreCheckoutAnswer, bool, error)
 }
 
-// botInvoicePreCheckoutResponder 让内置 service bot 同步回答 pre-checkout，
-// 免得它们在没有 MTProto 会话的情况下必然超时。
+// botInvoicePreCheckoutResponder lets a built-in service bot answer pre-checkout
+// synchronously, sparing it the inevitable timeout when it has no MTProto session.
 type botInvoicePreCheckoutResponder interface {
 	HandlesBot(botUserID int64) bool
 	OnPreCheckoutQuery(ctx context.Context, query domain.BotPreCheckoutQuery) (domain.BotPreCheckoutAnswer, bool, error)
 }
 
-// runPreCheckout 在扣款前向 bot 询问并等待应答。Bot 不应答即视为拒绝，这正是
-// Telegram 的约定：10 秒内不答 = 这笔支付不成立。
+// runPreCheckout asks the bot before charging and waits for an answer. A bot that
+// does not answer is taken as a refusal, which is Telegram's contract: no answer
+// within 10 seconds means the payment does not stand.
 //
 
-// runPreCheckout 在扣款前向 bot 询问并等待应答。
+// runPreCheckout asks the bot before charging and waits for an answer.
 //
-// 内置 service bot 没有 MTProto 会话也没有 Bot API 消费者，走"投递 update + 挂起"
-// 必然超时，因此先尝试同步应答器（与 callback 的处理一致，见 bots_callback.go）。
-// 外部 bot 一律走真实链路：投递 update，然后最多挂起 10 秒。
+// A built-in service bot has no MTProto session and no Bot API consumer, so
+// "deliver the update + suspend" inevitably times out; therefore try the
+// synchronous responder first (consistent with callback handling, see
+// bots_callback.go). External bots always take the real path: deliver the update,
+// then suspend for up to 10 seconds.
 func (r *Router) runPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {
 	if responder, ok := r.deps.ServiceBotCallbacks.(serviceBotPreCheckout); ok &&
 		r.deps.ServiceBotCallbacks.HandlesBot(botUserID) {

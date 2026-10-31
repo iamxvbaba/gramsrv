@@ -101,8 +101,10 @@ func exactTestRPCResult(result bin.Encoder) bin.Encoder {
 	return &opaqueExactTestRPCResult{result: result}
 }
 
-// startTestServer 生成 RSA key、监听随机端口并启动 Server，返回监听地址与公钥。
-// 通过 t.Cleanup 自动取消并校验优雅退出。opts 的 RSAKey/Logger/DC 会被补默认。
+// startTestServer generates an RSA key, listens on a random port and starts a
+// Server, returning the listen address and public key. It automatically cancels
+// via t.Cleanup and checks graceful shutdown. opts's RSAKey/Logger/DC are filled
+// in with defaults.
 func startTestServer(t *testing.T, opts Options) (addr string, pub exchange.PublicKey, srv *Server) {
 	t.Helper()
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -141,8 +143,10 @@ func startTestServer(t *testing.T, opts Options) (addr string, pub exchange.Publ
 	return ln.Addr().String(), exchange.PublicKey{RSA: &rsaKey.PublicKey}, srv
 }
 
-// dialHandshake 建立 TCP 连接、完成 intermediate 协商与 MTProto 密钥交换，
-// 返回连接、握手结果与 client 端 cipher。连接通过 t.Cleanup 自动关闭。
+// dialHandshake establishes a TCP connection, completes the intermediate
+// negotiation and the MTProto key exchange, and returns the connection, the
+// handshake result and the client-side cipher. The connection is closed
+// automatically via t.Cleanup.
 func dialHandshake(t *testing.T, addr string, dc int, pub exchange.PublicKey) (transport.Conn, exchange.ClientExchangeResult, crypto.Cipher) {
 	t.Helper()
 	conn := dialTransportOnly(t, addr)
@@ -196,13 +200,13 @@ func freezeActiveTestSessionProfile(t *testing.T, sessions *SessionManager, auth
 	}
 }
 
-// sendEncrypted 用 client cipher 加密并发送一条带 msgID 的消息。
+// sendEncrypted encrypts with the client cipher and sends a message with msgID.
 func sendEncrypted(t *testing.T, conn transport.Conn, cipher crypto.Cipher, auth exchange.ClientExchangeResult, msgID int64, msg bin.Encoder) {
 	t.Helper()
 	sendEncryptedWithSalt(t, conn, cipher, auth, auth.ServerSalt, msgID, msg)
 }
 
-// sendEncryptedWithSalt 用指定 salt 加密并发送一条消息。
+// sendEncryptedWithSalt encrypts with the given salt and sends a message.
 func sendEncryptedWithSalt(t *testing.T, conn transport.Conn, cipher crypto.Cipher, auth exchange.ClientExchangeResult, salt, msgID int64, msg bin.Encoder) {
 	t.Helper()
 	body, seqNo := encodeClientMessageForTest(t, msg)
@@ -278,9 +282,10 @@ func clientContainerSeqNoForTest(container *proto.MessageContainer) int32 {
 	return maxSeq
 }
 
-// collectReplies 读取并解密 server 回发的消息，按 TypeID 收集明文 buffer，
-// 直到见到 wantID（含）或达到上限。用于断言一次请求触发的多条响应
-// （new_session_created / 业务响应 / msgs_ack）。
+// collectReplies reads and decrypts messages the server sends back, collecting
+// plaintext buffers by TypeID, until wantID is seen (inclusive) or the cap is
+// reached. Used to assert the multiple responses triggered by one request
+// (new_session_created / business response / msgs_ack).
 func collectReplies(t *testing.T, conn transport.Conn, cipher crypto.Cipher, key crypto.AuthKey, wantID uint32) map[uint32]*bin.Buffer {
 	t.Helper()
 	got := make(map[uint32]*bin.Buffer)
@@ -385,7 +390,7 @@ func readServerMessageContext(t *testing.T, ctx context.Context, conn transport.
 	return data, id, &bin.Buffer{Buf: plain}
 }
 
-// mustHave 断言 replies 含指定 TypeID 的消息并返回其 buffer。
+// mustHave asserts replies contains a message of the given TypeID and returns its buffer.
 func mustHave(t *testing.T, replies map[uint32]*bin.Buffer, id uint32, name string) *bin.Buffer {
 	t.Helper()
 	b, ok := replies[id]

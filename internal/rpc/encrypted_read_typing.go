@@ -10,12 +10,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 私聊密聊已读回执与 typing（P1）。已读/ typing 都是定向投给【对端绑定设备】的 update。
-// P1：在线推送（已读 durable 离线补偿见后续 encrypted_state_events）。typing 是 transient。
-// 设计见 docs/secret-chat-module.md §8。
+// Private secret chat read receipts and typing (P1). Both read and typing are
+// updates targeted at the [peer's bound device]. P1: online push (durable offline
+// compensation for read lives in the later encrypted_state_events). typing is
+// transient. Design: see docs/secret-chat-module.md §8.
 
-// resolveSecretChatPeer 校验调用方是 normal 密聊的绑定设备且 access_hash 匹配，返回密聊、
-// 对端 user、对端绑定设备 auth_key。失败返回 CHAT_ID_INVALID。
+// resolveSecretChatPeer verifies the caller is the bound device of a normal secret
+// chat and the access_hash matches, returning the secret chat, the peer user, and
+// the peer's bound-device auth_key. Returns CHAT_ID_INVALID on failure.
 func (r *Router) resolveSecretChatPeer(ctx context.Context, userID int64, peer tg.InputEncryptedChat) (domain.SecretChat, int64, int64, error) {
 	chat, ok, err := r.deps.SecretChats.GetSecretChat(ctx, peer.ChatID)
 	if err != nil {
@@ -29,7 +31,7 @@ func (r *Router) resolveSecretChatPeer(ctx context.Context, userID int64, peer t
 	return chat, chat.PeerOf(userID), chat.PeerAuthKeyOf(userID), nil
 }
 
-// pushEncryptedPeerUpdate 把 update 定向投给对端绑定设备（transient=true 走 best-effort）。
+// pushEncryptedPeerUpdate targets the update at the peer's bound device (transient=true goes best-effort).
 func (r *Router) pushEncryptedPeerUpdate(ctx context.Context, peerUserID, peerAuthKeyID int64, update tg.UpdateClass, transient bool, logMessage string) {
 	if peerUserID == 0 || peerAuthKeyID == 0 {
 		return
@@ -76,11 +78,11 @@ func (r *Router) onMessagesReadEncryptedHistory(ctx context.Context, req *tg.Mes
 		return false, err
 	}
 	now := int(r.clock.Now().Unix())
-	// durable（设备定向）供离线对端 getDifference 补回已读回执。
+	// durable (device-targeted) so the offline peer can recover the read receipt via getDifference.
 	if err := r.deps.SecretChats.RecordReadEvent(ctx, chat.ID, peerUserID, peerAuthKeyID, req.MaxDate, now); err != nil {
 		r.log.Debug("record read state event", zap.Error(err))
 	}
-	// 仅投对端绑定设备（发起方靠本地置 read_outbox）。
+	// Only push to the peer's bound device (the initiator relies on a local read_outbox).
 	r.pushEncryptedPeerUpdate(ctx, peerUserID, peerAuthKeyID, &tg.UpdateEncryptedMessagesRead{
 		ChatID:  chat.ID,
 		MaxDate: req.MaxDate,
@@ -104,7 +106,7 @@ func (r *Router) onMessagesSetEncryptedTyping(ctx context.Context, req *tg.Messa
 	if err != nil {
 		return false, err
 	}
-	// typing 是 transient；停止 typing（Typing=false）无对应 update，自动过期。
+	// typing is transient; stopping typing (Typing=false) has no corresponding update and expires automatically.
 	if req.Typing {
 		r.pushEncryptedPeerUpdate(ctx, peerUserID, peerAuthKeyID, &tg.UpdateEncryptedChatTyping{
 			ChatID: chat.ID,

@@ -1,5 +1,6 @@
--- 恢复「权重必须 >= 1」的旧约束。若库里已经导入过 permille=0 的官方属性，本迁移会
--- 因 CHECK 失败而中止：先删除这些属性（或把它们改回可抽取的权重）再回滚。
+-- Restores the old "weight must be >= 1" constraint. If official attributes with permille=0 have
+-- already been imported, this migration aborts on the CHECK failure: delete those attributes
+-- (or set them back to an extractable weight) before rolling back.
 ALTER TABLE public.star_gift_collectible_models
     DROP CONSTRAINT star_gift_collectible_model_rarity_check,
     ADD CONSTRAINT star_gift_collectible_model_rarity_check CHECK (
@@ -20,7 +21,7 @@ ALTER TABLE public.star_gift_collectible_backdrops
         rarity_kind = 'permille' AND rarity_permille BETWEEN 1 AND 1000
     );
 
--- 恢复 0219 的激活触发器：0 权重属性重新计入预览池。
+-- Restores the 0219 activation trigger: 0-weight attributes count toward the preview pool again.
 CREATE OR REPLACE FUNCTION public.telesrv_validate_collectible_preview_activation() RETURNS trigger
     LANGUAGE plpgsql AS $$
 DECLARE

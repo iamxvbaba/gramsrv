@@ -6,8 +6,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// AIComposeStore 持久化用户自定义 AI tone 与每用户已保存列表。
-// 默认 tone 是代码目录配置，不进 store；memory 与 postgres 行为必须一致。
+// AIComposeStore persists user-defined AI tones and each user's saved list.
+// The default tone is code-directory configuration and does not go through the
+// store; memory and postgres must behave identically.
 type AIComposeStore interface {
 	CreateAIComposeTone(ctx context.Context, tone domain.AIComposeTone) error
 	UpdateAIComposeTone(ctx context.Context, tone domain.AIComposeTone) error

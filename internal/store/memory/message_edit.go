@@ -34,8 +34,9 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {
 		return res, domain.ErrMessageAuthorRequired
 	}
-	// WebPageResolve：服务端内部链接预览就地替换。幂等——仅当目标当前 media 仍是匹配 id 的
-	// pending 占位才替换；只换 media、不碰 body/entities/edit_date，事件为 web_page。
+	// WebPageResolve: server-internal in-place link-preview replacement. Idempotent — it
+	// replaces only when the target's current media is still the pending placeholder with the
+	// matching id; it swaps media only, leaves body/entities/edit_date untouched, and emits a web_page event.
 	if req.WebPageResolve {
 		if req.Media == nil || !domain.IsPendingWebPageMedia(target.Media, req.ExpectedWebPageID) {
 			return res, domain.ErrMessageNotModified
@@ -79,7 +80,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 					msg.Media = &media
 				}
 				if req.SetReplyMarkup {
-					// 替换 markup（nil/空 = 清空键盘）；双盒一致。
+					// Replace markup (nil/empty = clear the keyboard); both boxes stay consistent.
 					msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)
 				}
 				if req.SetRichMessage {

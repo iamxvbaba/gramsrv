@@ -1,10 +1,13 @@
-// Package livestream 实现频道 RTMP 直播的媒体面：RTMP ingest（OBS 推流）→
-// ffmpeg 转码按秒切段 → tgcalls broadcast part 内存 ring → 观众经
-// upload.getFile(inputGroupCallStream) 拉流。信令面（groupCall/participants）
-// 仍归 app/groupcalls；本包只认 stream key ↔ channelID 绑定。
+// Package livestream implements the media plane for channel RTMP live streaming:
+// RTMP ingest (OBS pushes) → ffmpeg transcodes and splits into one-second segments →
+// an in-memory ring of tgcalls broadcast parts → viewers pull via
+// upload.getFile(inputGroupCallStream). The signaling plane (groupCall/participants)
+// still belongs to app/groupcalls; this package only knows the stream key ↔ channelID
+// binding.
 //
-// 定位：dev 主路径（单实例、内存 ring、无 CDN/多码率），
-// 生产级转码集群与分发留后续任务（见 docs/voip-module.md 直播小节）。
+// Positioning: dev main path (single instance, in-memory ring, no CDN/multi-bitrate);
+// production-grade transcode clusters and distribution are left for follow-up tasks
+// (see the live-stream section of docs/voip-module.md).
 package livestream
 
 import (
@@ -25,35 +28,35 @@ import (
 
 var errPublishRejected = errors.New("livestream: publish rejected")
 
-// KeyResolver 校验 RTMP 推流密钥并返回其绑定的 channelID（app/groupcalls 实现）。
+// KeyResolver validates the RTMP stream key and returns the channelID it is bound to (implemented by app/groupcalls).
 type KeyResolver interface {
 	VerifyRtmpStreamKey(ctx context.Context, key string) (channelID int64, ok bool, err error)
 }
 
-// Config 是直播媒体面配置。
+// Config is the live-stream media plane configuration.
 type Config struct {
-	// ListenAddr 是 RTMP ingest 监听地址（如 ":2400"）。
+	// ListenAddr is the RTMP ingest listen address (e.g. ":2400").
 	ListenAddr string
-	// FFmpegPath 是 ffmpeg 可执行文件路径（默认 "ffmpeg"，走 PATH）。
+	// FFmpegPath is the ffmpeg executable path (default "ffmpeg", resolved via PATH).
 	FFmpegPath string
-	// WorkDir 是切段临时目录（默认系统临时目录）。
+	// WorkDir is the segmenting temp directory (defaults to the system temp directory).
 	WorkDir string
-	// SegmentKeep 是每路流内存保留的 segment 数（秒），默认 32。
+	// SegmentKeep is the number of segments (seconds) kept in memory per stream, default 32.
 	SegmentKeep int
 }
 
-// Service 管理全部活跃推流会话，并向 rpc 层提供拉流查询。
+// Service manages all active publish sessions and provides pull queries to the rpc layer.
 type Service struct {
 	cfg  Config
 	keys KeyResolver
 	log  *zap.Logger
 
 	mu       sync.Mutex
-	streams  map[int64]*stream // channelID → 活跃流
+	streams  map[int64]*stream // channelID → active stream
 	listener net.Listener
 }
 
-// NewService 创建直播服务（不监听；Start 启动 ingest）。
+// NewService creates the live-stream service (does not listen; Start begins ingest).
 func NewService(cfg Config, keys KeyResolver, log *zap.Logger) *Service {
 	if cfg.FFmpegPath == "" {
 		cfg.FFmpegPath = "ffmpeg"
@@ -67,7 +70,7 @@ func NewService(cfg Config, keys KeyResolver, log *zap.Logger) *Service {
 	return &Service{cfg: cfg, keys: keys, log: log, streams: make(map[int64]*stream)}
 }
 
-// Start 启动 RTMP ingest 监听。
+// Start begins the RTMP ingest listener.
 func (s *Service) Start() error {
 	ln, err := net.Listen("tcp", s.cfg.ListenAddr)
 	if err != nil {
@@ -95,7 +98,7 @@ func (s *Service) Start() error {
 	return nil
 }
 
-// Close 停止监听并结束全部推流。
+// Close stops listening and ends all publishing.
 func (s *Service) Close() {
 	s.mu.Lock()
 	ln := s.listener
@@ -113,8 +116,9 @@ func (s *Service) Close() {
 	}
 }
 
-// startPublish 鉴权 stream key 并建立一路新流；同 channel 已有活跃流时顶掉旧流
-// （OBS 断线重连的自然语义）。
+// startPublish authenticates the stream key and establishes a new stream; when the same
+// channel already has an active stream the old one is displaced (the natural semantics of OBS
+// reconnect).
 func (s *Service) startPublish(ctx context.Context, key string, conn net.Conn) (*stream, error) {
 	channelID, ok, err := s.keys.VerifyRtmpStreamKey(ctx, key)
 	if err != nil {
@@ -140,7 +144,7 @@ func (s *Service) startPublish(ctx context.Context, key string, conn net.Conn) (
 	return st, nil
 }
 
-// endPublish 在推流连接断开时收尾（仅当它仍是当前流时移除）。
+// endPublish cleans up when the publish connection drops (removes it only if it is still the current stream).
 func (s *Service) endPublish(st *stream) {
 	s.mu.Lock()
 	if s.streams[st.channelID] == st {
@@ -151,7 +155,7 @@ func (s *Service) endPublish(st *stream) {
 	s.log.Info("live stream publish ended", zap.Int64("channel_id", st.channelID))
 }
 
-// StreamChannels 返回 channel 当前直播时间轴；无活跃推流返回空。
+// StreamChannels returns the channel's current live timeline; empty when there is no active stream.
 func (s *Service) StreamChannels(channelID int64) []domain.LiveStreamChannel {
 	s.mu.Lock()
 	st := s.streams[channelID]
@@ -162,7 +166,7 @@ func (s *Service) StreamChannels(channelID int64) []domain.LiveStreamChannel {
 	return st.channels()
 }
 
-// StreamPart 按 time_ms 取打包好的 broadcast part（仅 scale 0）。
+// StreamPart fetches the packed broadcast part for a time_ms (scale 0 only).
 func (s *Service) StreamPart(channelID int64, timeMs int64, scale int) ([]byte, error) {
 	if scale != 0 {
 		return nil, domain.ErrLiveStreamPartExpired
@@ -176,7 +180,7 @@ func (s *Service) StreamPart(channelID int64, timeMs int64, scale int) ([]byte, 
 	return st.part(timeMs)
 }
 
-// DropChannel 断开该 channel 的推流会话并清空缓冲（discard 直播 / revoke key）。
+// DropChannel disconnects the channel's publish session and clears the buffer (discard live / revoke key).
 func (s *Service) DropChannel(channelID int64) {
 	s.mu.Lock()
 	st := s.streams[channelID]

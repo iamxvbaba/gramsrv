@@ -14,7 +14,7 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// DialogStore 用 PostgreSQL 实现 store.DialogStore。
+// DialogStore implements store.DialogStore with PostgreSQL.
 type DialogStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
@@ -22,7 +22,7 @@ type DialogStore struct {
 
 const dialogListSnapshotLimit = 10000
 
-// NewDialogStore 基于 pgx 连接池（或事务）创建 DialogStore。
+// NewDialogStore creates a DialogStore backed by a pgx pool (or transaction).
 func NewDialogStore(db sqlcgen.DBTX) *DialogStore {
 	return &DialogStore{db: db, q: sqlcgen.New(db)}
 }
@@ -195,9 +195,10 @@ func (s *DialogStore) listByUser(ctx context.Context, userID int64, filter domai
 			if err != nil {
 				return domain.DialogList{}, fmt.Errorf("decode message rich message: %w", err)
 			}
-			// top message 必须带全量元数据：TDesktop 把 getDialogs 的消息
-			// 先入缓存且不被后续 difference/getHistory 覆盖，缺 reply 等
-			// 字段会让置顶/回复服务消息永久渲染成 "Deleted message"。
+			// The top message must carry the full metadata: TDesktop caches getDialogs
+			// messages first and does not overwrite them with later difference/getHistory,
+			// so a missing field such as reply makes pinned/reply service messages render
+			// permanently as "Deleted message".
 			silent, noforwards, reply, forward, err := messageMetadataFromFields(
 				row.MessageSilent,
 				row.MessageNoforwards,
@@ -538,9 +539,10 @@ func (s *DialogStore) ListByPeers(ctx context.Context, userID int64, peers []dom
 			if err != nil {
 				return domain.DialogList{}, fmt.Errorf("decode message rich message: %w", err)
 			}
-			// top message 必须带全量元数据：TDesktop 把 getDialogs 的消息
-			// 先入缓存且不被后续 difference/getHistory 覆盖，缺 reply 等
-			// 字段会让置顶/回复服务消息永久渲染成 "Deleted message"。
+			// The top message must carry the full metadata: TDesktop caches getDialogs
+			// messages first and does not overwrite them with later difference/getHistory,
+			// so a missing field such as reply makes pinned/reply service messages render
+			// permanently as "Deleted message".
 			silent, noforwards, reply, forward, err := messageMetadataFromFields(
 				row.MessageSilent,
 				row.MessageNoforwards,
@@ -1111,7 +1113,7 @@ func (s *DialogStore) ArchivePinned(ctx context.Context, userID int64) (bool, er
 	pinned, err := s.q.GetDialogArchivePinned(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// 官方默认 archive folder 行在置顶区。
+			// Officially the default archive folder row is in the pinned area.
 			return true, nil
 		}
 		return false, fmt.Errorf("get dialog archive pinned: %w", err)

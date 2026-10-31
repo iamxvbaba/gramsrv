@@ -138,7 +138,7 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 		ReplyTo:     cloneMessageReply(senderReply),
 		Forward:     cloneMessageForward(req.Forward),
 		Pts:         nextPTS(req.SenderUserID),
-		// voice/round 在发送者副本上同样保持"未听"，由对端内容已读清除。
+		// voice/round also stays "unlistened" on the sender's copy; it is cleared when the peer reads the content.
 		MediaUnread: req.Media.HasUnreadPayload() && req.SenderUserID != req.RecipientUserID,
 	}
 	if req.SenderUserID == req.RecipientUserID {
@@ -156,8 +156,8 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 		recipient.Out = false
 		recipient.ReplyTo = cloneMessageReply(recipientReply)
 		recipient.Media = cloneRequestedPeerMedia(sender.Media)
-		// recipient = sender 是值拷贝，共享 sender.ReplyMarkup 指针/Data 切片——深拷
-		// 让双盒各持独立快照（与 postgres 每盒独立 decode 对齐，I3/I2）。
+		// recipient = sender is a value copy, sharing the sender.ReplyMarkup pointer/Data
+		// slice — a deep copy gives each box its own snapshot (matching postgres decoding each box independently, I3/I2).
 		recipient.ReplyMarkup = cloneReplyMarkup(sender.ReplyMarkup)
 		recipient.RichMessage = cloneRichMessage(sender.RichMessage)
 		recipient.Pts = nextPTS(req.RecipientUserID)
@@ -334,7 +334,7 @@ func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextReques
 		return nil, nil, err
 	}
 	if req.ReplyTo.StoryID > 0 {
-		// story 回复（评论）：无源消息可查；story 作者就是会话对端，双盒同持。
+		// story reply (comment): there is no source message to look up; the story author is the conversation peer and both boxes hold the same reply.
 		reply := &domain.MessageReply{
 			StoryID: req.ReplyTo.StoryID,
 			Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID},
@@ -403,8 +403,8 @@ func (s *MessageStore) upsertMemoryDialogsLocked(sender, recipient domain.Messag
 	defer s.dialogs.mu.Unlock()
 	list := s.dialogs.m[sender.OwnerUserID]
 	list = upsertMemoryDialog(list, domain.Dialog{Peer: sender.Peer, TopMessage: sender.ID, TopMessageDate: sender.Date})
-	// 发送方向清手动未读标记（对齐 postgres UpsertOutboxDialog 与
-	// channel 发送路径：向会话发出消息即视为已知晓内容）。
+	// The sending side clears the manual unread mark (matching postgres UpsertOutboxDialog
+	// and the channel send path: sending a message into the conversation counts as having seen its content).
 	for i := range list.Dialogs {
 		if list.Dialogs[i].Peer == sender.Peer {
 			list.Dialogs[i].UnreadMark = false

@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestWebPageStoreRoundTrip 验证 web_pages 的 upsert/读回（snapshot JSONB 字节级往返）与
-// 按 url_hash 去重覆盖。需 TELESRV_TEST_POSTGRES_DSN。
+// TestWebPageStoreRoundTrip verifies web_pages upsert/read-back (byte-level JSONB snapshot round-trip)
+// and dedup overwrite by url_hash. Requires TELESRV_TEST_POSTGRES_DSN.
 func TestWebPageStoreRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -51,7 +51,7 @@ func TestWebPageStoreRoundTrip(t *testing.T) {
 		t.Fatalf("refreshedAt = %d, want 1700000000", refreshedAt)
 	}
 
-	// upsert 覆盖为 empty 态。
+	// upsert overwrites to the empty state.
 	empty := domain.MessageWebPage{State: domain.MessageWebPageStateEmpty, ID: urlHash, URL: "https://example.com/a"}
 	if err := s.PutWebPage(ctx, urlHash, empty, 1700000500); err != nil {
 		t.Fatalf("PutWebPage(empty): %v", err)

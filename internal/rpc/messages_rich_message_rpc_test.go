@@ -178,7 +178,7 @@ func TestInvalidStoredRichMessageDoesNotPanicBaseProjection(t *testing.T) {
 	}
 }
 
-// richTextBlocks 构造一组纯文本 IV 页面块，用于富文本往返断言。
+// richTextBlocks builds a set of plain-text IV page blocks for rich-text round-trip assertions.
 func richTextBlocks() []tg.PageBlockClass {
 	return richTextBlocksWith("Rich Title", "First paragraph.")
 }
@@ -355,7 +355,7 @@ func collectOrderedListNums(blocks []tg.PageBlockClass) []string {
 	return nums
 }
 
-// assertRichTextBlocks 校验投影出的 RichMessage 携带 richTextBlocks 的两个块（标题+段落）。
+// assertRichTextBlocks verifies the projected RichMessage carries the two blocks from richTextBlocks (heading + paragraph).
 func assertRichTextBlocks(t *testing.T, label string, rich tg.RichMessage) {
 	t.Helper()
 	if !rich.Rtl {
@@ -684,8 +684,9 @@ func TestRichMessageBlockFormatsEncodeDecode(t *testing.T) {
 	}
 }
 
-// TestSendMessageRichMessageTextBlocksRoundTrip 验证 Layer 227 富文本（inputRichMessage 的
-// blocks 形态）经 send → 发送方 echo / getMessages / getRichMessage 全链路原样往返。
+// TestSendMessageRichMessageTextBlocksRoundTrip verifies Layer 227 rich text (the
+// inputRichMessage blocks form) round-trips verbatim through the whole chain:
+// send -> sender echo / getMessages / getRichMessage.
 func TestSendMessageRichMessageTextBlocksRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -709,7 +710,7 @@ func TestSendMessageRichMessageTextBlocksRoundTrip(t *testing.T) {
 	}
 	assertRichTextBlocks(t, "send echo", rich)
 
-	// getMessages（发送方按 box id 拉取）也应带富文本。
+	// getMessages (the sender pulling by box id) should also carry the rich text.
 	got, err := r.onMessagesGetMessages(WithUserID(ctx, owner.ID), []tg.InputMessageClass{&tg.InputMessageID{ID: echo.ID}})
 	if err != nil {
 		t.Fatalf("get messages: %v", err)
@@ -721,7 +722,7 @@ func TestSendMessageRichMessageTextBlocksRoundTrip(t *testing.T) {
 	}
 	assertRichTextBlocks(t, "getMessages", rich)
 
-	// getRichMessage（按 peer+id 拉取完整富文本）应带富文本。
+	// getRichMessage (pulling the full rich text by peer+id) should carry the rich text.
 	gotRich, err := r.onMessagesGetRichMessage(WithUserID(ctx, owner.ID), &tg.MessagesGetRichMessageRequest{
 		Peer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
 		ID:   echo.ID,
@@ -737,8 +738,9 @@ func TestSendMessageRichMessageTextBlocksRoundTrip(t *testing.T) {
 	assertRichTextBlocks(t, "getRichMessage", rich)
 }
 
-// TestSendMessageRichOnlyHeadingTableRoundTrip 覆盖 TDesktop rich editor 的真实发送形态：
-// messages.sendMessage 带 f_rich_message（标题与表格 blocks），但 message:string 为空。
+// TestSendMessageRichOnlyHeadingTableRoundTrip covers TDesktop rich editor's real
+// send shape: messages.sendMessage with f_rich_message (heading and table blocks)
+// but an empty message:string.
 func TestSendMessageRichOnlyHeadingTableRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -909,8 +911,9 @@ func TestSaveDraftRichMessageRoundTrip(t *testing.T) {
 	assertRichTextBlocks(t, "draft", rich)
 }
 
-// TestGetRichMessageWrongPeerReturnsEmpty 验证 getRichMessage 的 peer 校验：用不匹配的 peer
-// 拉取应返回 messageEmpty（不跨会话泄漏）。
+// TestGetRichMessageWrongPeerReturnsEmpty verifies getRichMessage's peer
+// validation: pulling with a mismatched peer should return messageEmpty (no
+// cross-dialog leakage).
 func TestGetRichMessageWrongPeerReturnsEmpty(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -926,7 +929,7 @@ func TestGetRichMessageWrongPeerReturnsEmpty(t *testing.T) {
 	}
 	echo := newMessageFromUpdates(t, updates)
 
-	// 用 self peer（≠ 该消息盒的 peer=friend）拉取 → messageEmpty。
+	// Pull with the self peer (different from the message box's peer=friend) -> messageEmpty.
 	gotRich, err := r.onMessagesGetRichMessage(WithUserID(ctx, owner.ID), &tg.MessagesGetRichMessageRequest{
 		Peer: &tg.InputPeerSelf{},
 		ID:   echo.ID,
@@ -943,8 +946,9 @@ func TestGetRichMessageWrongPeerReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestSendMessageRichMessageEmbeddedPhoto 验证富文本内嵌图片：按 id 解析为媒体快照存储，
-// 投影时复用 tgPhoto 还原。
+// TestSendMessageRichMessageEmbeddedPhoto verifies an embedded image in rich
+// text: it is resolved by id and stored as a media snapshot, then restored via
+// tgPhoto during projection.
 func TestSendMessageRichMessageEmbeddedPhoto(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -1159,7 +1163,7 @@ func slicesEqual(got, want []int64) bool {
 	return true
 }
 
-// singleStoredMessage 从 messages.messages 取出唯一一条非空 *tg.Message。
+// singleStoredMessage extracts the single non-empty *tg.Message from messages.messages.
 func singleStoredMessage(t *testing.T, res tg.MessagesMessagesClass) *tg.Message {
 	t.Helper()
 	box, ok := res.(*tg.MessagesMessages)

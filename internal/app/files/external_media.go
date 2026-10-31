@@ -17,27 +17,30 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 外链媒体：inputMediaPhotoExternal / inputMediaDocumentExternal——客户端给一个 URL，
-// 服务端抓取并铸造 Photo/Document。抓取任意用户可控 URL，安全是核心：
-//   - SSRF 防护：自定义 Dialer.Control 在连接前检查**解析出的目标 IP**，挡掉 loopback/
-//     私网/link-local/CGNAT/multicast/unspecified。因为每次实际 dial 都查，所以同时防住
-//     DNS rebinding（公网域名解析到内网 IP）与重定向（每一跳都重新 dial→重新检查）。
-//   - 仅 http/https；重定向上限；响应大小上限（LimitReader）；请求超时；全局抓取限速
-//     （防一条消息触发大量服务端外网抓取的放大攻击）。
+// External media: inputMediaPhotoExternal / inputMediaDocumentExternal — the client provides a
+// URL and the server fetches it and mints a Photo/Document. Fetching an arbitrary user-controlled
+// URL makes security the core concern:
+//   - SSRF protection: a custom Dialer.Control checks the **resolved target IP** before connecting,
+//     blocking loopback/private/link-local/CGNAT/multicast/unspecified. Because it checks on every
+//     actual dial, it also stops DNS rebinding (a public domain resolving to an internal IP) and
+//     redirects (every hop re-dials → re-checks).
+//   - http/https only; a redirect limit; a response size limit (LimitReader); a request timeout; a
+//     global fetch rate limit (to prevent an amplification attack where one message triggers many
+//     server-side external fetches).
 
 var (
-	// ErrExternalMediaDisabled 表示未启用外链媒体抓取（rpc 层映射为 MEDIA_INVALID）。
+	// ErrExternalMediaDisabled means external media fetching is not enabled (the rpc layer maps it to MEDIA_INVALID).
 	ErrExternalMediaDisabled = errors.New("external media disabled")
-	// ErrExternalMediaInvalid 表示 URL 不合法/被 SSRF 防护拦截/上游失败/超限。
+	// ErrExternalMediaInvalid means the URL is invalid / blocked by SSRF protection / upstream failed / over a limit.
 	ErrExternalMediaInvalid = errors.New("external media invalid")
 )
 
 const (
 	externalMediaTimeout      = 15 * time.Second
 	externalMediaMaxRedirects = 5
-	// DefaultExternalMediaMaxBytes 是抓取响应体上限。
+	// DefaultExternalMediaMaxBytes is the fetch response body limit.
 	DefaultExternalMediaMaxBytes = int64(10 << 20)
-	// DefaultExternalMediaRatePerMin 是全局每分钟抓取上限（防放大攻击）。
+	// DefaultExternalMediaRatePerMin is the global per-minute fetch limit (to prevent amplification attacks).
 	DefaultExternalMediaRatePerMin = 60
 	externalMediaRateWindow        = time.Minute
 )
@@ -51,8 +54,8 @@ type externalMediaFetcher struct {
 	fetchTimes []time.Time
 }
 
-// WithExternalMedia 启用外链媒体抓取（inputMediaPhoto/DocumentExternal）。
-// maxBytes<=0 用默认；ratePerMin<=0 用默认。SSRF 防护恒开。
+// WithExternalMedia enables external media fetching (inputMediaPhoto/DocumentExternal).
+// maxBytes<=0 uses the default; ratePerMin<=0 uses the default. SSRF protection is always on.
 func WithExternalMedia(maxBytes int64, ratePerMin int) Option {
 	return func(s *Service) {
 		if maxBytes <= 0 {
@@ -65,8 +68,8 @@ func WithExternalMedia(maxBytes int64, ratePerMin int) Option {
 	}
 }
 
-// newExternalMediaFetcher 构造抓取器。allowPrivate 仅供测试（指向 httptest loopback）；
-// 生产恒 false。
+// newExternalMediaFetcher constructs the fetcher. allowPrivate is for tests only (pointing at
+// httptest loopback); in production it is always false.
 func newExternalMediaFetcher(maxBytes int64, ratePerMin int, allowPrivate bool) *externalMediaFetcher {
 	dialer := &net.Dialer{Timeout: externalMediaTimeout}
 	dialer.Control = func(network, address string, _ syscall.RawConn) error {
@@ -99,14 +102,14 @@ func newExternalMediaFetcher(maxBytes int64, ratePerMin int, allowPrivate bool) 
 	return &externalMediaFetcher{client: client, maxBytes: maxBytes, rateLimit: ratePerMin}
 }
 
-// isBlockedExternalIP 报告是否为不可对外抓取的内网/特殊地址（SSRF 防护）。
+// isBlockedExternalIP reports whether an address is an internal/special one that must not be fetched externally (SSRF protection).
 func isBlockedExternalIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
 		return true
 	}
-	// CGNAT 100.64.0.0/10（运营商级 NAT，常用于内部基础设施）。
+	// CGNAT 100.64.0.0/10 (carrier-grade NAT, often used for internal infrastructure).
 	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
 		return true
 	}
@@ -131,7 +134,7 @@ func (f *externalMediaFetcher) allowFetch() bool {
 	return true
 }
 
-// fetch 抓取 URL，返回 (字节, content-type)。SSRF 检查在 dial 阶段发生。
+// fetch fetches a URL and returns (bytes, content-type). The SSRF check happens at dial time.
 func (f *externalMediaFetcher) fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -149,7 +152,7 @@ func (f *externalMediaFetcher) fetch(ctx context.Context, rawURL string) ([]byte
 	req.Header.Set("User-Agent", "telesrv-media-fetch")
 	resp, err := f.client.Do(req)
 	if err != nil {
-		// 含 SSRF 拦截、超时、传输错误。
+		// Includes SSRF blocks, timeouts and transport errors.
 		return nil, "", fmt.Errorf("%w: %v", ErrExternalMediaInvalid, err)
 	}
 	defer resp.Body.Close()
@@ -170,7 +173,7 @@ func (f *externalMediaFetcher) fetch(ctx context.Context, rawURL string) ([]byte
 	return data, strings.TrimSpace(contentType), nil
 }
 
-// CreatePhotoFromURL 抓取 URL 并铸造 Photo（CreatePhotoFromBytes 会解码校验是否为图片）。
+// CreatePhotoFromURL fetches a URL and mints a Photo (CreatePhotoFromBytes decodes to verify it is an image).
 func (s *Service) CreatePhotoFromURL(ctx context.Context, rawURL string) (domain.Photo, error) {
 	if s == nil || s.externalMedia == nil {
 		return domain.Photo{}, ErrExternalMediaDisabled
@@ -181,13 +184,13 @@ func (s *Service) CreatePhotoFromURL(ctx context.Context, rawURL string) (domain
 	}
 	photo, err := s.CreatePhotoFromBytes(ctx, data)
 	if err != nil {
-		// 非图片字节 → ErrPhotoInvalid，对外统一为 external invalid。
+		// Non-image bytes → ErrPhotoInvalid, uniformly reported externally as external invalid.
 		return domain.Photo{}, fmt.Errorf("%w: %v", ErrExternalMediaInvalid, err)
 	}
 	return photo, nil
 }
 
-// CreateDocumentFromURL 抓取 URL 并铸造 Document：mime 取 Content-Type，文件名取 URL basename。
+// CreateDocumentFromURL fetches a URL and mints a Document: the mime comes from Content-Type and the filename from the URL basename.
 func (s *Service) CreateDocumentFromURL(ctx context.Context, rawURL string) (domain.Document, error) {
 	if s == nil || s.externalMedia == nil {
 		return domain.Document{}, ErrExternalMediaDisabled
@@ -211,7 +214,7 @@ func (s *Service) CreateDocumentFromURL(ctx context.Context, rawURL string) (dom
 	return doc, nil
 }
 
-// externalMediaFilename 从 URL path 取 basename；缺失时回退通用名。
+// externalMediaFilename takes the basename from the URL path; falls back to a generic name when missing.
 func externalMediaFilename(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err == nil {

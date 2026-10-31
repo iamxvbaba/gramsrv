@@ -7,9 +7,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSetPaidMessagesPriceCreatesAndReusesMonoforum 验证开启频道私信(Direct Messages)时
-// 为广播频道关联一个 monoforum 虚拟频道:首次建、再次复用并同步价格;超级群(非广播)不建。
-// 与 postgres 实现行为对齐。
+// TestSetPaidMessagesPriceCreatesAndReusesMonoforum verifies that enabling channel DMs
+// (Direct Messages) associates a monoforum virtual channel with the broadcast channel:
+// created on first enable, reused with the price synced on the next; a supergroup (not a
+// broadcast) gets none. Behaviour matches the postgres implementation.
 func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()
@@ -78,8 +79,10 @@ func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("monoforum messages = %d, want exactly one creation service message", len(msgs))
 	}
-	// monoforum 的服务消息是创建消息(渲染 "Direct messages were enabled in this channel."),
-	// 不是 paid_messages_price(后者只进母频道,在 megagroup 里会渲染成错误的"消息免费"文案)。
+	// The monoforum's service message is the creation message (rendered as
+	// "Direct messages were enabled in this channel."), not paid_messages_price (the latter
+	// goes only into the parent channel; in a megagroup it would render as the wrong
+	// "messages are free" text).
 	if action := msgs[0].Action; action == nil || action.Type != domain.ChannelActionCreate {
 		t.Fatalf("monoforum service action = %+v, want channel_create", action)
 	}
@@ -110,7 +113,7 @@ func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 		t.Fatalf("monoforum repaired service action = %+v, want channel_create", action)
 	}
 
-	// 幂等:再次开启不新建,仅同步价格。
+	// Idempotent: re-enabling does not create a new one, only syncs the price.
 	againResult, err := store.SetPaidMessagesPrice(ctx, 1, channelID, 8, true)
 	if err != nil {
 		t.Fatalf("re-enable: %v", err)
@@ -122,7 +125,7 @@ func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 	if got := store.channels[monoID].SendPaidMessagesStars; got != 8 {
 		t.Fatalf("monoforum price = %d, want synced 8", got)
 	}
-	// 价格变更只进母广播频道;monoforum 仍只有创建消息那一条。
+	// A price change goes only into the parent broadcast channel; the monoforum still has only the one creation message.
 	if msgs = store.messages[monoID]; len(msgs) != 1 {
 		t.Fatalf("monoforum messages after price update = %d, want still one (price change goes to parent only)", len(msgs))
 	}
@@ -140,7 +143,7 @@ func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 	if disabledResult.ServiceMessage == nil || disabledResult.ServiceMessage.Event.Pts == 0 {
 		t.Fatalf("disable service result = %+v, want paid_messages_price event", disabledResult.ServiceMessage)
 	}
-	// 关闭只进母广播频道(+monoforumDisabled 状态显示停用页脚);monoforum 仍只有创建消息那一条。
+	// Disabling goes only into the parent broadcast channel (+ the monoforumDisabled state shows the disabled footer); the monoforum still has only the one creation message.
 	if msgs = store.messages[monoID]; len(msgs) != 1 {
 		t.Fatalf("monoforum messages after disable = %d, want still one (disable goes to parent only)", len(msgs))
 	}
@@ -148,7 +151,7 @@ func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 		t.Fatalf("parent latest action = %+v, want paid_messages_price disabled stars=0", store.messages[channelID])
 	}
 
-	// 超级群(非广播)即便 broadcastMessagesAllowed=true 也不建 monoforum:私信是广播频道专属。
+	// A supergroup (not a broadcast) gets no monoforum even with broadcastMessagesAllowed=true: DMs are exclusive to broadcast channels.
 	group, err := store.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: 1, Title: "SG", Megagroup: true, Date: 1_700_000_901,
 	})
@@ -165,10 +168,12 @@ func TestSetPaidMessagesPriceCreatesAndReusesMonoforum(t *testing.T) {
 	}
 }
 
-// TestGetChannelDialogsCoDeliversMonoforumParent 锁定 Direct-Messages 渲染的"同批下发"不变量:
-// 管理员按 id 拉取 monoforum 私信会话时,响应必须同时带母广播频道(作为 chats[] 附带,而非额外
-// dialog),客户端才能 resolve linked_monoforum_id 并派生 MonoforumAdmin;缺父对象会让 mono 退化为
-// 普通 megagroup。非管理员既拿不到 monoforum 也不会被泄漏母频道。
+// TestGetChannelDialogsCoDeliversMonoforumParent locks the "co-delivery" invariant for
+// Direct-Messages rendering: when an admin fetches a monoforum DM dialog by id, the
+// response must also carry the parent broadcast channel (as an attached chats[] entry, not
+// an extra dialog), so the client can resolve linked_monoforum_id and derive
+// MonoforumAdmin; a missing parent object makes the mono degrade into an ordinary
+// megagroup. A non-admin gets neither the monoforum nor a leaked parent channel.
 func TestGetChannelDialogsCoDeliversMonoforumParent(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()
@@ -209,7 +214,7 @@ func TestGetChannelDialogsCoDeliversMonoforumParent(t *testing.T) {
 		t.Fatalf("dialogs = %+v, want exactly the mono dialog (parent only as chats[])", list.Dialogs)
 	}
 
-	// 非管理员(非母频道成员)拿不到 monoforum,也不会被泄漏母频道。
+	// A non-admin (not a member of the parent channel) does not get the monoforum and is not leaked the parent channel.
 	deniedList, err := store.GetChannelDialogs(ctx, 999, []int64{monoID})
 	if err != nil {
 		t.Fatalf("get channel dialogs (non-admin): %v", err)

@@ -14,19 +14,19 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// AuthKeyStore 用 PostgreSQL 实现 store.AuthKeyStore。
+// AuthKeyStore implements store.AuthKeyStore with PostgreSQL.
 type AuthKeyStore struct {
 	q  *sqlcgen.Queries
 	db sqlcgen.DBTX
 }
 
-// NewAuthKeyStore 基于 pgx 连接池（或事务）创建 AuthKeyStore。
+// NewAuthKeyStore creates an AuthKeyStore backed by a pgx pool (or transaction).
 func NewAuthKeyStore(db sqlcgen.DBTX) *AuthKeyStore {
 	return &AuthKeyStore{q: sqlcgen.New(db), db: db}
 }
 
-// Save 实现 store.AuthKeyStore。auth_key_id 以小端解释为 int64 存入 BIGINT；
-// created_at/last_used_at 交由 DB 默认值（now()），故传入的 CreatedAt 不落库。
+// Save implements store.AuthKeyStore. auth_key_id is interpreted little-endian as int64 and stored in BIGINT;
+// created_at/last_used_at are left to the DB defaults (now()), so the passed CreatedAt is not persisted.
 func (s *AuthKeyStore) Save(ctx context.Context, k store.AuthKeyData) error {
 	if !store.ValidNewAuthKeyProtocolExpiry(k.ExpiresAt) {
 		return store.ErrInvalidAuthKeyProtocolExpiry
@@ -49,10 +49,10 @@ WHERE auth_keys.body = EXCLUDED.body
 	return nil
 }
 
-// Get 实现 store.AuthKeyStore。不存在时 found=false。读取与 last_used_at touch 是同一条
-// UPDATE ... RETURNING：若 orphan GC 已锁定并删除该行，Get 等待后得到 no rows；若 Get 先
-// 完成，GC 的 cutoff/final predicate 会看到新水位并跳过。这样连接不会在“读到旧 key、尚未
-// 注册进 SessionManager”的窗口被后台清理。
+// Get implements store.AuthKeyStore. found=false when absent. The read and the last_used_at touch are the same
+// UPDATE ... RETURNING: if orphan GC has already locked and deleted the row, Get waits and gets no rows; if Get
+// finishes first, the GC's cutoff/final predicate sees the new watermark and skips. This way a connection is not
+// cleaned up in the background during the window of "read an old key but not yet registered into SessionManager".
 func (s *AuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
 	data, err := scanAuthKeyData(s.db.QueryRow(ctx, `
 UPDATE auth_keys
@@ -276,14 +276,16 @@ WHERE auth_key_id = $1
 	return nil
 }
 
-// Delete 实现 store.AuthKeyStore。不存在时静默成功。
-// 手写 SQL 而非 sqlc 生成：避免触碰 sqlcgen 再生成链路。
+// Delete implements store.AuthKeyStore. Succeeds silently when absent.
+// Hand-written SQL rather than sqlc-generated: avoids touching the sqlcgen regeneration chain.
 //
-// 同时清理把本 key 当作 perm key 的 temp auth key 行：temp_auth_key_bindings.temp_auth_key_id
-// 侧有外键 ON DELETE CASCADE，删除 temp key 会自动清绑定；perm_auth_key_id 侧由
-// RESTRICT FK 防止悬空，因此显式销毁 perm key 时必须先把关联 temp key 一并删掉。
-// 远程撤销 authorization 不得调用本方法：被踢客户端必须保留协议 key，重连进入 RPC
-// 层后取得 AUTH_KEY_UNREGISTERED，而不是只收到连接层 -404。
+// It also cleans up temp auth key rows that use this key as their perm key: the
+// temp_auth_key_bindings.temp_auth_key_id side has an ON DELETE CASCADE foreign key, so
+// deleting the temp key clears the binding automatically; the perm_auth_key_id side is
+// protected from dangling by a RESTRICT FK, so explicitly destroying a perm key must delete
+// the associated temp keys first. Remote authorization revocation must not call this method:
+// a kicked client must keep its protocol key and, after reconnecting into the RPC layer,
+// receive AUTH_KEY_UNREGISTERED rather than only a transport-level -404.
 func (s *AuthKeyStore) Delete(ctx context.Context, id [8]byte) error {
 	return withAuthIdentityTx(ctx, s.db, "delete auth key", func(tx pgx.Tx) error {
 		return deleteAuthKeyTx(ctx, tx, authKeyIDToInt64(id))
@@ -334,10 +336,11 @@ SELECT
 
 const tempAuthKeyPermFKConstraint = "temp_auth_key_bindings_perm_auth_key_id_fkey"
 
-// DeleteOrphaned 回收握手已落库、但从未形成 authorization/temp binding 且当前没有
-// 活跃物理连接的旧 auth key。last_used_at 与 Get 的 UPDATE ... RETURNING 行锁配对，封住
-// active-key 快照之后新连接开始使用旧 key 的竞态；所有引用条件仍在最终 DELETE 中复核。
-// protected 必须是 SessionManager 的 raw key。
+// DeleteOrphaned reclaims old auth keys whose handshake was persisted but that never
+// formed an authorization/temp binding and currently have no active physical connection.
+// last_used_at pairs with the row lock of Get's UPDATE ... RETURNING, closing the race where
+// a new connection starts using an old key after the active-key snapshot; all reference
+// conditions are re-checked in the final DELETE. protected must be the SessionManager's raw key.
 func (s *AuthKeyStore) DeleteOrphaned(ctx context.Context, olderThan time.Duration, limit int, protected [][8]byte) (int, error) {
 	if olderThan <= 0 || limit <= 0 {
 		return 0, nil
@@ -488,7 +491,7 @@ CROSS JOIN LATERAL (SELECT count(*) FROM deleted_update_states) AS touched`,
 	return deleted, nil
 }
 
-// authKeyIDToInt64 把 [8]byte 的 auth_key_id 按小端解释为 int64（MTProto 定义即 SHA1 低 64 位）。
+// authKeyIDToInt64 interprets the [8]byte auth_key_id as a little-endian int64 (per the MTProto definition, the low 64 bits of SHA1).
 func authKeyIDToInt64(id [8]byte) int64 {
 	return int64(binary.LittleEndian.Uint64(id[:]))
 }

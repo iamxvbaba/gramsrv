@@ -22,7 +22,7 @@ var (
 	ErrOutboxUpdateProjectionEmpty          = errors.New("non-noop outbox event produced no update")
 )
 
-// BuildOutboxUpdates 为在线 outbox worker 构造按接收者视角补全后的 updates。
+// BuildOutboxUpdates builds recipient-perspective enriched updates for the online outbox worker.
 func (r *Router) BuildOutboxUpdates(ctx context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error) {
 	out := make([]*tg.Updates, len(requests))
 	if len(requests) == 0 {

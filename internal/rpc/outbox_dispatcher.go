@@ -20,13 +20,16 @@ const (
 	defaultOutboxBatch    = 10
 	defaultOutboxInterval = 200 * time.Millisecond
 	defaultOutboxWorkers  = 4
-	// outboxLogicalShards 是稳定 user→lane 哈希空间。它不随运行时 worker 数变化，
-	// worker 只独占其中一组 shard，保证同一用户始终单 lane 串行、不同用户可并行。
+	// outboxLogicalShards is the stable user->lane hash space. It does not change with the runtime
+	// worker count; each worker exclusively owns a subset of shards, ensuring the same user always
+	// stays serialized on a single lane while different users can run in parallel.
 	outboxLogicalShards = store.DispatchOutboxLogicalShards
-	// defaultOutboxMaxIdleInterval 是空闲退避上界：连续空 claim 时把轮询间隔从 interval
-	// 指数退避到此上界，削减「无消息时也每 200ms 查一次 DB」的空转；一旦有活就立刻复位到
-	// interval。代价是「长时间静默后的第一条消息」最多多等这个上界——退避只在持续空闲时触及，
-	// 会话期间有近期活动即保持快速轮询，故对正常收发延迟无影响。
+	// defaultOutboxMaxIdleInterval is the idle backoff ceiling: on consecutive empty claims the poll
+	// interval backs off exponentially from interval up to this ceiling, cutting the "query the DB
+	// every 200ms even with no messages" busy-work; as soon as there is activity it resets to
+	// interval immediately. The cost is that the first message after a long silence waits at most
+	// this ceiling — backoff is only reached while continuously idle, and recent activity during a
+	// session keeps fast polling, so normal send/receive latency is unaffected.
 	defaultOutboxMaxIdleInterval = 1 * time.Second
 )
 
@@ -38,8 +41,9 @@ var (
 	errInvalidOutboxExclusionPair = errors.New("outbox exclusion requires both raw auth key and session id")
 )
 
-// OutboxDispatcher 把 PG transactional outbox 中的 update 批量推给在线 session。
-// 多 worker 并发 claim：ClaimPending 用 FOR UPDATE SKIP LOCKED，worker 间认领不重叠。
+// OutboxDispatcher batch-pushes updates from the PG transactional outbox to online sessions.
+// Multiple workers claim concurrently: ClaimPending uses FOR UPDATE SKIP LOCKED, so claims never
+// overlap between workers.
 type OutboxDispatcher struct {
 	events          store.UpdateEventStore
 	outbox          store.DispatchOutboxStore
@@ -54,26 +58,27 @@ type OutboxDispatcher struct {
 	pushTimeout     time.Duration
 }
 
-// OutboxOption 调整 OutboxDispatcher 的运行参数。
+// OutboxOption adjusts the OutboxDispatcher's runtime parameters.
 type OutboxOption func(*OutboxDispatcher)
 
-// OutboxUpdateRequest 是 outbox worker 构造在线 updates 时的批量输入。
+// OutboxUpdateRequest is the batch input for an outbox worker building online updates.
 type OutboxUpdateRequest struct {
 	TargetUserID int64
 	Event        domain.UpdateEvent
 }
 
-// OutboxUpdateBuilder 按接收者视角批量把 domain.UpdateEvent 转为 TL updates。
+// OutboxUpdateBuilder batch-converts domain.UpdateEvent into TL updates from each recipient's
+// perspective.
 type OutboxUpdateBuilder func(ctx context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error)
 
-// WithOutboxUpdateBuilder 注入按接收者视角的批量 updates 构建器。
+// WithOutboxUpdateBuilder injects the recipient-perspective batch updates builder.
 func WithOutboxUpdateBuilder(builder OutboxUpdateBuilder) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		d.updateBuilder = builder
 	}
 }
 
-// WithOutboxBatch 设置每次 claim 的最大条数；<=0 时保持默认。
+// WithOutboxBatch sets the maximum number of rows per claim; <=0 keeps the default.
 func WithOutboxBatch(n int) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		if n > 0 {
@@ -82,7 +87,7 @@ func WithOutboxBatch(n int) OutboxOption {
 	}
 }
 
-// WithOutboxInterval 设置两次 claim 之间的轮询间隔；<=0 时保持默认。
+// WithOutboxInterval sets the poll interval between two claims; <=0 keeps the default.
 func WithOutboxInterval(interval time.Duration) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		if interval > 0 {
@@ -91,7 +96,7 @@ func WithOutboxInterval(interval time.Duration) OutboxOption {
 	}
 }
 
-// WithOutboxWorkers 设置并发 claim worker 数；<=0 时保持默认。
+// WithOutboxWorkers sets the number of concurrent claim workers; <=0 keeps the default.
 func WithOutboxWorkers(n int) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		if n > 0 {
@@ -100,7 +105,8 @@ func WithOutboxWorkers(n int) OutboxOption {
 	}
 }
 
-// WithOutboxPushTimeout 设置 updates fanout 入队等待时间；<=0 时使用同步可靠推送。
+// WithOutboxPushTimeout sets the wait time for updates fanout enqueue; <=0 uses synchronous
+// reliable push.
 func WithOutboxPushTimeout(timeout time.Duration) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		if timeout > 0 {
@@ -109,7 +115,7 @@ func WithOutboxPushTimeout(timeout time.Duration) OutboxOption {
 	}
 }
 
-// WithOutboxMetrics 注入指标实现；nil 时保持 NopMetrics。
+// WithOutboxMetrics injects the metrics implementation; nil keeps NopMetrics.
 func WithOutboxMetrics(m Metrics) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		if m != nil {
@@ -118,8 +124,9 @@ func WithOutboxMetrics(m Metrics) OutboxOption {
 	}
 }
 
-// NewOutboxDispatcher 创建在线 update 推送 worker。batch/interval 默认值见
-// defaultOutboxBatch/defaultOutboxInterval，可经 WithOutbox* 选项覆盖（生产由 config 注入）。
+// NewOutboxDispatcher creates the online update push worker. See defaultOutboxBatch/
+// defaultOutboxInterval for the batch/interval defaults; they can be overridden via WithOutbox*
+// options (in production, injected from config).
 func NewOutboxDispatcher(events store.UpdateEventStore, outbox store.DispatchOutboxStore, sessions SessionBinder, log *zap.Logger, opts ...OutboxOption) *OutboxDispatcher {
 	if log == nil {
 		log = zap.NewNop()
@@ -143,7 +150,8 @@ func NewOutboxDispatcher(events store.UpdateEventStore, outbox store.DispatchOut
 	return d
 }
 
-// Run 启动 workers 个并发 worker 持续 claim pending outbox；ctx 退出时全部停止并等待退出。
+// Run starts workers concurrent workers that continuously claim pending outbox rows; when ctx
+// exits, all stop and are waited on.
 func (d *OutboxDispatcher) Run(ctx context.Context) {
 	if d == nil || d.events == nil || d.outbox == nil || d.sessions == nil {
 		return
@@ -170,12 +178,13 @@ func normalizedOutboxWorkers(workers int, sharded bool) int {
 		workers = 1
 	}
 	if !sharded {
-		// 测试替身或旧 store 没有 user shard claim 时，强制单 worker，避免同一用户
-		// 的不同 pts 被并行领取。
+		// When a test double or an old store has no user shard claim, force a single worker so that
+		// different pts for the same user are not claimed in parallel.
 		return 1
 	}
-	// 多于 logical shard 的 worker 没有独占 lane。若让空 shard worker 回退全局
-	// claim，会与全部分片 worker 重叠，因此必须在启动前钳制。
+	// Workers beyond the number of logical shards have no exclusive lane. Letting an empty-shard
+	// worker fall back to a global claim would overlap with all the sharded workers, so it must be
+	// clamped before startup.
 	if workers > outboxLogicalShards {
 		return outboxLogicalShards
 	}
@@ -193,8 +202,9 @@ func logicalShardsForWorker(worker, workers int) []int {
 	return out
 }
 
-// runWorker 是单个 claim 循环；多 worker 靠 ClaimPending 的 SKIP LOCKED 互不重叠。
-// 空闲指数退避（interval→maxIdleInterval），claim 到事件即复位到 interval：有活快、无活省。
+// runWorker is a single claim loop; multiple workers avoid overlap via ClaimPending's SKIP LOCKED.
+// Idle exponential backoff (interval->maxIdleInterval); claiming an event resets to interval: fast
+// when active, cheap when idle.
 func (d *OutboxDispatcher) runWorker(ctx context.Context, claimer shardedOutboxClaimer, shardIDs []int) {
 	dispatch := d.DispatchOnce
 	if claimer != nil && len(shardIDs) > 0 {
@@ -205,12 +215,14 @@ func (d *OutboxDispatcher) runWorker(ctx context.Context, claimer shardedOutboxC
 	runIdleBackoffLoop(ctx, d.interval, d.maxIdleInterval, dispatch)
 }
 
-// batchEventLoader 是 UpdateEventStore 的可选批量能力：一次取多条 (user,pts) 事件。
+// batchEventLoader is an optional batch capability of UpdateEventStore: fetch multiple (user,pts)
+// events at once.
 type batchEventLoader interface {
 	BatchByCursor(ctx context.Context, cursors []store.EventCursor) ([]domain.UpdateEvent, error)
 }
 
-// batchOutboxMarker 是 DispatchOutboxStore 的可选批量能力：一次标记多行 delivered。
+// batchOutboxMarker is an optional batch capability of DispatchOutboxStore: mark multiple rows
+// delivered at once.
 type batchOutboxMarker interface {
 	MarkDeliveredBatch(ctx context.Context, items []store.DispatchOutboxItem) error
 }
@@ -219,9 +231,11 @@ type shardedOutboxClaimer interface {
 	ClaimPendingShards(ctx context.Context, shardCount int, shardIDs []int, limit int) ([]store.DispatchOutboxItem, error)
 }
 
-// DispatchOnce claim 一批 outbox 并投递，测试可直接调用。返回本次是否 claim 到事件，
-// 供 runWorker 决定快轮询还是空闲退避。
-// store 同时具备批量取事件 + 批量标记能力时走批量路径（每批 ~3 次 PG 往返），否则逐条回退。
+// DispatchOnce claims a batch of outbox rows and dispatches them; tests can call it directly.
+// Returns whether an event was claimed this time, so runWorker can decide between fast polling and
+// idle backoff.
+// When the store supports both batch event fetching and batch marking it takes the batch path
+// (~3 PG round-trips per batch); otherwise it falls back to per-row.
 func (d *OutboxDispatcher) DispatchOnce(ctx context.Context) bool {
 	items, err := d.outbox.ClaimPending(ctx, d.batch)
 	return d.dispatchClaimed(ctx, items, err)
@@ -278,7 +292,8 @@ type outboxEventKey struct {
 	pts    int
 }
 
-// dispatchBatch 批量加载已 claim 事件、逐条 push、批量标记 delivered；失败项单独退避重试。
+// dispatchBatch batch-loads already-claimed events, pushes them one by one, and batch-marks them
+// delivered; failed items back off and retry individually.
 func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.DispatchOutboxItem, loader batchEventLoader, marker batchOutboxMarker) {
 	valid := make([]store.DispatchOutboxItem, 0, len(items))
 	blockedUsers := make(map[int64]struct{})
@@ -303,7 +318,8 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 	}
 	events, err := loader.BatchByCursor(ctx, cursors)
 	if err != nil {
-		// 批量取失败则整批回退逐条路径，让每条各自重试/标失败，不丢进度。
+		// If batch fetching fails, fall back to the per-row path for the whole batch so each row
+		// retries or is marked failed on its own, without losing progress.
 		d.log.Warn("batch load dispatch events", zap.Error(err))
 		blockedUsers := make(map[int64]struct{})
 		for _, item := range items {
@@ -339,9 +355,10 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 	}
 	builtUpdates, err := d.buildOutboxUpdates(ctx, requests)
 	if err != nil {
-		// 聚合构建失败不代表每个 durable row 都坏了。复用本批已经加载的 event
-		// 做 singleton 隔离，避免某一条坏数据或批量容量错误污染无关用户；同一用户
-		// 的 lane head 一旦失败，后续 pts 仍不得越过。
+		// An aggregate build failure does not mean every durable row is bad. Reuse the events
+		// already loaded for this batch to isolate singletons, so one bad row or a batch-capacity
+		// error does not poison unrelated users; once a user's lane head fails, later pts still must
+		// not jump ahead of it.
 		d.log.Warn("batch build dispatch outbox updates; isolating items", zap.Error(err))
 		clear(blockedUsers)
 		for i, entry := range ready {
@@ -370,8 +387,9 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		if _, retriable, err := d.pushOutboxUpdate(ctx, item, update); err != nil {
 			blockedUsers[item.TargetUserID] = struct{}{}
 			if retriable {
-				// 出站队列拥塞：留 dispatching 行靠租约过期重投，不计入 attempts 升级。
-				// 不加入 delivered，故不会被 MarkDeliveredBatch 删除。
+				// Outbound queue congestion: leave the dispatching row to be redelivered when the
+				// lease expires, without incrementing attempts. It is not added to delivered, so it
+				// will not be removed by MarkDeliveredBatch.
 				continue
 			}
 			d.markDispatchFailed(ctx, item, err)
@@ -383,7 +401,8 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		return
 	}
 	if err := marker.MarkDeliveredBatch(ctx, delivered); err != nil {
-		// 批量标记失败则逐条标记，避免整批已投递却卡在 dispatching 等租约过期重投。
+		// If batch marking fails, mark one by one so the whole batch is not stuck in dispatching
+		// waiting for lease expiry and redelivery.
 		d.log.Warn("mark dispatch delivered batch", zap.Error(err))
 		for _, item := range delivered {
 			if markErr := d.outbox.MarkDelivered(ctx, item); markErr != nil {
@@ -419,8 +438,8 @@ func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.Dispatch
 	return d.dispatchPreparedItem(ctx, item, events[0], start)
 }
 
-// dispatchPreparedItem 构建并投递一条已经加载、且 exclusion pair 已验证的 event。
-// 批量构建隔离路径调用它时不会再次读取 event store。
+// dispatchPreparedItem builds and dispatches an already-loaded event whose exclusion pair has been
+// validated. When the batch-build isolation path calls it, it does not read the event store again.
 func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent, start time.Time) bool {
 	update, err := d.buildOutboxUpdate(ctx, item, event)
 	if err != nil {
@@ -438,8 +457,9 @@ func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.
 	sent, retriable, err := d.pushOutboxUpdate(ctx, item, update)
 	if err != nil {
 		if retriable {
-			// 出站队列拥塞：保留 dispatching 行，靠租约过期（defaultDispatchLease）重新 claim 重投，
-			// 不计入 attempts 升级，避免正常满 fan-out 负载把可靠 update 误打成 failed。
+			// Outbound queue congestion: keep the dispatching row to be re-claimed and redelivered
+			// after the lease expires (defaultDispatchLease), without incrementing attempts, so a
+			// normal full fan-out load does not wrongly mark a reliable update as failed.
 			d.log.Debug("dispatch outbox deferred (push queue full)",
 				zap.Int64("target_user_id", item.TargetUserID),
 				zap.Int64("outbox_id", item.ID),
@@ -498,10 +518,12 @@ func (d *OutboxDispatcher) buildOutboxUpdates(ctx context.Context, requests []Ou
 	return built, nil
 }
 
-// pushOutboxUpdate 投递一条 outbox update，返回 (送达的在线 session 数, 是否可重试, err)。
-// 生产 SessionManager 会把 queue-full/closed 慢连接摘除并按离线处理，因此 best-effort
-// 接口剩余的非 context 错误通常是确定性的编码/构造错误，必须进入 failed，不能永久占着
-// dispatching head 靠租约空转。只有 dispatcher shutdown/deadline 属于可重试中断。
+// pushOutboxUpdate dispatches one outbox update, returning (number of online sessions reached,
+// whether it is retriable, err). The production SessionManager removes queue-full/closed slow
+// connections and treats them as offline, so the remaining non-context errors from the best-effort
+// interface are usually deterministic encoding/construction errors that must go to failed rather
+// than permanently holding the dispatching head idle via the lease. Only a dispatcher
+// shutdown/deadline is a retriable interruption.
 func (d *OutboxDispatcher) pushOutboxUpdate(ctx context.Context, item store.DispatchOutboxItem, update *tg.Updates) (sent int, retriable bool, err error) {
 	if err := validateOutboxExclusionPair(item); err != nil {
 		return 0, false, errInvalidOutboxExclusionPair
@@ -580,7 +602,7 @@ func tgUpdateForOutboxEventForViewer(event domain.UpdateEvent, viewerUserID int6
 		return &tg.Updates{
 			Updates: appendAuxPtsBookkeeping([]tg.UpdateClass{update}, event),
 			Date:    event.Date,
-			Seq:     0, // 私聊不维护账号级 seq，恒 0
+			Seq:     0, // private chats keep no account-level seq, always 0
 		}
 	case domain.UpdateEventChannelState:
 		update := tgOtherUpdateFromEvent(event)
@@ -631,9 +653,10 @@ func tgDeletedPrivateMessageOutboxUpdate(event domain.UpdateEvent) *tg.Updates {
 	}
 }
 
-// appendAuxPtsBookkeeping 给"占账号 pts 但 TL update 不带 pts"的事件附一条
-// 空 updateDeleteMessages：客户端按 pts/pts_count 推进本地水位且不产生任何
-// 可见变化。没有它，客户端水位停在事件前，下一条带 pts 的更新会被判为空洞。
+// appendAuxPtsBookkeeping attaches an empty updateDeleteMessages to events that "consume account
+// pts but whose TL update carries no pts": the client advances its local watermark by pts/pts_count
+// without producing any visible change. Without it, the client watermark stops before the event and
+// the next pts-bearing update is treated as a gap.
 func appendAuxPtsBookkeeping(updates []tg.UpdateClass, event domain.UpdateEvent) []tg.UpdateClass {
 	if event.Pts <= 0 || event.PtsCount <= 0 || !event.LacksWirePts() {
 		return updates

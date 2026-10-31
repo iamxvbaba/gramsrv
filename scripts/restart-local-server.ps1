@@ -140,11 +140,14 @@ function Test-RepoTelesrvProcess {
 
 function Get-RepoTelesrvProcesses {
     param([int]$Port, [string]$ExePath)
-    # 按 PID 去重，合并两条发现路径：
-    #   1) 端口监听者——主路径，但 Get-NetTCPConnection 偶发返回空（曾漏判成 "no listener"，
-    #      导致旧进程没被停、promote 复制撞文件锁）。
-    #   2) 按进程名/路径 + 仓库 bin 下 telesrv* 可执行文件——兜底覆盖端口漏报，并能抓到
-    #      “持有 telesrv.exe / telesrv.exe~ 文件锁但端口尚未就绪”的实例（promote 复制前必须停掉）。
+    # Deduplicate by PID, merging two discovery paths:
+    #   1) Port listeners -- the primary path, but Get-NetTCPConnection occasionally
+    #      returns empty (once misjudged as "no listener", leaving the old process
+    #      running and the promote copy hitting a file lock).
+    #   2) By process name/path + telesrv* executables under the repo bin -- a fallback
+    #      covering missed ports that also catches instances "holding a telesrv.exe /
+    #      telesrv.exe~ file lock but not yet listening" (which must be stopped before
+    #      the promote copy).
     $foundByPid = @{}
 
     $listenerPids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
@@ -177,8 +180,9 @@ function Get-RepoTelesrvProcesses {
         if ($foundByPid.ContainsKey($procId)) {
             continue
         }
-        # 只接管仓库内的实例：路径在 repo/bin 下，或路径不可读但进程名看起来就是 telesrv（兜底）。
-        # 仓库外的同名进程（用户在别处跑的）一律不动。
+        # Take over only instances inside the repo: path under repo/bin, or an
+        # unreadable path whose process name looks like telesrv (fallback). Same-named
+        # processes outside the repo (run by the user elsewhere) are never touched.
         $isRepoProcess = Test-RepoTelesrvProcess -Process $proc -ExePath $ExePath
         if ($isRepoProcess) {
             $foundByPid[$procId] = $proc
@@ -279,8 +283,9 @@ try {
 
     if (-not $SkipBuild) {
         Write-Step "Promote executable"
-        # telesrv.exe 可能被外部 watcher/watchdog 抢先重生的实例占用文件锁；停掉持有者后短暂重试，
-        # 避免直接撞 "being used by another process" 复制失败（曾因此 promote 失败）。
+        # telesrv.exe may be file-locked by an instance an external watcher/watchdog
+        # respawned first; after stopping the holder, retry briefly to avoid hitting
+        # "being used by another process" and failing the copy (once caused promote to fail).
         $promoted = $false
         for ($attempt = 1; $attempt -le 10; $attempt++) {
             try {

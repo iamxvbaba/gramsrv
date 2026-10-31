@@ -384,11 +384,12 @@ last_sale_date=$2,updated_at=now() WHERE gift_id=$1`, gift.ID, req.Date); err !=
 	if err != nil {
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, err
 	}
-	// 机器人送出的礼物不参与「转换回 Stars」：catalog 的 ConvertStars 是给普通用户
-	// 买家的退款额度，而机器人这一侧的钱是它开票赚来的钱包余额。若照抄，收到礼物的
-	// 对端就能把机器人支出的 Stars 直接兑换回自己的余额，等于给钱包开了一条提现口子。
-	// 这里按付款人身份把它归零：peer_star_gifts.convert_stars 为 0，客户端因此不显示
-	// 转换按钮，ConvertStarGift 也只走 amount==0 的纯归档分支，不产生任何 Credit。
+	// Gifts sent by a bot do not take part in "convert back to Stars": the catalog's ConvertStars is a
+	// refund allowance for ordinary user buyers, whereas the bot's funds are the wallet balance it
+	// earned from invoicing. Copying it would let the receiving peer redeem the Stars the bot spent
+	// straight back to their own balance, effectively opening a withdrawal path into the wallet.
+	// Here it is zeroed by payer identity: peer_star_gifts.convert_stars is 0, so the client does not
+	// show the convert button and ConvertStarGift only takes the amount==0 pure-archive branch, producing no Credit.
 	convertStars := gift.ConvertStars
 	if req.BuyerIsBot {
 		convertStars = 0

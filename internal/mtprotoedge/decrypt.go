@@ -12,30 +12,36 @@ import (
 	"github.com/iamxvbaba/td/crypto"
 )
 
-// clientFrame 是解密后的单帧客户端消息视图。data/plaintext 引用调用方持有的复用明文
-// 缓冲，仅在解密下一帧前有效；需要跨帧保留的字节必须拷贝（dispatch 对 RPC body 已
-// b.Copy()，container/gzip 均在当前帧内同步消费）。
+// clientFrame is the decrypted view of a single client message frame.
+// data/plaintext reference the caller-owned reused plaintext buffer and are only
+// valid until the next frame is decrypted; bytes that must survive across frames
+// have to be copied (dispatch already does b.Copy() for the RPC body, and
+// container/gzip are consumed synchronously within the current frame).
 type clientFrame struct {
 	salt      int64
 	sessionID int64
 	messageID int64
 	seqNo     int32
-	// data 是去掉 32 字节头与 padding 后的消息体。
+	// data is the message body after stripping the 32-byte header and padding.
 	data []byte
-	// plaintext 是完整明文（头 + 数据 + padding），quick ack token 直接对它做 SHA256，
-	// 免去 gotd 路径上「为算 token 把解密结果整帧重编码一遍」的拷贝。
+	// plaintext is the full plaintext (header + data + padding); the quick ack
+	// token is SHA256'd directly over it, avoiding the copy on the gotd path
+	// where the whole decrypted frame is re-encoded just to compute the token.
 	plaintext []byte
 }
 
-// encryptedFrameHeaderLen 是 MTProto 2.0 明文头长度：salt(8)+session_id(8)+msg_id(8)+seq_no(4)+len(4)。
+// encryptedFrameHeaderLen is the MTProto 2.0 plaintext header length: salt(8)+session_id(8)+msg_id(8)+seq_no(4)+len(4).
 const encryptedFrameHeaderLen = 32
 
-// decryptClientFrame 把一帧客户端加密消息解密进 plain 复用缓冲（telesrv-owned，
-// 与出站 encryptOutboundFrame 对称）。校验集合与 gotd Cipher.Decrypt 逐条一致：
-// auth_key_id 匹配、密文 16 字节块对齐、msg_key（SHA256，client side x=0）、明文头
-// 长度、message_data_len 非负 / 4 字节对齐 / 不越界、padding ≤ 1024。区别只在
-// 明文缓冲复用与免结构体堆分配——gotd DecryptFromBuffer 每帧 make 整帧明文
-// （上传帧可达 512KiB+），是入站 Dispatch 链路最大的稳态分配点。
+// decryptClientFrame decrypts one client encrypted message into the plain reuse
+// buffer (telesrv-owned, symmetric with the outbound encryptOutboundFrame). Its
+// validation set matches gotd Cipher.Decrypt line by line: auth_key_id match,
+// 16-byte ciphertext block alignment, msg_key (SHA256, client side x=0),
+// plaintext header length, message_data_len non-negative / 4-byte aligned / not
+// out of bounds, padding ≤ 1024. The only difference is plaintext buffer reuse
+// and avoiding struct heap allocation—gotd DecryptFromBuffer makes the whole
+// plaintext frame every time (upload frames can reach 512KiB+), which is the
+// largest steady-state allocation point on the inbound Dispatch path.
 func decryptClientFrame(key crypto.AuthKey, b *bin.Buffer, plain *bin.Buffer) (clientFrame, error) {
 	buf := b.Buf
 	if len(buf) < 24 {

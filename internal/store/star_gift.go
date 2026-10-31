@@ -6,24 +6,24 @@ import (
 	"telesrv/internal/domain"
 )
 
-// StarGiftStore 持久化礼物目录、不可变版本和 peer 收到的礼物实例。
+// StarGiftStore persists the gift catalog, immutable revisions, and gift instances received by a peer.
 type StarGiftStore interface {
-	// Catalog 返回启用的当前目录快照，按 sort_order/gift_id 排序。
+	// Catalog returns the enabled current catalog snapshot, sorted by sort_order/gift_id.
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
 	// CatalogAll includes disabled gifts for admin import duplicate detection.
 	CatalogAll(ctx context.Context) ([]domain.StarGift, error)
-	// CatalogGift 只返回当前启用版本，供新购买校验。
+	// CatalogGift returns only the currently enabled revision, for validating new purchases.
 	CatalogGift(ctx context.Context, giftID int64) (domain.StarGift, bool, error)
-	// CatalogRevision 返回不可变历史版本，供已领取礼物投影。
+	// CatalogRevision returns an immutable historical revision, for projecting already-received gifts.
 	CatalogRevision(ctx context.Context, revisionID int64) (domain.StarGift, bool, error)
-	// CreateCatalogRevision 创建新礼物或为既有礼物创建新版本，并原子切换当前版本。
+	// CreateCatalogRevision creates a new gift or a new revision of an existing gift and atomically switches the current revision.
 	CreateCatalogRevision(ctx context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error)
 	// CreateCatalogBundle atomically switches the catalog revision and optional complete
 	// collectible revision. It is the only write path used by official full imports.
 	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
 	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
 	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
-	// AnimationJSON 返回当前版本的规范化 Lottie JSON，供管理后台安全预览。
+	// AnimationJSON returns the current revision's normalized Lottie JSON, for safe preview in the admin panel.
 	AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error)
 	// PublishCollectibleRevision validates and atomically publishes a new immutable attribute pool.
 	PublishCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error)
@@ -41,12 +41,12 @@ type StarGiftStore interface {
 	// stable order. Exported/burned/transferred gifts are deliberately excluded.
 	ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error)
 
-	// Create 写一条收到的礼物实例，返回行 id；频道礼物未显式给 saved_id 时以该行 id 作为 saved_id。
+	// Create writes one received gift instance and returns the row id; when a channel gift is not given an explicit saved_id, the row id is used as saved_id.
 	Create(ctx context.Context, gift domain.SavedStarGift) (int64, error)
-	// ListByOwner 按 id DESC keyset 分页返回某 owner 未转换的礼物；excludeUnsaved 时只返展示在资料的。
+	// ListByOwner returns an owner's unconverted gifts paginated by id DESC keyset; with excludeUnsaved it returns only those shown on the profile.
 	ListByOwner(ctx context.Context, owner domain.Peer, excludeUnsaved bool, offset string, limit int) (domain.SavedStarGiftPage, error)
 	ListByOwnerFiltered(ctx context.Context, filter domain.SavedStarGiftFilter) (domain.SavedStarGiftPage, error)
-	// GetByRef 按协议引用取礼物实例：用户用 msg_id，频道用 saved_id。
+	// GetByRef fetches a gift instance by protocol reference: users use msg_id, channels use saved_id.
 	GetByRef(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, bool, error)
 	// ResolveUserMessageRef resolves only an explicit viewer-local service-message
 	// alias. The returned ref retains the saved gift's authoritative user/channel
@@ -55,12 +55,13 @@ type StarGiftStore interface {
 	// ResolveSavedIDs resolves an ordered batch of protocol references without
 	// per-gift round trips. Every ref must belong to owner and resolve to a live gift.
 	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
-	// CountByOwner 返回某 owner 展示在资料的礼物数（非转换、非隐藏），供 full.stargifts_count。
+	// CountByOwner returns the number of an owner's gifts shown on the profile (not converted, not hidden), for full.stargifts_count.
 	CountByOwner(ctx context.Context, owner domain.Peer) (int, error)
-	// SetUnsaved 切换礼物在资料的展示（saveStarGift）；返回是否命中一行。
+	// SetUnsaved toggles a gift's display on the profile (saveStarGift); returns whether a row matched.
 	SetUnsaved(ctx context.Context, ref domain.SavedStarGiftRef, unsaved bool) (bool, error)
-	// MarkConverted 幂等地把礼物标记为已转换（convertStarGift），返回该行供调用方据 ConvertStars
-	// 入账；已转换返回 domain.ErrStarGiftAlreadyConverted，不存在返回 domain.ErrStarGiftNotFound。
+	// MarkConverted idempotently marks a gift as converted (convertStarGift) and returns the row
+	// so the caller can credit Stars per ConvertStars; already-converted returns
+	// domain.ErrStarGiftAlreadyConverted, and absent returns domain.ErrStarGiftNotFound.
 	MarkConverted(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, error)
 
 	ListCollections(ctx context.Context, owner domain.Peer) ([]domain.StarGiftCollection, error)

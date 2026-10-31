@@ -74,7 +74,7 @@ func (r *Router) BotAPISendInvoice(
 		Type: domain.MessageReplyMarkupInline,
 		Inline: [][]domain.MarkupButton{{{
 			Type:  domain.MarkupButtonBuy,
-			Text:  fmt.Sprintf("Оплатить %d Stars", amount),
+			Text:  fmt.Sprintf("Pay %d Stars", amount),
 			Style: domain.MarkupButtonStyleSuccess,
 		}}},
 	}

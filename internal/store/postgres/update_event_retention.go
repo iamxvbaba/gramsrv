@@ -11,12 +11,14 @@ import (
 
 const userUpdateRetentionTransactionBatch = 256
 
-// DeleteConfirmedPrefix 删除账号 durable update 的共同确认安全前缀。
+// DeleteConfirmedPrefix deletes an account's durable update common-confirmation safe prefix.
 //
-// 安全边界：只考虑当前 authorizations；任一授权缺 update_states 时其 observed 水位按 0，
-// 因而不会删除它可能仍需的事件。AuthorizationStore.Bind 会为新授权以账号当前水位
-// 初始化 delivered state、以已回收 floor 初始化 observed baseline：新设备无需恢复其授权
-// 创建前已删除的事件，但在主动报告后续 pts 前仍会阻塞新的前缀回收。
+// Safety boundary: only current authorizations are considered; when an authorization lacks
+// update_states, its observed watermark is treated as 0, so events it may still need are not deleted.
+// AuthorizationStore.Bind initializes a new authorization's delivered state to the account's current
+// watermark and its observed baseline to the reclaimed floor: a new device does not need to recover
+// events deleted before its authorization was created, but it still blocks further prefix reclamation
+// until it actively reports subsequent pts.
 func (s *UpdateEventStore) DeleteConfirmedPrefix(ctx context.Context, olderThan time.Duration, limit int) (int, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
@@ -55,10 +57,11 @@ func (s *UpdateEventStore) DeleteConfirmedPrefix(ctx context.Context, olderThan 
 			return deletedTotal, err
 		}
 		if deleted == 0 {
-			// candidate 在选取与加锁之间可能被其它 worker 处理，或遇到既有空洞；
-			// 本轮排除后继续找其它用户，避免一个竞态账号饿死全局回收。
-			// candidate SQL 已只允许 floor 后的 immediate head，不再让“新 head+旧 tail”
-			// 或缺口账号占用任意 256-pass 配额；因此这里也不再设人为 256 截断。
+			// The candidate may have been handled by another worker between selection and locking, or
+			// hit a pre-existing hole; exclude it this round and keep looking for other users so one
+			// racing account does not starve global reclamation. The candidate SQL already allows only
+			// the immediate head after the floor, so a "new head + old tail" or gapped account no longer
+			// consumes any 256-pass quota; hence no artificial 256 truncation is set here either.
 			excluded = append(excluded, userID)
 			continue
 		}
@@ -115,7 +118,7 @@ func pruneConfirmedUserPrefixTx(ctx context.Context, tx pgx.Tx, userID int64, cu
 	if userID == 0 || limit <= 0 {
 		return 0, nil
 	}
-	// 与所有 pts 分配共享 watermark 行锁：新业务事件不能在 floor 计算与删除之间穿插。
+	// Share the watermark row lock with all pts allocations: new business events must not slip in between floor computation and deletion.
 	var currentPts int
 	if err := tx.QueryRow(ctx, `
 SELECT contiguous_pts
@@ -182,7 +185,7 @@ LIMIT $5`, userID, floor, safePts, cutoff, limit)
 		}
 		expected += event.ptsCount
 		if event.pts != expected {
-			// 绝不跨越既有空洞推进 retained floor。
+			// Never advance the retained floor across a pre-existing hole.
 			break
 		}
 		events = append(events, event)
@@ -254,13 +257,14 @@ WHERE user_id = $1`, userID, last.pts, last.date); err != nil {
 	return len(events), nil
 }
 
-// UserUpdateRetentionCheckpoint 返回当前 auth key 已明确确认、可通过普通
-// differenceSlice 跳过的安全前缀。
+// UserUpdateRetentionCheckpoint returns the safe prefix the current auth key has explicitly
+// confirmed and can skip via the ordinary differenceSlice.
 //
-// 一旦 retained floor > 0，仍存在的 authorization 必须同时有 observed_pts >= floor；
-// AuthorizationStore.Bind 在同一事务建立这个 baseline。若这里看到 authorization 存在但
-// state 缺失/倒退，说明生命周期不变量已经破坏。此时必须 fail-fast，不能返回 ok=false 后让
-// GetDifference 从已删除前缀继续读并伪装成空差分。
+// Once retained floor > 0, any surviving authorization must also have observed_pts >= floor;
+// AuthorizationStore.Bind establishes this baseline in the same transaction. If an authorization
+// exists here but its state is missing/regressed, the lifecycle invariant has already been broken.
+// At that point we must fail fast, not return ok=false and let GetDifference keep reading from the
+// deleted prefix while pretending it is an empty difference.
 func (s *UpdateEventStore) UserUpdateRetentionCheckpoint(ctx context.Context, authKeyID [8]byte, userID int64) (pts, date int, ok bool, err error) {
 	if s == nil || s.db == nil || userID == 0 || authKeyID == ([8]byte{}) {
 		return 0, 0, false, nil

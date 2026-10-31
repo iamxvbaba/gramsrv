@@ -36,8 +36,9 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	if strings.TrimSpace(req.Message) == "" && finalMedia.IsZero() && finalRich.IsZero() {
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
-	// WebPageResolve：频道链接预览就地替换（服务端内部，幂等守卫即授权）。只换 media、
-	// 不碰 body/entities/edit_date，事件为 channel_web_page。
+	// WebPageResolve: in-place replacement of a channel link preview (server-internal; the
+	// idempotent guard is the authorization). Only swaps media; body/entities/edit_date are
+	// untouched, and the event is channel_web_page.
 	if req.WebPageResolve {
 		if req.Media == nil || !domain.IsPendingWebPageMedia(msg.Media, req.ExpectedWebPageID) {
 			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
@@ -66,8 +67,9 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 			Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
 		}, nil
 	}
-	// participant todo 协作须满足与正常发消息相同的权限，禁言成员/无发帖权订阅者
-	// 不得借 OthersCanComplete/Append 绕过发言限制（与 postgres 对齐）。
+	// Participant todo collaboration must satisfy the same permissions as normal sending;
+	// a muted member / a subscriber without posting rights must not bypass the posting
+	// restriction via OthersCanComplete/Append (aligned with postgres).
 	participantTodoEdit := isChannelTodoParticipantEdit(req, msg) && canSendChannelMessage(channel, member)
 	viaBotEditRequested := req.ViaBotEditBotID != 0
 	viaBotEdit := viaBotEditRequested && msg.ViaBotID == req.ViaBotEditBotID
@@ -161,9 +163,11 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 			}
 		}
 	}
-	// 编辑对账 @ 集合：新增者补提及，被移除的实体提及删除；reply 隐式提及保留。
-	// 仅在 body/entities 实际变化时执行：media-only 编辑（geolive/todo/poll）不带
-	// MentionUserIDs，无条件对账会误删 caption 里仍未读的 @ 提及（与 postgres 对齐）。
+	// Reconcile the @ set on edit: newly added users get a mention, entities removed from
+	// the text have their mention deleted; the implicit reply mention is kept. Only run
+	// when body/entities actually changed: a media-only edit (geolive/todo/poll) carries no
+	// MentionUserIDs, so unconditional reconciliation would wrongly delete still-unread @
+	// mentions in the caption (aligned with postgres).
 	textChanged := prevMsg.Body != req.Message || !sameMessageEntities(prevMsg.Entities, req.Entities)
 	if textChanged && (!channel.Broadcast || channel.Megagroup) {
 		keep := make(map[int64]struct{}, len(req.MentionUserIDs)+1)
@@ -278,8 +282,8 @@ func (s *ChannelStore) UpdatePinnedMessage(_ context.Context, req domain.UpdateC
 	if !ok || msg.Deleted {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrMessageIDInvalid
 	}
-	// 多置顶模型：pin/unpin 只翻转目标消息自身的 pinned flag，不影响其它
-	// 置顶；与官方一致不设数量上限。
+	// Multi-pin model: pin/unpin only flips the target message's own pinned flag and does
+	// not affect other pins; consistent with official behaviour there is no count limit.
 	if msg.Pinned == req.Pinned {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelNotModified
 	}
@@ -321,7 +325,7 @@ func (s *ChannelStore) UpdatePinnedMessage(_ context.Context, req domain.UpdateC
 	}, nil
 }
 
-// latestPinnedMessageIDLocked 返回最新置顶消息 id（channelFull.pinned_msg_id 缓存语义）。
+// latestPinnedMessageIDLocked returns the latest pinned message id (channelFull.pinned_msg_id cache semantics).
 func (s *ChannelStore) latestPinnedMessageIDLocked(channelID int64) int {
 	latest := 0
 	for _, m := range s.messages[channelID] {
@@ -332,7 +336,7 @@ func (s *ChannelStore) latestPinnedMessageIDLocked(channelID int64) int {
 	return latest
 }
 
-// UnpinAllChannelMessages 清空全部置顶并以单条 channel 事件携带全部 id。
+// UnpinAllChannelMessages clears all pins and carries all ids in a single channel event.
 func (s *ChannelStore) UnpinAllChannelMessages(_ context.Context, req domain.UnpinAllChannelMessagesRequest) (domain.UpdateChannelPinnedMessageResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.UpdateChannelPinnedMessageResult{}, domain.ErrChannelInvalid
@@ -380,7 +384,7 @@ func (s *ChannelStore) UnpinAllChannelMessages(_ context.Context, req domain.Unp
 	}, nil
 }
 
-// ClearDanglingPinnedMessage 把指向已删除消息的置顶值清零（unpinAll 自愈）。
+// ClearDanglingPinnedMessage zeroes a pinned value that points at a deleted message (unpinAll self-heal).
 func (s *ChannelStore) ClearDanglingPinnedMessage(_ context.Context, channelID int64, messageID int) error {
 	if channelID == 0 || messageID <= 0 {
 		return domain.ErrChannelInvalid

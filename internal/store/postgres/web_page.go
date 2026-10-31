@@ -10,10 +10,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// web_pages 是链接预览解析缓存：按规范化 URL 的 63-bit 哈希去重，snapshot 持久化完整的
-// domain.MessageWebPage 快照。用裸 pgx（非 sqlc），该表无需进入查询代码生成。
+// web_pages is the link-preview resolution cache: deduplicated by a 63-bit hash of the normalized URL,
+// with snapshot persisting the full domain.MessageWebPage snapshot. It uses raw pgx (not sqlc), so this
+// table does not need to enter query code generation.
 
-// PutWebPage upsert 一行解析结果；冲突按 url_hash 覆盖快照与 refreshed_at（created_at 保留首次）。
+// PutWebPage upserts one resolution row; on conflict it overwrites the snapshot and refreshed_at by
+// url_hash (created_at keeps the first value).
 func (s *MediaStore) PutWebPage(ctx context.Context, urlHash int64, page domain.MessageWebPage, now int) error {
 	snapshot, err := json.Marshal(page)
 	if err != nil {
@@ -31,7 +33,7 @@ func (s *MediaStore) PutWebPage(ctx context.Context, urlHash int64, page domain.
 	return err
 }
 
-// GetWebPageByURLHash 读回已解析快照；未命中 found=false。
+// GetWebPageByURLHash reads back a resolved snapshot; found=false on a miss.
 func (s *MediaStore) GetWebPageByURLHash(ctx context.Context, urlHash int64) (domain.MessageWebPage, int, bool, error) {
 	var (
 		snapshot    []byte

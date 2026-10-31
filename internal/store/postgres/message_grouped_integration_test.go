@@ -8,9 +8,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendPrivateGroupedIDSurvivesReadPaths 回归迁移 0008：相册 grouped_id 经私聊
-// 全部读路径保真——发送结果双盒、history、GetByIDs、以及更新事件重建路径（离线
-// difference / 在线推送共用）。这是「漏一处读站点=分组静默丢失」最易踩的地方。
+// TestSendPrivateGroupedIDSurvivesReadPaths regresses migration 0008: the album grouped_id
+// stays faithful through all private read paths — the send result's two boxes, history, GetByIDs,
+// and the update-event rebuild path (shared by offline difference / online push). This is the most
+// easily missed spot for "one missing read site = grouping silently lost".
 func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -38,7 +39,7 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
 	const groupedID = int64(880000000123)
 
-	// 同一 album 的两条消息共享 grouped_id。
+	// The two messages of the same album share grouped_id.
 	var senderMsgIDs []int
 	for i := 0; i < 2; i++ {
 		res, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
@@ -58,7 +59,7 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 		senderMsgIDs = append(senderMsgIDs, res.SenderMessage.ID)
 	}
 
-	// history：两条都带同一 grouped_id（客户端据此分组）。
+	// history: both carry the same grouped_id (the client groups by it).
 	hist, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("recipient history: %v", err)
@@ -73,7 +74,7 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 		t.Fatalf("recipient history grouped count = %d, want 2", album)
 	}
 
-	// GetByIDs 带 grouped_id。
+	// GetByIDs carries grouped_id.
 	byID, err := messages.GetByIDs(ctx, sender.ID, senderMsgIDs)
 	if err != nil {
 		t.Fatalf("sender get by ids: %v", err)
@@ -87,7 +88,7 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 		}
 	}
 
-	// 更新事件重建路径（关键：getDifference/推送共用）带 grouped_id。
+	// The update-event rebuild path (key: shared by getDifference/push) carries grouped_id.
 	events := NewUpdateEventStore(pool)
 	got, err := events.ListAfter(ctx, recipient.ID, 0, 20)
 	if err != nil {
@@ -97,7 +98,7 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 	for _, ev := range got {
 		if ev.Type == domain.UpdateEventNewMessage && ev.Message.ID != 0 {
 			if ev.Message.GroupedID != groupedID {
-				t.Fatalf("update-event grouped = %d, want %d（重建路径丢失分组）", ev.Message.GroupedID, groupedID)
+				t.Fatalf("update-event grouped = %d, want %d (rebuild path lost the grouping)", ev.Message.GroupedID, groupedID)
 			}
 			rebuilt++
 		}
@@ -107,8 +108,8 @@ func TestSendPrivateGroupedIDSurvivesReadPaths(t *testing.T) {
 	}
 }
 
-// TestSendChannelGroupedIDSurvivesReadPaths 回归迁移 0008：频道侧（手写 SQL）相册
-// grouped_id 经发送结果/事件/history/GetChannelMessages 保真。
+// TestSendChannelGroupedIDSurvivesReadPaths regresses migration 0008: the channel-side (hand-written
+// SQL) album grouped_id stays faithful through the send result/events/history/GetChannelMessages.
 func TestSendChannelGroupedIDSurvivesReadPaths(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/readmodelcache"
 )
 
-// storyPinnedAvailableCache 缓存 (viewer,peer)→是否有置顶故事,由统一缓存原语承载
-// (LRU 单条驱逐 / epoch 守卫 / 内建 singleflight;纯 TTL,无版本闸门)。
+// storyPinnedAvailableCache caches (viewer,peer)->has pinned stories, carried by
+// the shared cache primitive (LRU single-entry eviction / epoch guard / built-in
+// singleflight; pure TTL, no version gate).
 type storyPinnedAvailableCache struct {
 	cache *readmodelcache.Cache[storyProjectionCacheKey, bool]
 }

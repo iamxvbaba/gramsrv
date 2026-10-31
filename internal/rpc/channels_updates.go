@@ -25,9 +25,11 @@ func (r *Router) onUpdatesGetChannelDifference(ctx context.Context, req *tg.Upda
 	if err := r.checkFrozenChannelParticipants(ctx, userID, channelID); err != nil {
 		return nil, err
 	}
-	// difference 类 catch-up FLOOD_WAIT（设计 Phase 2 / §10.3）：nudge 被消费后客户端会触发
-	// getChannelDifference，大群 nudge 全速前需限速防风暴。未配置阈值时不限速。
-	// participant gate 必须先于限流写入，保证冻结拒绝没有副作用。
+	// difference-class catch-up FLOOD_WAIT (design Phase 2 / §10.3): after a nudge is
+	// consumed the client triggers getChannelDifference, so a large group nudge at
+	// full speed needs rate limiting to prevent a storm. No limit when no threshold
+	// is configured. The participant gate must run before the rate-limit write so a
+	// freeze rejection has no side effects.
 	if err := r.checkCatchupRateLimit(ctx, userID, channelDifferenceRateLimitKeyPrefix); err != nil {
 		return nil, err
 	}
@@ -150,8 +152,10 @@ func (r *Router) channelStateUpdates(viewerUserID int64, channel domain.Channel)
 	}
 }
 
-// appendChannelStateUpdates 把 extra 的 update/chat 合并进 dst(chats 按 id 去重)。用于在一次响应里
-// 叠加关联频道的状态更新,例如随母频道删除一并下发的 monoforum ChannelForbidden 墓碑。
+// appendChannelStateUpdates merges extra's updates/chats into dst (chats deduped by
+// id). Used to layer the status update of a related channel into one response, e.g.
+// the monoforum ChannelForbidden tombstone sent together with the parent channel's
+// deletion.
 func appendChannelStateUpdates(dst *tg.Updates, extra *tg.Updates) {
 	if dst == nil || extra == nil {
 		return
@@ -168,11 +172,15 @@ func appendChannelStateUpdates(dst *tg.Updates, extra *tg.Updates) {
 // turn one state change into one query per member.
 func (r *Router) channelStateUpdatesWithLinkedMonoforum(viewerUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool, botVerificationIcon int64, usernames map[domain.Peer][]domain.Username) *tg.Updates {
 	updates := r.channelStateUpdates(viewerUserID, channel)
-	// 母广播频道有/曾有关联 monoforum 时,按完整(非 min)形态下发。关闭 Direct Messages 时
-	// linked_monoforum_id 在投影里被隐藏,只有完整频道对象才能覆盖客户端缓存里旧的 linked_monoforum_id,
-	// 触发 applyMonoforumLinkedId(parent,0) → monoforum 的 MonoforumDisabled → 「已停用私信」停用页脚;
-	// min 母频道不覆盖缓存字段,页脚出不来。与官方 disable(parent 完整下发 + 隐藏 linked id)一致。
-	// 普通频道(无 linked monoforum)仍走 min,不受影响。
+	// When the parent broadcast channel has or had a linked monoforum, project it in
+	// full (non-min) form. When Direct Messages is disabled, linked_monoforum_id is
+	// hidden in the projection, and only the full channel object can overwrite the
+	// client cache's old linked_monoforum_id, triggering applyMonoforumLinkedId(parent,0)
+	// → the monoforum's MonoforumDisabled → the "direct messages disabled" footer; a
+	// min parent channel does not overwrite cached fields, so the footer never
+	// appears. Aligned with the official behavior (parent projected in full + hidden
+	// linked id on disable). Normal channels (no linked monoforum) still use min and
+	// are unaffected.
 	if channel.LinkedMonoforumID != 0 {
 		updates.Chats = []tg.ChatClass{tgChannelChat(viewerUserID, channel, nil)}
 	}
@@ -227,9 +235,10 @@ func (r *Router) pushChannelDiscussionUpdate(ctx context.Context, originUserID i
 		Recipients:     discussion.Recipients,
 		MentionUserIDs: discussion.MentionUserIDs,
 	}
-	// 讨论组联动（broadcast↔linked megagroup）的第二轮 fan-out 也异步化 + 跨 viewer 投影预热
-	// （设计 Phase 0/Phase 1）。cache 仅被本 fan-out 闭包/预热使用、由单分片 worker 串行执行，
-	// 无跨 goroutine 竞态。
+	// The second-round fan-out of the discussion-group wiring (broadcast↔linked
+	// megagroup) is also made asynchronous + cross-viewer projection warm-up (design
+	// Phase 0/Phase 1). The cache is used only by this fan-out closure/warm-up and is
+	// run serially by a single-shard worker, so there is no cross-goroutine race.
 	r.enqueueChannelMessageFanout(ctx, originUserID, res, nil)
 }
 
@@ -380,9 +389,9 @@ func (r *Router) channelAvailableMessagesUpdates(viewerUserID int64, channel dom
 	}
 }
 
-// projectChannelMentionForViewer 把全局消息快照按接收者投影 viewer-specific
-// 的 mentioned/media_unread：被 @ 的在线成员必须在实时推送里就看到 @ 角标，
-// 不能等到离线差量或重开会话才出现。
+// projectChannelMentionForViewer projects the global message snapshot into a
+// viewer-specific mentioned/media_unread: a mentioned online member must see the @
+// badge in the live push, not only after an offline difference or a session restart.
 func projectChannelMentionForViewer(event domain.ChannelUpdateEvent, mentionUserIDs []int64, viewerUserID int64) domain.ChannelUpdateEvent {
 	if viewerUserID == 0 || event.Message.ID == 0 || viewerUserID == event.Message.SenderUserID {
 		return event
@@ -391,8 +400,8 @@ func projectChannelMentionForViewer(event domain.ChannelUpdateEvent, mentionUser
 		if id != viewerUserID {
 			continue
 		}
-		// 客户端的未读提及判定要求 mentioned 与 media_unread 同时置位，
-		// 与消息是否含媒体无关。
+		// The client's unread-mention check requires mentioned and media_unread to be
+		// set together, regardless of whether the message carries media.
 		event.Message.Mentioned = true
 		event.Message.MediaUnread = true
 		return event

@@ -279,8 +279,11 @@ func (r *Router) onMessagesGetForumTopics(ctx context.Context, req *tg.MessagesG
 	if req.Limit < 0 || utf8.RuneCountInString(req.Q) > maxMessageSearchQLength {
 		return nil, limitInvalidErr()
 	}
-	// 官方客户端会请求超过单页上限的数量(telegram-tt 首屏 loadTopics 发 limit=500),对齐官方与
-	// store 行为=钳到服务端单页上限,而非报 LIMIT_INVALID;客户端据响应里的 count 用 offset 翻页取其余。
+	// Official clients request counts above the single-page limit (telegram-tt's
+	// first-screen loadTopics sends limit=500); matching the official server and
+	// store behavior means clamping to the server's single-page limit rather than
+	// returning LIMIT_INVALID; the client pages through the rest with offset based
+	// on the count in the response.
 	effectiveLimit := req.Limit
 	if effectiveLimit > domain.MaxChannelForumTopicsLimit {
 		effectiveLimit = domain.MaxChannelForumTopicsLimit

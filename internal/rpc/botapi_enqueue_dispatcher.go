@@ -8,16 +8,18 @@ import (
 	"go.uber.org/zap"
 )
 
-// Bot API 私聊 enqueue 异步化（性能审计 H2）：user→bot 私聊发送/编辑时，把
-// bot_api_updates 的 INSERT（以及可能打 PG 的 bot 判定）移出发送者 RPC 同步路径，
-// 发送者不再为 Bot API 队列写入多等一次 PG 往返。
+// Bot API private-chat enqueue async-ification (performance audit H2): when a user->bot private
+// chat is sent/edited, the bot_api_updates INSERT (and the possibly-PG-hitting bot check) is
+// moved off the sender's RPC synchronous path, so the sender no longer waits an extra PG round
+// trip for the Bot API queue write.
 //
-// 与 channel fanout dispatcher 的关键差异：bot_api_updates 行本身就是投递真值
-// （getUpdates 只读该表，没有 getDifference 类兜底），因此队列满时**同步回退执行**
-// 而不是丢弃——发送者多等一次 INSERT，换 update 不丢。
+// Key difference from the channel fanout dispatcher: the bot_api_updates row itself is the
+// delivery source of truth (getUpdates reads only that table, with no getDifference-like
+// fallback), so when the queue is full it **falls back to running synchronously** rather than
+// dropping -- the sender waits one extra INSERT in exchange for not losing the update.
 //
-// 单 worker FIFO：保证同一 bot 的 update_id 顺序与发送顺序一致（并发 goroutine 池
-// 会让 bot 侧 getUpdates 看到乱序消息）。
+// Single-worker FIFO: guarantees the update_id order for the same bot matches the send order
+// (a concurrent goroutine pool would let the bot side's getUpdates see out-of-order messages).
 
 const (
 	defaultBotAPIEnqueueBuffer  = 4096
@@ -41,8 +43,9 @@ func newBotAPIEnqueueDispatcher(log *zap.Logger, buffer int) *botAPIEnqueueDispa
 	}
 }
 
-// RunBotAPIEnqueue 启动 Bot API enqueue 后台 worker，由 main 与其它 dispatcher 一同 go 起。
-// 阻塞到 ctx 取消；未调用前 enqueue 同步执行（行为同旧版，测试/未装配场景不变）。
+// RunBotAPIEnqueue starts the Bot API enqueue background worker, launched alongside the other
+// dispatchers by main. Blocks until ctx is canceled; before it is called, enqueue runs
+// synchronously (same behavior as the old version, unchanged for tests/unwired setups).
 func (r *Router) RunBotAPIEnqueue(ctx context.Context) {
 	r.botAPIEnqueueQueue.Run(ctx)
 }
@@ -63,8 +66,9 @@ func (d *botAPIEnqueueDispatcher) Run(ctx context.Context) {
 	}
 }
 
-// Enqueue 投递一个 Bot API 队列写入任务。dispatcher 未启动时同步执行（用请求 ctx）；
-// 已启动时投入 FIFO，满则同步回退执行——绝不丢弃（队列行是投递真值）。
+// Enqueue submits a Bot API queue-write task. When the dispatcher is not started it runs
+// synchronously (using the request ctx); when started it is put into the FIFO, and falls back to
+// synchronous execution when full -- it never drops (a queue row is the delivery source of truth).
 func (d *botAPIEnqueueDispatcher) Enqueue(reqCtx context.Context, job func(context.Context)) {
 	if d == nil || job == nil {
 		return

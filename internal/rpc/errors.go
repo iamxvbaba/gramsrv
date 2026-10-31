@@ -10,35 +10,38 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件集中构造所有 rpc_error：error_code 遵循 Telegram 约定（4xx 客户端 / 5xx 服务端），
-// error_message 为 SCREAMING_SNAKE_CASE。统一用 tgerr.New，由它从 message 解析 Type/Argument
-// （正确处理 FLOOD_WAIT_X 等带参数错误），避免手写 &tgerr.Error{} 时重复且易错。
+// This file centralizes the construction of every rpc_error: error_code follows the
+// Telegram convention (4xx client / 5xx server), and error_message is
+// SCREAMING_SNAKE_CASE. Always use tgerr.New, which parses Type/Argument from the
+// message (correctly handling parameterized errors like FLOOD_WAIT_X), avoiding the
+// duplication and mistakes of hand-writing &tgerr.Error{}.
 
-// internalErr 是兜底的服务端错误。
+// internalErr is the fallback server error.
 func internalErr() error { return tgerr.New(500, "INTERNAL_SERVER_ERROR") }
 
-// notImplementedErr 表示 RPC 未实现（落兼容矩阵），让客户端继续运行而非断连。
+// notImplementedErr means the RPC is not implemented (recorded in the compatibility matrix), so the client keeps running instead of disconnecting.
 func notImplementedErr() error { return tgerr.New(500, "NOT_IMPLEMENTED") }
 
-// wrapperTooDeepErr 表示 invokeWithLayer/initConnection 等 wrapper 嵌套过深。
+// wrapperTooDeepErr means invokeWithLayer/initConnection etc. wrappers are nested too deeply.
 func wrapperTooDeepErr() error { return tgerr.New(400, "WRAPPER_TOO_DEEP") }
 
-// inputConstructorInvalidErr 表示客户端传入的 TL 构造器不在当前 RPC 接受范围内。
+// inputConstructorInvalidErr means the TL constructor sent by the client is not accepted by the current RPC.
 func inputConstructorInvalidErr() error { return tgerr.New(400, "INPUT_CONSTRUCTOR_INVALID") }
 
-// langCodeNotSupportedErr 表示请求的语言码没有已导入的语言包。
+// langCodeNotSupportedErr means the requested language code has no imported language pack.
 func langCodeNotSupportedErr() error { return tgerr.New(400, "LANG_CODE_NOT_SUPPORTED") }
 
-// langPackInvalidErr 表示请求的语言包目录不存在。
+// langPackInvalidErr means the requested language pack directory does not exist.
 func langPackInvalidErr() error { return tgerr.New(400, "LANG_PACK_INVALID") }
 
-// folderIDInvalidErr 表示客户端传入多个 folder peer 或非法 folder。
+// folderIDInvalidErr means the client passed multiple folder peers or an invalid folder.
 func folderIDInvalidErr() error { return tgerr.New(400, "FOLDER_ID_INVALID") }
 
 func pinnedTooMuchErr() error { return tgerr.New(400, "PINNED_DIALOGS_TOO_MUCH") }
 
-// savedPinnedTooMuchErr 是收藏夹子会话置顶超限（messages.toggleSavedDialogPin /
-// reorderPinnedSavedDialogs，官方错误码 PINNED_TOO_MUCH）。
+// savedPinnedTooMuchErr is the favorites sub-session pin limit exceeded
+// (messages.toggleSavedDialogPin / reorderPinnedSavedDialogs; official error code
+// PINNED_TOO_MUCH).
 func savedPinnedTooMuchErr() error { return tgerr.New(400, "PINNED_TOO_MUCH") }
 
 func filterIDInvalidErr() error { return tgerr.New(400, "FILTER_ID_INVALID") }
@@ -59,7 +62,7 @@ func chatlistsTooMuchErr() error { return tgerr.New(400, "CHATLISTS_TOO_MUCH") }
 
 func peersListEmptyErr() error { return tgerr.New(400, "PEERS_LIST_EMPTY") }
 
-// peerIDInvalidErr 表示目标 peer 不存在或当前阶段不支持。
+// peerIDInvalidErr means the target peer does not exist or is not supported at this stage.
 func peerIDInvalidErr() error { return tgerr.New(400, "PEER_ID_INVALID") }
 
 func fromPeerInvalidErr() error { return tgerr.New(400, "FROM_PEER_INVALID") }
@@ -100,7 +103,7 @@ func mediaTypeInvalidErr() error { return tgerr.New(400, "MEDIA_TYPE_INVALID") }
 
 func urlInvalidErr() error { return tgerr.New(400, "URL_INVALID") }
 
-// 文件上传 / 下载相关错误。
+// File upload / download related errors.
 func filePartInvalidErr() error      { return tgerr.New(400, "FILE_PART_INVALID") }
 func filePartsInvalidErr() error     { return tgerr.New(400, "FILE_PARTS_INVALID") }
 func filePartTooBigErr() error       { return tgerr.New(400, "FILE_PART_TOO_BIG") }
@@ -122,21 +125,21 @@ func photoInvalidErr() error { return tgerr.New(400, "PHOTO_INVALID") }
 
 func stickersetInvalidErr() error { return tgerr.New(406, "STICKERSET_INVALID") }
 
-// stickerInvalidErr 表示输入文档不是合法贴纸/GIF（faveSticker/saveRecentSticker/saveGif）。
+// stickerInvalidErr means the input document is not a valid sticker/GIF (faveSticker/saveRecentSticker/saveGif).
 func stickerInvalidErr() error { return tgerr.New(400, "STICKER_DOCUMENT_INVALID") }
 
-// gifIDInvalidErr 表示 messages.saveGif 引用的文档不存在或不是规范 GIFv。
+// gifIDInvalidErr means the document referenced by messages.saveGif does not exist or is not a canonical GIFv.
 func gifIDInvalidErr() error { return tgerr.New(400, "GIF_ID_INVALID") }
 
 func mediaCaptionTooLongErr() error { return tgerr.New(400, "MEDIA_CAPTION_TOO_LONG") }
 
 func replyMarkupInvalidErr() error { return tgerr.New(400, "REPLY_MARKUP_INVALID") }
 
-// accessTokenInvalidErr 是 auth.importBotAuthorization 的 bot token 校验失败
-// （含 revoke 后旧 token）。
+// accessTokenInvalidErr is a failed auth.importBotAuthorization bot token
+// validation (including an old token after revoke).
 func accessTokenInvalidErr() error { return tgerr.New(400, "ACCESS_TOKEN_INVALID") }
 
-// importBotAuthorizationErr 把 bot 登录业务错误映射为 rpc_error。
+// importBotAuthorizationErr maps a bot login business error to an rpc_error.
 func importBotAuthorizationErr(err error) error {
 	if errors.Is(err, domain.ErrBotTokenInvalid) {
 		return accessTokenInvalidErr()
@@ -194,17 +197,17 @@ func pollClosedErr() error { return tgerr.New(400, "MESSAGE_POLL_CLOSED") }
 
 func revoteNotAllowedErr() error { return tgerr.New(400, "REVOTE_NOT_ALLOWED") }
 
-// pollVoteRequiredErr 用于 getPollVotes 防御路径（非公开投票/未投票即查投票人，官方同名错误）。
+// pollVoteRequiredErr is used in the getPollVotes defensive path (querying voters for a non-public poll / without voting; the official error of the same name).
 func pollVoteRequiredErr() error { return tgerr.New(403, "POLL_VOTE_REQUIRED") }
 
 func reactionInvalidErr() error { return tgerr.New(400, "REACTION_INVALID") }
 
-// emoticonInvalidErr 用于 InputMediaDice 等带 emoticon 的输入不在支持集合内。
+// emoticonInvalidErr is for InputMediaDice-style inputs whose emoticon is outside the supported set.
 func emoticonInvalidErr() error { return tgerr.New(400, "EMOTICON_INVALID") }
 
 func themeInvalidErr() error { return tgerr.New(400, "THEME_INVALID") }
 
-// themeErr 把自定义云主题(account.createTheme 等)的 domain 错误映射为 tgerr。
+// themeErr maps the domain errors of custom cloud themes (account.createTheme etc.) to tgerr.
 func themeErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrThemeFormatInvalid):
@@ -266,10 +269,10 @@ func contactNameEmptyErr() error { return tgerr.New(400, "CONTACT_NAME_EMPTY") }
 
 func contactReqMissingErr() error { return tgerr.New(400, "CONTACT_REQ_MISSING") }
 
-// messageEmptyErr 表示发送空文本。
+// messageEmptyErr means sending empty text.
 func messageEmptyErr() error { return tgerr.New(400, "MESSAGE_EMPTY") }
 
-// messageTooLongErr 表示文本超出当前阶段限制。
+// messageTooLongErr means the text exceeds the current stage's limit.
 func messageTooLongErr() error { return tgerr.New(400, "MESSAGE_TOO_LONG") }
 
 func entitiesTooLongErr() error { return tgerr.New(400, "ENTITIES_TOO_LONG") }
@@ -329,23 +332,25 @@ func topicTitleEmptyErr() error { return tgerr.New(400, "TOPIC_TITLE_EMPTY") }
 func topicIDInvalidErr() error  { return tgerr.New(400, "TOPIC_ID_INVALID") }
 func topicsEmptyErr() error     { return tgerr.New(400, "TOPICS_EMPTY") }
 
-// randomIDEmptyErr 表示发送消息缺少 random_id。
+// randomIDEmptyErr means the sent message is missing random_id.
 func randomIDEmptyErr() error { return tgerr.New(400, "RANDOM_ID_EMPTY") }
 
 func randomIDExpiredErr() error { return tgerr.New(400, "RANDOM_ID_EXPIRED") }
 
-// randomIDDuplicateErr 表示同一发送者重复使用 random_id，但请求载荷与首次
-// 成功发送不一致。Layer 227 为该错误定义的 code 是 500。
+// randomIDDuplicateErr means the same sender reused a random_id, but the request
+// payload does not match the first successful send. Layer 227 defines code 500 for
+// this error.
 func randomIDDuplicateErr() error { return tgerr.New(500, "RANDOM_ID_DUPLICATE") }
 
-// secretChatRandomIDDuplicateErr 使用 Telegram messages.requestEncryption 的官方
-// BAD_REQUEST 语义；普通消息历史上使用的 500 映射保持独立，避免扩大改动范围。
+// secretChatRandomIDDuplicateErr uses the official BAD_REQUEST semantics of
+// Telegram messages.requestEncryption; the 500 mapping historically used by plain
+// messages stays separate to avoid widening the change.
 func secretChatRandomIDDuplicateErr() error { return tgerr.New(400, "RANDOM_ID_DUPLICATE") }
 
-// scheduleDateInvalidErr 表示当前阶段不支持定时消息。
+// scheduleDateInvalidErr means scheduled messages are not supported at this stage.
 func scheduleDateInvalidErr() error { return tgerr.New(400, "SCHEDULE_DATE_INVALID") }
 
-// floodWaitErr 表示触发写操作限流。
+// floodWaitErr means a write-operation rate limit was triggered.
 func floodWaitErr(seconds int) error {
 	if seconds <= 0 {
 		seconds = 1
@@ -353,7 +358,7 @@ func floodWaitErr(seconds int) error {
 	return tgerr.New(420, fmt.Sprintf("FLOOD_WAIT_%d", seconds))
 }
 
-// phoneNumberInvalidErr 表示手机号为空或格式非法（auth.sendCode/signIn/signUp）。
+// phoneNumberInvalidErr means the phone number is empty or malformed (auth.sendCode/signIn/signUp).
 func phoneNumberInvalidErr() error { return tgerr.New(406, "PHONE_NUMBER_INVALID") }
 
 func phoneNumberOccupiedErr() error { return tgerr.New(400, "PHONE_NUMBER_OCCUPIED") }
@@ -382,11 +387,11 @@ func phoneChangeErr(err error) error {
 	}
 }
 
-// authKeyUnregisteredErr 表示请求要求登录态而当前连接未授权。
+// authKeyUnregisteredErr means the request requires a logged-in state but the current connection is unauthorized.
 func authKeyUnregisteredErr() error { return tgerr.New(401, "AUTH_KEY_UNREGISTERED") }
 func botMethodInvalidErr() error    { return tgerr.New(400, "BOT_METHOD_INVALID") }
 
-// 私聊通话（phone.*）错误；触发点见 internal/rpc/phone_calls.go 与 app/phone 错误映射。
+// Private call (phone.*) errors; trigger points are in internal/rpc/phone_calls.go and the app/phone error mapping.
 func callPeerInvalidErr() error     { return tgerr.New(400, "CALL_PEER_INVALID") }
 func callAlreadyAcceptedErr() error { return tgerr.New(400, "CALL_ALREADY_ACCEPTED") }
 func callAlreadyDeclinedErr() error { return tgerr.New(400, "CALL_ALREADY_DECLINED") }
@@ -407,10 +412,10 @@ func chatSendVoicesForbiddenErr() error {
 	return tgerr.New(403, "CHAT_SEND_VOICES_FORBIDDEN")
 }
 
-// signalingDataInvalidErr 表示 phone.sendSignalingData 载荷超限或非法。
+// signalingDataInvalidErr means the phone.sendSignalingData payload is oversized or invalid.
 func signalingDataInvalidErr() error { return tgerr.New(400, "DATA_INVALID") }
 
-// 群通话（group call）错误。
+// Group call errors.
 func groupCallInvalidErr() error          { return tgerr.New(400, "GROUPCALL_INVALID") }
 func groupCallAlreadyDiscardedErr() error { return tgerr.New(400, "GROUPCALL_ALREADY_DISCARDED") }
 func groupCallAlreadyStartedErr() error   { return tgerr.New(400, "GROUPCALL_ALREADY_STARTED") }
@@ -425,8 +430,9 @@ func confWriteChainInvalidErr() error {
 	return tgerr.New(400, "CONF_WRITE_CHAIN_INVALID")
 }
 
-// 私聊端对端加密（Secret Chat / encrypted chat）错误；触发点见
-// internal/rpc/encrypted_chats.go 与 app/secretchat、domain 错误映射。
+// Private end-to-end encryption (Secret Chat / encrypted chat) errors; trigger
+// points are in internal/rpc/encrypted_chats.go and the app/secretchat, domain error
+// mappings.
 func encryptionIDInvalidErr() error       { return tgerr.New(400, "ENCRYPTION_ID_INVALID") }
 func encryptionAlreadyAcceptedErr() error { return tgerr.New(400, "ENCRYPTION_ALREADY_ACCEPTED") }
 func encryptionAlreadyDeclinedErr() error { return tgerr.New(400, "ENCRYPTION_ALREADY_DECLINED") }
@@ -435,7 +441,7 @@ func dhGAInvalidErr() error               { return tgerr.New(400, "DH_G_A_INVALI
 func maxDateInvalidErr() error            { return tgerr.New(400, "MAX_DATE_INVALID") }
 func fileEmptyErr() error                 { return tgerr.New(400, "FILE_EMPTY") }
 
-// signInErr 把登录业务错误映射为客户端可识别的 rpc_error。
+// signInErr maps a login business error to a client-recognizable rpc_error.
 func signInErr(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrPhoneNumberInvalid),
@@ -456,8 +462,9 @@ func signInErr(err error) error {
 	}
 }
 
-// passkeyErr 映射 passkey(WebAuthn)错误。验证类失败统一返回 PASSKEY_INVALID,不泄漏
-// 具体哪一步失败(防探测);非验证类(store/内部)返回 500。
+// passkeyErr maps passkey (WebAuthn) errors. Verification-class failures uniformly
+// return PASSKEY_INVALID without leaking which step failed (anti-probing);
+// non-verification (store/internal) failures return 500.
 func passkeyErr(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
@@ -508,7 +515,7 @@ func passwordErr(err error) error {
 	}
 }
 
-// bindTempAuthKeyErr 映射 PFS temp auth key 绑定错误。
+// bindTempAuthKeyErr maps PFS temp auth key binding errors.
 func bindTempAuthKeyErr(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrExpiresAtInvalid):

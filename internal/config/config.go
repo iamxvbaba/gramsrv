@@ -1,4 +1,4 @@
-// Package config 负责 telesrv 运行配置的加载与校验。
+// Package config loads and validates telesrv's runtime configuration.
 package config
 
 import (
@@ -25,42 +25,42 @@ const (
 	defaultCountryCode = "CN"
 )
 
-// Config 是 telesrv 的运行配置。
+// Config is telesrv's runtime configuration.
 type Config struct {
-	// ListenAddr 是 MTProto TCP 监听地址。
-	// 需与 TDesktop patch 指向的自建 DC 地址/端口一致（记录于 docs/tdesktop-patch-notes.md）。
+	// ListenAddr is the MTProto TCP listen address.
+	// It must match the self-hosted DC address/port the TDesktop patch points at (recorded in docs/tdesktop-patch-notes.md).
 	ListenAddr string
-	// WebSocketEnable 在同一端口启用 MTProto-over-WebSocket 分流（WebA/telegram-tt）。
+	// WebSocketEnable enables MTProto-over-WebSocket multiplexing on the same port (WebA/telegram-tt).
 	WebSocketEnable bool
-	// WebSocketAllowedOrigins 是允许浏览器发起 WS upgrade 的页面 origin；"*" 仅用于临时调试。
+	// WebSocketAllowedOrigins lists page origins allowed to initiate a browser WS upgrade; "*" is only for temporary debugging.
 	WebSocketAllowedOrigins []string
-	// AdvertiseIP 是写入 help.getConfig DCOptions 的对外可达 IP（客户端据此连接本 DC）。
+	// AdvertiseIP is the externally reachable IP written into help.getConfig DCOptions (clients use it to connect to this DC).
 	AdvertiseIP string
-	// RSAKeyPath 是 server RSA 私钥的 PEM 路径；不存在时自动生成。
+	// RSAKeyPath is the PEM path of the server RSA private key; generated automatically when missing.
 	RSAKeyPath string
-	// DC 是本 server 的 DC ID。
+	// DC is this server's DC ID.
 	DC int
-	// DefaultCountryCode 是 help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
-	// 客户端登录页据此预选国家和国际电话区号；例如 CN 对应 +86。
+	// DefaultCountryCode is the ISO 3166-1 alpha-2 country code returned by help.getNearestDc.
+	// The client login page preselects the country and international dialing code from it; e.g. CN maps to +86.
 	DefaultCountryCode string
 	// StrictDCCheck enables the default-off key-exchange DC-label diagnostic.
 	// The normal single-backend mode accepts every wire int32 label without
 	// partitioning auth keys, sessions, or business state. See
 	// mtprotoedge.Options.StrictDC for the optional strict behavior.
 	StrictDCCheck bool
-	// CheckNumberFormat 要求普通手机号通过已分配号段校验。默认关闭，
-	// 国家号码计划无法描述的 4-32 位非零开头号码也可作为登录身份。
-	// +888 虚拟号码与保留系统号继续使用各自的独立规则。
+	// CheckNumberFormat requires ordinary phone numbers to pass assigned-range validation. Off by default,
+	// so a 4-32 digit, non-zero-leading number a national numbering plan cannot describe may still be used as
+	// a login identity. +888 virtual numbers and reserved system numbers keep their own separate rules.
 	CheckNumberFormat bool
-	// MTProtoMaxConnections / PerIP 覆盖 raw Accept、codec sniff、握手到认证 session
-	// 的完整物理连接生命周期；负数关闭对应 admission 上限。
+	// MTProtoMaxConnections / PerIP cover the full physical connection lifecycle from raw Accept, codec sniff
+	// and handshake to authenticated session; a negative value disables the corresponding admission limit.
 	MTProtoMaxConnections      int
 	MTProtoMaxConnectionsPerIP int
-	// MTProtoMaxConcurrentHandshakes 限制昂贵 RSA/DH exchange 并发；负数关闭。
+	// MTProtoMaxConcurrentHandshakes limits concurrency of the expensive RSA/DH exchange; a negative value disables it.
 	MTProtoMaxConcurrentHandshakes int
-	// MTProto RPC 使用 Server 共享公平调度器；per-connection 与 global 预算共同限制
-	// goroutine、排队任务和 request memory charge。legacy charge 等于 copied body，
-	// exact charge 是 typed decode 前的保守 materialization 上界，不等同 wire bytes。
+	// MTProto RPC uses the Server's shared fair scheduler; the per-connection and global budgets together limit
+	// goroutines, queued tasks and request memory charge. legacy charge equals the copied body, while
+	// exact charge is a conservative materialization upper bound before typed decode and is not equal to wire bytes.
 	MTProtoRPCMaxInflight    int
 	MTProtoRPCQueueSize      int
 	MTProtoRPCTimeout        time.Duration
@@ -78,23 +78,23 @@ type Config struct {
 	MTProtoRPCExecutionAuthMaxEntries    int
 	MTProtoRPCExecutionSessionMaxEntries int
 	MTProtoRPCExecutionPendingPerAuth    int
-	// MTProtoInboundFrameGlobalMaxBytes 是 transport wire + 最大解密 plaintext 的
-	// 进程级在途预算；frame 长度读出后、payload 分配前预留。
+	// MTProtoInboundFrameGlobalMaxBytes is the process-wide in-flight budget for transport wire + maximum
+	// decrypted plaintext; it is reserved after the frame length is read and before the payload is allocated.
 	MTProtoInboundFrameGlobalMaxBytes int64
-	// MTProto outbound mailbox 按连接有界；resend pending body 另受 Server 全局预算约束。
+	// The MTProto outbound mailbox is bounded per connection; the resend pending body is separately constrained by the Server's global budget.
 	MTProtoOutboundQueueSize              int
 	MTProtoOutboundControlQueueSize       int
 	MTProtoOutboundTrackedGlobalMaxBytes  int64
 	MTProtoOutboundCriticalGlobalMaxBytes int64
 	MTProtoOutboundWriteGlobalMaxBytes    int64
 
-	// DebugAddr 是 net/http/pprof 调试端点监听地址（CPU/heap/goroutine/mutex/block 剖析）。
-	// telesrv 是宿主进程、不在 docker 内，docker stats 看不到它，性能定位主要靠此端点。
-	// 默认仅绑 127.0.0.1，避免 profile 数据对外暴露；置空关闭。生产需远程抓取时走 SSH 隧道，
-	// 不要改成 0.0.0.0。
+	// DebugAddr is the listen address of the net/http/pprof debug endpoint (CPU/heap/goroutine/mutex/block profiling).
+	// telesrv is a host process, not inside docker, so docker stats cannot see it and performance analysis relies
+	// mainly on this endpoint. It binds only 127.0.0.1 by default to avoid exposing profile data; empty disables it.
+	// For remote captures in production use an SSH tunnel; do not change it to 0.0.0.0.
 	DebugAddr string
-	// BotAPIAddr 是最小 HTTP Bot API 网关监听地址；为空关闭。该网关复用 MTProto
-	// app/store 事实源，不维护独立 bot 状态。
+	// BotAPIAddr is the listen address of the minimal HTTP Bot API gateway; empty disables it. The gateway reuses
+	// the MTProto app/store source of truth and keeps no separate bot state.
 	BotAPIAddr string
 	// BotAPIPublicURL is the client-reachable Bot API base URL that BotFather
 	// shows next to a token; empty shows none.
@@ -103,15 +103,15 @@ type Config struct {
 	// @gramsrv operator bot. Values are numeric user/chat IDs, never usernames.
 	GramsrvBotChatIDs         []int64
 	StarGiftCrossCraftUserIDs []int64
-	// AdminAPIAddr 是 telesrv 进程内管理写 API 监听地址；为空关闭。
+	// AdminAPIAddr is the listen address of the in-process telesrv admin write API; empty disables it.
 	AdminAPIAddr string
-	// AdminAPIToken 是 Admin API bearer token；开启 AdminAPIAddr 时必须显式配置。
+	// AdminAPIToken is the Admin API bearer token; it must be configured explicitly when AdminAPIAddr is enabled.
 	AdminAPIToken string
-	// PublicBaseURL 是所有客户端可见 telesrv 链接的公开根 URL。
-	// 生产默认 https://telesrv.net；本地可设为 http://127.0.0.1:2401。
+	// PublicBaseURL is the public root URL of every client-visible telesrv link.
+	// Production defaults to https://telesrv.net; locally it can be http://127.0.0.1:2401.
 	PublicBaseURL string
-	// Branding 是所有客户端可见产品名称的进程级只读快照；协议标识、
-	// 客户端检测 token 与兼容 header 不属于品牌配置。
+	// Branding is the process-level read-only snapshot of every client-visible product name; protocol
+	// identifiers, client-detection tokens and compatibility headers are not part of the branding config.
 	Branding branding.Config
 	// UpdatePublicURL is advertised to native clients through
 	// help.getConfig.autoupdate_url_prefix. Empty disables desktop updates.
@@ -120,20 +120,20 @@ type Config struct {
 	// help.getAppUpdate responses. It defaults to UpdatePublicURL when enabled.
 	UpdateServiceURL     string
 	UpdateRequestTimeout time.Duration
-	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
-	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
+	// PublicAppScheme is the URL scheme used by the public landing page to auto-launch the self-hosted client.
+	// It must match the scheme registered when the TDesktop/Android client was built, and must not occupy tg/http/https.
 	PublicAppScheme string
-	// PublicAppLinkBase 是可选的 host-based 自建客户端链接根，例如
-	// owpg://example.com。为空时继续生成 PublicAppScheme://<route>；非空时
-	// 生成 <base>/<route>，同时保留旧 scheme 作为服务端输入兼容。
+	// PublicAppLinkBase is the optional host-based self-hosted-client link root, e.g.
+	// owpg://example.com. When empty it keeps generating PublicAppScheme://<route>; when non-empty it
+	// generates <base>/<route> while retaining the old scheme for server-side input compatibility.
 	PublicAppLinkBase string
-	// PublicWebBaseURL 是公开 username 页面“Open in Web”按钮指向的 Web 客户端根 URL。
+	// PublicWebBaseURL is the Web client root URL the "Open in Web" button on the public username page points to.
 	PublicWebBaseURL string
-	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
+	// PublicAppName is the product name shown on the public landing page; it does not participate in protocol routing.
 	PublicAppName string
-	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
-	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/、
-	// /addlist/ 与 hash-only /appeal/ 路由反代到该地址。
+	// PublicLinkWebAddr is the listen address of the public-link landing page; empty disables it.
+	// Production should listen only on loopback, with nginx reverse-proxying /<username>, /addstickers/, /addemoji/,
+	// /addlist/ and the hash-only /appeal/ route to this address.
 	PublicLinkWebAddr string
 	// CustomFragment enables mainnet withdrawal of unique Gramsrv gifts. The
 	// mint authority key is file-backed; the server never exposes it to the Web
@@ -185,19 +185,19 @@ type Config struct {
 	TelegramLoginRetention         time.Duration
 	TelegramLoginSweepInterval     time.Duration
 	TelegramLoginSweepBatch        int
-	// WalletStateDir 是 Layer 230 应用内 TON 钱包的私有状态目录：每个账号一份
-	// 0600 JSON（挑战 + 已验证地址绑定），目录必须没有 group/other 权限。留空
-	// 即禁用钱包，此时 wallet.* 回 WALLET_UNAVAILABLE。
+	// WalletStateDir is the private state directory for the Layer 230 in-app TON wallet: one 0600 JSON
+	// per account (challenge + verified address binding); the directory must have no group/other permissions.
+	// Empty disables the wallet, in which case wallet.* returns WALLET_UNAVAILABLE.
 	WalletStateDir string
 	// WalletInternalTransfers explicitly enables password-authorized ledger transfers.
 	WalletInternalTransfers bool
-	// WalletKeyFile 是钱包私钥的 AES-256-GCM 主密钥文件。缺失时首次启动生成
-	// 0600 文件；与 MTProto RSA 身份密钥同属 data/ 下的“必须备份”文件。
+	// WalletKeyFile is the AES-256-GCM master key file for the wallet private key. When missing, a 0600
+	// file is generated on first startup; like the MTProto RSA identity key it is a "must back up" file under data/.
 	WalletKeyFile string
-	// WalletToncenterAPIKey 选配。留空表示不连接任何 TON provider，
-	// toncenter.performApiRequest 直接回 WALLET_PROVIDER_UNAVAILABLE。
+	// WalletToncenterAPIKey is optional. Empty means no TON provider is contacted, and
+	// toncenter.performApiRequest returns WALLET_PROVIDER_UNAVAILABLE directly.
 	WalletToncenterAPIKey string
-	// Admin UI 独立进程配置项保留在统一配置中，cmd/telesrv-admin 也按同名 env 读取。
+	// The admin UI's standalone-process config items are kept in the unified config, and cmd/telesrv-admin reads them under the same env names.
 	AdminUIAddr     string
 	AdminUIPassword string
 	AdminUIToken    string
@@ -216,18 +216,20 @@ type Config struct {
 	// granting or dropping rights.
 	AdminScopedTokens []AdminScopedToken
 
-	// GeoIP* 控制 account.getAuthorizations 里会话国家/地区文案的解析。协议层
-	// 没有 help.requestIpAddress 的对等实现,没配这些项时 country/region 继续
-	// 回传 "Unknown" 占位文案,与启用前完全一致。
+	// GeoIP* controls resolution of the session country/region text in account.getAuthorizations. The
+	// protocol layer has no equivalent of help.requestIpAddress, so without these items configured
+	// country/region keeps returning the "Unknown" placeholder text, exactly as before enabling it.
 	//
-	// GeoIPEndpoints 是按顺序 failover 的后端列表:每个元素是含 {ip} 占位符的 URL
-	// 模板,第一个是主力,上一个查不到或此刻不可用就自动落到下一个。空列表表示未启用。
+	// GeoIPEndpoints is the failover backend list in order: each element is a URL template containing the
+	// {ip} placeholder, the first is primary, and if the previous one finds nothing or is currently
+	// unavailable the resolver falls through to the next. An empty list means disabled.
 	//
-	// 单后端必然会让一部分会话显示 Unknown,实测 2026-09 四家的失效方式各不相同:
-	// reallyfreegeoip.org 连续几次请求后 429(约 60s 恢复);geojs.io 只有 ASN 级
-	// 覆盖,1.1.1.1 那种地址连 country 字段都没有;hackmyip.com 间歇性回 400;
-	// ipapi.is 对保留网段回 is_bogon。所以缓存和熔断不是优化而是必需品,调小
-	// CacheTTL 或 NegativeTTL 会明显提高限流概率。
+	// A single backend inevitably leaves some sessions showing Unknown; measured in 2026-09 the four
+	// providers fail in different ways: reallyfreegeoip.org returns 429 after a few consecutive requests
+	// (recovering in ~60s); geojs.io only covers ASN level, and an address like 1.1.1.1 does not even have
+	// a country field; hackmyip.com intermittently returns 400; ipapi.is returns is_bogon for reserved
+	// ranges. So caching and the circuit breaker are necessities rather than optimizations; lowering
+	// CacheTTL or NegativeTTL markedly raises the rate-limit probability.
 	GeoIPEndpoints          []string
 	GeoIPTimeout            time.Duration
 	GeoIPConcurrency        int
@@ -239,68 +241,69 @@ type Config struct {
 	GeoIPDownThreshold      int
 	GeoIPDownCooldown       time.Duration
 
-	// PostgresDSN 是业务数据（auth_key / user / authorization 等）持久化的 PostgreSQL 连接串。
-	// 依赖由 deploy/docker-compose.yml 启动；职责划分见 docs/persistence-layer.md。
+	// PostgresDSN is the PostgreSQL connection string persisting business data (auth_key / user / authorization, etc.).
+	// Its dependencies are started by deploy/docker-compose.yml; see docs/persistence-layer.md for the responsibility split.
 	PostgresDSN string
-	// PostgresMaxConns 是 pgxpool 最大连接数。<=0 用 pgx 默认（max(4, NumCPU)，生产偏小）。
-	// 需覆盖发送事务 + outbox worker 并发 + RPC 读，过小会在高并发下排队（表现为尾延迟突刺）。
+	// PostgresMaxConns is the pgxpool maximum connection count. <=0 uses the pgx default (max(4, NumCPU), small for production).
+	// It must cover send transactions + outbox worker concurrency + RPC reads; too small queues under high concurrency (showing up as tail-latency spikes).
 	PostgresMaxConns int
-	// PostgresMinConns 是启动时预热的 pgxpool 连接数，降低 TDesktop 冷启动并发 RPC 的建连等待。
+	// PostgresMinConns is the number of pgxpool connections pre-warmed at startup, reducing connection-establishment wait for TDesktop's cold-start concurrent RPCs.
 	PostgresMinConns int
-	// RedisAddr 是高频易失态（验证码、限流计数、update 队列）的 Redis 地址。
+	// RedisAddr is the Redis address for high-frequency volatile state (verification codes, rate-limit counters, update queues).
 	RedisAddr string
-	// RedisPassword 是 Redis 密码；开发默认空。
+	// RedisPassword is the Redis password; empty by default in development.
 	RedisPassword string
-	// RedisDB 是 Redis 逻辑库编号。
+	// RedisDB is the Redis logical database number.
 	RedisDB int
 
-	// DevAuthCode 是开发固定验证码；生产短信/风控不在当前范围内。
+	// DevAuthCode is the fixed development verification code; production SMS/anti-fraud is out of current scope.
 	DevAuthCode string
-	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
+	// AuthCodeTTL is the validity period of the login/register/email verification code.
 	AuthCodeTTL time.Duration
-	// PhoneCodeLength 是使用外部 provider 时生成的短信验证码长度。development
-	// provider 继续使用 DevAuthCode 原样，不受此字段影响。
+	// PhoneCodeLength is the length of the SMS verification code generated when an external provider is used. The
+	// development provider keeps using DevAuthCode as-is and is unaffected by this field.
 	PhoneCodeLength int
-	// AuthCodeMaxAttempts 是同一 phone_code_hash / email verification code 的最大错误次数。
-	// 达到上限后验证码立即失效，用户必须重发。
+	// AuthCodeMaxAttempts is the maximum number of wrong attempts for the same phone_code_hash / email verification code.
+	// Once the limit is reached the code is invalidated immediately and the user must resend.
 	AuthCodeMaxAttempts int
-	// AuthCodePhoneRateLimit / AuthCodeAuthKeyRateLimit 对未授权验证码签发按规范化手机号摘要
-	// 与连接实际 raw auth_key 分别限流。两个维度共用 AuthCodeRateWindow；<=0 关闭对应维度。
-	// 手机号只以 SHA-256 摘要进入限流 key，禁止把原文写入 Redis key 或日志。
+	// AuthCodePhoneRateLimit / AuthCodeAuthKeyRateLimit rate-limit unauthorized code issuance separately by
+	// normalized phone-number digest and by the connection's actual raw auth_key. Both dimensions share
+	// AuthCodeRateWindow; <=0 disables the corresponding dimension. The phone number enters the rate-limit key
+	// only as a SHA-256 digest; the plaintext must never be written to a Redis key or a log.
 	AuthCodePhoneRateLimit   int
 	AuthCodeAuthKeyRateLimit int
 	AuthCodeRateWindow       time.Duration
-	// LoginEmailEnable 启用手机号登录流程中的邮箱验证码投递。
+	// LoginEmailEnable enables email verification-code delivery in the phone login flow.
 	LoginEmailEnable bool
-	// LoginEmailRequireSetup 为 true 时，没有登录邮箱的账号/新手机号会要求先设置邮箱。
+	// When LoginEmailRequireSetup is true, an account/new phone number without a login email is required to set one up first.
 	LoginEmailRequireSetup bool
-	// LoginEmailCodeLength 是邮箱验证码长度。
+	// LoginEmailCodeLength is the email verification-code length.
 	LoginEmailCodeLength int
-	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是 777000 登录成功后的
-	// 欢迎消息（每次手机号/邮箱登录完成即发送）的回退模板——仅在管理面板未在
-	// internal/identity.Store 设置覆盖时生效（见 domain.ResolveWelcomeMessageTemplate）。
-	// 支持 {{server_name}} 占位符；默认取 domain.DefaultWelcomeMessage{Phone,Email}Template。
+	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate are the fallback templates for the 777000 welcome message
+	// after a successful login (sent each time a phone/email login completes) -- effective only when the admin panel
+	// has not set an override in internal/identity.Store (see domain.ResolveWelcomeMessageTemplate). They support the
+	// {{server_name}} placeholder; the default is domain.DefaultWelcomeMessage{Phone,Email}Template.
 	WelcomeMessagePhoneTemplate string
 	WelcomeMessageEmailTemplate string
-	// LoginCodeMessageTemplate 是 777000 登录码投递消息的回退模板（登录码不分渠道，
-	// 只有一份，见 domain.ResolveLoginCodeMessageTemplate），仅在管理面板未在
-	// internal/identity.Store 设置覆盖时生效。支持 {{server_name}}，且要求 {{code}}
-	// 占位符恰好出现一次；默认取 domain.DefaultLoginCodeMessageTemplate。
+	// LoginCodeMessageTemplate is the fallback template for the 777000 login-code delivery message (the login code is
+	// channel-independent and singular, see domain.ResolveLoginCodeMessageTemplate), effective only when the admin
+	// panel has not set an override in internal/identity.Store. It supports {{server_name}} and requires the {{code}}
+	// placeholder to appear exactly once; the default is domain.DefaultLoginCodeMessageTemplate.
 	LoginCodeMessageTemplate string
-	// PhoneCodeDeliveryProvider 选择普通登录/注册与改号验证码的投递方式：
-	// development 保留固定码与 777000 app-code；webhook 使用随机 SMS code。
+	// PhoneCodeDeliveryProvider selects the delivery method for ordinary login/registration and number-change codes:
+	// development keeps the fixed code and 777000 app-code; webhook uses a random SMS code.
 	PhoneCodeDeliveryProvider string
-	// EmailCodeDeliveryProvider 选择登录邮箱与邮箱 setup/change 的投递方式。
+	// EmailCodeDeliveryProvider selects the delivery method for the login email and email setup/change.
 	EmailCodeDeliveryProvider string
-	// OTPWebhook* 定义固定 v1 webhook 协议的端点、HMAC secret 与请求超时。
+	// OTPWebhook* define the endpoint, HMAC secret and request timeout of the fixed v1 webhook protocol.
 	OTPWebhookURL     string
 	OTPWebhookSecret  string
 	OTPWebhookTimeout time.Duration
-	// ASRURL/ASRTimeout 指向本地 ASR HTTP 后端（whisper-server 的 /inference）。
-	// URL 为空则语音转文字不可用，messages.transcribeAudio 显式回 TRANSCRIPTION_FAILED。
+	// ASRURL/ASRTimeout point at the local ASR HTTP backend (whisper-server's /inference).
+	// If URL is empty speech-to-text is unavailable and messages.transcribeAudio returns TRANSCRIPTION_FAILED explicitly.
 	ASRURL     string
 	ASRTimeout time.Duration
-	// SMTP* 是 email provider=smtp 时使用的出站邮件配置。
+	// SMTP* is the outbound email config used when email provider=smtp.
 	SMTPHost     string
 	SMTPPort     int
 	SMTPUsername string
@@ -309,42 +312,42 @@ type Config struct {
 	SMTPFromName string
 	SMTPTLSMode  string
 	SMTPTimeout  time.Duration
-	// MapboxToken 是服务端代理地图缩略图（upload.getWebFile）请求 Mapbox Static Images API
-	// 的 access token；为空则关闭代理、回退确定性占位图。客户端选点器 token 经 appConfig
-	// `tdesktop_config_map` 下发（同源运行时配置）。
+	// MapboxToken is the access token the server uses to proxy map thumbnails (upload.getWebFile) to the Mapbox
+	// Static Images API; empty disables the proxy and falls back to a deterministic placeholder image. The client
+	// location-picker token is delivered via appConfig `tdesktop_config_map` (same-origin runtime config).
 	MapboxToken string
-	// MapTileCacheDir 是已抓取地图缩略图的磁盘缓存目录（保证分片续传字节一致 + 控制配额消耗）。
+	// MapTileCacheDir is the disk cache directory for fetched map thumbnails (ensuring byte-identical part resume + controlling quota consumption).
 	MapTileCacheDir string
-	// ExternalMediaEnable 控制是否启用外链媒体抓取（inputMediaPhoto/DocumentExternal）。
-	// 默认开启：服务端 SSRF 安全抓取用户 URL 并铸造 Photo/Document（含 SSRF 防护/大小/限速）。
+	// ExternalMediaEnable controls whether external-link media fetching is enabled (inputMediaPhoto/DocumentExternal).
+	// On by default: the server SSRF-safely fetches the user URL and mints a Photo/Document (with SSRF protection/size/rate limiting).
 	ExternalMediaEnable bool
-	// ExternalMediaMaxBytes 是单次外链抓取响应体上限；<=0 用默认 10MB。
+	// ExternalMediaMaxBytes is the response-body upper bound for a single external fetch; <=0 uses the default 10MB.
 	ExternalMediaMaxBytes int64
-	// ExternalMediaRatePerMin 是全局每分钟外链抓取上限（防放大攻击）；<=0 用默认。
+	// ExternalMediaRatePerMin is the global per-minute external-fetch limit (to prevent amplification attacks); <=0 uses the default.
 	ExternalMediaRatePerMin int
-	// WebPagePreviewEnable 控制是否启用链接预览抓取（messages.getWebPagePreview / 发送时挂卡片）。
-	// 默认开启：服务端 SSRF 安全抓取消息内 URL，解析 OG/Twitter/标题元数据并铸造预览卡片。
+	// WebPagePreviewEnable controls whether link-preview fetching is enabled (messages.getWebPagePreview / attaching a card on send).
+	// On by default: the server SSRF-safely fetches URLs inside messages, parses OG/Twitter/title metadata and mints the preview card.
 	WebPagePreviewEnable bool
-	// WebPagePreviewMaxBytes 是单次链接预览抓取响应体上限（HTML 与预览图共用）；<=0 用默认 5MB。
+	// WebPagePreviewMaxBytes is the response-body upper bound for a single link-preview fetch (shared by HTML and preview image); <=0 uses the default 5MB.
 	WebPagePreviewMaxBytes int64
-	// WebPagePreviewRatePerMin 是全局每分钟链接预览抓取上限；<=0 用默认。一次解析最多 2 次上游。
+	// WebPagePreviewRatePerMin is the global per-minute link-preview fetch limit; <=0 uses the default. One parse makes at most 2 upstream requests.
 	WebPagePreviewRatePerMin int
-	// LangPackSeedDir 是 TDesktop 语言包 .strings 种子目录。
+	// LangPackSeedDir is the TDesktop language-pack .strings seed directory.
 	LangPackSeedDir string
-	// OfficialGiftsDir 是 cmd/giftfetch 生成的只读官方礼物快照目录。
+	// OfficialGiftsDir is the read-only official gift snapshot directory generated by cmd/giftfetch.
 	OfficialGiftsDir string
-	// StarGiftTONStartingGrant 是 telesrv 内部 TON 账本首次访问时授予的 nanoton。
-	// 该账本只用于自建服务端礼物链路，不连接任何外部区块链。
+	// StarGiftTONStartingGrant is the nanoton granted on the first access to telesrv's internal TON ledger.
+	// That ledger is used only by the self-hosted server gift flow and connects to no external blockchain.
 	StarGiftTONStartingGrant int64
-	// BlobBackendKind 选择唯一永久 blob backend：localfs（默认）或 s3。
+	// BlobBackendKind selects the single permanent blob backend: localfs (default) or s3.
 	BlobBackendKind string
-	// BlobDir 是 localfs 永久媒体根目录。s3 模式不从这里回退读取。
+	// BlobDir is the localfs permanent media root directory. s3 mode does not fall back to reading from here.
 	BlobDir string
-	// BlobStagingDir 是 s3 模式的本地临时上传分片与写入 spool 根目录；
-	// 它不是永久 backend，成功组装后的媒体只存在 S3。
+	// BlobStagingDir is the local temp upload-part and write-spool root for s3 mode;
+	// it is not a permanent backend, and media is stored only in S3 once successfully assembled.
 	BlobStagingDir string
-	// S3* 配置 MinIO/AWS S3 兼容永久 backend。endpoint 不含 URL scheme；
-	// access key/secret 没有默认值，CreateBucket 默认关闭。
+	// S3* configures the MinIO/AWS S3-compatible permanent backend. endpoint has no URL scheme;
+	// the access key/secret have no defaults, and CreateBucket is off by default.
 	S3Endpoint        string
 	S3Region          string
 	S3Bucket          string
@@ -360,33 +363,33 @@ type Config struct {
 	StorageMinFreeBytes         int64
 	StorageMaxTotalBytes        int64
 	StorageUsageRefreshInterval time.Duration
-	// StickerSeedDir 是 reaction / sticker 资源种子目录（导入到 documents/sticker_sets + blob）。
+	// StickerSeedDir is the reaction / sticker asset seed directory (imported into documents/sticker_sets + blob).
 	StickerSeedDir string
 	// GifSeedDir is an optional bounded .gif/.mp4 drop directory for @gif.
 	GifSeedDir string
-	// StickerSeedMaxSets 限制导入的常规贴纸集数量（避免启动时导入过多包），<=0 表示不限。
+	// StickerSeedMaxSets limits the number of regular sticker sets imported (avoiding importing too many packs at startup); <=0 means unlimited.
 	StickerSeedMaxSets int
-	// PremiumPromoSeedDir 是 help.getPremiumPromo 视频与缩略图导出目录。
-	// 目录缺失时保留无视频兼容响应；目录存在但内容非法时启动失败。
+	// PremiumPromoSeedDir is the export directory for help.getPremiumPromo videos and thumbnails.
+	// A missing directory keeps the video-less compatibility response; a present directory with invalid content fails startup.
 	PremiumPromoSeedDir string
-	// IdentityDir 存放管理员可编辑的服务器身份（identity.json 中的名称/简介、icon.<ext>
-	// 图标）——见 internal/identity。由 cmd/telesrv-admin 的面板写入、cmd/telesrv 每次
-	// 使用前实时读取，编辑即时生效、无需重启服务器。
+	// IdentityDir holds the admin-editable server identity (name/description in identity.json, icon.<ext>
+	// icon) -- see internal/identity. It is written by the cmd/telesrv-admin panel and read live before each
+	// use by cmd/telesrv, so edits take effect immediately with no server restart.
 	IdentityDir string
-	// BusinessAIProvider 控制服务端 Business automation 回复生成器。
-	// 空值/"echo" 回显触发私聊文本，用于跑通后续 AI provider 链路；
-	// "template" 使用 quick reply 模板。
+	// BusinessAIProvider controls the server-side Business automation reply generator.
+	// An empty value/"echo" echoes the triggering private text, used to exercise the downstream AI provider
+	// chain; "template" uses the quick reply template.
 	BusinessAIProvider string
-	// AIEnabled 控制客户端输入框 AI 改写/润色能力；关闭时 getTones 返回空集合以隐藏入口。
+	// AIEnabled controls the client input-box AI rewrite/polish capability; when off, getTones returns an empty set to hide the entry point.
 	AIEnabled bool
-	// AIProviders 是 compose AI provider 链路，按顺序尝试；默认 local，不出网。
+	// AIProviders is the compose AI provider chain, tried in order; local by default and does not leave the network.
 	AIProviders []AIProviderConfig
-	// AITimeout 是单次 provider 调用总超时。
+	// AITimeout is the total timeout for a single provider call.
 	AITimeout time.Duration
-	// AIRateLimit/AIRateWindow 是账号级 compose AI 限流。
+	// AIRateLimit/AIRateWindow is the account-level compose AI rate limit.
 	AIRateLimit  int
 	AIRateWindow time.Duration
-	// AIPrivacyLogContent 为 false 时日志只写长度/provider/状态，不写用户输入和生成文本。
+	// When AIPrivacyLogContent is false, logs record only length/provider/status, not user input or generated text.
 	AIPrivacyLogContent bool
 	// Translation* controls messages.translateText. Remote provider credentials
 	// are reused from AIProviders; TranslationProviders optionally selects names
@@ -396,13 +399,15 @@ type Config struct {
 	TranslationTimeout    time.Duration
 	TranslationRateLimit  int
 	TranslationRateWindow time.Duration
-	// TempKeyResolveCacheMaxEntries 是 Router temp→perm 解析缓存容量。
+	// TempKeyResolveCacheMaxEntries is the Router temp→perm resolution cache capacity.
 	TempKeyResolveCacheMaxEntries int
-	// TempKeyResolveCacheTTL 是 temp→perm 正绑定的进程内复核周期。bind 成功投影已提交
-	// 映射，revoke/destroy 精确失效；TTL 作为跨进程或异常路径兜底。
+	// TempKeyResolveCacheTTL is the in-process re-verification period for a positive temp→perm binding. A successful
+	// bind projects the committed mapping, and revoke/destroy invalidates exactly; the TTL is a fallback for
+	// cross-process or exceptional paths.
 	TempKeyResolveCacheTTL time.Duration
-	// ReadModelVersionCacheMaxEntries 是 durable read-model hash 的进程内 LRU
-	// 容量。它由统一 NOTIFY 流更新/失效；达到上限只逐项驱逐，禁止整表清空。
+	// ReadModelVersionCacheMaxEntries is the in-process LRU capacity for durable read-model hashes. It is
+	// updated/invalidated by the unified NOTIFY stream; on reaching the limit entries are only evicted one by
+	// one, never the whole table cleared.
 	ReadModelVersionCacheMaxEntries int
 	// ReadModelVersionBatch* bounds synchronous cross-request batching for exact
 	// cache misses. Each caller still waits for its complete durable hash set;
@@ -432,26 +437,28 @@ type Config struct {
 	// profile_photo NOTIFY is primary freshness; TTL is only a missed-event guard.
 	ProfilePhotoCacheMaxEntries int
 	ProfilePhotoCacheTTL        time.Duration
-	// PeerIdentityCacheMaxEntries 是合并后的 peer username/third-party
-	// verification viewer-independent 版本化 LRU 容量。
+	// PeerIdentityCacheMaxEntries is the capacity of the merged peer username/third-party
+	// verification viewer-independent versioned LRU.
 	PeerIdentityCacheMaxEntries int
-	// DialogPrivatePeerCache* 控制 private getPeerDialogs 结构事实缓存；频道
-	// projection 由独立 ChannelDialogCache 承载，禁止在 Service 复制。
+	// DialogPrivatePeerCache* controls the private getPeerDialogs structural fact cache; the channel
+	// projection is carried by the separate ChannelDialogCache and must not be duplicated in the Service.
 	DialogPrivatePeerCacheMaxEntries int
 	DialogPrivatePeerCacheMaxBytes   int64
-	// DialogDraftCache* 控制按 dialog_light 版本校验的 cloud-draft 正/负缓存。
+	// DialogDraftCache* controls the cloud-draft positive/negative cache validated against the dialog_light version.
 	DialogDraftCacheMaxEntries int
 	DialogDraftCacheMaxBytes   int64
-	// UserProjectionFactCacheMaxEntries 是 freeze 与 collectible-phone
-	// viewer-independent durable fact 两个 LRU 各自的条目上限。
+	// UserProjectionFactCacheMaxEntries is the entry limit for each of the two LRs for freeze and
+	// collectible-phone viewer-independent durable facts.
 	UserProjectionFactCacheMaxEntries int
-	// StoryActivePeerCacheMaxEntries 控制共享 active-story candidate；hidden
-	// preference 按 viewer 稀疏集合缓存，并同时受条目与估算字节上限约束。
+	// StoryActivePeerCacheMaxEntries controls the shared active-story candidate; the hidden
+	// preference is cached as a per-viewer sparse set and is bounded by both an entry limit and an
+	// estimated-byte limit.
 	StoryActivePeerCacheMaxEntries int
 	StoryHiddenListCacheMaxEntries int
 	StoryHiddenListCacheMaxBytes   int64
-	// DialogListSnapshotCache* 控制 materialized owner dialog 工作集。条目数与
-	// header-equivalent 总权重同时受限，避免 10k owner 或单个超大账号把 heap 推成无界。
+	// DialogListSnapshotCache* controls the materialized owner dialog working set. The entry count and
+	// the total header-equivalent weight are bounded together, so 10k owners or a single very large
+	// account cannot push the heap to unbounded size.
 	DialogListSnapshotCacheMaxEntries int
 	DialogListSnapshotCacheMaxHeaders int64
 	DialogListSnapshotCacheTTL        time.Duration
@@ -491,59 +498,62 @@ type Config struct {
 	PresenceLastSeenBatchTimeout time.Duration
 	PresenceLastSeenDrainTimeout time.Duration
 
-	// ChannelRowCacheMaxEntries 是「共享频道行」进程内缓存容量(channelID→domain.Channel)。
-	// 由 channels 表 LISTEN/NOTIFY 触发器实时失效(强一致、零 TTL)。<=0 禁用缓存与监听。
+	// ChannelRowCacheMaxEntries is the in-process "shared channel row" cache capacity (channelID→domain.Channel).
+	// It is invalidated live by channels-table LISTEN/NOTIFY triggers (strong consistency, zero TTL). <=0 disables the cache and listener.
 	ChannelRowCacheMaxEntries int
-	// ChannelTopMessageCacheMaxEntries 是 dialog 顶部频道消息共享缓存容量。
-	// viewer 的 read/reaction overlay 不入缓存；channel_base 事件按频道失效。
+	// ChannelTopMessageCacheMaxEntries is the shared cache capacity for the channel message at the top of a dialog.
+	// The viewer's read/reaction overlay does not enter the cache; channel_base events invalidate per channel.
 	ChannelTopMessageCacheMaxEntries int
-	// ChannelMemberCacheMaxEntries 是频道成员/访问态 read-model 缓存容量((channelID,userID)→member)。
-	// 由 read_model_versions 统一通知实时失效。<=0 禁用缓存。
+	// ChannelMemberCacheMaxEntries is the channel member/access-state read-model cache capacity ((channelID,userID)→member).
+	// It is invalidated live by the unified read_model_versions notification. <=0 disables the cache.
 	ChannelMemberCacheMaxEntries int
-	// ChannelDialogCacheMaxEntries 是频道 dialog 读投影缓存容量((viewerUserID,channelID)→dialog)。
-	// 由 channel_base/channel_member/dialog_light 统一通知实时失效。<=0 禁用缓存。
+	// ChannelDialogCacheMaxEntries is the channel dialog read-projection cache capacity ((viewerUserID,channelID)→dialog).
+	// It is invalidated live by the unified channel_base/channel_member/dialog_light notification. <=0 disables the cache.
 	ChannelDialogCacheMaxEntries int
-	// ChannelDifferenceCache* 控制 viewer-independent difference 基础页工作集。
-	// entry/估算 bytes 双重有界；TTL 只是带外写安全兜底，正常正确性由
-	// channel_base/channel_difference_base 通知与稳定切面 key 保证。
+	// ChannelDifferenceCache* controls the viewer-independent difference base-page working set.
+	// Bounded by both entry count and estimated bytes; the TTL is only an out-of-band write-safety fallback, while
+	// normal correctness is guaranteed by channel_base/channel_difference_base notifications and a stable facet key.
 	ChannelDifferenceCacheMaxEntries int
 	ChannelDifferenceCacheMaxBytes   int64
 	ChannelDifferenceCacheTTL        time.Duration
-	// ChannelBoostCacheMaxEntries 是频道 boost read-model 缓存容量，覆盖当前用户
-	// SelfBoostsApplied 与频道总 active boost 数两类投影。写入 channel_boost_slots
-	// 时精确失效，TTL 兜底自然过期。<=0 禁用缓存。
+	// ChannelBoostCacheMaxEntries is the channel boost read-model cache capacity, covering two projections: the
+	// current user's SelfBoostsApplied and the channel's total active boost count. It is invalidated exactly when
+	// channel_boost_slots is written, with TTL as a natural-expiry fallback. <=0 disables the cache.
 	ChannelBoostCacheMaxEntries int
-	// ChannelBoostCacheTTL 是 boost 读投影在未收到写侧通知时的最大陈旧窗口。
+	// ChannelBoostCacheTTL is the maximum staleness window of the boost read projection when no write-side notification is received.
 	ChannelBoostCacheTTL time.Duration
 
-	// OutboxWorkers 是并发 outbox worker 数。用户先稳定哈希到固定 logical shard，
-	// 每个 shard 只归一个 worker，故提高 worker 数不会破坏同一用户 pts 顺序。
+	// OutboxWorkers is the number of concurrent outbox workers. Users are first stably hashed to a fixed logical
+	// shard, and each shard belongs to only one worker, so raising the worker count does not break pts ordering
+	// for the same user.
 	OutboxWorkers int
-	// OutboxBatch 是 transactional outbox worker 每次 claim 的最大条数。
-	// 调大提升吞吐、增大单批 PG/推送压力；调小降低延迟抖动。配套压测见 docs/message-module.md。
+	// OutboxBatch is the maximum number of rows a transactional outbox worker claims per iteration.
+	// Larger raises throughput and increases per-batch PG/push pressure; smaller reduces latency jitter. See docs/message-module.md for the accompanying load test.
 	OutboxBatch int
-	// OutboxInterval 是 outbox worker 两次 claim 之间的轮询间隔。
+	// OutboxInterval is the polling interval between two claims by an outbox worker.
 	OutboxInterval time.Duration
-	// OutboxLeaseTimeout 是 'dispatching' 行被判定为租约过期、允许其它 worker 重新 claim 的时长。
-	// 取值需大于单批投递耗时，否则会重复推送；过大则 worker 崩溃后积压恢复变慢。
+	// OutboxLeaseTimeout is the duration after which a 'dispatching' row is deemed lease-expired and may be
+	// re-claimed by another worker. It must exceed the per-batch delivery time, otherwise pushes will be
+	// duplicated; too large and backlog recovery after a worker crash becomes slow.
 	OutboxLeaseTimeout time.Duration
-	// OutboxPoisonRetention 是 terminal failed outbox head 的隔离窗口。隔离期内保留
-	// last_error 供排障，期满只删除在线投递任务；durable user_update_events 仍保留，
-	// 客户端可经 updates.getDifference 恢复。
+	// OutboxPoisonRetention is the quarantine window for a terminal failed outbox head. During the window
+	// last_error is kept for troubleshooting, and on expiry only the online delivery task is deleted; the durable
+	// user_update_events are still retained, and the client can recover via updates.getDifference.
 	OutboxPoisonRetention time.Duration
-	// OutboxPoisonCleanupInterval 独立于大表 retention 周期清理 terminal failed head，
-	// 避免一条确定性坏事件长期冻结同账号更高 pts 的在线投递 lane。
+	// OutboxPoisonCleanupInterval cleans up terminal failed heads independently of the big-table retention cycle,
+	// preventing one deterministic bad event from long freezing the online delivery lane for higher pts of the same account.
 	OutboxPoisonCleanupInterval time.Duration
-	// OutboundPushTimeout 是 best-effort updates 推送等待 outbound 队列接受的最长时间。
+	// OutboundPushTimeout is the maximum time a best-effort updates push waits for the outbound queue to accept it.
 	OutboundPushTimeout time.Duration
-	// SendRateLimit 是账号级发送窗口内允许的消息条数；<=0 表示关闭发送限流。
+	// SendRateLimit is the number of messages allowed per account-level send window; <=0 disables send rate limiting.
 	SendRateLimit int
-	// SendRateWindow 是发送限流窗口。
+	// SendRateWindow is the send rate-limit window.
 	SendRateWindow time.Duration
-	// CatchupRateLimit 是 difference 类 catch-up RPC（getChannelDifference / getPeerDialogs）
-	// 每用户每窗口允许的次数；<=0 关闭（设计 fan-out Phase 2 / §10.3，放开大群 nudge 全速前置）。
+	// CatchupRateLimit is the number of difference-class catch-up RPCs (getChannelDifference / getPeerDialogs)
+	// allowed per user per window; <=0 disables it (fan-out design Phase 2 / §10.3, unblocking full-speed
+	// large-group nudge as a prerequisite).
 	CatchupRateLimit int
-	// CatchupRateWindow 是 catch-up 限流窗口。
+	// CatchupRateWindow is the catch-up rate-limit window.
 	CatchupRateWindow time.Duration
 	// SRPRateLimit bounds 2FA password verification RPCs per user (per auth key while pre-auth); <=0 disables.
 	SRPRateLimit int
@@ -565,51 +575,52 @@ type Config struct {
 	ClaimWithdrawRateLimit int
 	// ClaimWithdrawRateWindow is the sliding window for ClaimWithdrawRateLimit.
 	ClaimWithdrawRateWindow time.Duration
-	// ChannelNudgeMaxTargets 是一次 fan-out >cap nudge 的目标上限；<=0 用内置默认。
+	// ChannelNudgeMaxTargets is the target limit for one fan-out >cap nudge; <=0 uses the built-in default.
 	ChannelNudgeMaxTargets int
-	// UpdateEventRetention 是 durable update log 保留期；只清理已被水位/state 覆盖的事件。
+	// UpdateEventRetention is the durable update log retention period; only events already covered by the watermark/state are cleaned up.
 	UpdateEventRetention time.Duration
-	// BotAPIUpdateRetention 是 bot_api_updates 投递队列的最大保留期（官方 Bot API 语义 24h）；
-	// 已确认的行另按固定短宽限提前回收（性能审计 H1）。
+	// BotAPIUpdateRetention is the maximum retention period of the bot_api_updates delivery queue (official Bot API semantics, 24h);
+	// acknowledged rows are additionally reclaimed earlier under a fixed short grace period (performance audit H1).
 	BotAPIUpdateRetention time.Duration
-	// OrphanAuthKeyRetention 是握手已创建、但没有 authorization/temp binding/活跃连接的
-	// auth key 最短保留期。过期后由有界 GC 回收；客户端收到 -404 会重建 key。
+	// OrphanAuthKeyRetention is the minimum retention period for an auth key created by the handshake but with no
+	// authorization/temp binding/active connection. After expiry it is reclaimed by a bounded GC; a client receiving
+	// -404 will rebuild the key.
 	OrphanAuthKeyRetention time.Duration
-	// RetentionInterval 是 retention worker 的运行间隔。
+	// RetentionInterval is the run interval of the retention worker.
 	RetentionInterval time.Duration
-	// RetentionBatch 是单次 retention 最多删除的行数。
+	// RetentionBatch is the maximum number of rows deleted in one retention pass.
 	RetentionBatch int
-	// UploadPartTTL 是未组装上传分片的保留期。
+	// UploadPartTTL is the retention period for unassembled upload parts.
 	UploadPartTTL time.Duration
-	// UploadPartGCInterval 是 upload_parts GC worker 的运行间隔。
+	// UploadPartGCInterval is the run interval of the upload_parts GC worker.
 	UploadPartGCInterval time.Duration
-	// UploadPartGCBatch 是单次 upload_parts GC 最多删除的行数。
+	// UploadPartGCBatch is the maximum number of rows deleted in one upload_parts GC pass.
 	UploadPartGCBatch int
-	// UploadInFlightMaxBytes 是单用户未组装上传分片的字节上限；<=0 表示不限。
+	// UploadInFlightMaxBytes is the byte limit for a single user's unassembled upload parts; <=0 means unlimited.
 	UploadInFlightMaxBytes int64
-	// UploadInFlightMaxParts 是单用户未组装上传分片行数上限；<=0 表示不限。
+	// UploadInFlightMaxParts is the row limit for a single user's unassembled upload parts; <=0 means unlimited.
 	UploadInFlightMaxParts int
-	// UploadInFlightMaxFiles 是单用户未组装 file_id 数上限；<=0 表示不限。
+	// UploadInFlightMaxFiles is the limit on the number of a single user's unassembled file_ids; <=0 means unlimited.
 	UploadInFlightMaxFiles int
 
-	// CallRingTimeout 是私聊通话服务端兜底超时（振铃/Accepted 悬挂），与下发给
-	// 客户端的 callRingTimeoutMs（compat/tdesktop/config.go，90000ms）同源。
+	// CallRingTimeout is the server-side fallback timeout for a private call (ringing/Accepted hanging), sharing
+	// the same source as the callRingTimeoutMs delivered to clients (compat/tdesktop/config.go, 90000ms).
 	CallRingTimeout time.Duration
-	// CallTombstoneTTL 是终态通话 tombstone 保留期（幂等/晚到 RPC 吸收窗口）。
+	// CallTombstoneTTL is the retention period for a terminal call tombstone (the absorption window for idempotent/late RPCs).
 	CallTombstoneTTL time.Duration
-	// CallMaxActivePerUser 是单用户并发非终态通话上限。
+	// CallMaxActivePerUser is the limit on a single user's concurrent non-terminal calls.
 	CallMaxActivePerUser int
-	// CallRegistryMaxEntries 是进程内通话 registry 的全局硬上限。
+	// CallRegistryMaxEntries is the global hard limit of the in-process call registry.
 	CallRegistryMaxEntries int
-	// CallSignalingMaxBytes 是 phone.sendSignalingData 单条载荷上限。
+	// CallSignalingMaxBytes is the per-payload limit for phone.sendSignalingData.
 	CallSignalingMaxBytes int
-	// CallSignalingRate 是单通话每秒信令转发上限（超限静默丢弃）。
+	// CallSignalingRate is the per-second signaling-forward limit for a single call (excess is silently dropped).
 	CallSignalingRate int
-	// CallExpiryInterval 是通话超时兜底 dispatcher 的轮询间隔。
+	// CallExpiryInterval is the polling interval of the call-timeout fallback dispatcher.
 	CallExpiryInterval time.Duration
 
-	// PremiumGrantMonths 是新注册账号默认赠送的会员月数；0 关闭赠送。
-	// 存量账号的一次性赠送由迁移 0094 backfill，不受该配置影响。
+	// PremiumGrantMonths is the number of Premium months granted by default to a newly registered account; 0 disables the grant.
+	// The one-time grant to existing accounts is backfilled by migration 0094 and is unaffected by this setting.
 	PremiumGrantMonths int
 	// PremiumBotUsername is the public username advertised in app config and
 	// Premium deep links. The reserved bot id remains stable.
@@ -619,20 +630,21 @@ type Config struct {
 	// fixed month count, exact duration in days and Stars price.
 	PremiumPlans []domain.PremiumPlan
 
-	// PasskeyRPID 是 passkey(WebAuthn) relying-party id（域名）。服务端据此校验
-	// authData.rpIdHash；真机经 Android CredentialManager 时须与托管 assetlinks.json
-	// 的公网域名一致(详见 docs)。本地/软件 authenticator 验证用任意稳定值即可。
+	// PasskeyRPID is the passkey (WebAuthn) relying-party id (domain). The server validates
+	// authData.rpIdHash against it; on a real device via Android CredentialManager it must match the public
+	// domain hosting assetlinks.json (see docs). Any stable value works for local/software-authenticator
+	// verification.
 	PasskeyRPID string
-	// PasskeyAllowedOrigins 是允许的 WebAuthn origin 白名单；为空=不强校验 origin
-	//（服务端通常不预知 Android apk-key-hash origin）。
+	// PasskeyAllowedOrigins is the allowed WebAuthn origin allowlist; empty means origins are not strictly checked
+	// (the server usually does not know the Android apk-key-hash origin in advance).
 	PasskeyAllowedOrigins []string
-	// StarsStartingGrant 是 Stars 本地账本的起始余额（首读时惰性授予、granted 布尔幂等，
-	// 新老账号都覆盖、免回填迁移）；0 关闭自动授予。
+	// StarsStartingGrant is the starting balance of the local Stars ledger (granted lazily on first read, the
+	// granted boolean is idempotent, covering new and old accounts with no backfill migration); 0 disables the automatic grant.
 	StarsStartingGrant int64
-	// PremiumSweepInterval 是会员到期 sweeper 的轮询间隔。premium 下发正确性
-	// 由读取路径即时派生，sweeper 只负责清理过期行并推 updateUser 通知。
+	// PremiumSweepInterval is the polling interval of the Premium-expiry sweeper. Premium delivery correctness is
+	// derived live from the read path; the sweeper only cleans up expired rows and pushes updateUser notifications.
 	PremiumSweepInterval time.Duration
-	// PremiumSweepBatch 是单次到期清理的最大行数。
+	// PremiumSweepBatch is the maximum number of rows cleaned up in one expiry pass.
 	PremiumSweepBatch int
 	// StarGiftSweepInterval drives offer expiry/refunds, auction rounds and their
 	// durable notification/delivery outboxes. It is entirely server-local.
@@ -789,54 +801,54 @@ type Config struct {
 	// as the last path segment. No external marketplace is contacted.
 	CollectibleUsernameURLTemplate string
 
-	// GroupCallCheckTTL 是群通话参与者保活水位的过期阈值（客户端 Connecting 态
-	// 4s 一跳；M1 起 SFU liveness reporter 同样刷新该水位）。
+	// GroupCallCheckTTL is the expiry threshold for the group-call participant liveness watermark (the client in
+	// Connecting state ticks every 4s; from M1 the SFU liveness reporter also refreshes this watermark).
 	GroupCallCheckTTL time.Duration
-	// GroupCallSweepInterval 是幽灵参与者 sweeper 的轮询间隔。
+	// GroupCallSweepInterval is the polling interval of the ghost-participant sweeper.
 	GroupCallSweepInterval time.Duration
-	// GroupCallMaxParticipants 是单房间参与者上限（演示规模）。
+	// GroupCallMaxParticipants is the per-room participant limit (demo scale).
 	GroupCallMaxParticipants int
 
-	// TURNEnable 为 false 时私聊通话不下发中继（退回 P1 的 LAN 直连模式）。
+	// When TURNEnable is false, private calls do not deliver a relay (falling back to P1's direct-LAN mode).
 	TURNEnable bool
-	// TURNUDPPort 是内嵌 TURN/STUN 的监听端口（独立于 SFU 端口，两者都要独占
-	// 消费各自 socket 的 STUN 流量）。Windows 防火墙需放行。
+	// TURNUDPPort is the listen port of the embedded TURN/STUN (independent of the SFU port, since both must
+	// exclusively consume the STUN traffic on their own sockets). Must be opened in the Windows firewall.
 	TURNUDPPort int
-	// TURNAdvertiseIP 是写进 phoneConnectionWebrtc 与 relay 分配的客户端可达
-	// 地址，默认回落 SFUAdvertiseIP → AdvertiseIP。
+	// TURNAdvertiseIP is the client-reachable address written into phoneConnectionWebrtc and relay allocations,
+	// falling back by default to SFUAdvertiseIP → AdvertiseIP.
 	TURNAdvertiseIP string
-	// TURNSecret 是 TURN REST 凭据 HMAC 密钥；为空则进程级随机（单实例自洽，
-	// 多实例/外部 coturn 必须显式配置同一值）。
+	// TURNSecret is the HMAC key for TURN REST credentials; empty means a process-level random one (self-consistent
+	// for a single instance, while multi-instance/external coturn must configure the same value explicitly).
 	TURNSecret string
-	// TURNRelayMinPort/TURNRelayMaxPort 限定 relay 分配端口段（防火墙放行范围）。
+	// TURNRelayMinPort/TURNRelayMaxPort bound the UDP port range for relay allocations (the firewall opening range).
 	TURNRelayMinPort int
 	TURNRelayMaxPort int
-	// CallTURNCredentialTTL 是按通话签发的 TURN 凭据有效期。
+	// CallTURNCredentialTTL is the validity period of the TURN credential issued per call.
 	CallTURNCredentialTTL time.Duration
-	// CallForceRelay 强制 p2p_allowed=false（调试 TURN 中继路径用）。
-	// 私聊通话 P2P 默认仅限互为联系人（rpc 层互认联系人硬门槛 + phone_p2p
-	// 默认 AllowContacts）；此开关让整条链路强制走中继。
+	// CallForceRelay forces p2p_allowed=false (for debugging the TURN relay path).
+	// Private-call P2P by default is limited to mutual contacts (an rpc-layer hard gate on mutual contacts +
+	// phone_p2p defaulting to AllowContacts); this switch forces the whole chain through the relay.
 	CallForceRelay bool
 
-	// LiveStreamEnable 为 true 时启用频道 RTMP 直播媒体面（内嵌 RTMP ingest + ffmpeg 切段）。
+	// When LiveStreamEnable is true, the channel RTMP livestream media plane is enabled (embedded RTMP ingest + ffmpeg segmenting).
 	LiveStreamEnable bool
-	// LiveStreamRtmpAddr 是 RTMP ingest 的 TCP 监听地址（默认 ":2400"）。
+	// LiveStreamRtmpAddr is the TCP listen address of RTMP ingest (default ":2400").
 	LiveStreamRtmpAddr string
-	// LiveStreamRtmpURL 是返回给推流端（OBS）的服务器地址；为空回落 rtmp://<AdvertiseIP>:2400/live。
+	// LiveStreamRtmpURL is the server address returned to the streaming-side (OBS); empty falls back to rtmp://<AdvertiseIP>:2400/live.
 	LiveStreamRtmpURL string
-	// LiveStreamFFmpegPath 是 ffmpeg 可执行路径（默认走 PATH 的 "ffmpeg"）。
+	// LiveStreamFFmpegPath is the ffmpeg executable path (defaults to "ffmpeg" from PATH).
 	LiveStreamFFmpegPath string
-	// LiveStreamWorkDir 是切段临时目录（默认系统临时目录）。
+	// LiveStreamWorkDir is the segmenting temp directory (defaults to the system temp directory).
 	LiveStreamWorkDir string
-	// LiveStreamSegmentKeep 是每路流内存保留的 segment 秒数（默认 32）。
+	// LiveStreamSegmentKeep is the number of segment seconds retained in memory per stream (default 32).
 	LiveStreamSegmentKeep int
 
-	// SFUEnable 为 false 时群通话只走信令（M0 模式，无媒体）。
+	// When SFUEnable is false, group calls carry only signaling (M0 mode, no media).
 	SFUEnable bool
-	// SFUUDPPort 是内嵌 SFU 的单 UDP 端口（pion ICE UDPMux）。Windows 防火墙需放行。
+	// SFUUDPPort is the embedded SFU's single UDP port (pion ICE UDPMux). Must be opened in the Windows firewall.
 	SFUUDPPort int
-	// SFUAdvertiseIP 是写进下行 candidate 的客户端可达地址，默认回落 AdvertiseIP。
-	// ⚠ 127.0.0.1 会让真机 ICE 永远连不上且无任何 RPC 错误（纯媒体面静默失败）。
+	// SFUAdvertiseIP is the client-reachable address written into downstream candidates, falling back to AdvertiseIP by default.
+	// ⚠ 127.0.0.1 makes ICE on real devices never connect and produces no RPC error at all (a pure media-plane silent failure).
 	SFUAdvertiseIP string
 }
 
@@ -861,7 +873,7 @@ type AIProviderConfig struct {
 	Thinking        string
 }
 
-// Load 从环境变量与可选配置文件读取配置并填充默认值。环境变量优先于配置文件。
+// Load reads configuration from environment variables and an optional config file and fills in defaults. Environment variables take precedence over the config file.
 func Load() (Config, error) {
 	fileEnv, err := loadConfigEnv()
 	if err != nil {
@@ -979,8 +991,8 @@ func Load() (Config, error) {
 			"http://localhost:1234",
 			"http://127.0.0.1:1234",
 		}),
-		// help.getConfig 必须下发至少一个可重连的主 DC 地址；远端部署不能
-		// 沿用 loopback 默认值，需显式设置客户端实际可达的 IP。
+		// help.getConfig must deliver at least one reconnectable main DC address; a remote deployment must
+		// not reuse the loopback default and needs the client's actually reachable IP set explicitly.
 		AdvertiseIP:                       advertiseIP,
 		RSAKeyPath:                        envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
 		DC:                                envIntOr("TELESRV_DC", 2),
@@ -1080,14 +1092,15 @@ func Load() (Config, error) {
 		MTProtoOutboundCriticalGlobalMaxBytes: envInt64Or("TELESRV_MTPROTO_OUTBOUND_CRITICAL_GLOBAL_MAX_BYTES", 64<<20),
 		AllowDevPayments:                      envBoolOr("TELESRV_ALLOW_DEV_PAYMENTS", false),
 
-		// 用 127.0.0.1 而非 localhost：localhost 在 Windows 上会先解析到 IPv6 ::1，而 Docker
-		// Desktop 的端口转发只在 IPv4 监听，IPv6 连接要等 ~1s 超时才回退 IPv4（实测 localhost
-		// 建连 1.0s vs 127.0.0.1 6ms）。冷连接洪峰下池扩容的新连接各等 1s → pre-handler 惊群卡顿。
-		// 生产由 TELESRV_POSTGRES_DSN 覆盖；本地开发从密码变量组装 DSN。
+		// Use 127.0.0.1 rather than localhost: on Windows localhost resolves to IPv6 ::1 first, while Docker
+		// Desktop's port forwarding listens only on IPv4, so an IPv6 connection waits ~1s for the timeout before
+		// falling back to IPv4 (measured: localhost connection 1.0s vs 127.0.0.1 6ms). Under a cold-connection
+		// burst, each new pool-growing connection waits 1s -> pre-handler thundering herd and stalling.
+		// Production overrides this via TELESRV_POSTGRES_DSN; local dev assembles the DSN from password variables.
 		PostgresDSN:      postgresDSN(fileEnv),
 		PostgresMaxConns: envIntOr("TELESRV_POSTGRES_MAX_CONNS", 50),
 		PostgresMinConns: envIntOr("TELESRV_POSTGRES_MIN_CONNS", 16),
-		RedisAddr:        envOr("TELESRV_REDIS_ADDR", "127.0.0.1:6399"), // 同理避开 localhost→IPv6 回退延迟
+		RedisAddr:        envOr("TELESRV_REDIS_ADDR", "127.0.0.1:6399"), // likewise avoid the localhost->IPv6 fallback delay
 		RedisPassword:    envAllowEmptyOr("TELESRV_REDIS_PASSWORD", ""),
 		RedisDB:          envIntOr("TELESRV_REDIS_DB", 0),
 
@@ -1701,8 +1714,9 @@ func normalizeAdvertiseIP(raw string) (string, error) {
 	return addr.String(), nil
 }
 
-// validateGeoIPConfig 校验会话地理归属后端链。未配置端点时全部放行——
-// 会话列表会继续回传 "Unknown" 占位文案,这是未启用时的预期行为,不该让服务起不来。
+// validateGeoIPConfig validates the session geo-attribution backend chain. When no endpoint is configured
+// everything is allowed -- the session list keeps returning the "Unknown" placeholder text, which is the
+// expected behavior when disabled and should not keep the service from starting.
 func validateGeoIPConfig(cfg Config) error {
 	configured := 0
 	for index, endpoint := range cfg.GeoIPEndpoints {
@@ -1724,20 +1738,22 @@ func validateGeoIPConfig(cfg Config) error {
 			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must include a host", index+1)
 		}
 	}
-	// 全是空白的列表等同于未启用,不该拖出后面那堆数值校验。
+	// An all-blank list is equivalent to disabled and should not drag in all the numeric checks below.
 	if configured == 0 {
 		return nil
 	}
-	// 上游正常响应 0.6~1.3s。给到 10s 以上就说明值填错了(比如误当成 duration
-	// 字符串解析),那时候每一批解析都会先耗掉整个预算才回落 Unknown。
+	// Upstreams respond normally in 0.6~1.3s. Allowing 10s or more indicates a mis-set value (e.g. mistakenly
+	// parsed as a duration string); in that case every resolution batch burns the whole budget before falling
+	// back to Unknown.
 	if cfg.GeoIPTimeout <= 0 || cfg.GeoIPTimeout > 10*time.Second {
 		return fmt.Errorf("TELESRV_GEOIP_TIMEOUT must be greater than zero and at most 10s")
 	}
 	if cfg.GeoIPConcurrency <= 0 || cfg.GeoIPConcurrency > 32 {
 		return fmt.Errorf("TELESRV_GEOIP_CONCURRENCY must be 1..32")
 	}
-	// 负缓存必须显著短于正文缓存:负缓存过期后只应重试失败的那次解析,长到
-	// 和正文缓存一样就等于一次限流把该 IP 冻到第二天。
+	// The negative cache must be markedly shorter than the positive cache: after a negative entry expires only
+	// the failed resolution should be retried, whereas matching the positive cache equals freezing that IP until
+	// the next day on a single rate limit.
 	if cfg.GeoIPNegativeTTL <= 0 || cfg.GeoIPCacheTTL <= 0 || cfg.GeoIPNegativeTTL >= cfg.GeoIPCacheTTL {
 		return fmt.Errorf("TELESRV_GEOIP_NEGATIVE_TTL must be greater than zero and shorter than TELESRV_GEOIP_CACHE_TTL")
 	}
@@ -1750,7 +1766,8 @@ func validateGeoIPConfig(cfg Config) error {
 	if cfg.GeoIPRateLimitCooldown <= 0 || cfg.GeoIPRateLimitCooldown > time.Hour {
 		return fmt.Errorf("TELESRV_GEOIP_RATE_LIMIT_COOLDOWN must be greater than zero and at most 1h")
 	}
-	// 不可达窗口必须比限流窗口短:后端只是抖了一下不该离线比配额窗口还久。
+	// The down/unreachable window must be shorter than the rate-limit window: a backend merely flickering should
+	// not stay offline longer than the quota window.
 	if cfg.GeoIPDownThreshold <= 0 || cfg.GeoIPDownThreshold > 100 {
 		return fmt.Errorf("TELESRV_GEOIP_DOWN_THRESHOLD must be 1..100")
 	}
@@ -1806,8 +1823,9 @@ func validateWalletConfig(cfg Config) error {
 	if cfg.WalletInternalTransfers && cfg.StarGiftTONStartingGrant != 0 {
 		return fmt.Errorf("TELESRV_WALLET_INTERNAL_TRANSFERS requires TELESRV_STARGIFT_TON_STARTING_GRANT=0; per-account starting grants cannot be pooled through transfers")
 	}
-	// 钱包目录留空即禁用，此时不要求密钥文件存在；启用时必须给出私钥主密钥
-	// 路径，否则钱包状态会被写入明文风险无法接受的形态。
+	// An empty wallet directory disables the wallet, in which case the key file need not exist; when enabled the
+	// private-key master key path must be given, otherwise wallet state would be written in a form whose plaintext
+	// risk is unacceptable.
 	if cfg.WalletStateDir == "" {
 		if cfg.WalletInternalTransfers {
 			return fmt.Errorf("TELESRV_WALLET_INTERNAL_TRANSFERS requires TELESRV_WALLET_STATE_DIR")
@@ -2290,10 +2308,11 @@ func loadConfigEnv() (envSource, error) {
 	return env, nil
 }
 
-// configFilePath 解析配置文件路径：TELESRV_CONFIG 显式指定，否则用默认 .env；
-// 返回值同时报告该路径是否为显式指定（显式路径缺失是硬错误，缺省缺失则回落到
-// 纯进程环境）。TrimSpace 后为空表示调用方应跳过文件读取。EnvDrift 用同一规则
-// 定位被比对的文件，避免两处口径不一致。
+// configFilePath resolves the config file path: TELESRV_CONFIG if explicitly given, otherwise the default .env;
+// the return value also reports whether the path was explicit (a missing explicit path is a hard error, while a
+// missing default falls back to the pure process environment). Empty after TrimSpace means the caller should skip
+// reading the file. EnvDrift uses the same rule to locate the compared file, avoiding inconsistent behavior in
+// the two places.
 func configFilePath() (path string, explicit bool) {
 	path, explicit = os.LookupEnv("TELESRV_CONFIG")
 	if !explicit {
@@ -2541,7 +2560,7 @@ func (e envSource) envFloatOr(key string, def float64) float64 {
 	return def
 }
 
-// envDurationOr 读取 time.ParseDuration 格式（如 "200ms"、"30s"）的时长配置；解析失败回退默认值。
+// envDurationOr reads a duration setting in time.ParseDuration format (e.g. "200ms", "30s"); falls back to the default on parse failure.
 func (e envSource) envDurationOr(key string, def time.Duration) time.Duration {
 	if v := e.envOr(key, ""); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

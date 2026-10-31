@@ -13,12 +13,12 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// PasskeyStore 用 PostgreSQL 实现 store.PasskeyStore。
+// PasskeyStore implements store.PasskeyStore with PostgreSQL.
 type PasskeyStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewPasskeyStore 基于 pgx 连接池(或事务)创建 PasskeyStore。
+// NewPasskeyStore creates a PasskeyStore on top of a pgx pool (or transaction).
 func NewPasskeyStore(db sqlcgen.DBTX) *PasskeyStore {
 	return &PasskeyStore{db: db}
 }

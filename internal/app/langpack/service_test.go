@@ -27,7 +27,7 @@ func TestServiceNormalizesWebAliasAndRejectsUnknownCatalogEntries(t *testing.T) 
 			LangPack: "webk",
 			LangCode: "zh-hans",
 			Version:  9,
-			Strings:  []domain.LangPackString{{Key: "lng_settings_language", Value: "语言"}},
+			Strings:  []domain.LangPackString{{Key: "lng_settings_language", Value: "Language"}},
 		},
 	} {
 		if err := packs.UpsertPack(ctx, pack); err != nil {
@@ -47,7 +47,7 @@ func TestServiceNormalizesWebAliasAndRejectsUnknownCatalogEntries(t *testing.T) 
 	if err != nil {
 		t.Fatalf("get web langpack: %v", err)
 	}
-	if full.LangPack != "webk" || full.LangCode != "zh-hans" || full.Version != 9 || stringValue(full.Strings, "lng_settings_language") != "语言" {
+	if full.LangPack != "webk" || full.LangCode != "zh-hans" || full.Version != 9 || stringValue(full.Strings, "lng_settings_language") != "Language" {
 		t.Fatalf("web langpack = %+v, want canonical webk/zh-hans", full)
 	}
 
@@ -63,7 +63,7 @@ func TestServiceNormalizesWebAliasAndRejectsUnknownCatalogEntries(t *testing.T) 
 	if err != nil {
 		t.Fatalf("get web strings: %v", err)
 	}
-	if selected.LangPack != "webk" || stringValue(selected.Strings, "lng_settings_language") != "语言" {
+	if selected.LangPack != "webk" || stringValue(selected.Strings, "lng_settings_language") != "Language" {
 		t.Fatalf("web strings = %+v, want selected webk string", selected)
 	}
 

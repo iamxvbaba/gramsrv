@@ -18,8 +18,10 @@ var ErrActiveChannelMemberPairsLimit = errors.New("active channel membership pai
 type ChannelStore interface {
 	CreateChannel(ctx context.Context, req domain.CreateChannelRequest) (domain.CreateChannelResult, error)
 	GetChannel(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelView, error)
-	// ResolveChannel 是 GetChannel 的轻量版：只做访问校验并返回 Channel(含 access_hash)+Self，
-	// 跳过 dialog top/读态/boost 这 3 条额外查询。供只需 access_hash/频道标志的纯解析路径用。
+	// ResolveChannel is a lightweight version of GetChannel: it only performs access
+	// validation and returns Channel (with access_hash) + Self, skipping the 3 extra
+	// queries for dialog top/read state/boost. Used by pure resolution paths that only
+	// need access_hash/channel flags.
 	ResolveChannel(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelView, error)
 	GetChannels(ctx context.Context, viewerUserID int64, channelIDs []int64) ([]domain.ChannelView, error)
 	GetChannelByID(ctx context.Context, channelID int64) (domain.Channel, error)
@@ -98,10 +100,10 @@ type ChannelStore interface {
 	ListForumTopics(ctx context.Context, viewerUserID int64, filter domain.ChannelForumTopicFilter) (domain.ChannelForumTopicList, error)
 	GetForumTopicsByID(ctx context.Context, viewerUserID, channelID int64, ids []int) (domain.ChannelForumTopicList, error)
 	SendChannelMessage(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error)
-	// SendMonoforumMessage 向频道私信(monoforum)发消息,按 saved_peer 分订阅者子会话;不要求成员身份。
+	// SendMonoforumMessage sends a message to a channel's direct messages (monoforum), splitting subscribers into sub-dialogs by saved_peer; it does not require membership.
 	SendMonoforumMessage(ctx context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error)
 	EditChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error)
-	// EditFactCheck 写入或删除消息上的 Layer 231 事实核查标签；空文本表示删除。
+	// EditFactCheck writes or deletes the Layer 231 fact-check tag on a message; empty text means delete.
 	EditFactCheck(ctx context.Context, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error)
 	DeleteChannelMessages(ctx context.Context, req domain.DeleteChannelMessagesRequest) (domain.DeleteChannelMessagesResult, error)
 	DeleteChannelHistory(ctx context.Context, req domain.DeleteChannelHistoryRequest) (domain.DeleteChannelHistoryResult, error)
@@ -110,10 +112,11 @@ type ChannelStore interface {
 	UnpinAllChannelMessages(ctx context.Context, req domain.UnpinAllChannelMessagesRequest) (domain.UpdateChannelPinnedMessageResult, error)
 	ClearDanglingPinnedMessage(ctx context.Context, channelID int64, messageID int) error
 	ExportInvite(ctx context.Context, req domain.ExportChannelInviteRequest) (domain.ExportChannelInviteResult, error)
-	// EnsurePermanentInvite 幂等返回 (channel, admin) 当前未撤销的永久邀请，缺失则创建。
-	// 官方语义：每个有邀请权限的管理员都持有自己的主链接（DrKLO 建频道后
-	// getExportedChatInvites(limit=1) 直接取 invites[0]，空列表即客户端闪退）。
-	// date==0 时由实现取当前时间。
+	// EnsurePermanentInvite idempotently returns the current unrevoked permanent invite
+	// for (channel, admin), creating it when missing. Official semantics: every admin with
+	// invite permission holds their own primary link (after DrKLO creates a channel,
+	// getExportedChatInvites(limit=1) takes invites[0] directly, and an empty list crashes
+	// the client). When date==0 the implementation uses the current time.
 	EnsurePermanentInvite(ctx context.Context, channelID, adminUserID int64, date int) (domain.ChannelInvite, error)
 	CheckInvite(ctx context.Context, userID int64, hash string, date int) (domain.CheckChannelInviteResult, error)
 	ImportInvite(ctx context.Context, req domain.ImportChannelInviteRequest) (domain.CreateChannelResult, error)
@@ -135,32 +138,33 @@ type ChannelStore interface {
 	ListChannelRecommendations(ctx context.Context, req domain.ChannelRecommendationsRequest) (domain.ChannelRecommendationsResult, error)
 	ListDiscussionGroups(ctx context.Context, userID int64, limit int) ([]domain.Channel, error)
 	SetDiscussionGroup(ctx context.Context, userID, broadcastID, groupID int64) (domain.DiscussionGroupUpdateResult, error)
-	// SetChannelDialogPinned 置顶/取消置顶频道会话；order 在会话当前 folder
-	// 内分配，返回 (changed, 该会话所在 folder_id)。
+	// SetChannelDialogPinned pins/unpins a channel dialog; order is assigned within the
+	// dialog's current folder, returning (changed, the folder_id the dialog belongs to).
 	SetChannelDialogPinned(ctx context.Context, userID, channelID int64, pinned bool) (bool, int, error)
-	// ReorderChannelPinnedDialogs 重排指定 folder 内的频道置顶；force 只清除
-	// 该 folder 内不在 order 中的置顶。
+	// ReorderChannelPinnedDialogs reorders channel pins within the given folder; force
+	// only clears pins in that folder that are not in order.
 	ReorderChannelPinnedDialogs(ctx context.Context, userID int64, folderID int, order []domain.Peer, force bool) (bool, error)
 	SetChannelDialogUnreadMark(ctx context.Context, userID, channelID int64, unread bool) (bool, error)
 	SetChannelViewForumAsMessages(ctx context.Context, userID, channelID int64, enabled bool) (bool, error)
 	ListChannelUnreadMarked(ctx context.Context, userID int64) ([]domain.Peer, error)
 	EditChannelPeerFolders(ctx context.Context, userID int64, peers []domain.FolderPeerUpdate) error
-	// CountChannelArchiveUnread 统计归档中有未读（含手动标记）的频道会话数
-	// 与未读消息总数，供主列表 dialogFolder 条目聚合。
+	// CountChannelArchiveUnread counts channel dialogs with unread (including manually
+	// marked) and the total unread message count in the archive, for main-list dialogFolder
+	// entry aggregation.
 	CountChannelArchiveUnread(ctx context.Context, userID int64) (peers int, messages int, err error)
 	ListChannelHistory(ctx context.Context, viewerUserID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error)
-	// ListMonoforumHistory 拉取某订阅者在频道私信(monoforum)内的历史。
+	// ListMonoforumHistory fetches one subscriber's history within channel direct messages (monoforum).
 	ListMonoforumHistory(ctx context.Context, filter domain.MonoforumHistoryFilter) (domain.ChannelHistory, error)
-	// ListMonoforumDialogs 列出 monoforum 的订阅者子会话(管理员视角的私信列表)。
+	// ListMonoforumDialogs lists the monoforum's subscriber sub-dialogs (the direct-messages list from the admin's view).
 	ListMonoforumDialogs(ctx context.Context, filter domain.MonoforumDialogsFilter) (domain.MonoforumDialogList, error)
-	// ResolveMonoforumSend 按 id 取 monoforum 频道(不要求成员身份)并返回调用者是否为其母频道管理员。
+	// ResolveMonoforumSend fetches a monoforum channel by id (does not require membership) and returns whether the caller is an admin of its parent channel.
 	ResolveMonoforumSend(ctx context.Context, viewerUserID, monoforumID int64) (domain.Channel, bool, error)
 	SearchPublicPosts(ctx context.Context, viewerUserID int64, req domain.ChannelSearchPostsRequest) (domain.ChannelHistory, error)
 	SearchJoinedMessages(ctx context.Context, viewerUserID int64, req domain.ChannelGlobalSearchRequest) (domain.ChannelHistory, error)
 	GetChannelMessages(ctx context.Context, viewerUserID, channelID int64, ids []int) (domain.ChannelHistory, error)
-	// SearchChannelMedia 返回某频道中属于给定媒体类别的消息(共享媒体标签页),newest-first 分页。
+	// SearchChannelMedia returns messages in a channel that belong to the given media category (shared media tab), paginated newest-first.
 	SearchChannelMedia(ctx context.Context, viewerUserID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error)
-	// CountChannelMediaCategories 返回某频道对当前 viewer 可见消息按基础媒体类别聚合的精确计数。
+	// CountChannelMediaCategories returns exact counts of a channel's messages visible to the current viewer, aggregated by base media category.
 	CountChannelMediaCategories(ctx context.Context, viewerUserID, channelID int64) (domain.MediaCategoryCounts, error)
 	ChannelPollFanoutViews(ctx context.Context, channelID int64, msgID int, viewers []int64, now int) (domain.ChannelPollFanoutViews, error)
 	ListStoryMessageForwards(ctx context.Context, req domain.StoryMessageForwardListRequest) (domain.StoryMessageForwardList, error)
@@ -173,9 +177,9 @@ type ChannelStore interface {
 	ReadChannelReactions(ctx context.Context, req domain.ReadChannelReactionsRequest) (domain.ReadChannelReactionsResult, error)
 	GetDiscussionMessage(ctx context.Context, viewerUserID, channelID int64, msgID int) (domain.ChannelDiscussionMessage, error)
 	ReadChannelHistory(ctx context.Context, req domain.ReadChannelHistoryRequest) (domain.ReadChannelHistoryResult, error)
-	// ReadChannelTopicHistory 推进 forum 单话题的 per-viewer 已读水位（不碰频道级），返回需推进 outbox 的发送者。
+	// ReadChannelTopicHistory advances a forum single topic's per-viewer read watermark (without touching the channel level), returning the senders whose outbox must advance.
 	ReadChannelTopicHistory(ctx context.Context, req domain.ReadChannelTopicHistoryRequest) (domain.ReadChannelTopicHistoryResult, error)
-	// GeneralForumTopic 现算 forum General 话题（id=1）对 viewer 的状态（per-topic 水位，不被普通话题串扰）。
+	// GeneralForumTopic computes the forum General topic's (id=1) state for the viewer on the fly (per-topic watermark, not disturbed by regular topics).
 	GeneralForumTopic(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelForumTopic, error)
 	ListMessageReadParticipants(ctx context.Context, req domain.ChannelReadParticipantsRequest) (domain.ChannelReadParticipantsResult, error)
 	ListChannelDifference(ctx context.Context, req domain.ChannelDifferenceRequest) (domain.ChannelDifference, error)
@@ -204,13 +208,15 @@ type ChannelStore interface {
 	// Missing/deleted ids are omitted so a stale process-local membership key cannot poison the
 	// entire fan-out recovery sweep.
 	MaxChannelPtsBatch(ctx context.Context, channelIDs []int64) (map[int64]int, error)
-	// SetActiveCall 写入/清除（callID=0）channel 行上的活跃群通话关联
-	//（channel.call_active/call_not_empty flag 与 channelFull.call 的数据源）。
+	// SetActiveCall writes/clears (callID=0) the active group call association on the
+	// channel row (the data source for the channel.call_active/call_not_empty flags and
+	// channelFull.call).
 	SetActiveCall(ctx context.Context, channelID, callID, callAccessHash int64, notEmpty bool) (domain.Channel, error)
-	// AppendCallServiceMessage 生成群通话服务消息（started/ended/invite，带频道
-	// pts），Recipients 为活跃成员（rpc 据此扇出 updateNewChannelMessage）。
+	// AppendCallServiceMessage generates a group call service message (started/ended/invite,
+	// with channel pts), and Recipients are the active members (rpc fans out
+	// updateNewChannelMessage from this).
 	AppendCallServiceMessage(ctx context.Context, channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error)
-	// AppendStarGiftAdminLog 记录频道 Star gift 的 Recent Actions 快照，不插入频道历史、不推进 pts。
+	// AppendStarGiftAdminLog records a Recent Actions snapshot for a channel Star gift without inserting into channel history or advancing pts.
 	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID int64, savedID int64, date int, action domain.ChannelMessageAction) error
 }
 

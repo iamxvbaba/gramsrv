@@ -15,13 +15,13 @@ import (
 	"telesrv/internal/geoip"
 )
 
-// stubGeoIPResolver 记录解析请求,用来验证"必须批量"和回落行为。
+// stubGeoIPResolver records resolve requests, used to verify "must be batched" and fallback behavior.
 type stubGeoIPResolver struct {
 	mu        sync.Mutex
 	locations map[string]geoip.Location
 	calls     int
 	batches   [][]string
-	// waitBeforeResolve 让测试能验证解析超时时列表照常返回。
+	// waitBeforeResolve lets the test verify the list is still returned when resolution times out.
 	waitBeforeResolve time.Duration
 }
 
@@ -36,7 +36,7 @@ func (s *stubGeoIPResolver) Resolve(ctx context.Context, ips []string) map[strin
 		select {
 		case <-time.After(wait):
 		case <-ctx.Done():
-			// 上游封顶的上下文到期:上层必须已经回落,这里直接返回空结果。
+			// The upstream-capped context expired: the caller must already have fallen back, so return an empty result directly.
 			return nil
 		}
 	}
@@ -69,7 +69,8 @@ func newGeoIPAuthorizationsRouter(t *testing.T, resolver geoip.Resolver, items .
 	return New(Config{}, Deps{Auth: auth, GeoIP: resolver}, zaptest.NewLogger(t), clock.System)
 }
 
-// 未配置地理后端时列表必须与启用前逐字节一致:占位文案不能消失,也不能变成空串。
+// With no geo backend configured the list must be byte-identical to before it was enabled: the
+// placeholder text must not disappear or become an empty string.
 func TestAccountGetAuthorizationsWithoutGeoIPKeepsUnknownPlaceholder(t *testing.T) {
 	router := newGeoIPAuthorizationsRouter(t, nil, domain.Authorization{
 		AuthKeyID:   [8]byte{1},
@@ -101,7 +102,7 @@ func TestAccountGetAuthorizationsFillsResolvedLocations(t *testing.T) {
 	router := newGeoIPAuthorizationsRouter(t, resolver,
 		domain.Authorization{AuthKeyID: [8]byte{1}, IP: "203.0.113.7"},
 		domain.Authorization{AuthKeyID: [8]byte{2}, IP: "198.51.100.9"},
-		// 后端查不到这台设备:必须回落,不能把整条记录丢掉。
+		// The backend cannot find this device: must fall back, not drop the whole record.
 		domain.Authorization{AuthKeyID: [8]byte{3}, IP: "192.0.2.44"},
 	)
 
@@ -125,7 +126,7 @@ func TestAccountGetAuthorizationsFillsResolvedLocations(t *testing.T) {
 			t.Fatalf("authorization[%d] country/region = %q/%q, want %q/%q", i, got.Country, got.Region, w.country, w.region)
 		}
 	}
-	// 逐条解析会把上游成本乘以设备数,必须一次批量提交。
+	// Resolving one by one multiplies the upstream cost by the device count, so it must be submitted in one batch.
 	if calls := resolver.calls; calls != 1 {
 		t.Fatalf("resolver calls = %d, want 1 batched call", calls)
 	}
@@ -155,7 +156,8 @@ func TestAccountGetAuthorizationsSkipsLookupWithoutAddresses(t *testing.T) {
 	}
 }
 
-// 解析是纯展示增强:后端变慢时列表必须照常返回,只是文案回落。
+// Resolution is a pure display enhancement: when the backend is slow the list must still be returned,
+// just with the text falling back.
 func TestAccountGetAuthorizationsFallsBackWhenLookupTimesOut(t *testing.T) {
 	resolver := &stubGeoIPResolver{
 		locations:         map[string]geoip.Location{"203.0.113.7": {Country: "Finland", Region: "Helsinki"}},
@@ -180,7 +182,8 @@ func TestAccountGetAuthorizationsFallsBackWhenLookupTimesOut(t *testing.T) {
 	}
 }
 
-// 扫码登录回传的那一条授权走同一套解析:只查这一条地址,不该在列表之外退回占位文案。
+// The single authorization returned by QR login goes through the same resolution: only this one address
+// is looked up, and it should not fall back to the placeholder text outside the list.
 func TestAcceptLoginTokenResolvesAuthorizationLocation(t *testing.T) {
 	const scannerUserID = int64(1000000001)
 	targetRawAuthKeyID := [8]byte{0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80}

@@ -119,7 +119,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
-	// 被重新激活的成员(此前 left/kicked)同样要归还 prehistory 读边界,否则永久空频道。
+	// A reactivated member (previously left/kicked) likewise has its prehistory read boundary returned, otherwise they permanently see an empty channel.
 	if membershipActivated {
 		if err := resetPrehistoryBoundaryTx(ctx, tx, channel, member.UserID); err != nil {
 			return domain.EditChannelAdminResult{}, err
@@ -473,8 +473,8 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	var serviceMsg domain.ChannelMessage
 	var serviceEvent domain.ChannelUpdateEvent
 	if channel.Megagroup && previous.Status == domain.ChannelMemberActive && member.Status == domain.ChannelMemberKicked {
-		// megagroup 踢人产生可见 "X removed Y" 服务消息并占 channel pts，
-		// 其它成员的成员面板/人数与离线差量都靠它收敛。
+		// Kicking in a megagroup produces a visible "X removed Y" service message and consumes channel pts;
+		// other members' member panel/count and offline diffs converge via it.
 		serviceMsg, serviceEvent, err = s.insertServiceMessage(ctx, tx, channel, req.UserID, req.Date, domain.ChannelMessageAction{
 			Type:    domain.ChannelActionChatDelete,
 			UserIDs: []int64{req.Participant.ID},

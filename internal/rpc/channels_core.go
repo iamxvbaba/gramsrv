@@ -226,8 +226,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	r.applyChannelStatsCapability(full)
 	r.applyStarGiftsCountToChannelFull(ctx, view.Channel.ID, full)
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}
-	// 注：Bots 过滤实际会返回群内 bot（TestGroupBotRPCShape 覆盖），这里据此富化 full.BotInfo。
-	// （此前审计误判为死代码，已由单测纠正——勿删。）
+	// Note: the Bots filter actually returns in-group bots (covered by TestGroupBotRPCShape), and
+	// full.BotInfo is enriched from it here. (An earlier audit misjudged this as dead code; a unit
+	// test corrected that -- do not delete.)
 	botInfo := r.channelFullBotInfo(ctx, userID, view.Channel.ID)
 	userIDs = append(userIDs, botInfo.userIDs...)
 	full.BotInfo = append(full.BotInfo, botInfo.botInfos...)
@@ -240,8 +241,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	if mono, ok := r.linkedMonoforumForChannelState(ctx, userID, view.Channel); ok {
 		chats = appendUniqueTGChats(chats, tgChannelChat(userID, mono, nil))
 	}
-	// 当前频道默认已由 tgChannelFull 处理；外部频道默认（以自己拥有的别的频道身份发言）需在此投影并
-	// 带上该频道对象，否则客户端拿不到默认 chip。
+	// The current channel default is already handled by tgChannelFull; the external-channel
+	// default (posting as another channel one owns) must be projected here with that channel
+	// object attached, otherwise the client gets no default chip.
 	var defaultSendAsChannelID int64
 	if def := view.Dialog.DefaultSendAs; def != nil && def.Type == domain.PeerTypeChannel && def.ID != view.Channel.ID {
 		defaultSendAsChannelID = def.ID
@@ -388,7 +390,7 @@ func (r *Router) onChannelsGetSendAs(ctx context.Context, req *tg.ChannelsGetSen
 			if view.Channel.Broadcast && view.Channel.SignatureProfiles && canSendAsForeignChannel(view) {
 				peers = append(peers, tg.SendAsPeer{Peer: &tg.PeerUser{UserID: userID}})
 			}
-			// 以「当前频道/群本身」发言：广播频道自帖、匿名管理员等（canCurrentChannelSendAs 判定）。
+			// Post as "the current channel/group itself": broadcast self-posts, anonymous admins, etc. (decided by canCurrentChannelSendAs).
 			if canCurrentChannelSendAs(view) {
 				peers = append(peers, tg.SendAsPeer{Peer: &tg.PeerChannel{ChannelID: view.Channel.ID}})
 			}

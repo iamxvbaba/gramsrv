@@ -7,12 +7,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelStoreRecentRepliersPostgres 回归 populateChannelMessageReplies:此前它只算
-// Replies/MaxID/RepliesPts,从不填 RecentRepliers(恒 nil),导致 Postgres(生产)下频道帖
-// 评论入口拿不到「最近回复者头像」——而 memory store 一直在填,属双 store 不一致。
-// 这里验证 Postgres 也按「各回复者最新一条回复 id 倒序、去重、取前 3」回填,与 memory 对齐。
+// TestChannelStoreRecentRepliersPostgres regresses populateChannelMessageReplies: previously it
+// only computed Replies/MaxID/RepliesPts and never filled RecentRepliers (always nil), so under
+// Postgres (production) the channel post comment entry could not get the "recent replier avatars" —
+// while the memory store always filled them, an inconsistency between the two stores. This verifies
+// Postgres also backfills by "each replier's latest reply id, newest-first, deduped, top 3",
+// matching memory.
 func TestChannelStoreRecentRepliersPostgres(t *testing.T) {
-	pool := testPool(t) // 未设 TELESRV_TEST_POSTGRES_DSN 会 t.Skip
+	pool := testPool(t) // without TELESRV_TEST_POSTGRES_DSN set this will t.Skip
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -65,9 +67,9 @@ func TestChannelStoreRecentRepliersPostgres(t *testing.T) {
 			t.Fatalf("reply from %d: %v", u, err)
 		}
 	}
-	reply(alice.ID, 9302, 1700000802) // alice 最旧
-	reply(bob.ID, 9303, 1700000803)   // bob 居中
-	reply(alice.ID, 9304, 1700000804) // alice 最新
+	reply(alice.ID, 9302, 1700000802) // alice oldest
+	reply(bob.ID, 9303, 1700000803)   // bob in the middle
+	reply(alice.ID, 9304, 1700000804) // alice newest
 
 	got, err := channels.GetChannelMessages(ctx, owner.ID, channelID, []int{root.Message.ID})
 	if err != nil {
@@ -83,8 +85,8 @@ func TestChannelStoreRecentRepliersPostgres(t *testing.T) {
 	if replies.Replies != 3 {
 		t.Fatalf("replies count = %d, want 3", replies.Replies)
 	}
-	// 去重 + newest-first:alice(最新一条 9304)排首、bob(9303)次之;alice 那条更旧的(9302)
-	// 因 alice 已出现被去重,故只剩两个去重回复者。
+	// Dedup + newest-first: alice (latest 9304) first, bob (9303) next; alice's older entry
+	// (9302) is deduped because alice already appeared, leaving only two distinct repliers.
 	want := []domain.Peer{
 		{Type: domain.PeerTypeUser, ID: alice.ID},
 		{Type: domain.PeerTypeUser, ID: bob.ID},

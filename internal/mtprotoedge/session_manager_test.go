@@ -74,7 +74,7 @@ func (t *closeCountingTransport) Close() error {
 	return nil
 }
 
-// TestSessionManagerRegistry 验证注册表的注册/注销/查找语义（不涉及网络发送）。
+// TestSessionManagerRegistry verifies the registry's register/unregister/lookup semantics (without network sending).
 func TestSessionManagerRegistry(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	c := &Conn{sessionID: 42, authKeyID: [8]byte{1, 2, 3}}
@@ -158,7 +158,7 @@ func TestSessionManagerReplacementClosesOldPhysicalTransport(t *testing.T) {
 	if oldTransport.closes != 1 {
 		t.Fatalf("old transport closes = %d, want 1", oldTransport.closes)
 	}
-	// 旧 serveConn 稍后退出时不得把 replacement 从索引删掉。
+	// When the old serveConn exits later it must not delete the replacement from the index.
 	sm.Unregister(old)
 	if got, ok := sm.bySession[sessionKey{authKeyID: raw, sessionID: 42}]; !ok || got != replacement {
 		t.Fatal("old unregister removed the replacement connection")
@@ -381,7 +381,7 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	const userID = int64(101)
 
-	// 三个满队列模拟三个慢设备；没有 outbound actor，确保队列在测试期间不会自行排空。
+	// Three full queues simulate three slow devices; with no outbound actor, ensuring the queues do not drain on their own during the test.
 	slow := make([]*Conn, 0, 3)
 	for i := 0; i < 3; i++ {
 		tr := &closeCountingTransport{}
@@ -467,8 +467,9 @@ func TestSessionManagerScopesSameSessionIDByAuthKey(t *testing.T) {
 	}
 
 	sm.BindAuthKeyForSession(raw1, 42, perm1)
-	// 两条 PFS/raw 连接可以解析到同一业务 perm key 且复用同一个 session_id；
-	// 精确排除必须只匹配 raw1，不能按 business key 把 raw2 一并排除。
+	// Two PFS/raw connections can resolve to the same business perm key and reuse the
+	// same session_id; the exact exclusion must match only raw1 and must not exclude
+	// raw2 along with it by business key.
 	sm.BindAuthKeyForSession(raw2, 42, perm1)
 	sm.BindUserForAuthKey(raw1, 42, 100)
 	sm.BindUserForAuthKey(raw2, 42, 200)
@@ -1298,8 +1299,9 @@ func TestPendingPushBudgetSurvivesTakeAndReturnsAcrossOverflowAndUnregister(t *t
 	}
 }
 
-// TestSessionManagerPush 验证主动推送端到端：两个 client 连接握手并建立 session 后，
-// server 经 PushToSession / PushToUser 主动向其推送，client 收到。
+// TestSessionManagerPush verifies proactive push end to end: after two client
+// connections handshake and establish a session, the server proactively pushes to
+// them via PushToSession / PushToUser and the clients receive it.
 func TestSessionManagerPush(t *testing.T) {
 	const dc = 2
 	addr, pub, srv := startTestServer(t, Options{DC: dc})
@@ -1307,7 +1309,7 @@ func TestSessionManagerPush(t *testing.T) {
 	conn1, auth1, cipher1 := dialHandshake(t, addr, dc, pub)
 	conn2, auth2, cipher2 := dialHandshake(t, addr, dc, pub)
 
-	// 各发一个 ping 建立 session，触发注册（并清掉 new_session_created/pong/ack）。
+	// Each sends a ping to establish a session, triggering registration (and clearing new_session_created/pong/ack).
 	msgGen := proto.NewMessageIDGen(time.Now)
 	sendEncryptedWithSeq(t, conn1, cipher1, auth1, msgGen.New(proto.MessageFromClient), 1, &mt.PingRequest{PingID: 1})
 	collectReplies(t, conn1, cipher1, auth1.AuthKey, mt.PongTypeID)
@@ -1325,7 +1327,7 @@ func TestSessionManagerPush(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 1) PushToSession：session2 尚未进入 updates 同步入口时先暂存，ready 后下发。
+	// 1) PushToSession: stag it while session2 has not yet entered the updates sync entry, deliver once ready.
 	if err := srv.Conns().PushToSession(ctx, auth2.SessionID, proto.MessageFromServer, &tg.UpdatesTooLong{}); err != nil {
 		t.Fatalf("push to session: %v", err)
 	}
@@ -1333,7 +1335,7 @@ func TestSessionManagerPush(t *testing.T) {
 	r2 := collectReplies(t, conn2, cipher2, auth2.AuthKey, tg.UpdatesTooLongTypeID)
 	mustHave(t, r2, tg.UpdatesTooLongTypeID, "pushed updates on conn2")
 
-	// 2) BindUser + PushToUser：按 user 维度推送给 conn1。
+	// 2) BindUser + PushToUser: push to conn1 by user dimension.
 	srv.Conns().BindUser(auth1.SessionID, 100)
 	srv.Conns().SetReceivesUpdates(auth1.SessionID, true)
 	sent, err := srv.Conns().PushToUser(ctx, 100, proto.MessageFromServer, &tg.UpdatesTooLong{})
@@ -1346,7 +1348,7 @@ func TestSessionManagerPush(t *testing.T) {
 	r1 := collectReplies(t, conn1, cipher1, auth1.AuthKey, tg.UpdatesTooLongTypeID)
 	mustHave(t, r1, tg.UpdatesTooLongTypeID, "pushed updates on conn1")
 
-	// 3) PushToUserExceptSession：模拟 SyncUpdatesNotMe，跳过当前 session。
+	// 3) PushToUserExceptSession: simulate SyncUpdatesNotMe, skipping the current session.
 	srv.Conns().BindUser(auth1.SessionID, 200)
 	srv.Conns().BindUser(auth2.SessionID, 200)
 	sent, err = srv.Conns().PushToUserExceptSession(ctx, 200, auth2.SessionID, proto.MessageFromServer, &tg.UpdatesTooLong{})

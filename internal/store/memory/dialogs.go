@@ -9,7 +9,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// DialogStore 是 store.DialogStore 的内存实现。
+// DialogStore is the in-memory implementation of store.DialogStore.
 type DialogStore struct {
 	mu          sync.RWMutex
 	m           map[int64]domain.DialogList
@@ -17,7 +17,7 @@ type DialogStore struct {
 	folders     map[int64]map[int]domain.DialogFolder
 	folderOrder map[int64][]int
 	folderTags  map[int64]bool
-	// archivePinned 记录 archive folder 行置顶状态；无记录时官方默认 true。
+	// archivePinned records the pin state of the archive folder row; the official default is true when no record exists.
 	archivePinned map[int64]bool
 	translations  map[translationPreferenceKey]bool
 }
@@ -33,7 +33,7 @@ type dialogDraftKey struct {
 	topMessageID int
 }
 
-// NewDialogStore 创建内存 DialogStore。
+// NewDialogStore creates an in-memory DialogStore.
 func NewDialogStore() *DialogStore {
 	return &DialogStore{
 		m:             make(map[int64]domain.DialogList),
@@ -131,7 +131,7 @@ func (s *DialogStore) ListPrivateDialogPeerIDs(_ context.Context, userID int64, 
 	return out, nil
 }
 
-// SaveList 保存一份用户会话列表，供测试和本地替身使用。
+// SaveList stores a user's dialog list for tests and local stand-ins.
 func (s *DialogStore) SaveList(_ context.Context, userID int64, list domain.DialogList) error {
 	list.Dialogs = cloneDialogs(list.Dialogs)
 	list.Messages = cloneMessages(list.Messages)
@@ -341,8 +341,9 @@ func (s *DialogStore) SetPinned(_ context.Context, userID int64, peer domain.Pee
 			break
 		}
 	}
-	// order 仅在目标会话所在 folder 内分配；memory 双 store 互不可见，
-	// 与 postgres 跨表统一 order 空间相比此处只看私聊表（reorder 会统一重排）。
+	// order is only assigned within the folder the target dialog belongs to; the two
+	// memory stores cannot see each other, so unlike postgres' unified cross-table order
+	// space this only looks at the private-chat table (reorder renumbers everything).
 	nextOrder := 1
 	for _, dialog := range list.Dialogs {
 		if dialog.Pinned && dialog.FolderID == targetFolderID && dialog.PinnedOrder >= nextOrder {
@@ -413,7 +414,7 @@ func (s *DialogStore) SetUnreadMark(_ context.Context, userID int64, peer domain
 		if list.Dialogs[i].Peer != peer {
 			continue
 		}
-		// 值守卫对齐 postgres：重复标记同值返回 changed=false，避免幽灵事件。
+		// Value guard matching postgres: marking the same value again returns changed=false to avoid phantom events.
 		if list.Dialogs[i].UnreadMark == unread {
 			return false, nil
 		}
@@ -629,8 +630,8 @@ func (s *DialogStore) EditPeerFolders(_ context.Context, userID int64, peers []d
 		if !ok {
 			continue
 		}
-		// 换 folder 时清 pinned：TDesktop 在归档/还原时本地无条件 unpin，
-		// 服务端保留旧 pin 会在下次 getDialogs 时把状态漂移回来。
+		// Clear pinned when moving folders: TDesktop unconditionally unpins locally on
+		// archive/unarchive, and keeping the old pin server-side would drift the state back on the next getDialogs.
 		if list.Dialogs[i].FolderID != folderID {
 			list.Dialogs[i].Pinned = false
 			list.Dialogs[i].PinnedOrder = 0
@@ -702,8 +703,8 @@ func upsertMemoryDialog(list domain.DialogList, dialog domain.Dialog) domain.Dia
 			if !dialog.UnreadMark {
 				dialog.UnreadMark = list.Dialogs[i].UnreadMark
 			}
-			// 与 postgres 的 ON CONFLICT 局部更新对齐：消息路径的 upsert
-			// 不得抹掉既有置顶/设置类状态。
+			// Aligns with postgres' partial ON CONFLICT update: a message-path upsert
+			// must not wipe existing pin/settings state.
 			if !dialog.Pinned && list.Dialogs[i].Pinned {
 				dialog.Pinned = list.Dialogs[i].Pinned
 				dialog.PinnedOrder = list.Dialogs[i].PinnedOrder
@@ -779,8 +780,8 @@ func filterDialogList(list domain.DialogList, filter domain.DialogFilter) domain
 
 func dialogMatchesFolder(d domain.Dialog, users []domain.User, filter domain.DialogFilter) bool {
 	if !filter.HasFolderID {
-		// 不带 folder_id 视为主列表（folder 0）：归档对话只以 dialogFolder
-		// 聚合条目出现，DrKLO Android 主列表请求不设 flag。
+		// No folder_id means the main list (folder 0): archived dialogs appear only as
+		// a dialogFolder aggregate entry, and the DrKLO Android main-list request sets no flag.
 		return d.FolderID == domain.DialogMainFolderID
 	}
 	if filter.FolderID < domain.DialogCustomFolderMinID {

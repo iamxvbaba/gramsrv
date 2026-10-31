@@ -13,7 +13,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// pollOptionsHex 把 options 编码成日志可读形态（每个 option 一段 hex）。
+// pollOptionsHex encodes options into a log-readable form (one hex segment per option).
 func pollOptionsHex(options [][]byte) []string {
 	out := make([]string, 0, len(options))
 	for _, option := range options {
@@ -22,8 +22,9 @@ func pollOptionsHex(options [][]byte) []string {
 	return out
 }
 
-// onMessagesSendVote 给 poll 投票（options 为空 = 撤票）。响应必须内联 updateMessagePoll：
-// TDesktop 靠它清 sendingVotes，否则 UI 卡 pending。
+// onMessagesSendVote casts a poll vote (empty options = retract the vote). The
+// response must inline updateMessagePoll: TDesktop relies on it to clear
+// sendingVotes, otherwise the UI sticks at pending.
 func (r *Router) onMessagesSendVote(ctx context.Context, req *tg.MessagesSendVoteRequest) (tg.UpdatesClass, error) {
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
@@ -35,7 +36,9 @@ func (r *Router) onMessagesSendVote(ctx context.Context, req *tg.MessagesSendVot
 	if err != nil {
 		return nil, err
 	}
-	// 双端联调诊断：记录收到的原始 options（空 = 撤票）与处理结果，定位“投票不生效”一类问题。
+	// Two-sided integration diagnostics: log the raw options received (empty =
+	// retract) and the processing outcome, to pin down "vote has no effect"-type
+	// problems.
 	r.log.Info("sendVote received",
 		zap.Int64("user_id", userID),
 		zap.String("peer_type", string(peer.Type)),
@@ -89,7 +92,8 @@ func (r *Router) onMessagesSendVote(ctx context.Context, req *tg.MessagesSendVot
 	}
 }
 
-// logPollOutcome 摘要化 viewer 视角的 poll 状态（chosen/总票数），与 sendVote received 配对读。
+// logPollOutcome summarizes the viewer-view poll state (chosen/total votes) and
+// is read paired with "sendVote received".
 func (r *Router) logPollOutcome(event string, viewerUserID, pollID int64, media *domain.MessageMedia) {
 	if media == nil || media.Poll == nil || media.Poll.Results == nil {
 		r.log.Warn(event+" but poll results missing", zap.Int64("user_id", viewerUserID), zap.Int64("poll_id", pollID))
@@ -112,7 +116,8 @@ func (r *Router) logPollOutcome(event string, viewerUserID, pollID int64, media 
 	)
 }
 
-// onMessagesGetPollResults 返回 viewer 视角的最新 poll 状态（updateMessagePoll 内联 poll）。
+// onMessagesGetPollResults returns the viewer-view latest poll state
+// (updateMessagePoll with an inlined poll).
 func (r *Router) onMessagesGetPollResults(ctx context.Context, req *tg.MessagesGetPollResultsRequest) (tg.UpdatesClass, error) {
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
@@ -139,7 +144,7 @@ func (r *Router) onMessagesGetPollResults(ctx context.Context, req *tg.MessagesG
 	}, nil
 }
 
-// onMessagesGetPollVotes 列出公开投票的投票人（按 vote_date DESC 分页）。
+// onMessagesGetPollVotes lists the voters of a public poll (paginated by vote_date DESC).
 func (r *Router) onMessagesGetPollVotes(ctx context.Context, req *tg.MessagesGetPollVotesRequest) (*tg.MessagesVotesList, error) {
 	if req.ID <= 0 || req.ID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
@@ -216,7 +221,8 @@ func (r *Router) onMessagesGetPollVotes(ctx context.Context, req *tg.MessagesGet
 	return out, nil
 }
 
-// tgMessagePeerVote 输出单个投票人条目；按 option 过滤时官方用 messagePeerVoteInputOption 省字节。
+// tgMessagePeerVote emits a single voter entry; when filtering by option the
+// official server uses messagePeerVoteInputOption to save bytes.
 func tgMessagePeerVote(vote domain.PollVote, option []byte, filtered bool) tg.MessagePeerVoteClass {
 	peer := &tg.PeerUser{UserID: vote.UserID}
 	if filtered {

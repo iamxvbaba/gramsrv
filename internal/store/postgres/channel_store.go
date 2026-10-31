@@ -16,7 +16,7 @@ const channelMemberFilterBatch = 1000
 
 const retryableChannelTxAttempts = 3
 
-// ChannelStore 用 PostgreSQL 实现 store.ChannelStore。
+// ChannelStore implements store.ChannelStore with PostgreSQL.
 type ChannelStore struct {
 	db              sqlcgen.DBTX
 	ids             store.ChannelIDAllocator
@@ -33,10 +33,10 @@ type ChannelStore struct {
 	paidReactionStartingGrant int64
 }
 
-// ChannelStoreOption 调整 PostgreSQL ChannelStore 依赖。
+// ChannelStoreOption adjusts a PostgreSQL ChannelStore dependency.
 type ChannelStoreOption func(*ChannelStore)
 
-// WithChannelAllocators 注入 Redis-backed channel id / message id allocator。
+// WithChannelAllocators injects the Redis-backed channel id / message id allocators.
 func WithChannelAllocators(ids store.ChannelIDAllocator, msgIDs store.ChannelMessageIDAllocator) ChannelStoreOption {
 	return func(s *ChannelStore) {
 		s.ids = ids
@@ -44,15 +44,16 @@ func WithChannelAllocators(ids store.ChannelIDAllocator, msgIDs store.ChannelMes
 	}
 }
 
-// WithChannelLogger 注入频道 store 日志器，用于追踪 channel pts 分配。
+// WithChannelLogger injects the channel store logger, used to trace channel pts allocation.
 func WithChannelLogger(log *zap.Logger) ChannelStoreOption {
 	return func(s *ChannelStore) {
 		s.log = log
 	}
 }
 
-// WithChannelRowCache 注入「共享频道行」进程内缓存(由 ReadModelChangeListener 实时失效)。
-// 传 nil 等于禁用，不影响任何读路径行为。
+// WithChannelRowCache injects the "shared channel row" in-process cache (invalidated in real
+// time by ReadModelChangeListener). Passing nil is equivalent to disabling it and does not
+// affect any read-path behavior.
 func WithChannelRowCache(cache *ChannelRowCache) ChannelStoreOption {
 	return func(s *ChannelStore) {
 		s.rowCache = cache
@@ -67,24 +68,26 @@ func WithChannelTopMessageCache(cache *ChannelTopMessageCache) ChannelStoreOptio
 	}
 }
 
-// WithChannelMemberCache 注入「频道成员/访问态」进程内缓存。
-// 传 nil 等于禁用；事务内仍绕过，提交后由 read model listener 失效。
+// WithChannelMemberCache injects the "channel member/access state" in-process cache.
+// Passing nil is equivalent to disabling it; transactions still bypass it, and the read model
+// listener invalidates it on commit.
 func WithChannelMemberCache(cache *ChannelMemberCache) ChannelStoreOption {
 	return func(s *ChannelStore) {
 		s.memberCache = cache
 	}
 }
 
-// WithChannelDialogCache 注入 viewer-scoped 频道 dialog 投影缓存。
-// 传 nil 等于禁用；事务内仍绕过，避免写后读旧 dialog/read boundary。
+// WithChannelDialogCache injects the viewer-scoped channel dialog projection cache.
+// Passing nil is equivalent to disabling it; transactions still bypass it, avoiding reading a
+// stale dialog/read boundary after a write.
 func WithChannelDialogCache(cache *ChannelDialogCache) ChannelStoreOption {
 	return func(s *ChannelStore) {
 		s.dialogCache = cache
 	}
 }
 
-// WithChannelBoostCache 注入频道 boost 读投影缓存(SelfBoostsApplied + peer total)。
-// 传 nil 等于禁用；事务内仍绕过，避免 send 权限判断读到旧值。
+// WithChannelBoostCache injects the channel boost read-model projection cache (SelfBoostsApplied + peer total).
+// Passing nil is equivalent to disabling it; transactions still bypass it, avoiding the send-permission check reading a stale value.
 func WithChannelBoostCache(cache *ChannelBoostCache) ChannelStoreOption {
 	return func(s *ChannelStore) {
 		s.boostCache = cache
@@ -112,8 +115,10 @@ func WithChannelStarsStartingGrant(amount int64) ChannelStoreOption {
 	}
 }
 
-// cacheActive 报告当前句柄是否可用频道行缓存：仅启用缓存且走连接池(非事务)时。
-// 事务内(db != s.db)一律绕过缓存实时读，保证事务读己写。
+// cacheActive reports whether the channel row cache is usable for the current handle: only when
+// the cache is enabled and the pool (not a transaction) is used. Inside a transaction
+// (db != s.db) the cache is always bypassed for live reads, guaranteeing transactional
+// read-your-write.
 func (s *ChannelStore) cacheActive(db sqlcgen.DBTX) bool {
 	return s.rowCache != nil && db == s.db
 }
@@ -134,7 +139,7 @@ func (s *ChannelStore) boostCacheActive(db sqlcgen.DBTX) bool {
 	return s.boostCache != nil && db == s.db
 }
 
-// NewChannelStore 基于 pgx 连接池（或事务）创建 ChannelStore。
+// NewChannelStore creates a ChannelStore backed by a pgx pool (or transaction).
 func NewChannelStore(db sqlcgen.DBTX, opts ...ChannelStoreOption) *ChannelStore {
 	s := &ChannelStore{db: db, paidReactionStartingGrant: domain.DefaultStarsStartingGrant}
 	for _, opt := range opts {

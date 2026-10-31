@@ -110,11 +110,12 @@ func TestLegacyChannelSettingsRPC(t *testing.T) {
 	}
 }
 
-// TestBroadcastChannelAcceptsFullReactionCatalog 复现并锁定真机 bug：广播频道开启
-// reactions 时，DrKLO 把「启用全部标准 reaction」发成显式 chatReactionsSome 列表
-// （megagroup 走 chatReactionsAll），列表长度等于 getAvailableReactions 目录大小
-// （当前 ~74）。此前 MaxChannelReactionItems=64 把它误判成 LIMIT_INVALID。修复后
-// 任何不超过 MaxChannelReactionTypes 的列表都必须被接受。
+// TestBroadcastChannelAcceptsFullReactionCatalog reproduces and locks in a real-device bug: when
+// a broadcast channel enables reactions, DrKLO sends "enable all standard reactions" as an
+// explicit chatReactionsSome list (megagroup uses chatReactionsAll), whose length equals the
+// getAvailableReactions catalog size (currently ~74). Previously MaxChannelReactionItems=64
+// misjudged this as LIMIT_INVALID. After the fix, any list not exceeding MaxChannelReactionTypes
+// must be accepted.
 func TestBroadcastChannelAcceptsFullReactionCatalog(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -138,8 +139,9 @@ func TestBroadcastChannelAcceptsFullReactionCatalog(t *testing.T) {
 	}
 	peer := &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
 
-	// 用一个明显超过旧上限(64)的目录大小，证明修复生效。每个 emoticon 取互不相同
-	// 的合法短串即可（验证只关心非空且 rune 数 <= MaxChannelReactionEmoticonLength）。
+	// Use a catalog size clearly above the old cap (64) to prove the fix works. Each emoticon can
+	// be a distinct legal short string (the validation only cares that it is non-empty and has
+	// rune count <= MaxChannelReactionEmoticonLength).
 	const catalogSize = 74
 	if catalogSize <= 64 || catalogSize > domain.MaxChannelReactionTypes {
 		t.Fatalf("test catalog size %d must exceed the old 64 cap and stay within %d",

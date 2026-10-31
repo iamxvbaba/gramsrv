@@ -266,9 +266,9 @@ type UserLookup interface {
 type StarsService interface {
 	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
 	Debit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
-	// CountStarsAllUsers 返回批量贷记的候选真实用户数（dry-run 预览用）。
+	// CountStarsAllUsers returns the number of real-user candidates for the bulk credit (used by the dry-run preview).
 	CountStarsAllUsers(ctx context.Context) (int64, error)
-	// GrantStarsAll 给所有真实用户批量贷记 amount，返回受影响账号数。
+	// GrantStarsAll bulk-credits amount to all real users and returns the number of affected accounts.
 	GrantStarsAll(ctx context.Context, amount int64, title, desc string) (int64, error)
 }
 
@@ -888,7 +888,7 @@ type ImportStarGiftRequest struct {
 	PerUserTotal int `json:"per_user_total,omitempty"`
 
 	// Optional lifecycle authoring for the auction panel and scheduled-release
-	// ("отложенный дроп") surfaces. Zero values describe an ordinary gift.
+	// ("scheduled drop") surfaces. Zero values describe an ordinary gift.
 	// Validated by domain.StarGiftCatalogWrite.ValidateLifecycleAuthoring.
 	// For auctions Stars is the starting/minimum bid and AvailabilityTotal is
 	// the supply; AuctionRoundDuration is seconds (0 => engine default).
@@ -1047,8 +1047,9 @@ type GrantStarsRequest struct {
 	Amount int64 `json:"amount"`
 }
 
-// GrantStarsAllRequest 是全量发星请求：给所有真实用户（非机器人、非系统账号）各贷记
-// Amount 颗星。无 user_id——目标由 store 层从 users 表一次性解析。
+// GrantStarsAllRequest is the grant-stars-to-all request: it credits Amount stars to every real
+// user (non-bot, non-system account). There is no user_id -- the targets are resolved at once by
+// the store layer from the users table.
 type GrantStarsAllRequest struct {
 	CommandMeta
 	Amount int64 `json:"amount"`
@@ -1927,8 +1928,9 @@ func (s *Service) GrantStars(ctx context.Context, req GrantStarsRequest) (Comman
 	})
 }
 
-// GrantStarsAll 给所有真实用户批量贷记 Amount 颗星。dry-run 只统计候选数不动账；
-// 真实执行在单个事务内完成余额+流水，返回受影响账号数（不逐个通知客户端，量级太大）。
+// GrantStarsAll bulk-credits Amount stars to all real users. A dry run only counts the candidates
+// without moving funds; the actual execution completes balance + ledger in a single transaction and
+// returns the number of affected accounts (clients are not notified one by one -- the volume is too large).
 func (s *Service) GrantStarsAll(ctx context.Context, req GrantStarsAllRequest) (CommandResult, error) {
 	if req.Amount <= 0 || req.Amount > maxStarsGrant {
 		return CommandResult{}, fmt.Errorf("amount must be between 1 and %d", maxStarsGrant)
@@ -4070,7 +4072,7 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		req.SlugPrefix = "official-" + req.SourceGiftID
 	}
 
-	// Scheduled release ("отложенный дроп") for a snapshot gift. The snapshot's own
+	// Scheduled release ("scheduled drop") for a snapshot gift. The snapshot's own
 	// locked_until_date records Telegram's release window, which is normally long
 	// past by the time the gift is mirrored here, so it cannot serve as a local
 	// schedule. An operator-supplied time therefore wins, and must be in the future
@@ -4085,9 +4087,9 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	}
 
 	// Auctions require finite inventory. For ordinary gifts, the base catalog is
-	// finite only when the operator sets a base limit ("Лимит подарков"): any
+	// finite only when the operator sets a base limit ("Gift limit"): any
 	// positive value makes the base gift a limited edition of that exact size.
-	// The collectible supply ("уникальный тираж") configures the pool alone and
+	// The collectible supply ("unique supply") configures the pool alone and
 	// must never turn a regular gift into a limited one.
 	limited, availabilityTotal := false, 0
 	if bundle.Gift.Auction {
@@ -4291,7 +4293,7 @@ func officialRarity(value officialgifts.Rarity) (domain.StarGiftAttributeRarityK
 		return "", 0, domain.ErrStarGiftCollectibleInvalid
 	}
 	if kind == domain.StarGiftRarityPermille {
-		// permille 0 是合法权重（属性在池中但不会被抽到），与官方快照保持一致。
+		// permille 0 is a valid weight (the attribute stays in the pool but is never drawn), matching the official snapshot.
 		if value.Permille == nil || *value.Permille < 0 || *value.Permille > 1000 {
 			return "", 0, domain.ErrStarGiftCollectibleInvalid
 		}

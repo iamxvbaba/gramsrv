@@ -69,22 +69,27 @@ func (s *ChannelStore) SetChannelMessageReactions(ctx context.Context, req domai
 		!channelMessageVisibleToViewer(channel, member, req.UserID, msg) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
-	// 仅新增/替换受策略约束；空向量是撤销，策略收紧后也必须允许撤销存量 reaction。
+	// Only additions/replacements are policy-gated; an empty vector is a retraction, and
+	// retracting existing reactions must remain allowed after the policy is tightened.
 	for _, reaction := range req.Reactions {
 		if !channel.ReactionPolicy.AllowsReaction(reaction) {
 			return domain.ChannelMessageReactionsResult{}, domain.ErrReactionInvalid
 		}
 	}
 	if len(req.Reactions) > 0 {
-		// READ COMMITTED 下并发新增不同新种类互不可见、会同时通过去重闸门，
-		// 事务级 advisory lock 按 (channel, message) 串行化带闸门的写入（独立于
-		// lockUsersForUpdate 的单参数键空间）；撤销不经闸门，无需上锁。
+		// Under READ COMMITTED, concurrent additions of different new kinds are mutually
+		// invisible and both pass the dedup gate; a transaction-level advisory lock
+		// serializes gated writes per (channel, message) (independent of
+		// lockUsersForUpdate's single-argument key space). Retractions bypass the gate and
+		// need no lock.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashint8($1::bigint), $2::int)`, req.ChannelID, req.MessageID); err != nil {
 			return domain.ChannelMessageReactionsResult{}, fmt.Errorf("advisory lock channel message reactions: %w", err)
 		}
-		// 官方 REACTIONS_TOO_MANY 只挡「引入消息上尚不存在的新种类」：存量已超限
-		//（管理员调低 reactions_limit / 部署前数据）时，重发自己的 reaction 或给
-		// 已有种类投票必须放行，否则客户端点击合法 chip 也会收到 400。
+		// The official REACTIONS_TOO_MANY only blocks "introducing a kind that does not
+		// already exist on the message": when the existing set is already over the limit
+		// (an admin lowered reactions_limit / pre-deployment data), re-sending one's own
+		// reaction or voting on an existing kind must be allowed, otherwise clicking a
+		// legitimate chip would also return 400.
 		existing := make(map[string]struct{})
 		final := make(map[string]struct{})
 		rows, err := tx.Query(ctx, `
@@ -130,7 +135,8 @@ DELETE FROM channel_message_reactions
 WHERE channel_id = $1 AND message_id = $2 AND reacted_user_id = $3`, req.ChannelID, req.MessageID, req.UserID); err != nil {
 		return domain.ChannelMessageReactionsResult{}, fmt.Errorf("delete channel message reactions: %w", err)
 	}
-	// 广播频道 reaction 匿名（官方语义），作者不收 unread 角标，不写 unread 簿记。
+	// Broadcast channel reactions are anonymous (official semantics); the author receives
+	// no unread badge and no unread bookkeeping is written.
 	unreadEligible := !channel.Broadcast || channel.Megagroup
 	for i, reaction := range req.Reactions {
 		if _, err := tx.Exec(ctx, `
@@ -180,7 +186,8 @@ DO UPDATE SET reaction_count = user_top_reactions.reaction_count + 1, reaction_d
 	} else {
 		msg.Reactions = &reactions
 	}
-	// sendReaction 实时推送走在线 viewer scope（rpc 层封顶），不预热全量成员列表。
+	// sendReaction realtime fanout uses the online viewer scope (capped at the rpc layer),
+	// without pre-warming the full member list.
 	return domain.ChannelMessageReactionsResult{
 		Channel:    channel,
 		Message:    msg,
@@ -641,7 +648,7 @@ WHERE payer_user_id=$1 AND random_id=$2 AND completed
 	return result, true, nil
 }
 
-// aggregateChannelPaidReactions 汇总一条消息的付费 reaction：总星数 + viewer 自身 + top reactors。
+// aggregateChannelPaidReactions aggregates the paid reactions of one message: total stars + the viewer's own + top reactors.
 func (s *ChannelStore) aggregateChannelPaidReactions(ctx context.Context, channelID int64, messageID int, viewerUserID int64) (domain.ChannelMessagePaidReactions, error) {
 	return aggregateChannelPaidReactionsDB(ctx, s.db, channelID, messageID, viewerUserID)
 }
@@ -681,7 +688,8 @@ ORDER BY stars DESC, reactor_user_id ASC`, channelID, messageID)
 	if err := rows.Err(); err != nil {
 		return domain.ChannelMessagePaidReactions{}, err
 	}
-	// viewer 自身始终出现在 top reactors（官方：你的条目总在列表里，带 My 标志）。
+	// The viewer itself always appears in top reactors (official: your entry is always in
+	// the list, flagged My).
 	if out.MyStars > 0 && !myInTop {
 		out.TopReactors = append(out.TopReactors, myReactor)
 	}

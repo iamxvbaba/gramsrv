@@ -8,15 +8,16 @@ import (
 	"telesrv/internal/domain"
 )
 
-// SecretChatStore 是 store.SecretChatStore 的进程内实现（rpc/app 单测 fixture 用）。
-// 行为契约与 postgres 实现由 storetest 共享 contract test 钉死；凡动握手态迁移
-// 语义两边必须同步。
+// SecretChatStore is the in-process implementation of store.SecretChatStore (used as an
+// rpc/app unit-test fixture). Its behavioral contract with the postgres implementation is
+// pinned by a shared storetest contract test; any change to handshake-state transition
+// semantics must be synced on both sides.
 type SecretChatStore struct {
 	mu    sync.Mutex
 	chats map[int]domain.SecretChat
 }
 
-// NewSecretChatStore 创建内存实现。
+// NewSecretChatStore creates the in-memory implementation.
 func NewSecretChatStore() *SecretChatStore {
 	return &SecretChatStore{chats: make(map[int]domain.SecretChat)}
 }
@@ -66,7 +67,7 @@ func (s *SecretChatStore) AcceptSecretChat(_ context.Context, chatID int, partic
 	case domain.SecretChatStateDiscarded:
 		return domain.SecretChat{}, domain.ErrSecretChatAlreadyDeclined
 	}
-	// requested 且未绑定接受设备：CAS 成功。
+	// requested and no accepting device bound yet: the CAS succeeds.
 	if c.ParticipantAuthKeyID != 0 {
 		return domain.SecretChat{}, domain.ErrSecretChatAlreadyAccepted
 	}
@@ -109,22 +110,22 @@ func (s *SecretChatStore) ListActiveSecretChatsByAuthKey(_ context.Context, auth
 			out = append(out, cloneSecretChat(c))
 		}
 	}
-	// map 遍历无序：按 chat_id 升序与 postgres ORDER BY 对齐，确定性供测试断言。
+	// map iteration is unordered: sort by ascending chat_id to match postgres ORDER BY, giving deterministic results for test assertions.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
-// EncryptedQueueStore 是 store.EncryptedQueueStore 的进程内实现。
+// EncryptedQueueStore is the in-process implementation of store.EncryptedQueueStore.
 type EncryptedQueueStore struct {
 	mu          sync.Mutex
-	byDevice    map[int64][]domain.SecretChatMessage // receiverAuthKeyID → qts 升序消息
+	byDevice    map[int64][]domain.SecretChatMessage // receiverAuthKeyID → messages in ascending qts
 	reserved    map[int64]int
 	confirmed   map[int64]int
 	dedup       map[emqDedupKey]int // → qts
 	stateEvents []domain.EncryptedStateEvent
 	delivered   map[int64]map[int64]bool // eventID → deviceAuthKeyID → true
 	nextEventID int64
-	files       map[int64]domain.EncryptedFileRef // file id → 快照
+	files       map[int64]domain.EncryptedFileRef // file id → snapshot
 }
 
 type emqDedupKey struct {
@@ -133,7 +134,7 @@ type emqDedupKey struct {
 	random   int64
 }
 
-// NewEncryptedQueueStore 创建内存实现。
+// NewEncryptedQueueStore creates the in-memory implementation.
 func NewEncryptedQueueStore() *EncryptedQueueStore {
 	return &EncryptedQueueStore{
 		byDevice:  make(map[int64][]domain.SecretChatMessage),

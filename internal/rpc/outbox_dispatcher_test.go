@@ -225,8 +225,9 @@ func TestOutboxDispatcherBatchRejectsPartialExclusionBeforeNoop(t *testing.T) {
 	}
 }
 
-// TestOutboxDispatcherBatchPath 覆盖生产批量路径：store 同时具备 BatchByCursor + MarkDeliveredBatch
-// 时，DispatchOnce 一次批量取事件、推送、再批量标记 delivered，而非逐条。
+// TestOutboxDispatcherBatchPath covers the production batch path: when the store has both
+// BatchByCursor + MarkDeliveredBatch, DispatchOnce batch-fetches events, pushes, then batch-marks
+// delivered, rather than doing it row by row.
 func TestOutboxDispatcherBatchPath(t *testing.T) {
 	msg := domain.Message{
 		ID:          10,
@@ -1185,7 +1186,7 @@ func firstOutboxUpdatePts(updates *tg.Updates) int {
 	}
 }
 
-// batchEventStore 给 captureUpdateEventStore 加上 BatchByCursor 批量能力。
+// batchEventStore adds the BatchByCursor batch capability to captureUpdateEventStore.
 type batchEventStore struct {
 	*captureUpdateEventStore
 	batchCursors []store.EventCursor
@@ -1231,7 +1232,7 @@ func (s *batchEventStore) BatchByCursor(_ context.Context, cursors []store.Event
 	return out, nil
 }
 
-// batchDispatchOutbox 给 captureDispatchOutbox 加上 MarkDeliveredBatch 批量能力。
+// batchDispatchOutbox adds the MarkDeliveredBatch batch capability to captureDispatchOutbox.
 type batchDispatchOutbox struct {
 	*captureDispatchOutbox
 	deliveredBatch []store.DispatchOutboxItem
@@ -1319,8 +1320,9 @@ type captureDispatchOutbox struct {
 
 type captureScopedSessions struct {
 	*captureSessions
-	// scopedMu 保护本层扩展字段：presence 等异步推送 goroutine 会并发写
-	// scopedAuthKeyID，测试主 goroutine 并发读（race detector 抓过这里）。
+	// scopedMu guards this layer's extension fields: async push goroutines such as presence write
+	// scopedAuthKeyID concurrently while the test's main goroutine reads it (the race detector
+	// caught this).
 	scopedMu        sync.Mutex
 	scopedAuthKeyID [8]byte
 	immediatePush   bool
@@ -1476,7 +1478,8 @@ func (m *captureOutboxMetrics) PresenceLastSeenOverflow() {}
 
 func (m *captureOutboxMetrics) PresenceLastSeenDrainDropped(int) {}
 
-// interruptedBestEffortSessions 模拟 dispatcher context 到期：该中断可安全靠 lease 重试。
+// interruptedBestEffortSessions simulates a dispatcher context deadline: such an interruption can
+// safely be retried via the lease.
 type interruptedBestEffortSessions struct {
 	*captureSessions
 	attempts int
@@ -1487,7 +1490,8 @@ func (s *interruptedBestEffortSessions) PushToUserExceptAuthKeySessionBestEffort
 	return 0, context.DeadlineExceeded
 }
 
-// TestOutboxDispatcherDefersOnPushInterruption 验证 shutdown/deadline 不把 lane head 误打 failed。
+// TestOutboxDispatcherDefersOnPushInterruption verifies shutdown/deadline does not wrongly mark the
+// lane head failed.
 func TestOutboxDispatcherDefersOnPushInterruption(t *testing.T) {
 	msg := domain.Message{
 		ID:          10,
@@ -1521,16 +1525,16 @@ func TestOutboxDispatcherDefersOnPushInterruption(t *testing.T) {
 	dispatcher.DispatchOnce(context.Background())
 
 	if sessions.attempts != 1 {
-		t.Fatalf("best-effort push attempts = %d, want 1（应走 best-effort 推送路径）", sessions.attempts)
+		t.Fatalf("best-effort push attempts = %d, want 1 (should take the best-effort push path)", sessions.attempts)
 	}
 	if outbox.delivered {
-		t.Fatalf("outbox delivered=true, want 未投递（中断应保留 dispatching 行靠租约重投）")
+		t.Fatalf("outbox delivered=true, want not delivered (an interruption should keep the dispatching row for lease redelivery)")
 	}
 	if outbox.failed {
-		t.Fatalf("outbox failed=true, want 未失败（context 中断不计入 attempts 升级）")
+		t.Fatalf("outbox failed=true, want not failed (a context interruption does not increment attempts)")
 	}
 	if metrics.failed != 0 {
-		t.Fatalf("metrics.failed=%d, want 0（context 中断不算投递失败）", metrics.failed)
+		t.Fatalf("metrics.failed=%d, want 0 (a context interruption is not counted as a delivery failure)", metrics.failed)
 	}
 }
 

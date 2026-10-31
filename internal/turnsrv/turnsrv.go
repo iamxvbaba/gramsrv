@@ -1,12 +1,17 @@
-// Package turnsrv 是私聊通话 P3 的内嵌 TURN/STUN 服务（pion/turn/v5）。
+// Package turnsrv is the embedded TURN/STUN service for private-call P3
+// (pion/turn/v5).
 //
-// 角色：私聊媒体面是客户端间 P2P（tgcalls/WebRTC），服务端只在 NAT 穿透失败时
-// 充当中继。本包对外只暴露三件事：服务可达地址（写进 phoneCall.connections 的
-// phoneConnectionWebrtc 条目）、按通话签发的临时凭据、运行开关。
+// Role: the private-call media plane is client-to-client P2P (tgcalls/WebRTC); the
+// server acts as a relay only when NAT traversal fails. This package exposes just
+// three things externally: the reachable service address (written into the
+// phoneConnectionWebrtc entries of phoneCall.connections), the temporary
+// credentials issued per call, and the on/off switch.
 //
-// 凭据采用 TURN REST 规范（draft-uberti-behave-turn-rest-00，coturn 同款）：
-// username = "<unix 过期时间>:<标识>"，password = base64(HMAC-SHA1(secret, username))。
-// 这使得未来切换到外部 coturn 时只需共享 secret，信令侧零改动。
+// Credentials follow the TURN REST spec (draft-uberti-behave-turn-rest-00, same as
+// coturn): username = "<unix expiry>:<identity>", password =
+// base64(HMAC-SHA1(secret, username)). This means switching to an external coturn
+// in the future only requires sharing the secret, with zero changes on the
+// signaling side.
 package turnsrv
 
 import (
@@ -21,43 +26,52 @@ import (
 	"go.uber.org/zap"
 )
 
-// Config 是内嵌 TURN 的运行参数。
+// Config is the operating parameters of the embedded TURN.
 type Config struct {
-	// UDPPort 是 TURN/STUN 监听端口（独立于 SFU 端口：两者都要独占消费各自
-	// socket 上的 STUN 流量，不能共用）。Windows 防火墙需放行。
+	// UDPPort is the TURN/STUN listening port (independent of the SFU port: both
+	// must exclusively consume the STUN traffic on their own socket and cannot
+	// share one). The Windows firewall must allow it.
 	UDPPort int
-	// AdvertiseIP 是写进 phoneConnectionWebrtc 与 relay 分配地址的客户端可达
-	// 地址。⚠ 127.0.0.1 时真机拿到的 relay candidate 不可达（媒体面静默失败）。
+	// AdvertiseIP is the client-reachable address written into
+	// phoneConnectionWebrtc and used for relay allocations. ⚠ With 127.0.0.1 the
+	// relay candidate a real device gets is unreachable (the media plane fails
+	// silently).
 	AdvertiseIP string
-	// Realm 是 TURN long-term credential 的 realm（任意稳定串即可）。
+	// Realm is the realm of the TURN long-term credential (any stable string works).
 	Realm string
-	// SharedSecret 是 REST 凭据的 HMAC 密钥；为空则进程级随机生成
-	// （单实例自洽；多实例/外部 coturn 必须显式配置同一值）。
+	// SharedSecret is the HMAC key for REST credentials; when empty it is generated
+	// randomly at process level (self-consistent for a single instance; multiple
+	// instances / an external coturn must explicitly configure the same value).
 	SharedSecret string
-	// RelayMinPort/RelayMaxPort 限定 relay 分配的 UDP 端口段（防火墙放行范围）。
+	// RelayMinPort/RelayMaxPort bound the UDP port range for relay allocations (the
+	// firewall's allowed range).
 	RelayMinPort int
 	RelayMaxPort int
-	// CredentialTTL 是签发凭据的有效期。⚠ 必须 ≥ 单次通话时长上限：libwebrtc
-	// TurnPort 的 allocation refresh 复用初始凭据，凭据过期会让进行中的中继
-	// 通话断流（TDesktop 读码结论），缺省 24h。
+	// CredentialTTL is the validity period of issued credentials. ⚠ It must be >=
+	// the maximum duration of a single call: libwebrtc TurnPort's allocation
+	// refresh reuses the initial credentials, so an expired credential cuts off an
+	// in-progress relayed call (conclusion from reading the TDesktop code);
+	// default 24h.
 	CredentialTTL time.Duration
 	Logger        *zap.Logger
 }
 
-// Service 是信令层可见的 TURN 边界。
+// Service is the TURN boundary visible to the signaling layer.
 type Service interface {
-	// Enabled 报告中继是否真实可用（false 时 connections 只能下发空列表，
-	// 行为退回 P1 的 LAN 直连）。
+	// Enabled reports whether relaying is actually available (when false,
+	// connections can only deliver an empty list and behavior falls back to P1's
+	// LAN direct connection).
 	Enabled() bool
-	// Credentials 为一通通话签发临时凭据（user 任意标识，惯例用 callID）。
+	// Credentials issues temporary credentials for one call (user is any identity;
+	// the convention is callID).
 	Credentials(user string) (username, password string, err error)
-	// IP/Port 返回客户端可达的服务地址。
+	// IP/Port return the client-reachable service address.
 	IP() string
 	Port() int
 	Close() error
 }
 
-// Disabled 返回未启用实现。
+// Disabled returns the not-enabled implementation.
 func Disabled() Service { return disabled{} }
 
 type disabled struct{}
@@ -75,7 +89,8 @@ type pionTURN struct {
 	server *turn.Server
 }
 
-// New 启动内嵌 TURN：绑定 UDP 端口、装配 REST 凭据校验与 relay 端口段。
+// New starts the embedded TURN: binds the UDP port and wires up REST credential
+// verification and the relay port range.
 func New(cfg Config) (Service, error) {
 	if cfg.UDPPort <= 0 {
 		return nil, fmt.Errorf("turnsrv: invalid udp port %d", cfg.UDPPort)
@@ -135,7 +150,7 @@ func New(cfg Config) (Service, error) {
 		zap.Int("relay_min_port", cfg.RelayMinPort),
 		zap.Int("relay_max_port", cfg.RelayMaxPort))
 	if cfg.AdvertiseIP == "127.0.0.1" {
-		cfg.Logger.Warn("TELESRV_TURN_ADVERTISE_IP 为 127.0.0.1：真机拿到的 relay candidate 不可达（跨网媒体面静默失败），跨设备通话必须设为客户端可达 IP")
+		cfg.Logger.Warn("TELESRV_TURN_ADVERTISE_IP is 127.0.0.1: the relay candidate a real device gets is unreachable (the cross-network media plane fails silently); cross-device calls must set it to a client-reachable IP")
 	}
 	return &pionTURN{cfg: cfg, server: server}, nil
 }

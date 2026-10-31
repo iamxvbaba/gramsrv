@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// UploadPartGCWorker 周期性清理未组装的过期上传分片。
+// UploadPartGCWorker periodically cleans up expired, unassembled upload parts.
 type UploadPartGCWorker struct {
 	files    *Service
 	logger   *zap.Logger
@@ -58,10 +58,10 @@ func (w *UploadPartGCWorker) runOnce(ctx context.Context) {
 	}
 	deleted, err := w.files.DeleteExpiredUploadParts(ctx, time.Now().Add(-w.ttl), w.batch)
 	if err != nil {
-		w.logger.Warn("清理过期 upload_parts 失败", zap.Error(err))
+		w.logger.Warn("failed to clean up expired upload_parts", zap.Error(err))
 		return
 	}
 	if deleted > 0 {
-		w.logger.Info("清理过期 upload_parts 完成", zap.Int64("deleted", deleted))
+		w.logger.Info("cleaned up expired upload_parts", zap.Int64("deleted", deleted))
 	}
 }

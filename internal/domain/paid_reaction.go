@@ -6,14 +6,14 @@ import (
 	"errors"
 )
 
-// 频道帖子付费 reaction（messages.sendPaidReaction）：用户花 Stars 为一条频道消息「点赞」，
-// 星数在 (channel,message,user) 上累计；消息展示 ReactionPaid 总星数 + top reactors 排行。
-// 与 Stars 账本（stars.go）在同一 store 事务中借记 payer、入账 channel 并累计。
+// Channel post paid reaction (messages.sendPaidReaction): a user spends Stars to "like" a channel message,
+// with the star count accumulated over (channel,message,user); the message shows the ReactionPaid total stars + a top reactors leaderboard.
+// It debits the payer, credits the channel and accumulates in the same store transaction as the Stars ledger (stars.go).
 
 const (
-	// MaxPaidReactionStarsPerRequest 是单次 sendPaidReaction 的星数上限（对齐官方 stars_paid_reaction_amount_max）。
+	// MaxPaidReactionStarsPerRequest is the star limit for a single sendPaidReaction (aligned with the official stars_paid_reaction_amount_max).
 	MaxPaidReactionStarsPerRequest = 10000
-	// MaxPaidReactionTopReactors 是 top reactors 排行展示条数。
+	// MaxPaidReactionTopReactors is the number of entries shown in the top reactors leaderboard.
 	MaxPaidReactionTopReactors = 3
 	// Paid reaction random_id embeds unix time in its high 32 bits. The future
 	// allowance covers ordinary client/server clock skew; the past window keeps
@@ -50,7 +50,7 @@ func PaidReactionRandomIDTimestamp(randomID int64) int {
 	return int(uint64(randomID) >> 32)
 }
 
-// PaidReactor 是某 reactor 对一条消息累计投入的付费 reaction 星数。
+// PaidReactor is the paid reaction stars one reactor has cumulatively put into a message.
 type PaidReactor struct {
 	UserID int64
 	// Peer is the leaderboard identity. UserID remains the payer identity used
@@ -58,7 +58,7 @@ type PaidReactor struct {
 	Peer      Peer
 	Stars     int64
 	Anonymous bool
-	My        bool // 是否为当前 viewer（投影时按视角置位）
+	My        bool // whether this is the current viewer (set per perspective when projecting)
 }
 
 func (r PaidReactor) DisplayPeer() Peer {
@@ -68,15 +68,15 @@ func (r PaidReactor) DisplayPeer() Peer {
 	return Peer{Type: PeerTypeUser, ID: r.UserID}
 }
 
-// ChannelMessagePaidReactions 是一条频道消息的付费 reaction 聚合（携带在消息上 / reaction 更新里）。
+// ChannelMessagePaidReactions is the paid reaction aggregate of one channel message (carried on the message / in reaction updates).
 type ChannelMessagePaidReactions struct {
-	TotalStars  int64         // 全体 reactor 投入星数之和
-	MyStars     int64         // 当前 viewer 投入的星数（0 = 未投）
-	MyAnonymous bool          // 当前 viewer 是否匿名投入
-	TopReactors []PaidReactor // 按 Stars DESC，含当前 viewer
+	TotalStars  int64         // sum of stars put in by all reactors
+	MyStars     int64         // stars put in by the current viewer (0 = none)
+	MyAnonymous bool          // whether the current viewer contributed anonymously
+	TopReactors []PaidReactor // by Stars DESC, including the current viewer
 }
 
-// SendChannelPaidReactionRequest 为一条频道消息增投付费 reaction 星数。
+// SendChannelPaidReactionRequest adds paid reaction stars to a channel message.
 type SendChannelPaidReactionRequest struct {
 	UserID    int64
 	ChannelID int64
@@ -92,7 +92,7 @@ type SendChannelPaidReactionRequest struct {
 	// It is excluded from Fingerprint: account-default resolution is mutable,
 	// while Privacy records the immutable client intent. Empty means payer user.
 	DisplayPeer Peer
-	Anonymous   bool // 隐私：是否匿名投入
+	Anonymous   bool // privacy: whether to contribute anonymously
 	Date        int
 }
 
@@ -121,7 +121,7 @@ func (r SendChannelPaidReactionRequest) Fingerprint() [sha256.Size]byte {
 	return sha256.Sum256(buf)
 }
 
-// ChannelMessagePaidReactionResult 是增投后的结果，供 rpc 投影与扇出。
+// ChannelMessagePaidReactionResult is the result after adding stars, for rpc projection and fan-out.
 type ChannelMessagePaidReactionResult struct {
 	Channel        Channel
 	Message        ChannelMessage

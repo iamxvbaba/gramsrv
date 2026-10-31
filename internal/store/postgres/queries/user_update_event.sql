@@ -213,8 +213,9 @@ INSERT INTO dispatch_outbox (
 ON CONFLICT DO NOTHING;
 
 -- name: ClaimDispatchOutbox :many
--- durable head 表只保留每用户一行，并同步 head 的 readiness。claim 先锁
--- lane head 再更新对应 outbox 行，既不会扫描 backlog，也不会并发领取同一用户。
+-- The durable head table keeps exactly one row per user and keeps the head's
+-- readiness in sync. Claim locks the lane head first, then updates the corresponding
+-- outbox row, so it neither scans the backlog nor concurrently claims the same user.
 WITH picked_heads AS (
   SELECT h.target_user_id, h.head_id
   FROM dispatch_outbox_user_heads h
@@ -248,13 +249,14 @@ RETURNING
   d.attempts;
 
 -- name: ClaimDispatchOutboxShards :many
--- 固定 logical shard 由 target_user_id 决定；运行时 worker 只领取分配给自己的
--- shard 集合，因此同一用户永远只有一条串行 lane，而不同用户可并行。
+-- The fixed logical shard is determined by target_user_id; at runtime a worker
+-- claims only the shard set assigned to it, so the same user always has exactly one
+-- serial lane while different users can proceed in parallel.
 WITH picked_heads AS (
   SELECT h.target_user_id, h.head_id
   FROM dispatch_outbox_user_heads h
-  -- 256 与 store.DispatchOutboxLogicalShards、0069 generated column 是同一
-  -- schema 常量；不得随 worker 数变化。
+  -- 256 is the same schema constant as store.DispatchOutboxLogicalShards and the
+  -- 0069 generated column; it must not change with the worker count.
   WHERE h.logical_shard = ANY(sqlc.arg(shard_ids)::smallint[])
     AND (
       (
@@ -288,10 +290,12 @@ RETURNING
   d.attempts;
 
 -- name: MarkDispatchDelivered :execrows
--- 方案 A：投递成功即删除。outbox 是任务队列，delivered 行无保留价值
--- （消息在 message_boxes、离线补偿在 user_update_events），删除让表维持「未完成任务」小稳态。
--- claim 的锁序是 user_heads→outbox；completion 必须先显式锁同一 head 再删 outbox，
--- 否则租约过期 claim 与完成恰好竞争时会形成 outbox→head / head→outbox 环路。
+-- Option A: delete immediately on successful delivery. The outbox is a task queue and
+-- delivered rows have no retention value (messages are in message_boxes, offline
+-- catch-up in user_update_events); deleting keeps the table at a small steady state of
+-- "unfinished tasks". Claim's lock order is user_heads -> outbox; completion must
+-- first explicitly lock the same head and then delete the outbox row, otherwise a
+-- racing expired-lease claim and completion can form an outbox -> head / head -> outbox cycle.
 WITH locked_head AS MATERIALIZED (
   SELECT h.target_user_id
   FROM dispatch_outbox_user_heads h
@@ -328,8 +332,10 @@ WHERE d.target_user_id = h.target_user_id
   AND d.attempts = sqlc.arg(expected_attempts)::int;
 
 -- name: BatchListDispatchEvents :many
--- 按 (user_id, pts) 精确批量取账号事件，供 outbox worker 一次性加载一批 claim 的事件详情，
--- 取代逐条 ListUserUpdateEventsAfter。列与 ListUserUpdateEventsAfter 完全一致以复用转换逻辑。
+-- Fetch account events in exact bulk by (user_id, pts) so the outbox worker can load
+-- the event details of a batch of claims at once, replacing per-row
+-- ListUserUpdateEventsAfter. The columns match ListUserUpdateEventsAfter exactly to
+-- reuse the conversion logic.
 SELECT
   e.user_id,
   e.pts,
@@ -465,7 +471,7 @@ LEFT JOIN users fwd_u ON m.fwd_from_peer_type = 'user' AND fwd_u.id = m.fwd_from
 LEFT JOIN users reply_u ON m.reply_to_peer_type = 'user' AND reply_u.id = m.reply_to_peer_id;
 
 -- name: MarkDispatchDeliveredBatch :execrows
--- 批量删除一批已投递的 (target_user_id, id)；target_user_id 入 WHERE 命中唯一索引并避免串删。
+-- Bulk-delete a batch of delivered (target_user_id, id); target_user_id goes into the WHERE clause to hit the unique index and avoid cross-user deletes.
 WITH input AS MATERIALIZED (
   SELECT tu.target_user_id, di.id, ea.attempts
   FROM unnest(@target_user_ids::bigint[]) WITH ORDINALITY AS tu(target_user_id, ord)
@@ -491,9 +497,10 @@ WHERE d.target_user_id = h.target_user_id
   AND d.attempts = i.attempts;
 
 -- name: DeleteFailedDispatchOutbox :one
--- failed 只能成为 lane head；从 head 表开始并先锁 head，既走 0074 的小索引，也与
--- claim/completion 保持同一 user_heads→outbox 锁序。删除的只是在线任务，durable
--- user_update_events 不动，故客户端仍可经 difference 恢复。
+-- failed can only be a lane head; starting from the head table and locking the head
+-- first both uses 0074's small index and keeps the same user_heads -> outbox lock
+-- order as claim/completion. Only the online task is deleted; durable
+-- user_update_events is untouched, so clients can still recover via difference.
 WITH doomed AS MATERIALIZED (
   SELECT h.target_user_id, h.head_id AS id
   FROM dispatch_outbox_user_heads h

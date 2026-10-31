@@ -8,10 +8,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestAppConfigPremiumKeys 断言 premium / Stars 相关 key 完整下发且 hash 已递增：
-// premium_purchase_blocked 必须显式为 false——客户端把 star gift「Send a Gift」入口与
-// premiumCanBuy()=!premium_purchase_blocked 耦合，置 true 会同时隐藏送礼入口；
-// reactions_user_max_premium 必须与服务端 enforcement 档位一致。
+// TestAppConfigPremiumKeys asserts that premium / Stars related keys are fully delivered
+// with an incremented hash: premium_purchase_blocked must be explicitly false — the client
+// couples the star gift "Send a Gift" entry with premiumCanBuy()=!premium_purchase_blocked,
+// so setting true also hides the gifting entry; reactions_user_max_premium must match the
+// server-side enforcement tier.
 func TestAppConfigPremiumKeys(t *testing.T) {
 	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0, 0)
 	if err != nil || notModified {
@@ -35,7 +36,7 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 		t.Fatalf("no_forwards_request_expire_period = %v, want %d", decoded["no_forwards_request_expire_period"], domain.PrivateNoForwardsRequestExpirePeriod)
 	}
 	if blocked, ok := decoded["premium_purchase_blocked"].(bool); !ok || blocked {
-		t.Fatalf("premium_purchase_blocked = %v, want false (star gift 送礼入口耦合此 flag)", decoded["premium_purchase_blocked"])
+		t.Fatalf("premium_purchase_blocked = %v, want false (star gift gifting entry is coupled to this flag)", decoded["premium_purchase_blocked"])
 	}
 	if username, ok := decoded["premium_bot_username"].(string); !ok || username != "premiumbot" {
 		t.Fatalf("premium_bot_username = %v, want premiumbot", decoded["premium_bot_username"])
@@ -45,13 +46,13 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 			t.Fatalf("%s = %v, want true", key, decoded[key])
 		}
 	}
-	// DrKLO 缺省 starsLocked=true；缺 key 时余额不足送礼会误弹「所在国家无法购买星星」。
+	// DrKLO defaults starsLocked=true; when the key is missing and the balance is insufficient for gifting it wrongly pops "cannot purchase stars in your country".
 	if blocked, ok := decoded["stars_purchase_blocked"].(bool); !ok || blocked {
-		t.Fatalf("stars_purchase_blocked = %v, want false (DrKLO starsPurchaseAvailable 据此解锁充值入口)", decoded["stars_purchase_blocked"])
+		t.Fatalf("stars_purchase_blocked = %v, want false (DrKLO starsPurchaseAvailable unlocks the top-up entry based on this)", decoded["stars_purchase_blocked"])
 	}
-	// DrKLO 缺省 stargiftsBlocked=true 会隐藏 star gift 送礼网格，必须显式下发 false。
+	// DrKLO defaults stargiftsBlocked=true, which hides the star gift grid; false must be sent explicitly.
 	if blocked, ok := decoded["stargifts_blocked"].(bool); !ok || blocked {
-		t.Fatalf("stargifts_blocked = %v, want false (DrKLO GiftSheet 据此隐藏礼物网格)", decoded["stargifts_blocked"])
+		t.Fatalf("stargifts_blocked = %v, want false (DrKLO GiftSheet hides the gift grid based on this)", decoded["stargifts_blocked"])
 	}
 	if available, ok := decoded["giveaway_gifts_purchase_available"].(bool); !ok || !available {
 		t.Fatalf("giveaway_gifts_purchase_available = %v, want true", decoded["giveaway_gifts_purchase_available"])
@@ -61,7 +62,7 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 		t.Fatalf("premium_playmarket_direct_currency_list = %#v, want non-empty list containing USD", decoded["premium_playmarket_direct_currency_list"])
 	}
 	if posting, ok := decoded["rich_message_posting"].(string); !ok || posting != "enabled" {
-		t.Fatalf("rich_message_posting = %v, want enabled (TDesktop 富文本编辑入口默认打开)", decoded["rich_message_posting"])
+		t.Fatalf("rich_message_posting = %v, want enabled (TDesktop rich-text editing entry is on by default)", decoded["rich_message_posting"])
 	}
 	fragmentPrefixes, ok := decoded["fragment_prefixes"].([]any)
 	if !ok || len(fragmentPrefixes) != 1 || fragmentPrefixes[0] != "888" {
@@ -115,10 +116,10 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 			t.Errorf("appConfig[%q] = %v, want %v", key, decoded[key], want)
 		}
 	}
-	// 未实现功能族的 key 不得下发（诱导客户端进入未实现路径）。
+	// Keys of unimplemented feature families must not be sent (they would lure clients into unimplemented paths).
 	for _, forbidden := range []string{"stories_sent_weekly_limit_default", "premium_invoice_slug"} {
 		if _, ok := decoded[forbidden]; ok {
-			t.Errorf("appConfig 不应包含 %q", forbidden)
+			t.Errorf("appConfig must not contain %q", forbidden)
 		}
 	}
 }

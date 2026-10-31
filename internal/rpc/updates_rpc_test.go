@@ -382,11 +382,13 @@ func TestUpdatesDifferenceEmptyCommitsRequestCursorNotInternalCandidate(t *testi
 	}
 }
 
-// TestUpdatesGetStateReturnsAccountCurrentState 复现 TDesktop 冷启动未读重复：
-// getState 必须返回账号当前最新状态（而非设备旧确认水位），且不得再推
-// updatesTooLong 诱导差分——TDesktop 不持久化 pts，启动期离线数据由
-// getDialogs 快照承载，旧水位差分会把快照里已计入的消息重放一遍
-// （实测未读 2→3、dialog 预览被旧消息抢占）。
+// TestUpdatesGetStateReturnsAccountCurrentState reproduces the TDesktop cold-start
+// unread duplication: getState must return the account's current latest state (not the
+// device's old confirmed watermark), and must not push updatesTooLong to induce a
+// difference - TDesktop does not persist pts, startup offline data is carried by the
+// getDialogs snapshot, and a stale-watermark difference would replay messages already
+// counted in the snapshot (measured as unread 2->3 and the dialog preview taken over by
+// older messages).
 func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 	sessions := &captureSessions{}
 	current := domain.UpdateState{Pts: 4, Date: 1700000001}
@@ -408,10 +410,10 @@ func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 		t.Fatalf("updates.getState: %v", err)
 	}
 	if got.Pts != 4 {
-		t.Fatalf("state pts = %d, want account current 4 (per-key stale=3 会触发客户端重放)", got.Pts)
+		t.Fatalf("state pts = %d, want account current 4 (per-key stale=3 would trigger client replay)", got.Pts)
 	}
 	if updates.acknowledged {
-		t.Fatal("getState 在 rpc_result 物理交付前推进了设备确认水位")
+		t.Fatal("getState advanced the device confirmed watermark before rpc_result physical delivery")
 	}
 	postresponse.Run(ctx)
 	if !updates.acknowledged || updates.commitMode != domain.UpdateStateCommitDeliveredAndObservedBaseline || updates.committedState.Pts != 4 {
@@ -420,7 +422,7 @@ func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	if msg := sessions.snapshot().message; msg != nil {
 		if _, ok := msg.(*tg.UpdatesTooLong); ok {
-			t.Fatal("getState 后不应再推 updatesTooLong（会诱导 TDesktop 重放快照前差分）")
+			t.Fatal("updatesTooLong must not be pushed after getState (it would induce TDesktop to replay a pre-snapshot difference)")
 		}
 	}
 }

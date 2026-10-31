@@ -1,6 +1,6 @@
 package domain
 
-// PeerType 标识 dialog 所属 peer 类型。
+// PeerType identifies the peer type a dialog belongs to.
 type PeerType string
 
 const (
@@ -9,40 +9,40 @@ const (
 	// PeerTypeCommunity identifies a Layer 228 Community container. Communities
 	// have dialog pin/notify state but never own messages, read boundaries or pts.
 	PeerTypeCommunity PeerType = "community"
-	// PeerTypeFolder 仅用于 dialog 置顶事件中表达 dialogPeerFolder
-	// （archive folder 行本身被置顶/取消置顶），ID 为 folder_id。
+	// PeerTypeFolder is used only in dialog pin events to express dialogPeerFolder
+	// (the archive folder row itself is pinned/unpinned); ID is folder_id.
 	PeerTypeFolder PeerType = "folder"
 )
 
 const (
-	// DialogMainFolderID 是 TDesktop 主会话列表 folder_id。
+	// DialogMainFolderID is the folder_id of TDesktop's main chat list.
 	DialogMainFolderID = 0
-	// DialogArchiveFolderID 是 Telegram 约定的归档会话 folder_id。
+	// DialogArchiveFolderID is Telegram's conventional folder_id for the archive.
 	DialogArchiveFolderID = 1
-	// DialogCustomFolderMinID 起才允许用户自定义 filter。
+	// User-defined filters are only allowed from DialogCustomFolderMinID up.
 	DialogCustomFolderMinID = 2
-	// MaxDialogFolders 限制单用户自定义 filter 数量，避免无界配置拖垮启动同步。
+	// MaxDialogFolders limits a user's custom filter count, so unbounded configuration cannot drag down startup sync.
 	MaxDialogFolders = 100
-	// MaxDialogFolderPeers 限制单 filter 中 include/exclude/pinned peer 数。
+	// MaxDialogFolderPeers limits the include/exclude/pinned peer count within one filter.
 	MaxDialogFolderPeers = 100
-	// MaxDialogFolderTitleRunes 对齐 Telegram folder title 的短标题语义。
+	// MaxDialogFolderTitleRunes matches the short-title semantics of a Telegram folder title.
 	MaxDialogFolderTitleRunes = 64
 	// MaxDialogDraftsPerUser bounds messages.getAllDrafts / clearAllDrafts work.
 	MaxDialogDraftsPerUser = 1000
-	// MaxPinnedDialogsMainFolder/MaxPinnedDialogsArchiveFolder 对齐 TDesktop
-	// 内置默认限额（appConfig dialogs_pinned_limit_default=5 /
-	// dialogs_folder_pinned_limit_default=100）；超限返回
-	// PINNED_DIALOGS_TOO_MUCH，服务端兜底防止客户端截断后两端漂移。
+	// MaxPinnedDialogsMainFolder/MaxPinnedDialogsArchiveFolder match TDesktop's
+	// built-in default limits (appConfig dialogs_pinned_limit_default=5 /
+	// dialogs_folder_pinned_limit_default=100); exceeding them returns
+	// PINNED_DIALOGS_TOO_MUCH, a server-side fallback that keeps the two sides from drifting after client truncation.
 	MaxPinnedDialogsMainFolder    = 5
 	MaxPinnedDialogsArchiveFolder = 100
-	// premium 档对齐 appConfig dialogs_pinned_limit_premium=10 /
-	// dialogs_folder_pinned_limit_premium=200。服务端档位必须 ≥ 客户端宣告
-	// 档位，否则 premium 用户 pin 第 6 个会话会被拒、UI 回滚。
+	// The Premium tier matches appConfig dialogs_pinned_limit_premium=10 /
+	// dialogs_folder_pinned_limit_premium=200. The server tier must be ≥ the client-declared
+	// tier, or a Premium user pinning a 6th chat is rejected and the UI rolls back.
 	MaxPinnedDialogsMainFolderPremium    = 10
 	MaxPinnedDialogsArchiveFolderPremium = 200
 )
 
-// PinnedDialogsLimit 返回 folder 维度的置顶上限档位（premium 双档）。
+// PinnedDialogsLimit returns the pin limit tier for a folder dimension (Premium dual tier).
 func PinnedDialogsLimit(folderID int, premium bool) int {
 	if folderID == DialogArchiveFolderID {
 		if premium {
@@ -56,7 +56,7 @@ func PinnedDialogsLimit(folderID int, premium bool) int {
 	return MaxPinnedDialogsMainFolder
 }
 
-// Peer 是业务层 peer 值对象，不依赖 TL 类型。
+// Peer is the business-layer peer value object, independent of TL types.
 type Peer struct {
 	Type PeerType
 	ID   int64
@@ -67,7 +67,7 @@ func (p Peer) IsSelfUser(userID int64) bool {
 	return userID != 0 && p.Type == PeerTypeUser && p.ID == userID
 }
 
-// Dialog 是账号的一条会话摘要。
+// Dialog is one chat summary for an account.
 type Dialog struct {
 	Peer           Peer
 	ChannelLeft    bool
@@ -107,12 +107,12 @@ type Dialog struct {
 	// under the same dialog_owner generation lets startup warm permission reads
 	// before channel difference without a per-channel PostgreSQL lookup.
 	ChannelMember *ChannelMember
-	// Pts 是 channel peer 当前 channel pts；客户端用 dialog.pts 初始化本地
-	// channel 序列并决定 getChannelDifference 起点，channel dialog 必填。
+	// Pts is the current channel pts of a channel peer; the client uses dialog.pts to initialize its local
+	// channel sequence and decide the getChannelDifference starting point. Required for a channel dialog.
 	Pts   int
 	Draft *DialogDraft
-	// NotifySettings 是该会话的 per-peer 通知设置（nil=未配置，投影时回落默认）。
-	// 由读路径批量装配（非 dialog store 持久字段），见 rpc.withDialogNotifySettings。
+	// NotifySettings is the per-peer notification setting for this chat (nil=unset, falls back to the default when projected).
+	// Assembled in bulk by the read path (not a persisted dialog store field); see rpc.withDialogNotifySettings.
 	NotifySettings *PeerNotifySettings
 }
 
@@ -176,26 +176,26 @@ func (d DialogDraft) Empty() bool {
 		d.RichMessage.IsZero()
 }
 
-// DialogArchiveSummary 聚合归档（folder_id=1）状态，供主列表 getDialogs
-// 第一页输出 dialogFolder 条目：TDesktop 依赖该条目发现 archive 的存在
-// （新登录设备没有任何 update 可重放，缺少它归档会话将彻底不可见）。
+// DialogArchiveSummary aggregates archive (folder_id=1) state for the main getDialogs list
+// to emit a dialogFolder entry on its first page: TDesktop relies on that entry to discover the archive
+// (a newly logged-in device has no update to replay, so without it archived chats would be entirely invisible).
 type DialogArchiveSummary struct {
-	// TopPeer/TopMessage 是归档内最新会话及其 top 消息（dialogFolder.peer/top_message）。
+	// TopPeer/TopMessage are the newest chat in the archive and its top message (dialogFolder.peer/top_message).
 	TopPeer    Peer
 	TopMessage int
 	// TopDialog retains the owner projection needed to hydrate a channel archive
 	// top payload without re-reading channel_members/channel_dialogs. It is an
 	// internal read-model field and is never converted into a second TL dialog.
 	TopDialog *Dialog
-	// UnreadPeersCount 是归档内有未读（或手动标记未读）的会话数；
-	// UnreadMessagesCount 是归档未读消息总数。当前未接 per-peer mute
-	// 状态，全部计入 unmuted 桶。
+	// UnreadPeersCount is the number of chats in the archive with unread (or manually marked unread) items;
+	// UnreadMessagesCount is the archive's total unread message count. Per-peer mute state is not yet wired up,
+	// so all are counted in the unmuted bucket.
 	UnreadPeersCount    int
 	UnreadMessagesCount int
 	Pinned              bool
 }
 
-// DialogList 是 dialogs 查询结果。
+// DialogList is a dialogs query result.
 type DialogList struct {
 	Dialogs         []Dialog
 	Messages        []Message
@@ -206,7 +206,7 @@ type DialogList struct {
 	State           UpdateState
 	Hash            int64
 	Count           int
-	// ArchiveSummary 非 nil 时，主列表响应头部追加 dialogFolder 条目。
+	// When ArchiveSummary is non-nil, a dialogFolder entry is appended to the head of the main list response.
 	ArchiveSummary *DialogArchiveSummary
 }
 
@@ -218,7 +218,7 @@ type DialogHashCheck struct {
 	Count   int
 }
 
-// DialogFilter 是会话列表查询条件。
+// DialogFilter is a chat list query condition.
 type DialogFilter struct {
 	PinnedOnly    bool
 	ExcludePinned bool
@@ -233,13 +233,13 @@ type DialogFilter struct {
 	Hash          int64
 }
 
-// DialogFolderPeer 是 folder/filter 规则中的 peer，保留 access_hash 供 RPC 层回写 InputPeer。
+// DialogFolderPeer is a peer in a folder/filter rule, keeping access_hash for the RPC layer to write back InputPeer.
 type DialogFolderPeer struct {
 	Peer       Peer
 	AccessHash int64
 }
 
-// DialogFolder 是用户自定义会话分组规则。它只表达业务含义，不依赖 TL 生成类型。
+// DialogFolder is a user-defined chat grouping rule. It expresses only business meaning and does not depend on TL-generated types.
 type DialogFolder struct {
 	ID              int
 	Contacts        bool
@@ -264,13 +264,13 @@ type DialogFolder struct {
 	IsChatlist      bool
 }
 
-// DialogFolderList 是 messages.getDialogFilters 的业务响应。
+// DialogFolderList is the business response of messages.getDialogFilters.
 type DialogFolderList struct {
 	TagsEnabled bool
 	Folders     []DialogFolder
 }
 
-// FolderPeerUpdate 描述 folders.editPeerFolders 的单个归档/还原变更。
+// FolderPeerUpdate describes a single archive/unarchive change of folders.editPeerFolders.
 type FolderPeerUpdate struct {
 	Peer     Peer
 	FolderID int

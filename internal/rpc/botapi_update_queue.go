@@ -385,9 +385,10 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 	}
 }
 
-// enqueueBotAPIPrivateMessageUpdateAsync 把私聊消息的 Bot API 队列写入投给后台
-// dispatcher（性能审计 H2）：发送者 RPC 不再为 bot 判定 miss / INSERT 多等 PG 往返。
-// dispatcher 未启动（测试/未装配）时同步执行，行为不变。
+// enqueueBotAPIPrivateMessageUpdateAsync hands the Bot API queue write for a private message to
+// the background dispatcher (performance audit H2): the sender's RPC no longer waits extra PG
+// round trips for a bot-check miss / INSERT. When the dispatcher is not started (tests/unwired),
+// it runs synchronously, behavior unchanged.
 func (r *Router) enqueueBotAPIPrivateMessageUpdateAsync(ctx context.Context, res domain.SendPrivateTextResult) {
 	if r == nil || r.deps.BotAPIUpdates == nil || res.Duplicate || res.RecipientMessage.ID <= 0 {
 		return
@@ -397,7 +398,7 @@ func (r *Router) enqueueBotAPIPrivateMessageUpdateAsync(ctx context.Context, res
 	})
 }
 
-// enqueueBotAPIPrivateEditUpdatesAsync 同上，覆盖私聊编辑的 edited_message 队列写入。
+// enqueueBotAPIPrivateEditUpdatesAsync is the same, covering the edited_message queue write for a private-chat edit.
 func (r *Router) enqueueBotAPIPrivateEditUpdatesAsync(ctx context.Context, res domain.EditMessageResult) {
 	if r == nil || r.deps.BotAPIUpdates == nil || len(res.Edited) == 0 {
 		return

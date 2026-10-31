@@ -75,7 +75,7 @@ func TestAssertCounterRegressionRejected(t *testing.T) {
 	cd, ad, sig, _ := auth.Assert(testRPID, testOrigin, ch) // signCount -> 1
 	if _, err := webauthn.VerifyAssertion(webauthn.VerifyAssertionInput{
 		COSEPublicKey: cred.COSEPublicKey, ClientDataJSON: cd, AuthenticatorData: ad, Signature: sig,
-		RPID: testRPID, Challenge: ch, StoredSignCount: 5, // 已存计数器更大 => 克隆嫌疑
+		RPID: testRPID, Challenge: ch, StoredSignCount: 5, // stored counter larger => suspected clone
 	}); !errors.Is(err, webauthn.ErrCounterRegressed) {
 		t.Fatalf("err = %v, want ErrCounterRegressed", err)
 	}
@@ -139,14 +139,14 @@ func TestOriginEnforcement(t *testing.T) {
 	auth, cred := registerAuth(t)
 	ch := randChallenge(t)
 	cd, ad, sig, _ := auth.Assert(testRPID, testOrigin, ch)
-	// 允许列表匹配 => 通过。
+	// Allowlist match => pass.
 	if _, err := webauthn.VerifyAssertion(webauthn.VerifyAssertionInput{
 		COSEPublicKey: cred.COSEPublicKey, ClientDataJSON: cd, AuthenticatorData: ad, Signature: sig,
 		RPID: testRPID, Challenge: ch, AllowedOrigins: []string{testOrigin}, StoredSignCount: cred.SignCount,
 	}); err != nil {
 		t.Fatalf("matching origin should pass: %v", err)
 	}
-	// 允许列表不含该 origin => 拒绝。
+	// Allowlist does not contain this origin => reject.
 	if _, err := webauthn.VerifyAssertion(webauthn.VerifyAssertionInput{
 		COSEPublicKey: cred.COSEPublicKey, ClientDataJSON: cd, AuthenticatorData: ad, Signature: sig,
 		RPID: testRPID, Challenge: ch, AllowedOrigins: []string{"android:apk-key-hash:other"}, StoredSignCount: cred.SignCount,

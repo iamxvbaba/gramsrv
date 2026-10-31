@@ -9,18 +9,21 @@ import (
 )
 
 const (
-	// DefaultPhotoCacheTTL 是头像投影缓存的兜底有效期；正常正确性依赖写入侧触发
-	// read_model_versions/NOTIFY 后显式失效，TTL 只负责覆盖漏通知或手工改库。
-	// 10s 会让 60s 的 10k 登录突发反复丢失稳定负结果，不能作为正常新鲜度机制。
+	// DefaultPhotoCacheTTL is the fallback TTL of the photo projection cache; normal
+	// correctness relies on explicit invalidation after the write side triggers
+	// read_model_versions/NOTIFY, and the TTL only covers missed notifications or manual DB
+	// edits. 10s would repeatedly lose stable negative results during a 60s 10k-login burst,
+	// so it cannot serve as the normal freshness mechanism.
 	DefaultPhotoCacheTTL = 24 * time.Hour
 
-	// DefaultPhotoCacheMaxEntries 覆盖 10k owner 的 profile/fallback 两种 key，
-	// 并为共享对话引用保留余量。底层是逐项 LRU，不允许整表清空。
+	// DefaultPhotoCacheMaxEntries covers the profile/fallback keys of 10k owners and leaves
+	// headroom for shared-dialog references. The underlying store is a per-entry LRU and does
+	// not allow clearing the whole table.
 	DefaultPhotoCacheMaxEntries = 200_000
 )
 
-// combinedPhotoProvider 是同时具备 batch 与 kind 两种头像查询能力的底层 provider（postgres
-// MediaStore 即满足）。
+// combinedPhotoProvider is the underlying provider with both batch and kind photo query
+// capabilities (postgres MediaStore satisfies it).
 type combinedPhotoProvider interface {
 	ProfilePhotoProvider
 	ProfilePhotoKindProvider
@@ -32,28 +35,33 @@ type photoCacheKey struct {
 	kind      domain.ProfilePhotoKind
 }
 
-// photoCacheValue 含负缓存:has=false 表示「已查过、该 owner 无此 kind 头像」,
-// 避免无头像 owner 反复打 PG。
+// photoCacheValue includes negative caching: has=false means "already queried, this owner
+// has no photo of this kind", so avatar-less owners do not repeatedly hit PG.
 type photoCacheValue struct {
 	ref domain.ProfilePhotoRef
 	has bool
 }
 
-// CachedPhotoProvider 给 owner 的当前 profile/fallback 头像查询加一层短 TTL 进程内缓存,
-// 由统一缓存原语承载(LRU 单条驱逐 / epoch 守卫 / clone;批量经 GetOrLoadBatch)。
-// projectBatch / ForViewers 对每批 owner 固定打 2 次 CurrentProfilePhotosKind（profile+fallback），
-// 且 base user 命中 redis 也不短路——高频「返回用户」的 RPC（getUsers 等）会把这两条头像查询
-// 刷到与 RPC 同频。这里按 (ownerType, ownerID, kind) 缓存结果（含负结果），命中 owner 不进 PG。
+// CachedPhotoProvider adds a short-TTL in-process cache in front of owner current
+// profile/fallback photo queries, carried by the shared cache primitive (single-entry LRU
+// eviction / epoch guard / clone; batch via GetOrLoadBatch). projectBatch / ForViewers
+// issue a fixed 2 CurrentProfilePhotosKind calls per owner batch (profile+fallback), and a
+// base-user redis hit does not short-circuit them — high-frequency "return user" RPCs
+// (getUsers etc.) drive these two photo queries at the same rate as the RPC. It caches
+// results (including negative ones) by (ownerType, ownerID, kind), so a cache-hit owner does
+// not reach PG.
 //
-// 注意：只缓存 owner-only 的 profile/fallback；personal photo 是 per-viewer 的（contacts.PersonalPhotos），
-// 不经此 provider，故无跨 viewer 串号风险。隐私裁剪发生在投影之后、缓存之外，缓存的是 owner 原始
-// 头像 ref 而非投影结果，故不会把某 viewer 的可见性固化给其他 viewer。
+// Note: it only caches owner-only profile/fallback; personal photo is per-viewer
+// (contacts.PersonalPhotos), does not go through this provider, and so has no cross-viewer
+// mix-up risk. Privacy trimming happens after projection, outside the cache; what is cached
+// is the owner's raw photo ref rather than the projection result, so it does not freeze one
+// viewer's visibility for other viewers.
 type CachedPhotoProvider struct {
 	inner combinedPhotoProvider
 	cache *readmodelcache.Cache[photoCacheKey, photoCacheValue]
 }
 
-// NewCachedPhotoProvider 包装底层 provider；ttl<=0 用 DefaultPhotoCacheTTL。
+// NewCachedPhotoProvider wraps the underlying provider; ttl<=0 uses DefaultPhotoCacheTTL.
 func NewCachedPhotoProvider(inner combinedPhotoProvider, ttl time.Duration) *CachedPhotoProvider {
 	return NewCachedPhotoProviderWithMaxEntries(inner, ttl, DefaultPhotoCacheMaxEntries)
 }
@@ -62,7 +70,7 @@ func NewCachedPhotoProviderWithMaxEntries(inner combinedPhotoProvider, ttl time.
 	return newCachedPhotoProvider(inner, ttl, maxEntries, nil)
 }
 
-// newCachedPhotoProviderWithClock 允许注入时钟,仅供测试确定地推进 TTL;now=nil 用真实时钟。
+// newCachedPhotoProviderWithClock allows injecting a clock, only for tests to advance the TTL deterministically; now=nil uses the real clock.
 func newCachedPhotoProviderWithClock(inner combinedPhotoProvider, ttl time.Duration, now func() time.Time) *CachedPhotoProvider {
 	return newCachedPhotoProvider(inner, ttl, DefaultPhotoCacheMaxEntries, now)
 }
@@ -88,7 +96,7 @@ func newCachedPhotoProvider(inner combinedPhotoProvider, ttl time.Duration, maxE
 	}
 }
 
-// CurrentProfilePhotosKind 是被缓存的热路径：先按 owner 取缓存，仅未命中的 owner 批量查底层。
+// CurrentProfilePhotosKind is the cached hot path: it first reads the cache per owner and queries the underlying store in a batch only for owners that missed.
 func (c *CachedPhotoProvider) CurrentProfilePhotosKind(ctx context.Context, ownerType domain.PeerType, ownerIDs []int64, kind domain.ProfilePhotoKind) (map[int64]domain.ProfilePhotoRef, error) {
 	if c == nil {
 		return nil, nil
@@ -98,7 +106,7 @@ func (c *CachedPhotoProvider) CurrentProfilePhotosKind(ctx context.Context, owne
 		keys = append(keys, photoCacheKey{ownerType: ownerType, ownerID: id, kind: kind})
 	}
 	values, err := c.cache.GetOrLoadBatch(ctx, keys,
-		func(photoCacheKey) (int64, bool) { return 0, true }, // 纯 TTL,无版本闸门
+		func(photoCacheKey) (int64, bool) { return 0, true }, // pure TTL, no version gate
 		func(ctx context.Context, missing []photoCacheKey) (map[photoCacheKey]photoCacheValue, error) {
 			missingIDs := make([]int64, len(missing))
 			for i, k := range missing {
@@ -127,9 +135,10 @@ func (c *CachedPhotoProvider) CurrentProfilePhotosKind(ctx context.Context, owne
 	return out, nil
 }
 
-// CurrentProfilePhotos 是非 kind 的回退路径——projectBatch 仅在 provider 不实现
-// ProfilePhotoKindProvider 时才走它，而本装饰器实现了 kind 接口，故生产不会命中此方法；
-// 直接透传，不缓存，保持行为不变。
+// CurrentProfilePhotos is the non-kind fallback path — projectBatch only uses it when the
+// provider does not implement ProfilePhotoKindProvider, and since this decorator implements
+// the kind interface, production never hits this method; it passes straight through without
+// caching, keeping behavior unchanged.
 func (c *CachedPhotoProvider) CurrentProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerIDs []int64) (map[int64]domain.ProfilePhotoRef, error) {
 	return c.inner.CurrentProfilePhotos(ctx, ownerType, ownerIDs)
 }

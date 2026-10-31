@@ -137,9 +137,10 @@ func (s *Service) CreateChannel(ctx context.Context, userID int64, req domain.Cr
 		return res, err
 	}
 	s.invalidateActiveChannelIDs(activeMembershipUserIDsFromMembers(userID, res.Members)...)
-	// 官方语义：创建即生成创建者的永久主链接（DrKLO 建频道后立刻
-	// getExportedChatInvites 取 invites[0]）。失败不阻断创建——
-	// ListExportedInvites 首页自愈会兜底补上。
+	// Official semantics: creation immediately generates the creator's permanent primary
+	// link (DrKLO calls getExportedChatInvites right after creating a channel and takes
+	// invites[0]). A failure does not block creation — the ListExportedInvites first page
+	// self-heals and fills it in as a fallback.
 	if res.Channel.ID != 0 {
 		_, _ = s.channels.EnsurePermanentInvite(ctx, res.Channel.ID, userID, req.Date)
 	}
@@ -198,8 +199,9 @@ func (s *Service) GetChannelReadModel(ctx context.Context, userID, channelID int
 	return s.cachedChannelView(ctx, userID, channelID)
 }
 
-// ResolveChannel 是 GetChannel 的轻量版（仅访问校验 + Channel/Self，跳过 dialog/boost 查询），
-// 供只需 access_hash / 频道标志的 peer 解析路径用。访问语义与 GetChannel 一致。
+// ResolveChannel is a lightweight version of GetChannel (access check + Channel/Self only,
+// skipping the dialog/boost queries), for peer resolution paths that need only the
+// access_hash / channel flags. Access semantics match GetChannel.
 func (s *Service) ResolveChannel(ctx context.Context, userID, channelID int64) (domain.ChannelView, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.ChannelView{}, domain.ErrChannelInvalid
@@ -207,7 +209,7 @@ func (s *Service) ResolveChannel(ctx context.Context, userID, channelID int64) (
 	return s.cachedResolveChannel(ctx, userID, channelID)
 }
 
-// SearchChannelMedia 返回某频道中属于给定媒体类别的消息(共享媒体标签页)。
+// SearchChannelMedia returns messages in a channel belonging to the given media category (the shared-media tab).
 func (s *Service) SearchChannelMedia(ctx context.Context, userID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
@@ -215,7 +217,7 @@ func (s *Service) SearchChannelMedia(ctx context.Context, userID, channelID int6
 	return s.channels.SearchChannelMedia(ctx, userID, channelID, req)
 }
 
-// CountChannelMediaCategories 返回某频道对当前 viewer 可见消息按基础媒体类别聚合的精确计数。
+// CountChannelMediaCategories returns exact counts of messages visible to the current viewer in a channel, aggregated by base media category.
 func (s *Service) CountChannelMediaCategories(ctx context.Context, userID, channelID int64) (domain.MediaCategoryCounts, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.MediaCategoryCounts{}, domain.ErrChannelInvalid
@@ -717,7 +719,7 @@ func (s *Service) SetSignatures(ctx context.Context, userID, channelID int64, en
 	return s.channels.SetSignatures(ctx, userID, channelID, enabled, profiles)
 }
 
-// SetPhoto 设置/清除频道头像（photo==nil 表示清除）。
+// SetPhoto sets/clears the channel photo (photo==nil means clear).
 func (s *Service) SetPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.SetChannelPhotoResult{}, domain.ErrChannelInvalid
@@ -1060,8 +1062,9 @@ func (s *Service) SetMessageReactions(ctx context.Context, userID int64, req dom
 	return s.channels.SetChannelMessageReactions(ctx, req)
 }
 
-// SendPaidReaction 为一条广播频道消息增投付费 reaction 星数。幂等命令、
-// payer 扣款、channel 入账、reaction 累计和 receipt 由 store 在一个事务完成。
+// SendPaidReaction adds paid reaction stars to a broadcast channel message. The idempotent
+// command, payer debit, channel credit, reaction accumulation and receipt are completed by
+// the store in a single transaction.
 func (s *Service) SendPaidReaction(ctx context.Context, userID int64, req domain.SendChannelPaidReactionRequest) (domain.ChannelMessagePaidReactionResult, error) {
 	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 {
 		return domain.ChannelMessagePaidReactionResult{}, domain.ErrChannelInvalid
@@ -1099,7 +1102,7 @@ func (s *Service) ReplayPaidReaction(ctx context.Context, userID int64, req doma
 	return replayer.ReplayChannelMessagePaidReaction(ctx, req)
 }
 
-// VoteMessagePoll 给频道/超级群消息上的 poll 投票（options 为空 = 撤票）。
+// VoteMessagePoll votes in a poll on a channel/supergroup message (empty options = retract vote).
 func (s *Service) VoteMessagePoll(ctx context.Context, userID int64, req domain.VoteChannelMessagePollRequest) (domain.ChannelMessagePollResult, error) {
 	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 {
 		return domain.ChannelMessagePollResult{}, domain.ErrChannelInvalid
@@ -1113,7 +1116,7 @@ func (s *Service) VoteMessagePoll(ctx context.Context, userID int64, req domain.
 	return s.channels.VoteChannelMessagePoll(ctx, req)
 }
 
-// CloseMessagePoll 关闭频道/超级群消息上的 poll（仅 poll 创建者）。
+// CloseMessagePoll closes a poll on a channel/supergroup message (poll creator only).
 func (s *Service) CloseMessagePoll(ctx context.Context, userID int64, req domain.CloseChannelMessagePollRequest) (domain.ChannelMessagePollResult, error) {
 	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 {
 		return domain.ChannelMessagePollResult{}, domain.ErrChannelInvalid
@@ -1512,8 +1515,9 @@ func (s *Service) ensureCanSend(ctx context.Context, userID int64) error {
 	return s.sendGate.CanSendMessages(ctx, userID)
 }
 
-// EditFactCheck 写入或删除一条消息的事实核查标签（Layer 231）。
-// 空文本表示删除标签；权限由 store 按“作者或可编辑消息的管理员”裁决。
+// EditFactCheck writes or deletes a fact-check label on a message (Layer 231).
+// Empty text means delete the label; permission is decided by the store as
+// "the author or an admin who can edit the message".
 func (s *Service) EditFactCheck(ctx context.Context, userID int64, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error) {
 	if s == nil || s.channels == nil || userID == 0 {
 		return domain.EditFactCheckResult{}, domain.ErrChannelInvalid
@@ -1527,7 +1531,7 @@ func (s *Service) EditFactCheck(ctx context.Context, userID int64, req domain.Ed
 	return s.channels.EditFactCheck(ctx, req)
 }
 
-// GetFactChecks 批量读取一组消息的事实核查标签（Layer 231）。
+// GetFactChecks batch-reads the fact-check labels of a set of messages (Layer 231).
 // Reuse the exact-message read boundary, including public preview and cleared history.
 func (s *Service) GetFactChecks(ctx context.Context, userID, channelID int64, messageIDs []int) (domain.FactCheckList, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 || len(messageIDs) == 0 {
@@ -1735,8 +1739,9 @@ func (s *Service) ListExportedInvites(ctx context.Context, userID int64, req dom
 	}
 	req.OffsetHash = strings.TrimSpace(req.OffsetHash)
 	req.Limit = capLimit(req.Limit, domain.MaxChannelInviteListLimit)
-	// 官方语义自愈：管理员查看自己的有效链接首页时，永久主链接必须存在
-	//（存量频道/创建路径漏建借此补上；权限校验由 store 内部完成）。
+	// Official semantics self-healing: when an admin views the first page of their own active links,
+	// the permanent primary link must exist (this fills in legacy channels/missed creation paths;
+	// permission is checked inside the store).
 	if req.AdminUserID == userID && !req.Revoked && req.OffsetDate == 0 && req.OffsetHash == "" {
 		if _, err := s.channels.EnsurePermanentInvite(ctx, req.ChannelID, userID, 0); err != nil {
 			return domain.ChannelInviteList{}, err
@@ -2062,8 +2067,10 @@ func (s *Service) GetReplies(ctx context.Context, userID int64, filter domain.Ch
 	return s.filterBotChannelHistory(ctx, userID, history), nil
 }
 
-// SendMonoforumMessage 发送频道私信(monoforum)。发件权限(订阅者身份 / monoforum 管理员)
-// 由 RPC 层校验,此处仅参数校验并委托 store(store 不要求发件人是 monoforum 成员)。
+// SendMonoforumMessage sends a channel direct message (monoforum). Send permission
+// (subscriber identity / monoforum admin) is checked by the RPC layer; here we only
+// validate parameters and delegate to the store (the store does not require the sender
+// to be a monoforum member).
 func (s *Service) SendMonoforumMessage(ctx context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if s == nil || s.channels == nil || req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
@@ -2102,7 +2109,7 @@ func (s *Service) SendMonoforumMessage(ctx context.Context, req domain.SendMonof
 	return result, nil
 }
 
-// ListMonoforumHistory 拉取某订阅者在频道私信(monoforum)内的历史。
+// ListMonoforumHistory fetches a subscriber's history within a channel direct message (monoforum).
 func (s *Service) ListMonoforumHistory(ctx context.Context, filter domain.MonoforumHistoryFilter) (domain.ChannelHistory, error) {
 	if s == nil || s.channels == nil || filter.MonoforumID == 0 || filter.SavedPeer.ID == 0 {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
@@ -2114,8 +2121,8 @@ func (s *Service) ListMonoforumHistory(ctx context.Context, filter domain.Monofo
 	return s.channels.ListMonoforumHistory(ctx, filter)
 }
 
-// ListMonoforumDialogs 列出 monoforum 的订阅者子会话(管理员视角私信列表)。访问权限(仅管理员)
-// 由 RPC 层校验。
+// ListMonoforumDialogs lists a monoforum's subscriber sub-sessions (the admin-view direct
+// message list). Access permission (admin only) is checked by the RPC layer.
 func (s *Service) ListMonoforumDialogs(ctx context.Context, filter domain.MonoforumDialogsFilter) (domain.MonoforumDialogList, error) {
 	if s == nil || s.channels == nil || filter.MonoforumID == 0 {
 		return domain.MonoforumDialogList{}, domain.ErrChannelInvalid
@@ -2127,7 +2134,7 @@ func (s *Service) ListMonoforumDialogs(ctx context.Context, filter domain.Monofo
 	return s.channels.ListMonoforumDialogs(ctx, filter)
 }
 
-// ResolveMonoforumSend 按 id 取 monoforum 频道(不要求成员身份)并返回调用者是否为其母频道管理员。
+// ResolveMonoforumSend fetches a monoforum channel by id (membership not required) and returns whether the caller is an admin of its parent channel.
 func (s *Service) ResolveMonoforumSend(ctx context.Context, viewerUserID, monoforumID int64) (domain.Channel, bool, error) {
 	if s == nil || s.channels == nil || viewerUserID == 0 || monoforumID == 0 {
 		return domain.Channel{}, false, domain.ErrChannelInvalid
@@ -2217,10 +2224,13 @@ func (s *Service) GetMessages(ctx context.Context, userID, channelID int64, ids 
 	return s.filterBotChannelHistory(ctx, userID, history), nil
 }
 
-// ChannelPollFanoutViews 批量为一组 viewer 返回频道 poll 消息的 per-viewer enrich（fan-out 模板化，
-// 消除逐 viewer GetMessages 的 N+1）。store 负责成员/AvailableMinID 可见性 + 模板聚合；此处叠加
-// bot 历史可见性过滤（复刻 filterBotChannelHistory：无 ChatHistory 的 bot 看不到该消息→置 nil）。
-// 返回 map[viewer]：key 存在=已评估（nil=不可见，调用方据此跳过且无需回退）；非 nil=该 viewer enrich poll。
+// ChannelPollFanoutViews returns per-viewer enrichment of a channel poll message for a set of
+// viewers in one batch (fan-out templating, eliminating the N+1 of per-viewer GetMessages). The
+// store handles member/AvailableMinID visibility + template aggregation; here we layer on bot
+// history visibility filtering (replicating filterBotChannelHistory: a bot without ChatHistory
+// cannot see the message → set nil).
+// Returns map[viewer]: key present = evaluated (nil = not visible, the caller skips accordingly
+// and needs no fallback); non-nil = the enriched poll for that viewer.
 func (s *Service) ChannelPollFanoutViews(ctx context.Context, channelID int64, msgID int, viewers []int64, now int) (map[int64]*domain.MessagePoll, error) {
 	if s == nil || s.channels == nil || channelID == 0 || msgID <= 0 || len(viewers) == 0 {
 		return map[int64]*domain.MessagePoll{}, nil
@@ -2245,8 +2255,9 @@ func (s *Service) ChannelPollFanoutViews(ctx context.Context, channelID int64, m
 	return views.Polls, nil
 }
 
-// botViewerCanSeeChannelMessage 复刻 filterBotChannelHistory 的单消息判定：非 bot 或带 ChatHistory
-// 的 bot 一律可见；无 ChatHistory 的 bot 按 botCanSeeChannelMessage 判定该条消息是否可见。
+// botViewerCanSeeChannelMessage replicates filterBotChannelHistory's single-message decision:
+// a non-bot or a bot with ChatHistory is always visible; for a bot without ChatHistory, whether
+// that message is visible is decided by botCanSeeChannelMessage.
 func (s *Service) botViewerCanSeeChannelMessage(ctx context.Context, viewer int64, msg domain.ChannelMessage) bool {
 	if s.bots == nil || viewer == 0 {
 		return true
@@ -2318,7 +2329,7 @@ func (s *Service) ReadTopicHistory(ctx context.Context, userID int64, req domain
 	return s.channels.ReadChannelTopicHistory(ctx, req)
 }
 
-// GeneralForumTopic 现算 forum General 话题（id=1）对 viewer 的状态。
+// GeneralForumTopic computes on the fly the state of the forum General topic (id=1) for the viewer.
 func (s *Service) GeneralForumTopic(ctx context.Context, userID, channelID int64) (domain.ChannelForumTopic, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.ChannelForumTopic{}, domain.ErrChannelInvalid
@@ -2453,7 +2464,7 @@ func (s *Service) GetDifference(ctx context.Context, userID int64, req domain.Ch
 	return diff, nil
 }
 
-// ClearDanglingPinnedMessage 清除指向已删除消息的悬挂置顶值（unpinAll 自愈）。
+// ClearDanglingPinnedMessage clears dangling pin values pointing at deleted messages (unpinAll self-healing).
 func (s *Service) ClearDanglingPinnedMessage(ctx context.Context, channelID int64, messageID int) error {
 	if s == nil || s.channels == nil || channelID == 0 || messageID <= 0 {
 		return domain.ErrChannelInvalid

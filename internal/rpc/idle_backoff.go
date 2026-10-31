@@ -57,8 +57,9 @@ func runIdleBackoffLoop(ctx context.Context, interval, maxIdleInterval time.Dura
 		case <-timer.C:
 		}
 		if dispatch(ctx) {
-			// 有积压时立即继续 drain；interval 只用于空闲轮询。旧逻辑每个非空
-			// batch 也固定等待 base，形成 batch/base 的人工吞吐上限。
+			// With a backlog, keep draining immediately; interval only governs
+			// idle polling. The old logic waited a fixed base per non-empty
+			// batch too, imposing an artificial batch/base throughput ceiling.
 			_ = backoff.ActiveDelay()
 			timer.Reset(0)
 			continue

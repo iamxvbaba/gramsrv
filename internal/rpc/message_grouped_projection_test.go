@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessageGroupedIDProjection 验证相册 grouped_id 投影到 tg.Message（私聊+频道），
-// 0 值不下发（flag-optional），非零下发。
+// TestMessageGroupedIDProjection verifies that album grouped_id projects to
+// tg.Message (private + channel): the zero value is omitted (flag-optional) and
+// non-zero is sent.
 func TestMessageGroupedIDProjection(t *testing.T) {
 	const groupedID = int64(880000000123)
 

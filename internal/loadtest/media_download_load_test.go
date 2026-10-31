@@ -16,9 +16,10 @@ import (
 	"telesrv/internal/store/postgres"
 )
 
-// TestMediaDownloadRangeBaseline 用真实 PostgreSQL 元数据 + localfs blob backend
-// 压测 upload.getFile 背后的 files.Service.GetFile range 读路径。默认跳过；
-// 设置 TELESRV_MEDIA_DOWNLOAD_LOAD=1 和 TELESRV_TEST_POSTGRES_DSN 后运行。
+// TestMediaDownloadRangeBaseline load-tests the files.Service.GetFile range read
+// path behind upload.getFile using real PostgreSQL metadata + a localfs blob
+// backend. Skipped by default; run after setting TELESRV_MEDIA_DOWNLOAD_LOAD=1 and
+// TELESRV_TEST_POSTGRES_DSN.
 func TestMediaDownloadRangeBaseline(t *testing.T) {
 	if os.Getenv("TELESRV_MEDIA_DOWNLOAD_LOAD") != "1" {
 		t.Skip("set TELESRV_MEDIA_DOWNLOAD_LOAD=1 to run media download baseline")

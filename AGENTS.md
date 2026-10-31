@@ -7,7 +7,7 @@ Telegram-compatible MTProto server written in Go. This file is a module map so y
 - Go module is `telesrv` (Go 1.26), repo is `gramsrv`, binary is `telesrv`. First compatibility target: **Telegram Desktop**. Protocol comes from `github.com/iamxvbaba/td` (fork of gotd/td); do not vendor or fork `td` here.
 - The TL schema layer lives in `td`, not here: `td/tg` holds the canonical Go model and `td/tlprofile` the exact per-layer profiles. Canonical Layer is **232** (`td` v1.7.0, plain module requirement — no local `replace`). `tg.Layer`/`tlprofile.ProfileCanonical` follow it; bumping a layer means a new `td` release first, then the layer-pinned tests in `internal/rpc/layer*_test.go`.
 - `main` = **monolith** (this branch), `v2` = microservices (Edge/Core/Egress/File/SFU). CI runs on `main`, `grammy`, `admin`. Current checkout: `main`.
-- Comments and package docs are commonly written in **Chinese** (e.g. `cmd/telesrv/main.go`, `internal/config/config.go`). Read them; match the style for new code. PowerShell artifacts may display `???` for Chinese in some terminals — the files are UTF-8.
+- Comments, logs and package docs are written in **English**; keep it that way for new code. Localized, user-facing text lives only in the locale files (`data/langpack/**`, the admin `i18n.tsx`, the grammystore `i18n.js`/`catalog.js` `*Ru` fields, `docs/*.zh-CN.md`, `docs/*.ru.md`). PowerShell artifacts may display `???` for non-ASCII in some terminals — the files are UTF-8. A guard test (`internal/translation`) fails if CJK/Cyrillic appears in source outside those paths.
 - No Makefile, no linter config, no test framework beyond stdlib `testing`. Formatting = `gofmt`.
 
 ## Commands
@@ -145,7 +145,7 @@ Binaries in `cmd/`: `telesrv` (server), `telesrv-admin` (admin dashboard), `tele
 ## Gotchas
 
 - `go test ./...` takes a while (many packages, chromedp-free but heavy). Prefix `-run` when iterating.
-- Some tests assert on log lines like `sfu listening` / `telesrv 服务就绪` — don't remove those readiness messages.
+- Some tests assert on log lines like `sfu listening` / `telesrv server ready` — don't remove those readiness messages.
 - `scripts/install.sh` is git-ignored on purpose (internal deployment script, not part of the public repo). Don't add it.
 - `telesrv-admin.exe` at the repo root is a force-added artifact; ignore it.
 - `.session` and `*.session.qr.png` are **Telegram account credentials**, produced by `giftfetch -login-qr` / `appearancefetch` / `scripts/giftfetch_telethon.py` (whose `--session` defaults to a bare relative name, so running it from the repo root drops one in the tree). They are git-ignored; keep it that way and never quote a session path into a committed example.

@@ -58,8 +58,9 @@ func (s *ChannelStore) EditChannelTitle(ctx context.Context, req domain.EditChan
 	}
 	channel.TopMessageID = msg.ID
 	channel.Pts = event.Pts
-	// read_outbox 由公共已读水位派生；服务消息只自读（inbox），不能把
-	// actor 的 outbox 水位顶到自己刚发的消息上造成虚假双勾。
+	// read_outbox is derived from the shared read watermark; a service message is self-read only
+	// (inbox), and the actor's outbox watermark must not be pushed up to its own just-sent
+	// message, which would produce a spurious double check.
 	if err := upsertChannelDialogTx(ctx, tx, req.UserID, channel, msg, msg.ID, 0); err != nil {
 		return domain.EditChannelTitleResult{}, err
 	}
@@ -290,7 +291,7 @@ func (s *ChannelStore) SetChannelVerified(ctx context.Context, channelID int64, 
 	return channel, nil
 }
 
-// SetChannelScamFake 设置/取消频道的 scam 与 fake 标记。
+// SetChannelScamFake sets/clears the channel's scam and fake flags.
 func (s *ChannelStore) SetChannelScamFake(ctx context.Context, channelID int64, scam, fake bool) (domain.Channel, error) {
 	if channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
@@ -645,7 +646,7 @@ func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int6
 	return channel, nil
 }
 
-// SetChannelPhoto 设置/清除频道头像，并生成对应频道服务消息。photo==nil 表示清除。
+// SetChannelPhoto sets/clears the channel photo and generates the corresponding channel service message. photo==nil means clear.
 func (s *ChannelStore) SetChannelPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error) {
 	if userID == 0 || channelID == 0 {
 		return domain.SetChannelPhotoResult{}, domain.ErrChannelInvalid

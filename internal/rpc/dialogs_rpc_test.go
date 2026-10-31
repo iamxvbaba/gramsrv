@@ -424,9 +424,10 @@ func TestDialogSettingRPCsSkipManualPushWhenReliableDispatch(t *testing.T) {
 	if len(updates.events) != 1 || updates.events[0].Type != domain.UpdateEventDialogPinned {
 		t.Fatalf("events = %+v, want durable event recorded", updates.events)
 	}
-	// reliable outbox 仍是 update 本体的唯一在线投递者；当前 session 只
-	// 收到一条纯 pts 簿记信封（outbox 排除了它，事件占用的账号 pts 必须
-	// 显式同步，否则当前设备水位落后）。
+	// The reliable outbox is still the sole online deliverer of the update body; the
+	// current session only receives a pure pts bookkeeping envelope (the outbox
+	// excludes it, and the account pts consumed by the event must be synced explicitly,
+	// otherwise the current device watermark lags).
 	got := sessions.snapshot()
 	if got.message == nil {
 		t.Fatalf("manual push = nil, want pts bookkeeping envelope for the current session")
@@ -786,8 +787,9 @@ func TestAccountUpdateStatusPushesPresenceToOnlinePrivateDialogPeers(t *testing.
 	alice := domain.User{ID: 1000000001, AccessHash: 11, FirstName: "Alice"}
 	bob := domain.User{ID: 1000000002, AccessHash: 22, FirstName: "Bob"}
 	dialogs := memory.NewDialogStore()
-	// 私聊 dialog 双向建行：alice↔bob 两侧都存。presence 接收者由「主体自己的
-	// dialog 对端 ∩ 在线」算出，故 bob 改状态时需 bob 侧 dialog 含 alice。
+	// Private-chat dialogs create rows in both directions: store both alice<->bob sides.
+	// Presence recipients are computed from "the subject's own dialog peers ∩ online",
+	// so when bob changes status, bob's side must contain alice.
 	if err := dialogs.SaveList(ctx, alice.ID, domain.DialogList{
 		Dialogs: []domain.Dialog{{
 			Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID},
@@ -841,8 +843,8 @@ func TestDialogPinFolderScoping(t *testing.T) {
 	updates := &captureUpdates{state: domain.UpdateState{Pts: 11, Date: 1700000400, Seq: 0}}
 	r := New(Config{}, Deps{Dialogs: dialogs, Updates: updates}, zaptest.NewLogger(t), clock.System)
 
-	// 归档内会话置顶：durable 事件必须携带 folder_id=1，否则离线设备
-	// 重放时会把置顶应用到主列表。
+	// Pin of a dialog within the archive: the durable event must carry folder_id=1,
+	// otherwise an offline device replaying it would apply the pin to the main list.
 	toggle := &tg.MessagesToggleDialogPinRequest{Peer: dialogPeer}
 	toggle.SetPinned(true)
 	if ok, err := r.onMessagesToggleDialogPin(ctx, toggle); err != nil || !ok {
@@ -852,7 +854,7 @@ func TestDialogPinFolderScoping(t *testing.T) {
 		t.Fatalf("pin event = %+v, want folder_id=1", updates.events)
 	}
 
-	// 归档列表内重排：req.folder_id 必须传到 service 与 durable 事件。
+	// Reorder within the archived list: req.folder_id must be passed to the service and the durable event.
 	reorder := &tg.MessagesReorderPinnedDialogsRequest{Order: []tg.InputDialogPeerClass{dialogPeer}}
 	reorder.FolderID = domain.DialogArchiveFolderID
 	if ok, err := r.onMessagesReorderPinnedDialogs(ctx, reorder); err != nil || !ok {
@@ -865,7 +867,7 @@ func TestDialogPinFolderScoping(t *testing.T) {
 		t.Fatalf("reorder event = %+v, want folder_id=1", updates.events)
 	}
 
-	// 差分重放转换：归档内置顶 update 带 folder_id flag。
+	// Difference replay conversion: an archived pin update carries the folder_id flag.
 	pinnedUpdate := tgOtherUpdateFromEvent(updates.events[0])
 	dialogPinned, ok := pinnedUpdate.(*tg.UpdateDialogPinned)
 	if !ok {
@@ -887,7 +889,7 @@ func TestToggleDialogPinArchiveFolderRow(t *testing.T) {
 	updates := &captureUpdates{state: domain.UpdateState{Pts: 11, Date: 1700000400, Seq: 0}}
 	r := New(Config{}, Deps{Dialogs: dialogs, Updates: updates}, zaptest.NewLogger(t), clock.System)
 
-	// archive folder 行自身置顶（TDesktop 归档行右键 Pin）。
+	// Pin of the archive folder row itself (TDesktop archive-row right-click Pin).
 	toggle := &tg.MessagesToggleDialogPinRequest{Peer: &tg.InputDialogPeerFolder{FolderID: domain.DialogArchiveFolderID}}
 	toggle.SetPinned(true)
 	if ok, err := r.onMessagesToggleDialogPin(ctx, toggle); err != nil || !ok {
@@ -899,8 +901,8 @@ func TestToggleDialogPinArchiveFolderRow(t *testing.T) {
 	if len(updates.events) != 1 || updates.events[0].Peer.Type != domain.PeerTypeFolder || updates.events[0].Peer.ID != domain.DialogArchiveFolderID {
 		t.Fatalf("archive pin event = %+v, want folder peer", updates.events)
 	}
-	// 重放转换：dialogPeerFolder 且不带 folder_id flag（TDesktop 会把带
-	// flag 的 folder peer 置顶视为 "Nested folders" 协议错误）。
+	// Replay conversion: dialogPeerFolder without the folder_id flag (TDesktop treats a
+	// folder peer pin with the flag as the "Nested folders" protocol error).
 	update := tgOtherUpdateFromEvent(updates.events[0])
 	dialogPinned, ok := update.(*tg.UpdateDialogPinned)
 	if !ok {
@@ -915,7 +917,7 @@ func TestToggleDialogPinArchiveFolderRow(t *testing.T) {
 		t.Fatalf("folder peer pin carries folder_id=%d flag, want absent", folderID)
 	}
 
-	// 非归档 folder id 一律 FOLDER_ID_INVALID。
+	// A non-archive folder id is always FOLDER_ID_INVALID.
 	badToggle := &tg.MessagesToggleDialogPinRequest{Peer: &tg.InputDialogPeerFolder{FolderID: 0}}
 	badToggle.SetPinned(true)
 	if _, err := r.onMessagesToggleDialogPin(ctx, badToggle); err == nil || !strings.Contains(err.Error(), "FOLDER_ID_INVALID") {
@@ -959,7 +961,7 @@ func TestMessagesDialogsIncludesArchiveFolderEntry(t *testing.T) {
 	if !ok || peer.UserID != 1000000003 {
 		t.Fatalf("folder peer = %+v, want archived top peer", folder.Peer)
 	}
-	// 无归档时不输出条目。
+	// No folder entry is output when there is no archive.
 	plain := domain.DialogList{Dialogs: list.Dialogs}
 	plainOut, _ := tgMessagesDialogs(1000000001, plain).(*tg.MessagesDialogs)
 	if len(plainOut.Dialogs) != 1 {
@@ -985,8 +987,8 @@ func TestPeerDialogsIncludesArchiveFolderEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("first dialog = %T, want *tg.DialogFolder", out.Dialogs[0])
 	}
-	// DrKLO fetchFolderInLoadedPinnedDialogs 要求 top_message 与 peer 非零，
-	// 否则条目被丢弃。
+	// DrKLO fetchFolderInLoadedPinnedDialogs requires top_message and peer to be
+	// nonzero, otherwise the entry is dropped.
 	if folder.TopMessage != 2 {
 		t.Fatalf("folder top message = %d, want 2", folder.TopMessage)
 	}

@@ -1,13 +1,18 @@
-// Package sfu 是群通话媒体面（Selective Forwarding Unit）的接口与实现。
+// Package sfu is the interface and implementation of the group-call media plane
+// (Selective Forwarding Unit).
 //
-// 角色契约（来自 tgcalls GroupNetworkManager 的硬性要求）：客户端 ICE=CONTROLLED、
-// DTLS setup="passive"（等待握手）；SFU 必须跑 full-ICE CONTROLLING（ICE-Lite 不可用）
-// 并以 DTLS client（setup="active"）主动发起握手。上行 join JSON 不含 ICE candidates，
-// SFU 只能凭 ufrag/pwd 认证的 STUN Binding Request 学到客户端地址（peer-reflexive）。
+// Role contract (hard requirements from tgcalls GroupNetworkManager): the client is
+// ICE=CONTROLLED and DTLS setup="passive" (waits for the handshake); the SFU must run
+// full-ICE CONTROLLING (ICE-Lite is not usable) and actively initiate the handshake as
+// a DTLS client (setup="active"). The upstream join JSON carries no ICE candidates, so
+// the SFU can only learn the client address (peer-reflexive) from a STUN Binding Request
+// authenticated with ufrag/pwd.
 //
-// M0 提供 Disabled 实现（纯信令联调）：下发语法完备的 ufrag/pwd/sha-256 指纹与空
-// candidates——客户端解析成功后停留在 Connecting 态（持续 4s checkGroupCall 心跳），
-// 属预期行为；M1 换 pion 实现后客户端无感切换。
+// M0 provides the Disabled implementation (signaling-only bring-up): it delivers
+// syntactically complete ufrag/pwd/sha-256 fingerprint and empty candidates — the client
+// parses them successfully and stays in the Connecting state (with a 4s checkGroupCall
+// heartbeat), which is expected; after M1 swaps in the pion implementation the client
+// switches over transparently.
 package sfu
 
 import (
@@ -18,15 +23,17 @@ import (
 	"strings"
 )
 
-// SsrcGroup 是上行 join JSON 的 ssrc-groups 条目：semantics ∈ {"SIM","FID"}。
-// SIM 的 sources 按质量低→高排列；FID 是 [媒体 ssrc, RTX 重传 ssrc] 对。
+// SsrcGroup is an ssrc-groups entry of the upstream join JSON: semantics ∈ {"SIM","FID"}.
+// A SIM's sources are ordered from lowest to highest quality; a FID is a
+// [media ssrc, RTX retransmission ssrc] pair.
 type SsrcGroup struct {
 	Semantics string
 	Sources   []uint32
 }
 
-// EndpointKind 区分同一参与者的两条媒体连接（M4：屏幕共享是独立的第二连接，
-// 独立 ICE/DTLS/ssrc 集，但 TL 层归属同一 participant）。
+// EndpointKind distinguishes a participant's two media connections (M4: screen sharing
+// is a separate second connection with its own ICE/DTLS/ssrc set, but belongs to the same
+// participant at the TL layer).
 type EndpointKind int
 
 const (
@@ -34,21 +41,24 @@ const (
 	EndpointPresentation
 )
 
-// ClientOffer 解析自 phone.joinGroupCall / joinGroupCallPresentation 的上行 params JSON。
+// ClientOffer is parsed from the upstream params JSON of phone.joinGroupCall / joinGroupCallPresentation.
 type ClientOffer struct {
 	AudioSSRC         uint32
 	Ufrag             string
 	Pwd               string
-	FingerprintSHA256 string // 形如 "AA:BB:..."（RFC 4572 hex）
-	// SsrcGroups 是视频 simulcast/RTX 源组（主 join 即带，无论摄像头开关）。
-	// SFU 据此做层选择：订阅端只为 SIM[0]（最低层）建解码 sink，发到其它层
-	// 原始 ssrc 的包会被客户端静默丢弃——v1 转发策略=只转 SIM[0] 层与其 FID
-	// RTX 伙伴，其余层在 SFU 侧丢弃（省下行且行为正确）。
+	FingerprintSHA256 string // of the form "AA:BB:..." (RFC 4572 hex)
+	// SsrcGroups are the video simulcast/RTX source groups (present on the main join
+	// regardless of camera state). The SFU uses them for layer selection: the subscriber
+	// creates a decode sink only for SIM[0] (the lowest layer), and packets sent to the
+	// raw ssrc of other layers are silently dropped by the client — the v1 forwarding
+	// policy is to forward only the SIM[0] layer and its FID RTX partner, dropping the
+	// remaining layers at the SFU (saves downlink and behaves correctly).
 	SsrcGroups []SsrcGroup
 }
 
-// Candidate 是下发给客户端的 ICE 候选（updateGroupCallConnection JSON 的
-// transport.candidates 条目，字段语义照抄 tgcalls 解析代码）。
+// Candidate is an ICE candidate delivered to the client (a transport.candidates entry
+// of the updateGroupCallConnection JSON; field semantics copied from the tgcalls
+// parsing code).
 type Candidate struct {
 	IP       string
 	Port     int
@@ -56,7 +66,7 @@ type Candidate struct {
 	Type     string // "host"
 }
 
-// ServerAnswer 是 SFU 端的传输参数，由 rpc 层组装进下行 JSON。
+// ServerAnswer holds the SFU-side transport parameters, assembled into the downstream JSON by the rpc layer.
 type ServerAnswer struct {
 	Ufrag             string
 	Pwd               string
@@ -64,26 +74,29 @@ type ServerAnswer struct {
 	Candidates        []Candidate
 }
 
-// Service 是信令层⇄媒体面的边界（未来横向扩展/远端 SFU 的替换点）。
+// Service is the boundary between the signaling layer and the media plane (the
+// replacement point for future horizontal scaling / remote SFUs).
 type Service interface {
-	// Enabled 报告媒体面是否真实可用（false=M0 纯信令模式）。
+	// Enabled reports whether the media plane is actually available (false = M0 signaling-only mode).
 	Enabled() bool
-	// Join 为参与者分配/重建媒体 endpoint，返回 SFU 端传输参数。
-	// kind=EndpointPresentation 时是同一参与者的第二连接（独立 ICE/DTLS）。
+	// Join allocates/rebuilds a participant's media endpoint and returns the SFU-side transport parameters.
+	// With kind=EndpointPresentation it is the participant's second connection (separate ICE/DTLS).
 	Join(ctx context.Context, callID, userID int64, kind EndpointKind, offer ClientOffer) (ServerAnswer, error)
-	// Leave 拆除参与者的 endpoint；kind=EndpointMain 时联动拆其 presentation
-	//（客户端整体离会从不补发 leaveGroupCallPresentation）。
+	// Leave tears down a participant's endpoint; with kind=EndpointMain it tears down the
+	// presentation alongside it (a client leaving the call as a whole never sends a
+	// follow-up leaveGroupCallPresentation).
 	Leave(ctx context.Context, callID, userID int64, kind EndpointKind) error
 	CloseRoom(ctx context.Context, callID int64) error
-	// AliveUserIDs 返回 callID 房间内媒体面仍存活（ICE consent/近期 SRTP 收包）
-	// 的参与者。sweeper 的判死条件 = 心跳过期 ∧ 媒体面不存活（双过期）。
+	// AliveUserIDs returns the participants in the callID room whose media plane is still
+	// alive (ICE consent / recent SRTP receive). The sweeper's death condition = heartbeat
+	// expired ∧ media plane not alive (double expiry).
 	AliveUserIDs(callID int64) []int64
 }
 
-// disabled 是 M0 纯信令实现。
+// disabled is the M0 signaling-only implementation.
 type disabled struct{}
 
-// Disabled 返回纯信令模式的 SFU。
+// Disabled returns a signaling-only SFU.
 func Disabled() Service {
 	return disabled{}
 }
@@ -103,7 +116,7 @@ func (disabled) Join(_ context.Context, _, _ int64, _ EndpointKind, _ ClientOffe
 	if err != nil {
 		return ServerAnswer{}, err
 	}
-	// 空 candidates：客户端无可连地址，保持 Connecting（M0 预期）。
+	// Empty candidates: the client has no reachable address and stays Connecting (expected for M0).
 	return ServerAnswer{Ufrag: ufrag, Pwd: pwd, FingerprintSHA256: fp, Candidates: nil}, nil
 }
 
@@ -125,8 +138,9 @@ func randomICEString(n int) (string, error) {
 	return b.String(), nil
 }
 
-// randomFingerprint 生成语法合法的 sha-256 指纹串（32 字节 hex，冒号分隔）。
-// M0 无 DTLS 端点，指纹值不会被验证（客户端连不上任何 candidate）。
+// randomFingerprint generates a syntactically valid sha-256 fingerprint string
+// (32 bytes hex, colon-separated). M0 has no DTLS endpoint, so the fingerprint value
+// is never verified (the client cannot connect to any candidate).
 func randomFingerprint() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {

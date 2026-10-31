@@ -434,10 +434,11 @@ WHERE collectible_revision_id=$1 AND crafted
 					canCraftAt = starGiftCraftReadyAt(req.Date, s.lifecycle.CraftDelaySeconds)
 				}
 			}
-			// issued 恒等于已铸造的藏品数量（每次铸造占用 [1..supply_total] 中一个
-			// 互不相同的号码，触发器又强制 issued 只能 +1），所以只要还有中标礼物等着
-			// 领号，issued 必然 < supply_total——这道闸门不会拦住中标者。真正判定中标号
-			// 是否越界或被占用的是 allocateCollectibleGiftNum。
+			// issued always equals the number of minted collectibles (each mint consumes one distinct
+			// number from [1..supply_total], and a trigger forces issued to increase by only +1), so as
+			// long as an auction-winning gift is still waiting for its number, issued must be <
+			// supply_total -- this gate never blocks a winner. What actually decides whether a winning
+			// number is out of range or occupied is allocateCollectibleGiftNum.
 			if revision.Issued >= revision.SupplyTotal {
 				return domain.ErrStarGiftCollectibleSoldOut
 			}
@@ -955,13 +956,14 @@ WHERE c.gift_id=$1 FOR UPDATE OF r`, giftID).Scan(
 	return revision, nil
 }
 
-// allocateCollectibleGiftNum 决定新藏品的编号。
+// allocateCollectibleGiftNum decides the new collectible's number.
 //
-// 拍卖中标的礼物在结算时就拿到了发行号（peer_star_gifts.gift_num，等于
-// star_gift_auction_acquired.gift_num）——那才是用户真正赢到的号码，升级成藏品
-// 时必须沿用，不能按"谁先点升级"重新编号。其余路径（普通购买、管理员发放）仍沿
-// 发行计数器递增，但必须跳过已发行的号码以及被尚未升级的中标礼物预留的号码，否
-// 则会撞上 unique_star_gift_number_uniq，或抢走中标者应得的号码。
+// An auction-winning gift already received its issue number at settlement (peer_star_gifts.gift_num,
+// equal to star_gift_auction_acquired.gift_num) -- that is the number the user actually won and must
+// be carried over when upgrading to a collectible, not renumbered by "who clicked upgrade first".
+// The other paths (normal purchase, admin grant) still advance the issue counter, but must skip
+// numbers already issued and numbers reserved by not-yet-upgraded winning gifts, otherwise they
+// would hit unique_star_gift_number_uniq or take the number the winner deserves.
 func allocateCollectibleGiftNum(ctx context.Context, tx pgx.Tx, giftID int64, wonNum int, revision domain.StarGiftCollectibleRevision) (int, error) {
 	if wonNum > 0 {
 		if wonNum > revision.SupplyTotal {
@@ -973,8 +975,9 @@ func allocateCollectibleGiftNum(ctx context.Context, tx pgx.Tx, giftID int64, wo
 			return 0, fmt.Errorf("check auction collectible number: %w", err)
 		}
 		if taken {
-			// 中标号被别的藏品占用属于数据损坏。宁可让升级失败并暴露出来，也不能
-			// 悄悄发一个错号——那正是本次修复要消灭的行为。
+			// A winning number being taken by another collectible is data corruption. It is better to
+			// let the upgrade fail and surface it than to silently issue a wrong number -- which is
+			// exactly the behavior this fix eliminates.
 			return 0, domain.ErrStarGiftCollectibleUnavailable
 		}
 		return wonNum, nil

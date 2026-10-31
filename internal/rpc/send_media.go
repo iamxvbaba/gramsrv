@@ -15,12 +15,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件实现 messages.uploadMedia / sendMedia / sendMultiMedia 的 photo/document/sticker 主路径，
-// 并抽取 sendOutgoing 作为「已校验的一条出站消息（文本或媒体）落地」的共享实现，私聊与频道共用。
+// This file implements the main photo/document/sticker paths of
+// messages.uploadMedia / sendMedia / sendMultiMedia, and extracts sendOutgoing as the
+// shared implementation of "persist one validated outbound message (text or media)",
+// used by both private chats and channels.
 
 const maxContactVcardLength = 8192
 
-// outgoingSend 是 sendOutgoing 的入参：一条已校验的出站消息。
+// outgoingSend is the input to sendOutgoing: one validated outbound message.
 type outgoingSend struct {
 	randomID               int64
 	idempotencyFingerprint []byte
@@ -37,16 +39,20 @@ type outgoingSend struct {
 	sendAs                 *domain.Peer
 	sendAsReady            bool
 	clearDraft             bool
-	// replyMarkup 是 bot reply/inline keyboard（已解析+校验；非 bot 恒 nil）。
+	// replyMarkup is the bot reply/inline keyboard (resolved+validated; always nil for a
+	// non-bot).
 	replyMarkup *domain.MessageReplyMarkup
 	viaBotID    int64
-	// richMessage 是 Layer 227 富文本消息快照（已解析内嵌媒体；普通消息恒 nil）。
+	// richMessage is the Layer 227 rich-message snapshot (with embedded media resolved;
+	// always nil for an ordinary message).
 	richMessage *domain.MessageRichMessage
-	// groupedID 是相册分组 id：sendMultiMedia 同组各条共享一个非零值（客户端据此渲染
-	// 成一个相册组）；单条发送恒 0。
+	// groupedID is the album group id: items of the same group in sendMultiMedia share a
+	// non-zero value (the client renders them as one album group); always 0 for a single
+	// send.
 	groupedID int64
-	// effect 是消息特效 id（私聊专属，0 表无特效）。调用方已对 catalog 校验合法性；
-	// 频道侧忽略（官方群/频道不渲染特效）。
+	// effect is the message effect id (private-chat only, 0 means no effect). The caller
+	// has validated it against the catalog; the channel side ignores it (official
+	// groups/channels do not render effects).
 	effect         int64
 	allowPaidStars int64
 	paidStars      int64
@@ -55,8 +61,9 @@ type outgoingSend struct {
 	paidStarsReady bool
 }
 
-// sendOutgoing 把一条出站消息落地到私聊或频道，返回 *tg.Updates、是否重复、错误。
-// media 为空即纯文本。校验（长度/random_id/限流）由调用方完成。
+// sendOutgoing persists one outbound message to a private chat or channel, returning
+// *tg.Updates, whether it is a duplicate, and an error. An empty media means plain text.
+// Validation (length/random_id/rate limit) is done by the caller.
 func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Peer, p outgoingSend) (tg.UpdatesClass, bool, error) {
 	sendAs := p.sendAs
 	if !p.sendAsReady {
@@ -107,18 +114,22 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		if err != nil {
 			return nil, false, channelInvalidErr(err)
 		}
-		// 发送者 echo 走 rpc_result（同步，用独立 cache）；其余成员的 fan-out 异步化，
-		// 移出发送者 RPC 同步路径（设计 Phase 0）。echo 与 fan-out 必须用各自独立的
-		// viewerPeerCache——前者在 RPC goroutine、后者在 worker goroutine，共享会数据竞态。
-		// 发送者 echo 走 rpc_result（同步，用独立 cache）；其余成员的 fan-out 异步化。
-		// echo 与 fan-out 必须用各自独立的 viewerPeerCache——前者在 RPC goroutine、后者在
-		// worker goroutine，共享会数据竞态。
+		// The sender echo goes through rpc_result (synchronously, with its own cache); the
+		// other members' fan-out is made asynchronous, moving off the sender's synchronous
+		// RPC path (design Phase 0). The echo and the fan-out must use their own separate
+		// viewerPeerCache - the former runs in the RPC goroutine and the latter in a worker
+		// goroutine, so sharing one would be a data race.
+		// The sender echo goes through rpc_result (synchronously, with its own cache); the
+		// other members' fan-out is made asynchronous. The echo and the fan-out must use
+		// their own separate viewerPeerCache - the former runs in the RPC goroutine and the
+		// latter in a worker goroutine, so sharing one would be a data race.
 		echoCache := newViewerPeerCache(r)
 		updates := r.channelMessageUpdatesWithPeerCache(ctx, userID, res, p.randomID, echoCache)
 		if !res.Duplicate {
 			r.enqueueChannelMessageFanout(ctx, userID, res, nil)
 			r.pushChannelDiscussionUpdate(ctx, userID, res.Discussion)
-			// 频道链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
+			// Channel link-preview pending placeholder: resolve out-of-band and swap in
+			// place (asynchronous, without blocking the send echo).
 			r.maybeEnqueueWebPageResolve(userID, peer, res.Message.ID, res.Message.Media)
 		}
 		if p.clearDraft && !res.Duplicate {
@@ -173,8 +184,9 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		return nil, false, err
 	}
 	sessionID, _ := SessionIDFrom(ctx)
-	// outbox 的排除键定位的是发起 RPC 的物理连接；PFS temp key 绑定后
-	// AuthKeyIDFrom 是业务视角 perm key，不能用它代替连接实际 raw key。
+	// The outbox exclusion key locates the physical connection that initiated the RPC;
+	// after PFS temp-key binding, AuthKeyIDFrom is the business-view perm key and cannot
+	// stand in for the connection's actual raw key.
 	authKeyID := rawAuthKeyIDForOrigin(ctx)
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
 		SenderUserID:           userID,
@@ -226,7 +238,8 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		r.clearDraftAfterSendWithPeerObjects(ctx, userID, peer, replyTo, users, chats)
 	}
 	if !res.Duplicate {
-		// 链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
+		// Link-preview pending placeholder: resolve out-of-band and swap in place
+		// (asynchronous, without blocking the send echo).
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
 		r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	}
@@ -238,7 +251,8 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	return out, res.Duplicate, nil
 }
 
-// onMessagesUploadMedia 解析 InputMedia（上传或引用），返回可复用的 tg.MessageMedia。
+// onMessagesUploadMedia resolves InputMedia (upload or reference) and returns a reusable
+// tg.MessageMedia.
 func (r *Router) onMessagesUploadMedia(ctx context.Context, req *tg.MessagesUploadMediaRequest) (tg.MessageMediaClass, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -268,7 +282,8 @@ func (r *Router) onMessagesUploadMedia(ctx context.Context, req *tg.MessagesUplo
 	return tgMessageMedia(media), nil
 }
 
-// onMessagesSendMedia 发送一条带媒体的消息（photo/document/sticker），私聊与频道均支持。
+// onMessagesSendMedia sends one message with media (photo/document/sticker), supported
+// for both private chats and channels.
 func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMediaRequest) (tg.UpdatesClass, error) {
 	if req.RandomID == 0 {
 		return nil, randomIDEmptyErr()
@@ -285,18 +300,22 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if req.Media == nil {
 		return nil, mediaInvalidErr()
 	}
-	// InputMediaEmpty / WebPage：退化为纯文本发送（复用 sendMessage 校验与流程，含 url 实体补全）。
+	// InputMediaEmpty / WebPage: degrade to a plain-text send (reusing the sendMessage
+	// validation and flow, including url-entity completion).
 	switch req.Media.(type) {
 	case *tg.InputMediaEmpty, *tg.InputMediaWebPage:
 		return r.onMessagesSendMessage(ctx, sendMessageRequestFromSendMedia(req))
 	}
-	// 指纹是幂等校验元数据，不能让一个本应由 media resolver 映射成
-	// MEDIA_INVALID 的畸形 input 因 Encode 失败提前变成 INTERNAL。合法请求会得到
-	// 原始 TL 指纹；编码失败则留空，由 store 使用 domain fallback。
+	// The fingerprint is idempotency-check metadata; a malformed input that the media
+	// resolver should map to MEDIA_INVALID must not turn into INTERNAL early because of
+	// an Encode failure. A valid request gets the original TL fingerprint; on an encode
+	// failure it is left empty and the store uses the domain fallback.
 	idempotencyFingerprint, _ := sendMediaIdempotencyFingerprint(req)
-	// 媒体 caption 里的链接/@mention/#hashtag 等同样补自动高亮实体（客户端未带时）。
-	// 派生结果保持在局部变量中，不能回写原始 TL request，否则同一请求对象重试时指纹会
-	// 从“客户端输入”变成“服务端派生输入”，错误触发 RANDOM_ID_DUPLICATE。
+	// Links/@mention/#hashtag etc. in a media caption likewise get auto-highlight entities
+	// added (when the client did not carry them). The derived result stays in a local
+	// variable and must not be written back to the original TL request, or a retry of the
+	// same request object would change the fingerprint from "client input" to
+	// "server-derived input", wrongly triggering RANDOM_ID_DUPLICATE.
 	entities := r.augmentAutoEntities(req.Message, req.Entities)
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -399,7 +418,8 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if replay.found {
 		return r.outgoingReplayUpdates(ctx, userID, peer, req.RandomID, replay), nil
 	}
-	// 消息特效：仅接受 catalog 内的合法 effect id（非法 id → EFFECT_ID_INVALID，官方行为）。
+	// Message effect: only a valid effect id from the catalog is accepted (an invalid id
+	// -> EFFECT_ID_INVALID, official behavior).
 	if r.messageEffectInvalid(ctx, req.Effect) {
 		return nil, effectIDInvalidErr()
 	}
@@ -424,8 +444,8 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if media == nil {
 		return nil, mediaInvalidErr()
 	}
-	// reply_markup：bot 可发送 inline keyboard 与普通 reply keyboard/hide/force；
-	// 非 bot 静默丢弃。
+	// reply_markup: a bot may send an inline keyboard and an ordinary reply
+	// keyboard/hide/force; for a non-bot it is silently dropped.
 	var replyMarkup *domain.MessageReplyMarkup
 	if req.ReplyMarkup != nil {
 		replyMarkup, err = domainOutgoingReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
@@ -474,7 +494,8 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	return updates, nil
 }
 
-// onMessagesSendMultiMedia 发送相册（多条媒体），并在解析媒体前持久预留 grouped_id。
+// onMessagesSendMultiMedia sends an album (multiple media) and durably reserves the
+// grouped_id before resolving media.
 func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesSendMultiMediaRequest) (tg.UpdatesClass, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -517,7 +538,8 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 		}
 		intentHash, fingerprintErr := sendMultiMediaItemIdempotencyFingerprint(req, item)
 		if fingerprintErr != nil {
-			// 畸形 InputMedia 的 TL 编码失败不能变成 INTERNAL；保持 media 输入错误语义。
+			// A TL encode failure on a malformed InputMedia must not become INTERNAL; keep
+			// the media-input error semantics.
 			return nil, mediaInvalidErr()
 		}
 		reservationItems = append(reservationItems, domain.AlbumGroupReservationItem{
@@ -583,8 +605,9 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 		return nil, err
 	}
 
-	// 必须在 resolveInputMedia 或发送任何 item 之前原子预留：首次请求若在第 N 条
-	// 失败，客户端只重试失败子集时仍从已绑定 random_id 恢复整包 grouped_id。
+	// The reservation must happen atomically before resolveInputMedia or sending any item:
+	// if the first request fails at item N, a client retrying only the failed subset still
+	// recovers the whole package's grouped_id from the already-bound random_id.
 	groupedID, err := r.reserveAlbumGroup(ctx, userID, peer, reservationItems)
 	if err != nil {
 		return nil, err
@@ -651,8 +674,9 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	return combineSendUpdates(results), nil
 }
 
-// resolveInputMedia 把 tg.InputMedia 解析为 domain.MessageMedia（上传则落库，引用则加载）。
-// 返回 nil 表示 InputMediaEmpty（调用方退化为纯文本）。
+// resolveInputMedia resolves tg.InputMedia into domain.MessageMedia (upload persists,
+// reference loads). Returning nil means InputMediaEmpty (the caller degrades to plain
+// text).
 func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.InputMediaClass) (*domain.MessageMedia, error) {
 	switch in := input.(type) {
 	case *tg.InputMediaEmpty:
@@ -718,7 +742,8 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 		}
 		return messageMediaFromDocument(doc, in.Spoiler, in.TTLSeconds), nil
 	case *tg.InputMediaPhotoExternal:
-		// 外链图片：服务端 SSRF 安全抓取 URL 并铸造 Photo。未启用/拦截/上游失败统一 MEDIA_INVALID。
+		// External image: the server SSRF-safely fetches the URL and mints a Photo.
+		// Disabled/blocked/upstream failure all map to MEDIA_INVALID.
 		if r.deps.Files == nil {
 			return nil, mediaInvalidErr()
 		}
@@ -728,7 +753,8 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 		}
 		return &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &photo, Spoiler: in.Spoiler, TTLSeconds: in.TTLSeconds}, nil
 	case *tg.InputMediaDocumentExternal:
-		// 外链文档：抓取 URL，mime 取 Content-Type、文件名取 URL basename。video_cover/timestamp 暂忽略。
+		// External document: fetch the URL, take mime from Content-Type and the filename
+		// from the URL basename. video_cover/timestamp are ignored for now.
 		if r.deps.Files == nil {
 			return nil, mediaInvalidErr()
 		}
@@ -824,7 +850,8 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 		}}, nil
 	case *tg.InputMediaGeoLive:
 		if in.Stopped {
-			// stopped 只在 editMessage 停止共享时有意义，发送即停没有客户端路径。
+			// stopped is only meaningful when editMessage stops sharing; sending an
+			// immediately-stopped location has no client path.
 			return nil, mediaInvalidErr()
 		}
 		geo, err := domainGeoPointFromInput(in.GeoPoint)
@@ -861,8 +888,9 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 		}
 		snapshot, def, err := r.domainPollFromInputMedia(ctx, in, userID, pollID, int(r.clock.Now().Unix()))
 		if err != nil {
-			// compat 诊断：客户端 poll 构造形状多变（flag 默认值/答案构造器随版本漂移），
-			// 拒绝时必须留痕，否则只有一个裸 4xx 无从对账。
+			// compat diagnostics: client poll construction shapes are varied (flag defaults /
+			// answer constructors drift across versions), so a rejection must leave a trace;
+			// otherwise there is only a bare 4xx with nothing to reconcile against.
 			answerTypes := make([]string, 0, len(in.Poll.Answers))
 			for _, answerClass := range in.Poll.Answers {
 				switch answer := answerClass.(type) {
@@ -905,7 +933,8 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 			)
 			return nil, err
 		}
-		// 权威行先落库（消息发送失败产生的孤儿 poll 无害且可回收）。
+		// Persist the authoritative row first (an orphaned poll from a failed message send
+		// is harmless and reclaimable).
 		if err := r.deps.Polls.CreatePoll(ctx, def); err != nil {
 			r.log.Warn("create poll failed", zap.Error(err))
 			return nil, internalErr()
@@ -920,8 +949,9 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 	case *tg.InputMediaStory:
 		return r.domainMessageStoryFromInput(ctx, userID, in)
 	default:
-		// poll（独立链路见 messages_polls.go）/ geoLive / todo / game / invoice /
-		// paid media / external 等未接入；范围与 stub 决策见 docs/compatibility-matrix.md。
+		// poll (see messages_polls.go for the separate path) / geoLive / todo / game /
+		// invoice / paid media / external etc. are not wired up; see
+		// docs/compatibility-matrix.md for the scope and stub decisions.
 		return nil, mediaInvalidErr()
 	}
 }
@@ -959,9 +989,11 @@ func (r *Router) domainMessageStoryFromInput(ctx context.Context, userID int64, 
 	}, nil
 }
 
-// domainGeoPointFromInput 校验并转换 InputGeoPoint；空点返回 MEDIA_EMPTY，越界返回 MEDIA_INVALID。
-// access_hash 在此随机生成：客户端会把它原样带回 upload.getWebFile 的地图缩略请求，但
-// 服务端地图渲染不依赖鉴权（详见 upload_webfile.go），故无需持久化校验。
+// domainGeoPointFromInput validates and converts InputGeoPoint; an empty point returns
+// MEDIA_EMPTY and out-of-range returns MEDIA_INVALID. access_hash is generated randomly
+// here: the client echoes it back verbatim in the upload.getWebFile map-thumbnail
+// request, but server map rendering does not depend on authorization (see
+// upload_webfile.go), so there is no need to persist/validate it.
 func domainGeoPointFromInput(input tg.InputGeoPointClass) (*domain.MessageGeoPoint, error) {
 	point, ok := input.(*tg.InputGeoPoint)
 	if !ok || point == nil {
@@ -998,7 +1030,9 @@ func randomGeoAccessHash() (int64, error) {
 	return v, nil
 }
 
-// randomPollID 生成正的 63 位随机 poll id；polls 主键冲突概率可忽略（冲突时 INSERT 报错重试由客户端承担）。
+// randomPollID generates a positive 63-bit random poll id; the probability of a polls
+// primary-key collision is negligible (on a collision the client bears the INSERT error
+// and retry).
 func randomPollID() (int64, error) {
 	var b [8]byte
 	if _, err := cryptorand.Read(b[:]); err != nil {
@@ -1011,14 +1045,17 @@ func randomPollID() (int64, error) {
 	return v, nil
 }
 
-// normalizeDiceEmoticon 去掉 emoji 变体选择符（U+FE0F）：TDesktop 的 ⚽️ 与 ⚽ 都允许发送，
-// 但 dice 贴纸系统集 key 与官方回包都是裸码点形态。
+// normalizeDiceEmoticon strips the emoji variation selector (U+FE0F): TDesktop allows
+// sending both ⚽️ and ⚽, but the dice sticker system-set key and the official response
+// are both in bare code-point form.
 func normalizeDiceEmoticon(emoticon string) string {
 	return strings.ReplaceAll(emoticon, "️", "")
 }
 
-// diceValueSides 返回 emoticon 对应的取值上限（值域 [1, sides]，与官方一致）。
-// 列表必须与 appConfig 的 emojies_send_dice 保持同步（客户端据其决定单 emoji 是否转 dice）。
+// diceValueSides returns the value bound for an emoticon (range [1, sides], consistent
+// with the official server).
+// The list must stay in sync with appConfig's emojies_send_dice (the client uses it to
+// decide whether a single emoji becomes a dice).
 func diceValueSides(emoticon string) (int, bool) {
 	switch emoticon {
 	case "\U0001F3B2", "\U0001F3AF", "\U0001F3B3": // 🎲 🎯 🎳
@@ -1036,7 +1073,7 @@ func randomDiceValue(sides int) (int, error) {
 	if sides <= 0 {
 		return 0, fmt.Errorf("dice sides must be positive")
 	}
-	// 拒绝采样消除模偏差；sides ≤ 64，单字节足够。
+	// Rejection sampling removes modulo bias; with sides ≤ 64 a single byte suffices.
 	max := 256 - 256%sides
 	var b [1]byte
 	for {
@@ -1064,7 +1101,8 @@ func (r *Router) messageContactUserID(ctx context.Context, userID int64, phone s
 	return u.ID
 }
 
-// messageMediaFromDocument 由 Document 构造 MessageMedia，并从属性推导 Video/Round/Voice 标志。
+// messageMediaFromDocument builds a MessageMedia from a Document and derives the
+// Video/Round/Voice flags from its attributes.
 func messageMediaFromDocument(doc domain.Document, spoiler bool, ttl int) *domain.MessageMedia {
 	media := &domain.MessageMedia{Kind: domain.MessageMediaKindDocument, Document: &doc, Spoiler: spoiler, TTLSeconds: ttl}
 	if doc.IsSticker() {
@@ -1107,7 +1145,8 @@ func inputDocumentCandidateIDs(input tg.InputDocumentClass) ([]int64, bool) {
 	return nil, false
 }
 
-// domainDocumentAttributes 把 tg.DocumentAttribute 反向转为 domain（InputMediaUploadedDocument 用）。
+// domainDocumentAttributes converts tg.DocumentAttribute back to domain (for
+// InputMediaUploadedDocument).
 func domainDocumentAttributes(attrs []tg.DocumentAttributeClass) []domain.DocumentAttribute {
 	out := make([]domain.DocumentAttribute, 0, len(attrs))
 	for _, a := range attrs {
@@ -1148,7 +1187,8 @@ func inputStickerSetIDs(input tg.InputStickerSetClass) (int64, int64, bool) {
 	return 0, 0, false
 }
 
-// sendMessageRequestFromSendMedia 把 sendMedia（空媒体）的字段映射到 sendMessage 请求。
+// sendMessageRequestFromSendMedia maps sendMedia's fields (empty media) onto a
+// sendMessage request.
 func sendMessageRequestFromSendMedia(req *tg.MessagesSendMediaRequest) *tg.MessagesSendMessageRequest {
 	return &tg.MessagesSendMessageRequest{
 		Silent:                 req.Silent,
@@ -1222,8 +1262,8 @@ func mapValuesChats(m map[int64]tg.ChatClass) []tg.ChatClass {
 	return out
 }
 
-// channelPostAuthorName 取当前用户的展示名作为 broadcast post 签名快照；
-// store 层只在 signatures 开启的 post 上落库。
+// channelPostAuthorName takes the current user's display name as the broadcast-post
+// signature snapshot; the store only persists it on posts with signatures enabled.
 func (r *Router) channelPostAuthorName(ctx context.Context, userID int64) string {
 	if r.deps.Users == nil || userID == 0 {
 		return ""

@@ -8,61 +8,64 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 合成集的固定 ID/AccessHash：种子导出的真实集 ID 在 1.2e15 量级，取明显隔离的
-// 常量段避免撞键；幂等性由 system_key 查询保证，常量仅需稳定。
+// Fixed ID/AccessHash for the synthesized set: the real set IDs exported by the seed are on the
+// order of 1.2e15, so a clearly isolated constant range avoids key collisions; idempotency is
+// guaranteed by the system_key lookup, and the constants only need to be stable.
 const (
 	defaultEmojiStatusSetID         int64 = 7_777_000_000_000_001
 	defaultEmojiStatusSetAccessHash int64 = 7_777_000_000_000_002
 )
 
-// defaultEmojiStatusEmoticons 是默认状态的精选 emoji（对齐官方默认状态选盘的
-// 常见项），按展示顺序排列。匹配不到的 emoticon 静默跳过（取决于 seed 内容）。
+// defaultEmojiStatusEmoticons is the curated set of emoji for default statuses (aligned with the
+// common entries of the official default status picker), ordered by display order. Emoticons
+// that do not match are silently skipped (depending on the seed content).
 var defaultEmojiStatusEmoticons = []string{
-	"\U0001f4bc", // 💼 工作
-	"\U0001f393", // 🎓 学习
-	"\U0001f3e0", // 🏠 在家
-	"\U0001f334", // 🌴 度假
-	"\U0001f3d6", // 🏖 海滩
-	"✈",          // ✈️ 旅行
-	"\U0001f912", // 🤒 生病
-	"\U0001f634", // 😴 睡觉
-	"☕",          // ☕ 咖啡
-	"\U0001f4bb", // 💻 编码/办公
-	"\U0001f4da", // 📚 阅读
-	"\U0001f3ae", // 🎮 游戏
-	"\U0001f3a7", // 🎧 听歌
-	"⚽",          // ⚽ 运动
-	"\U0001f3c6", // 🏆 获胜
-	"❤",          // ❤️ 爱心
-	"\U0001f60e", // 😎 酷
-	"\U0001f319", // 🌙 勿扰
-	"⭐",          // ⭐ 星标
-	"\U0001f525", // 🔥 火
-	"\U0001f44d", // 👍 赞
-	"\U0001f389", // 🎉 庆祝
-	"\U0001f914", // 🤔 思考
-	"\U0001f607", // 😇 天使
-	"\U0001f973", // 🥳 派对
-	"\U0001f602", // 😂 大笑
-	"\U0001f970", // 🥰 喜爱
-	"\U0001f62d", // 😭 大哭
-	"\U0001f92f", // 🤯 爆炸
-	"\U0001f440", // 👀 围观
-	"\U0001f4af", // 💯 满分
-	"\U0001f64f", // 🙏 感谢
-	"\U0001f91d", // 🤝 合作
-	"✍",          // ✍️ 写作
-	"\U0001f697", // 🚗 通勤
-	"\U0001f355", // 🍕 干饭
-	"\U0001f382", // 🎂 生日
-	"\U0001f338", // 🌸 春天
-	"⛄",          // ⛄ 冬天
-	"\U0001f984", // 🦄 独角兽
+	"\U0001f4bc", // 💼 work
+	"\U0001f393", // 🎓 study
+	"\U0001f3e0", // 🏠 at home
+	"\U0001f334", // 🌴 vacation
+	"\U0001f3d6", // 🏖 beach
+	"✈",          // ✈️ travel
+	"\U0001f912", // 🤒 sick
+	"\U0001f634", // 😴 sleeping
+	"☕",          // ☕ coffee
+	"\U0001f4bb", // 💻 coding / office
+	"\U0001f4da", // 📚 reading
+	"\U0001f3ae", // 🎮 gaming
+	"\U0001f3a7", // 🎧 listening to music
+	"⚽",          // ⚽ sports
+	"\U0001f3c6", // 🏆 winning
+	"❤",          // ❤️ love
+	"\U0001f60e", // 😎 cool
+	"\U0001f319", // 🌙 do not disturb
+	"⭐",          // ⭐ star
+	"\U0001f525", // 🔥 fire
+	"\U0001f44d", // 👍 thumbs up
+	"\U0001f389", // 🎉 celebrate
+	"\U0001f914", // 🤔 thinking
+	"\U0001f607", // 😇 angel
+	"\U0001f973", // 🥳 party
+	"\U0001f602", // 😂 laughing
+	"\U0001f970", // 🥰 affection
+	"\U0001f62d", // 😭 crying
+	"\U0001f92f", // 🤯 mind blown
+	"\U0001f440", // 👀 watching
+	"\U0001f4af", // 💯 perfect score
+	"\U0001f64f", // 🙏 thanks
+	"\U0001f91d", // 🤝 collaboration
+	"✍",          // ✍️ writing
+	"\U0001f697", // 🚗 commuting
+	"\U0001f355", // 🍕 eating
+	"\U0001f382", // 🎂 birthday
+	"\U0001f338", // 🌸 spring
+	"⛄",          // ⛄ winter
+	"\U0001f984", // 🦄 unicorn
 }
 
-// EnsureDefaultEmojiStatusSet 幂等地合成默认 emoji status 系统集：从已 seed 的
-// animated_emoji 系统集按 emoticon 精选文档（复用文档行与 blob，不复制字节）。
-// 返回 (集内文档数, 是否本次新建)。animated_emoji 未 seed 时静默跳过。
+// EnsureDefaultEmojiStatusSet idempotently synthesizes the default emoji status system set:
+// curates documents from the seeded animated_emoji system set by emoticon (reusing document
+// rows and blobs, not copying bytes). Returns (number of documents in the set, whether it was
+// created this time). If animated_emoji is not seeded it is silently skipped.
 func (s *Service) EnsureDefaultEmojiStatusSet(ctx context.Context) (int, bool, error) {
 	if existing, found, err := s.media.GetStickerSetBySystemKey(ctx, domain.StickerSetSystemKeyEmojiDefaultStatuses); err != nil {
 		return 0, false, fmt.Errorf("lookup default emoji status set: %w", err)
@@ -130,14 +133,14 @@ func (s *Service) EnsureDefaultEmojiStatusSet(ctx context.Context) (int, bool, e
 	return set.Count, true, nil
 }
 
-// normalizeStatusEmoticon 统一变体选择符差异（"❤" vs "❤️"），匹配 seed packs 与
-// 精选清单两侧的书写形态。
+// normalizeStatusEmoticon unifies variation-selector differences ("❤" vs "❤️"), matching the
+// spelling forms on both sides of the seed packs and the curated list.
 func normalizeStatusEmoticon(e string) string {
 	return strings.ReplaceAll(strings.TrimSpace(e), "️", "")
 }
 
-// stickerSetDocsHash 由文档 ID 列表算稳定 set hash（messages.getStickerSet 与
-// account.getDefaultEmojiStatuses 共用一份缓存判定）。
+// stickerSetDocsHash computes a stable set hash from the document ID list (messages.getStickerSet
+// and account.getDefaultEmojiStatuses share one cache decision).
 func stickerSetDocsHash(ids []int64) int {
 	var h uint64
 	for _, id := range ids {

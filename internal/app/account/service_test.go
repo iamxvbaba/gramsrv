@@ -346,8 +346,8 @@ func clientPasswordCheck(t *testing.T, settings domain.PasswordSettings, passwor
 	return domain.PasswordCheck{SRPID: settings.SRPID, A: aForHash, M1: m1}
 }
 
-// passwordDigest 与 verifierForPassword 是客户端侧（明文口令 → verifier）的模拟助手，
-// 服务端从不执行明文口令路径，仅供这里的客户端 SRP helper 构造测试输入。
+// passwordDigest and verifierForPassword are client-side (plaintext password -> verifier) simulation helpers;
+// the server never takes the plaintext-password path, so these only build test inputs for the client SRP helper here.
 func passwordDigest(algo domain.PasswordKDFAlgo, password []byte) []byte {
 	hash1 := hashBytes(algo.Salt1, password, algo.Salt1)
 	hash2 := hashBytes(algo.Salt2, hash1, algo.Salt2)

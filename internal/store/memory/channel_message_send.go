@@ -430,7 +430,7 @@ func canSendChannelMessageWithBoost(channel domain.Channel, member domain.Channe
 	return channel.BoostsUnrestrict > 0 && selfBoostsApplied >= channel.BoostsUnrestrict
 }
 
-// memoryChannelPostAuthor 仅在 signatures 开启的 broadcast post 上保留签名。
+// memoryChannelPostAuthor keeps the signature only on broadcast posts with signatures enabled.
 func memoryChannelPostAuthor(channel domain.Channel, author string) string {
 	if !channel.Broadcast || !channel.Signatures || channel.SignatureProfiles {
 		return ""

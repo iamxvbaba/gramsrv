@@ -22,7 +22,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// phonePushRecord 记录一次定向推送（目标用户、被排除的 session、载荷）。
+// phonePushRecord records a directed push (target user, excluded session, payload).
 type phonePushRecord struct {
 	userID         int64
 	rawAuthKeyID   [8]byte
@@ -31,7 +31,8 @@ type phonePushRecord struct {
 	msg            bin.Encoder
 }
 
-// phoneCaptureSessions 是带完整推送日志的 SessionBinder fake（captureSessions 只留最后一条）。
+// phoneCaptureSessions is a SessionBinder fake with a full push log (captureSessions keeps only
+// the last one).
 type phoneCaptureSessions struct {
 	mu      sync.Mutex
 	log     []phonePushRecord
@@ -99,7 +100,7 @@ func (s *phoneCaptureSessions) setPushError(err error) {
 	s.pushErr = err
 }
 
-// stubPrivacy 只为 CanSee 服务；其余接口方法不在通话链路使用。
+// stubPrivacy serves only CanSee; the other interface methods are not used on the call path.
 type stubPrivacy struct {
 	deny map[domain.PrivacyKey]bool
 }
@@ -120,8 +121,8 @@ func (p stubPrivacy) CanSee(_ context.Context, _, _ int64, key domain.PrivacyKey
 	return !p.deny[key], nil
 }
 
-// P2PAllowedBetween 让 stub 满足 phoneP2PGate：缺省放行（与 CanSee 的隐式
-// 全部放行一致），deny[phone_p2p] 时拒绝 P2P。
+// P2PAllowedBetween makes the stub satisfy phoneP2PGate: allow by default (consistent with
+// CanSee's implicit allow-all), deny P2P when deny[phone_p2p] is set.
 func (p stubPrivacy) P2PAllowedBetween(context.Context, int64, int64) (bool, error) {
 	return !p.deny[domain.PrivacyKeyPhoneP2P], nil
 }
@@ -212,7 +213,7 @@ func assertPhoneRPCErr(t *testing.T, err error, wantType string) {
 	}
 }
 
-// phoneCallPayload 从捕获的推送里取出 updatePhoneCall 的载荷。
+// phoneCallPayload extracts the updatePhoneCall payload from a captured push.
 func phoneCallPayload(t *testing.T, rec phonePushRecord) tg.PhoneCallClass {
 	t.Helper()
 	updates, ok := rec.msg.(*tg.Updates)
@@ -226,7 +227,8 @@ func phoneCallPayload(t *testing.T, rec phonePushRecord) tg.PhoneCallClass {
 	return upd.PhoneCall
 }
 
-// legacyPrivacy 实现 PrivacyService 但不实现 phoneP2PGate（模拟旧隐私提供方）。
+// legacyPrivacy implements PrivacyService but not phoneP2PGate (simulating an old privacy
+// provider).
 type legacyPrivacy struct{}
 
 func (legacyPrivacy) GetRules(context.Context, int64, domain.PrivacyKey) (domain.PrivacyRules, error) {
@@ -325,7 +327,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	f := newPhoneFixture(t, stubPrivacy{})
 	ga, gaHash, gb := phoneTestKeys()
 
-	// --- requestCall（主叫） ---
+	// --- requestCall (caller) ---
 	res, err := f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
 		UserID:   &tg.InputUser{UserID: f.callee.ID, AccessHash: f.callee.AccessHash},
 		RandomID: 42,
@@ -360,7 +362,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// --- receivedCall（被叫上报触达）→ 主叫收 receive_date ---
+	// --- receivedCall (callee reports reach) -> caller receives receive_date ---
 	if ok, err := f.router.onPhoneReceivedCall(f.calleeCtx(), tg.InputPhoneCall{ID: callID, AccessHash: accessHash}); err != nil || !ok {
 		t.Fatalf("receivedCall = %v err=%v", ok, err)
 	}
@@ -370,12 +372,13 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	ringing, ok := phoneCallPayload(t, pushes[0]).(*tg.PhoneCallWaiting)
 	if !ok || ringing.ReceiveDate == 0 {
-		// ⚠ P1-2：缺 receive_date 推送时主叫只有 20s 接听窗口。
+		// ⚠ P1-2: without the receive_date push the caller only has a 20s answer window.
 		t.Fatalf("caller payload = %+v, want waiting with receive_date", phoneCallPayload(t, pushes[0]))
 	}
 	f.sessions.reset()
 
-	// 其它被叫设备晚到的 receivedCall 幂等成功，但不得再次推 ringing。
+	// A late receivedCall from another callee device succeeds idempotently but must not push ringing
+	// again.
 	if ok, err := f.router.onPhoneReceivedCall(f.otherCalleeCtx(), tg.InputPhoneCall{ID: callID, AccessHash: accessHash}); err != nil || !ok {
 		t.Fatalf("duplicate receivedCall = %v err=%v", ok, err)
 	}
@@ -384,7 +387,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// --- acceptCall（被叫赢家设备） ---
+	// --- acceptCall (the winning callee device) ---
 	acceptRes, err := f.router.onPhoneAcceptCall(f.calleeCtx(), &tg.PhoneAcceptCallRequest{
 		Peer:     tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
 		GB:       gb,
@@ -407,12 +410,14 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	if string(accepted.GB) != string(gb) {
 		t.Fatalf("accepted.g_b must be relayed verbatim")
 	}
-	// 协商优先 "9.0.0"（不是语义化最高）：DrKLO 视频 gate 是字符串字典序比较，
-	// "1x.0.0" < "2.7.7" 会关掉 Android 视频；见 app/phone preferredVersions。
+	// Negotiation prefers "9.0.0" (not the semantic highest): DrKLO's video gate compares strings
+	// lexicographically, so "1x.0.0" < "2.7.7" would turn off Android video; see app/phone
+	// preferredVersions.
 	if got := accepted.Protocol.LibraryVersions; len(got) != 1 || got[0] != "9.0.0" {
 		t.Fatalf("negotiated library_versions = %v, want preferred [9.0.0]", got)
 	}
-	// ⚠ P0-1：被叫其它设备必须收合成 phoneCallDiscarded（无 reason），绝不能是 accepted。
+	// ⚠ P0-1: the callee's other devices must receive a synthetic phoneCallDiscarded (no reason),
+	// never accepted.
 	stop, ok := phoneCallPayload(t, pushes[1]).(*tg.PhoneCallDiscarded)
 	if !ok || pushes[1].userID != f.callee.ID {
 		t.Fatalf("second accept push = %+v payload %T, want PhoneCallDiscarded to callee devices", pushes[1], phoneCallPayload(t, pushes[1]))
@@ -425,7 +430,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// --- confirmCall（主叫揭示 g_a） ---
+	// --- confirmCall (caller reveals g_a) ---
 	confirmRes, err := f.router.onPhoneConfirmCall(f.callerCtx(), &tg.PhoneConfirmCallRequest{
 		Peer:           tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
 		GA:             ga,
@@ -437,7 +442,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	callerView, ok := confirmRes.PhoneCall.(*tg.PhoneCall)
 	if !ok || string(callerView.GAOrB) != string(gb) {
-		t.Fatalf("confirm result = %T g_a_or_b mismatch, 主叫视角必须是 g_b", confirmRes.PhoneCall)
+		t.Fatalf("confirm result = %T g_a_or_b mismatch, the caller perspective must be g_b", confirmRes.PhoneCall)
 	}
 	if callerView.Connections == nil || len(callerView.Connections) != 0 {
 		t.Fatalf("P1 connections = %v, want empty non-nil", callerView.Connections)
@@ -451,11 +456,11 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	calleeView, ok := phoneCallPayload(t, pushes[0]).(*tg.PhoneCall)
 	if !ok || string(calleeView.GAOrB) != string(ga) || calleeView.KeyFingerprint != 0xCAFE {
-		t.Fatalf("callee confirm payload = %+v, 被叫视角必须是 g_a + fingerprint", calleeView)
+		t.Fatalf("callee confirm payload = %+v, the callee perspective must be g_a + fingerprint", calleeView)
 	}
 	f.sessions.reset()
 
-	// --- sendSignalingData 双向透传 ---
+	// --- sendSignalingData bidirectional passthrough ---
 	okSig, err := f.router.onPhoneSendSignalingData(f.callerCtx(), &tg.PhoneSendSignalingDataRequest{
 		Peer: tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
 		Data: []byte("sdp-offer"),
@@ -474,7 +479,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// --- discardCall（主叫挂断，duration 在 Confirmed 后被采纳） ---
+	// --- discardCall (caller hangs up; duration is adopted after Confirmed) ---
 	discardRes, err := f.router.onPhoneDiscardCall(f.callerCtx(), &tg.PhoneDiscardCallRequest{
 		Peer:     tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
 		Duration: 42,
@@ -503,7 +508,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// --- 终态尾包：信令静默吞掉、重复 discard 幂等 ---
+	// --- terminal tail packets: signaling silently swallowed, duplicate discard idempotent ---
 	if okSig, err := f.router.onPhoneSendSignalingData(f.calleeCtx(), &tg.PhoneSendSignalingDataRequest{
 		Peer: tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
 		Data: []byte("late"),
@@ -523,7 +528,7 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 		t.Fatalf("idempotent discard must not re-push")
 	}
 
-	// --- 评分/调试上报打发掉 ---
+	// --- rating/debug reports acknowledged ---
 	if _, err := f.router.onPhoneSetCallRating(f.callerCtx(), &tg.PhoneSetCallRatingRequest{
 		Peer: tg.InputPhoneCall{ID: callID, AccessHash: accessHash}, Rating: 5,
 	}); err != nil {
@@ -569,14 +574,14 @@ func TestPhoneCallRPCValidation(t *testing.T) {
 	f := newPhoneFixture(t, stubPrivacy{})
 	_, gaHash, gb := phoneTestKeys()
 
-	// 自呼。
+	// Self-call.
 	_, err := f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
 		UserID: &tg.InputUser{UserID: f.caller.ID, AccessHash: f.caller.AccessHash},
 		GAHash: gaHash, Protocol: phoneTestProtocol(),
 	})
 	assertPhoneRPCErr(t, err, "USER_ID_INVALID")
 
-	// 协议层级非法。
+	// Invalid protocol layer.
 	badProto := phoneTestProtocol()
 	badProto.MinLayer = 93
 	_, err = f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
@@ -585,14 +590,14 @@ func TestPhoneCallRPCValidation(t *testing.T) {
 	})
 	assertPhoneRPCErr(t, err, "CALL_PROTOCOL_LAYER_INVALID")
 
-	// g_a_hash 长度非法。
+	// Invalid g_a_hash length.
 	_, err = f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
 		UserID: &tg.InputUser{UserID: f.callee.ID, AccessHash: f.callee.AccessHash},
 		GAHash: []byte("short"), Protocol: phoneTestProtocol(),
 	})
 	assertPhoneRPCErr(t, err, "CALL_PROTOCOL_FLAGS_INVALID")
 
-	// 建一通合法通话供后续状态校验。
+	// Establish a valid call for the later state checks.
 	res, err := f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
 		UserID: &tg.InputUser{UserID: f.callee.ID, AccessHash: f.callee.AccessHash},
 		GAHash: gaHash, Protocol: phoneTestProtocol(), RandomID: 7,
@@ -604,17 +609,17 @@ func TestPhoneCallRPCValidation(t *testing.T) {
 	peer := tg.InputPhoneCall{ID: waiting.ID, AccessHash: waiting.AccessHash}
 	f.sessions.reset()
 
-	// 主叫不能 accept 自己发起的通话。
+	// The caller cannot accept a call they initiated.
 	_, err = f.router.onPhoneAcceptCall(f.callerCtx(), &tg.PhoneAcceptCallRequest{Peer: peer, GB: gb, Protocol: phoneTestProtocol()})
 	assertPhoneRPCErr(t, err, "CALL_PEER_INVALID")
 
-	// 信令超限。
+	// Signaling over the limit.
 	_, err = f.router.onPhoneSendSignalingData(f.callerCtx(), &tg.PhoneSendSignalingDataRequest{
 		Peer: peer, Data: make([]byte, 2048),
 	})
 	assertPhoneRPCErr(t, err, "DATA_INVALID")
 
-	// accept 后重复 accept。
+	// Duplicate accept after accept.
 	if _, err := f.router.onPhoneAcceptCall(f.calleeCtx(), &tg.PhoneAcceptCallRequest{Peer: peer, GB: gb, Protocol: phoneTestProtocol()}); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
@@ -622,7 +627,8 @@ func TestPhoneCallRPCValidation(t *testing.T) {
 	assertPhoneRPCErr(t, err, "CALL_ALREADY_ACCEPTED")
 	f.sessions.reset()
 
-	// g_a 与承诺不符：CALL_PEER_INVALID 且双方收到强制 discarded。
+	// g_a does not match the commitment: CALL_PEER_INVALID and both sides receive a forced
+	// discarded.
 	wrongGA := make([]byte, 256)
 	wrongGA[0] = 9
 	_, err = f.router.onPhoneConfirmCall(f.callerCtx(), &tg.PhoneConfirmCallRequest{Peer: peer, GA: wrongGA, KeyFingerprint: 1, Protocol: phoneTestProtocol()})
@@ -725,12 +731,13 @@ func TestMessagesGetDhConfig(t *testing.T) {
 		t.Fatalf("cached random length = %d, want 32", len(notModified.Random))
 	}
 
-	// 未登录 → 401。
+	// Not logged in -> 401.
 	_, err = f.router.onMessagesGetDhConfig(f.ctx, &tg.MessagesGetDhConfigRequest{Version: 0, RandomLength: 256})
 	assertPhoneRPCErr(t, err, "AUTH_KEY_UNREGISTERED")
 }
 
-// phoneTestClock 是可推进的测试时钟（fixedClock 不可变，dispatcher 测试需要推进）。
+// phoneTestClock is an advanceable test clock (fixedClock is immutable; dispatcher tests need to
+// advance).
 type phoneTestClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -751,7 +758,8 @@ func (c *phoneTestClock) Advance(d time.Duration) {
 func (c *phoneTestClock) Timer(d time.Duration) clock.Timer   { return clock.System.Timer(d) }
 func (c *phoneTestClock) Ticker(d time.Duration) clock.Ticker { return clock.System.Ticker(d) }
 
-// phoneCaptureMessages 只捕获 SendPrivateText；其余 MessagesService 方法不在通话链路使用。
+// phoneCaptureMessages captures only SendPrivateText; the other MessagesService methods are not used
+// on the call path.
 type phoneCaptureMessages struct {
 	MessagesService
 	mu   sync.Mutex
@@ -799,7 +807,7 @@ func newPhoneFixtureFull(t *testing.T, clk clock.Clock, messages *phoneCaptureMe
 	return f
 }
 
-// establishPhoneCall 把一通通话推进到 Confirmed，返回 peer 引用。
+// establishPhoneCall drives a call to Confirmed and returns the peer reference.
 func establishPhoneCall(t *testing.T, f *phoneFixture) tg.InputPhoneCall {
 	t.Helper()
 	ga, gaHash, gb := phoneTestKeys()
@@ -828,7 +836,7 @@ func TestPhoneCallDiscardWritesHistory(t *testing.T) {
 	f := newPhoneFixtureFull(t, clk, messages)
 	peer := establishPhoneCall(t, f)
 
-	// 被叫挂断：sender 仍须是主叫（AdminID）。
+	// Callee hangs up: the sender must still be the caller (AdminID).
 	if _, err := f.router.onPhoneDiscardCall(f.calleeCtx(), &tg.PhoneDiscardCallRequest{
 		Peer: peer, Duration: 17, Reason: &tg.PhoneCallDiscardReasonHangup{},
 	}); err != nil {
@@ -852,7 +860,7 @@ func TestPhoneCallDiscardWritesHistory(t *testing.T) {
 	if action == nil || action.CallID != peer.ID || action.Duration != 17 || action.Reason != string(domain.PhoneCallDiscardReasonHangup) {
 		t.Fatalf("history action = %+v", action)
 	}
-	// 幂等：重复 discard 不再落历史。
+	// Idempotent: a duplicate discard does not record history again.
 	if _, err := f.router.onPhoneDiscardCall(f.callerCtx(), &tg.PhoneDiscardCallRequest{Peer: peer}); err != nil {
 		t.Fatalf("idempotent discard: %v", err)
 	}
@@ -899,7 +907,7 @@ func TestPhoneExpiryDispatcherMissedCall(t *testing.T) {
 		} else if _, isMissed := reason.(*tg.PhoneCallDiscardReasonMissed); !isMissed {
 			t.Fatalf("expiry reason = %T, want missed", reason)
 		}
-		// dispatcher 推送不排除任何设备。
+		// The dispatcher push excludes no device.
 		if rec.excludeSession != 0 {
 			t.Fatalf("expiry push exclude = %d, want 0", rec.excludeSession)
 		}
@@ -919,8 +927,9 @@ func TestPhoneExpiryDispatcherPreservesConfirmedCallPastRingTimeout(t *testing.T
 	f := newPhoneFixtureFull(t, clk, messages)
 	peer := establishPhoneCall(t, f)
 
-	// 回归旧的 registry GC：2×RingTimeout 后触发 dispatcher 时，已建立通话
-	// 仍须可供后续 signaling/discard 寻址，不能返回 CALL_PEER_INVALID。
+	// Regression for the old registry GC: when the dispatcher fires after 2×RingTimeout, an
+	// established call must still be addressable for later signaling/discard, not return
+	// CALL_PEER_INVALID.
 	clk.Advance(181 * time.Second)
 	dispatcher := NewPhoneExpiryDispatcher(f.router, zaptest.NewLogger(t), time.Second)
 	dispatcher.DispatchOnce(f.ctx)
@@ -962,8 +971,9 @@ func TestPhoneExpiryDispatcherPreservesConfirmedCallPastRingTimeout(t *testing.T
 	}
 }
 
-// TestPhoneCallHistoryThroughRealPipeline 走真实 messages 管线（memory store）验证
-// 通话历史端到端：新 action kind 经媒体 JSONB 序列化、读路径 TL 转换后完整存活。
+// TestPhoneCallHistoryThroughRealPipeline uses the real messages pipeline (memory store) to verify
+// call history end to end: the new action kind survives media JSONB serialization and the read-path
+// TL conversion intact.
 func TestPhoneCallHistoryThroughRealPipeline(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -996,7 +1006,8 @@ func TestPhoneCallHistoryThroughRealPipeline(t *testing.T) {
 		t.Fatalf("discardCall: %v", err)
 	}
 
-	// 被叫视角读历史：服务消息存在且转换为 messageActionPhoneCall。
+	// Reading history from the callee perspective: the service message exists and is converted to
+	// messageActionPhoneCall.
 	list, err := router.deps.Messages.GetHistory(ctx, f.callee.ID, domain.MessageFilter{
 		HasPeer: true,
 		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.caller.ID},

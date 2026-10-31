@@ -286,8 +286,9 @@ func (r *Router) onMessagesGetDiscussionMessage(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, channelInvalidErr(err)
 	}
-	// 解析讨论帖/回复作者的 user/channel 实体（store 不填 Users），否则客户端拿不到
-	// 作者实体需额外 getUser 兜底。
+	// Resolve the discussion post/reply author's user/channel entities (the store
+	// does not fill Users); otherwise clients cannot get the author entity and
+	// need an extra getUser fallback.
 	discussion = r.enrichChannelDiscussion(ctx, userID, discussion)
 	return r.tgMessagesDiscussionMessage(ctx, userID, discussion), nil
 }
@@ -311,9 +312,12 @@ func (r *Router) onMessagesReadDiscussion(ctx context.Context, req *tg.MessagesR
 		return true, nil
 	}
 	now := int(r.clock.Now().Unix())
-	// forum 话题已读：req.MsgID 是话题 id，推进 per-topic 水位（不碰频道级，消除话题间已读串扰），
-	// 向自己其它设备下发 DiscussionInbox、向话题内发送者下发 DiscussionOutbox 回执。不经
-	// GetDiscussionMessage，避免话题根消息被裁剪/删除时整条已读 400（root 不存活不应阻塞标已读）。
+	// forum topic read: req.MsgID is the topic id; advance the per-topic watermark
+	// (leaving channel-level untouched, eliminating cross-talk between topics'
+	// read state), send DiscussionInbox to the user's other devices and
+	// DiscussionOutbox receipts to senders within the topic. It does not go
+	// through GetDiscussionMessage, so a trimmed/deleted topic root message does
+	// not 400 the whole read (a non-surviving root must not block marking read).
 	topicRes, terr := r.deps.Channels.ReadTopicHistory(ctx, userID, domain.ReadChannelTopicHistoryRequest{
 		UserID:    userID,
 		ChannelID: peer.ID,
@@ -328,7 +332,8 @@ func (r *Router) onMessagesReadDiscussion(ctx context.Context, req *tg.MessagesR
 			}
 			r.pushChannelDiscussionOutboxUpdates(ctx, peer.ID, topicRes.TopicID, topicRes.OutboxUpdates)
 		}
-		// 保守叠加：同时推进频道级 inbox 水位，保持 getDialogs/getPeerDialogs 会话总未读不退化。
+		// Conservative overlay: also advance the channel-level inbox watermark so
+		// the total unread of getDialogs/getPeerDialogs does not regress.
 		if read, rerr := r.deps.Channels.ReadHistory(ctx, userID, domain.ReadChannelHistoryRequest{
 			UserID:    userID,
 			ChannelID: peer.ID,
@@ -345,8 +350,9 @@ func (r *Router) onMessagesReadDiscussion(ctx context.Context, req *tg.MessagesR
 	if !errors.Is(terr, domain.ErrChannelForumMissing) {
 		return false, channelInvalidErr(terr)
 	}
-	// 非 forum（频道-讨论组 linked comments）：只解析 target/root/boundary，禁止为了一个
-	// 已读请求加载完整 discussion message、reply stats、reactions 与 unread aggregates。
+	// Non-forum (channel-discussion-group linked comments): only resolve
+	// target/root/boundary; never load a full discussion message, reply stats,
+	// reactions and unread aggregates just for a read request.
 	readChannelID := peer.ID
 	if provider, ok := r.deps.Channels.(interface {
 		ResolveDiscussionReadTarget(context.Context, int64, int64, int, int) (domain.ChannelDiscussionReadTarget, error)
@@ -454,9 +460,12 @@ func (r *Router) onMessagesGetMessages(ctx context.Context, ids []tg.InputMessag
 	return result, nil
 }
 
-// onMessagesGetRichMessage 返回单条消息的完整富文本（Layer 227 richMessage）。消息列表
-// 投影里已带 richMessage（tgMessage），本 RPC 是客户端按 (peer,id) 拉取完整富文本的入口。
-// Phase 1 仅私聊：按 box id 从请求者自己的消息盒取出并投影；频道侧富文本留 Phase 2。
+// onMessagesGetRichMessage returns the full rich text of a single message
+// (Layer 227 richMessage). The message list projection already carries
+// richMessage (tgMessage); this RPC is the client's entry point to fetch the full
+// rich text by (peer,id). Phase 1 is private chats only: fetch by box id from the
+// requester's own message box and project; channel-side rich text is left to
+// Phase 2.
 func (r *Router) onMessagesGetRichMessage(ctx context.Context, req *tg.MessagesGetRichMessageRequest) (tg.MessagesMessagesClass, error) {
 	if r.deps.Messages == nil || req.ID <= 0 || req.ID > domain.MaxMessageBoxID {
 		return &tg.MessagesMessages{}, nil
@@ -473,7 +482,8 @@ func (r *Router) onMessagesGetRichMessage(ctx context.Context, req *tg.MessagesG
 		return nil, err
 	}
 	if peer.Type == domain.PeerTypeChannel {
-		// 频道富文本留 Phase 2（channel_message 富文本列已备未接线）。
+		// Channel rich text left to Phase 2 (the channel_message rich-text column
+		// is prepared but not wired).
 		return &tg.MessagesMessages{}, nil
 	}
 	list, err := r.deps.Messages.GetMessages(ctx, userID, []int{req.ID})
@@ -703,7 +713,8 @@ func tgGlobalSearchMessages(viewerUserID int64, limit int, private domain.Messag
 	for _, hit := range hits {
 		messages = append(messages, hit.message)
 	}
-	// 全局搜索命中自己发的消息时 viewer 自己会出现在 users 里，须带 self 标志。
+	// When a global search hits a message the viewer sent, the viewer appears in
+	// users and must carry the self flag.
 	users := append(tgUsersForViewer(viewerUserID, private.Users), tgUsersForViewer(viewerUserID, channel.Users)...)
 	chats := tgChannels(viewerUserID, channel.Channels)
 	if hasMore {
@@ -905,8 +916,10 @@ func searchFilterNeedsMediaStore(filter tg.MessagesFilterClass) bool {
 	}
 }
 
-// mediaCategoriesForFilter 把客户端共享媒体标签页过滤器映射为媒体索引的基础类别并集。
-// 复合标签页(PhotoVideo / RoundVoice)映射为多个基础类别;返回 nil 表示该过滤器不走媒体索引。
+// mediaCategoriesForFilter maps a client shared-media tab filter to the union of
+// base media-index categories. Composite tabs (PhotoVideo / RoundVoice) map to
+// several base categories; returning nil means the filter does not use the media
+// index.
 func mediaCategoriesForFilter(filter tg.MessagesFilterClass) []domain.MediaCategory {
 	switch filter.(type) {
 	case *tg.InputMessagesFilterPhotos:

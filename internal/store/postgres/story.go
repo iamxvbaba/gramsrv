@@ -85,11 +85,12 @@ func storyPublicRepostVisiblePredicateFor(alias, viewerParam string) string {
 	return storyBaseVisiblePredicateFor(alias, viewerParam)
 }
 
-// storyForwardSourceTypeSQL / storyForwardSourceIDSQL 复刻 memory store 的 repost 源解析
-// （memory story.go effectiveForwardSource：forward.Source.ID != 0 用 Source，否则回退 From）。
-// 原 postgres 写法只在 Source 字段为空串时回退 From，但零值 Peer 的 Source.ID 会序列化成 "0"
-// （非空串），使「只设了 From 的 repost」被计成 source_id=0 → forwards_count/列表错位为 0，
-// 与 memory 行为漂移。两 store 必须一致：按 Source.ID 是否为 0 在 Source / From 间整体切换。
+// storyForwardSourceTypeSQL / storyForwardSourceIDSQL replicate the memory store's repost source
+// resolution (memory story.go effectiveForwardSource: use Source when forward.Source.ID != 0, otherwise fall back to From).
+// The original postgres code fell back to From only when the Source field was an empty string, but a
+// zero-value Peer's Source.ID serializes to "0" (a non-empty string), so a "repost with only From set"
+// was counted as source_id=0 -> forwards_count/list misaligned to 0, drifting from the memory behavior.
+// The two stores must agree: switch wholesale between Source / From based on whether Source.ID is 0.
 func storyForwardSourceTypeSQL(alias string) string {
 	return `(CASE WHEN COALESCE(NULLIF(` + alias + `.fwd_from->'Source'->>'ID', ''), '0')::bigint <> 0
         THEN ` + alias + `.fwd_from->'Source'->>'Type'
@@ -233,9 +234,11 @@ self_read AS (
     END
   RETURNING 1
 )
--- inserted 的列已是 storyReturningColumns（含 COALESCE 等表达式求值后的结果），外层不能再按
--- 原列名（如 privacy_rules）重复套表达式——那些列在 CTE 里是表达式结果而非原始列，会报
--- "column does not exist"。直接 SELECT * 取 CTE 行（顺序与 storyReturningColumns 一致，按位扫描）。
+-- the inserted columns are already storyReturningColumns (including the evaluated COALESCE and other
+-- expressions), so the outer query must not re-apply expressions under the original column names
+-- (e.g. privacy_rules) -- those columns in the CTE are expression results, not raw columns, and it
+-- would report "column does not exist". Just SELECT * from the CTE row (order matches
+-- storyReturningColumns, scanned positionally).
 SELECT * FROM inserted`,
 			string(req.Owner.Type), req.Owner.ID, req.RandomID, int32(req.Date), int32(req.Date+req.Period),
 			req.Pinned, req.Public, req.CloseFriends, req.Contacts, req.SelectedContacts,

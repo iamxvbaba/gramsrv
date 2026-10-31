@@ -1,16 +1,16 @@
--- Удалённый аккаунт больше не отдаёт свои идентичности.
+-- A deleted account no longer gives out its identities.
 --
--- 0217/ExecuteAccountDeletion раньше просто удалял editable-строку из
--- peer_usernames, из-за чего обычный username удалённого аккаунта освобождался
--- для всех, а collectible (NFT) username оставался закреплён за призраком.
--- Теперь удаление гасит editable-слот (строка остаётся, но active=false: имя
--- занято навсегда и никому не резолвится) и возвращает NFT-юзернеймы в хранилище
--- (status='vault' — актив остаётся, его можно перевыпустить).
+-- 0217/ExecuteAccountDeletion previously simply deleted the editable row from
+-- peer_usernames, which freed a deleted account's ordinary username for everyone
+-- while a collectible (NFT) username stayed pinned to a ghost. Now deletion retires
+-- the editable slot (the row remains but active=false: the name is taken forever
+-- and resolves for nobody) and returns NFT usernames to the vault (status='vault'
+-- -- the asset remains and can be reissued).
 --
--- Миграция догоняет аккаунты, удалённые до этого изменения: vault для
--- collectible-активов с записью 'revoke' в журнале происхождения, погашение
--- registry-строк и деактивация профильных фото. Ровно тот же набор операций, что
--- теперь делает ExecuteAccountDeletion в одной транзакции.
+-- The migration catches up accounts deleted before this change: vaulting
+-- collectible assets with a 'revoke' entry in the provenance journal, retiring
+-- registry rows and deactivating profile photos. Exactly the same set of operations
+-- that ExecuteAccountDeletion now performs in one transaction.
 
 WITH previous AS MATERIALIZED (
  SELECT asset.id, asset.owner_peer_id FROM public.collectible_usernames asset
@@ -47,8 +47,8 @@ SELECT vaulted.id,
        now()
 FROM vaulted;
 
--- Registry-строки collectible-юзернеймов снимаются: имя перестаёт резолвиться в
--- удалённый аккаунт (в том числе collectible-резолв, который требует active).
+-- Registry rows of collectible usernames are removed: the name no longer resolves
+-- to a deleted account (including collectible resolution, which requires active).
 DELETE FROM public.peer_usernames
 WHERE peer_type = 'user'
   AND collectible_id IS NOT NULL
@@ -59,8 +59,8 @@ WHERE peer_type = 'user'
         AND owner.deleted_at IS NOT NULL
   );
 
--- Оставшиеся слоты (уже погашенные, но всё ещё активные — например если слот был
--- перезаписан до удаления) окончательно гасятся: имя занято навсегда.
+-- Remaining slots (already retired but still active -- e.g. if the slot was
+-- overwritten before deletion) are retired for good: the name is taken forever.
 UPDATE public.peer_usernames
 SET active = false,
     updated_at = now()
@@ -73,8 +73,8 @@ WHERE peer_type = 'user'
         AND owner.deleted_at IS NOT NULL
   );
 
--- Аватар удалённого аккаунта не должен проецироваться ни в одном виде; строки
--- сохраняются (blob'ы остаются в файловом хранилище), но перестают быть активными.
+-- A deleted account's avatar must not be projected in any form; the rows are kept
+-- (the blobs remain in file storage) but stop being active.
 UPDATE public.profile_photos
 SET active = false
 WHERE owner_peer_type = 'user'

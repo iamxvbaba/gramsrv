@@ -14,7 +14,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 客户端可识别的业务错误；rpc 层映射为对应 RPC_ERROR（CALL_* 等）。
+// Business errors recognizable by clients; the rpc layer maps them to the corresponding RPC_ERROR (CALL_*, etc.).
 var (
 	ErrPeerInvalid                = errors.New("phone: call peer invalid")
 	ErrAlreadyAccepted            = errors.New("phone: call already accepted")
@@ -23,32 +23,33 @@ var (
 	ErrProtocolLayerInvalid       = errors.New("phone: protocol layer invalid")
 	ErrProtocolCompatLayerInvalid = errors.New("phone: protocol compat layer invalid")
 	ErrProtocolFlagsInvalid       = errors.New("phone: protocol flags invalid")
-	// ErrGAHashMismatch：confirmCall 揭示的 g_a 与 requestCall 承诺的 SHA256 不符。
-	// 服务端同时把通话强制置为 discarded(disconnect)，防止攻击者卡死状态机。
+	// ErrGAHashMismatch: the g_a revealed by confirmCall does not match the SHA256 committed
+	// by requestCall. The server also forces the call into discarded(disconnect), preventing an
+	// attacker from wedging the state machine.
 	ErrGAHashMismatch = errors.New("phone: g_a does not match committed hash")
 )
 
-// minSupportedLayer 是 libtgvoip/tgcalls 的最低协议层（TDesktop kMinLayer、
-// DrKLO VoIPService.CALL_MIN_LAYER 均为 65）。
+// minSupportedLayer is the minimum protocol layer of libtgvoip/tgcalls (both TDesktop
+// kMinLayer and DrKLO VoIPService.CALL_MIN_LAYER are 65).
 const minSupportedLayer = 65
 
 const (
 	gaHashSize = sha256.Size // 32
-	dhPubSize  = 256         // g_a / g_b 都是 2048-bit
+	dhPubSize  = 256         // g_a / g_b are both 2048-bit
 )
 
-// Config 是通话服务的运行参数。
+// Config holds the runtime parameters of the call service.
 type Config struct {
-	// RingTimeout 是服务端兜底超时（与下发给客户端的 callRingTimeoutMs 同源，默认 90s）。
+	// RingTimeout is the server-side fallback timeout (same source as the callRingTimeoutMs sent to the client, default 90s).
 	RingTimeout time.Duration
-	// TombstoneTTL 是终态 tombstone 保留期（吸收双方同时挂断/晚到 RPC 的幂等窗口）。
+	// TombstoneTTL is the retention period of terminal tombstones (the idempotency window absorbing simultaneous hangups / late RPCs).
 	TombstoneTTL time.Duration
-	// MaxActivePerUser 是单用户并发非终态通话上限（防呼叫轰炸自锁）。
+	// MaxActivePerUser is the cap on concurrent non-terminal calls per user (prevents call-flooding self-lock).
 	MaxActivePerUser int
-	// MaxRegistryEntries 是进程内 registry 的硬上限。达到上限时拒绝新通话，
-	// 不驱逐可能仍在进行的 Confirmed 通话。
+	// MaxRegistryEntries is the hard cap of the in-process registry. When reached, new calls
+	// are rejected; Confirmed calls that may still be in progress are not evicted.
 	MaxRegistryEntries int
-	// SignalingRatePerSecond 是单通话每秒信令转发上限；超限静默丢弃（不破坏客户端状态机）。
+	// SignalingRatePerSecond is the per-call signaling forwarding cap per second; over-limit packets are silently dropped (without breaking the client state machine).
 	SignalingRatePerSecond int
 }
 
@@ -71,22 +72,22 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// Service 实现私聊通话信令状态机。所有方法返回的 domain.PhoneCall 都是当时快照。
+// Service implements the private call signaling state machine. Every domain.PhoneCall returned by its methods is a snapshot at that moment.
 type Service struct {
 	cfg Config
 	clk clock.Clock
 	reg *registry
 }
 
-// Option 配置 Service。
+// Option configures Service.
 type Option func(*Service)
 
-// WithClock 注入测试时钟。
+// WithClock injects a test clock.
 func WithClock(clk clock.Clock) Option {
 	return func(s *Service) { s.clk = clk }
 }
 
-// NewService 创建通话服务。
+// NewService creates the call service.
 func NewService(cfg Config, opts ...Option) *Service {
 	s := &Service{cfg: cfg.withDefaults(), clk: clock.System, reg: newRegistry()}
 	for _, opt := range opts {
@@ -95,8 +96,9 @@ func NewService(cfg Config, opts ...Option) *Service {
 	return s
 }
 
-// RequestCall 受理主叫请求：校验协议与配额、(callerID, randomID) 幂等去重、建档。
-// 隐私/拉黑/目标用户合法性由 rpc 层先行校验。
+// RequestCall accepts a caller request: validates the protocol and quota, idempotently
+// dedups by (callerID, randomID), and creates the record. Privacy/blocking/target-user
+// validity are checked first by the rpc layer.
 func (s *Service) RequestCall(ctx context.Context, callerID int64, in domain.PhoneCallRequest) (domain.PhoneCall, error) {
 	if err := validateProtocol(in.Protocol); err != nil {
 		return domain.PhoneCall{}, err
@@ -111,7 +113,7 @@ func (s *Service) RequestCall(ctx context.Context, callerID int64, in domain.Pho
 	defer s.reg.mu.Unlock()
 	s.reg.sweepTombstonesLocked(nowUnix, int64(s.cfg.TombstoneTTL/time.Second))
 
-	// 幂等：同一 (callerID, randomID) 的未终结通话直接返回快照，吸收客户端重试。
+	// Idempotent: an unterminated call with the same (callerID, randomID) returns the snapshot directly, absorbing client retries.
 	key := randomKey{callerID: callerID, randomID: in.RandomID}
 	if id, ok := s.reg.byRandom[key]; ok {
 		if e, ok := s.reg.byID[id]; ok && !e.call.Terminal() {
@@ -155,8 +157,9 @@ func (s *Service) RequestCall(ctx context.Context, callerID int64, in domain.Pho
 	return call, nil
 }
 
-// ReceivedCall 标记被叫设备已收到来电。首次（Requested→Ringing）返回 transitioned=true，
-// 其余状态幂等成功（多设备各自上报、晚到无害）。
+// ReceivedCall marks that the callee device has received the incoming call. The first call
+// (Requested→Ringing) returns transitioned=true; other states succeed idempotently (multiple
+// devices each report, and late arrivals are harmless).
 func (s *Service) ReceivedCall(ctx context.Context, userID, callID, accessHash int64) (domain.PhoneCall, bool, error) {
 	s.reg.mu.Lock()
 	defer s.reg.mu.Unlock()
@@ -165,7 +168,7 @@ func (s *Service) ReceivedCall(ctx context.Context, userID, callID, accessHash i
 		return domain.PhoneCall{}, false, err
 	}
 	if userID != e.call.ParticipantID {
-		// receivedCall 只能由被叫上报。
+		// receivedCall can only be reported by the callee.
 		return domain.PhoneCall{}, false, ErrPeerInvalid
 	}
 	if e.call.State == domain.PhoneCallStateRequested {
@@ -176,8 +179,9 @@ func (s *Service) ReceivedCall(ctx context.Context, userID, callID, accessHash i
 	return e.call, false, nil
 }
 
-// AcceptCall 受理被叫接听。多设备并发竞争由 registry 锁串行化：首个完成迁移者赢，
-// 后到者收 ErrAlreadyAccepted（其 UI 自行收场）。
+// AcceptCall accepts the callee answering. Concurrent races across devices are serialized
+// by the registry lock: the first to complete the transition wins, and later ones get
+// ErrAlreadyAccepted (their UI cleans up on its own).
 func (s *Service) AcceptCall(ctx context.Context, userID, callID, accessHash int64, gb []byte, proto domain.PhoneCallProtocol, device domain.SessionRef) (domain.PhoneCall, error) {
 	if err := validateProtocol(proto); err != nil {
 		return domain.PhoneCall{}, err
@@ -196,7 +200,7 @@ func (s *Service) AcceptCall(ctx context.Context, userID, callID, accessHash int
 	}
 	switch e.call.State {
 	case domain.PhoneCallStateRequested, domain.PhoneCallStateRinging:
-		// 合法路径；未 receivedCall 直接 accept 也允许。
+		// Valid path; accepting directly without receivedCall is also allowed.
 	case domain.PhoneCallStateAccepted, domain.PhoneCallStateConfirmed:
 		return domain.PhoneCall{}, ErrAlreadyAccepted
 	case domain.PhoneCallStateDiscarded:
@@ -211,13 +215,14 @@ func (s *Service) AcceptCall(ctx context.Context, userID, callID, accessHash int
 	e.call.Protocol = negotiated
 	e.call.CalleeDevice = device
 	e.call.State = domain.PhoneCallStateAccepted
-	// 不解除超时：同一只表继续走，主叫永不 confirm 时由兜底超时收尾。
+	// The timeout is not lifted: the same timer keeps running, and if the caller never confirms, the fallback timeout closes it out.
 	return e.call, nil
 }
 
-// ConfirmCall 受理主叫确认：核验 SHA256(g_a) 与承诺一致后进入 Confirmed。
-// 核验失败时通话被强制置为 discarded(disconnect)，返回 (终态快照, true, ErrGAHashMismatch)，
-// 调用方须把终态推送给双方。
+// ConfirmCall accepts the caller's confirmation: after verifying SHA256(g_a) matches the
+// commitment it enters Confirmed. On verification failure the call is forced into
+// discarded(disconnect), returning (terminal snapshot, true, ErrGAHashMismatch); the caller
+// must push the terminal state to both sides.
 func (s *Service) ConfirmCall(ctx context.Context, userID, callID, accessHash int64, ga []byte, keyFingerprint int64, proto domain.PhoneCallProtocol) (domain.PhoneCall, bool, error) {
 	s.reg.mu.Lock()
 	defer s.reg.mu.Unlock()
@@ -234,11 +239,12 @@ func (s *Service) ConfirmCall(ctx context.Context, userID, callID, accessHash in
 		return domain.PhoneCall{}, false, ErrAlreadyAccepted
 	case domain.PhoneCallStateDiscarded:
 		return domain.PhoneCall{}, false, ErrAlreadyDeclined
-	default: // Requested / Ringing：被叫尚未 accept，confirm 非法。
+	default: // Requested / Ringing: the callee has not accepted yet, so confirm is illegal.
 		return domain.PhoneCall{}, false, ErrPeerInvalid
 	}
-	// confirmCall 携带的第三份 protocol 仅校验合法性，不改 accept 时的协商结果
-	//（官方语义：协商在 accept 完成，confirm 的 protocol 是回显）。
+	// The third protocol carried by confirmCall is only validated for legality and does not
+	// change the negotiation result from accept (official semantics: negotiation completes at
+	// accept, and confirm's protocol is an echo).
 	if err := validateProtocol(proto); err != nil {
 		return domain.PhoneCall{}, false, err
 	}
@@ -250,16 +256,18 @@ func (s *Service) ConfirmCall(ctx context.Context, userID, callID, accessHash in
 	e.call.GA = append([]byte(nil), ga...)
 	e.call.KeyFingerprint = keyFingerprint
 	e.call.StartDate = int(s.clk.Now().Unix())
-	// p2p_allowed = 双方 protocol 都允许 P2P ∧ phone_p2p 隐私双向放行（P3 起
-	// PrivacyP2P 由 rpc 层算定，强制 relay 时也走它置 false）。false 时 tgcalls
-	// 只用 relay candidates——前提是 connections 里有可用 TURN。
+	// p2p_allowed = both protocols allow P2P ∧ phone_p2p privacy allows it in both
+	// directions (since P3, PrivacyP2P is computed by the rpc layer, and forced relay also
+	// sets it false through that). When false, tgcalls uses only relay candidates — provided a
+	// usable TURN exists in connections.
 	e.call.P2PAllowed = e.call.CallerProtocol.UDPP2P && e.call.CalleeProtocol.UDPP2P && e.call.PrivacyP2P
 	e.call.State = domain.PhoneCallStateConfirmed
 	return e.call, false, nil
 }
 
-// DiscardCall 挂断：任意非终态可达，幂等。already=true 表示通话此前已是终态
-// （双方同时挂断：先到者定 reason，后到者拿快照）。
+// DiscardCall hangs up: reachable from any non-terminal state, idempotent. already=true
+// means the call was already terminal (simultaneous hangups: the first sets the reason, the
+// later one gets the snapshot).
 func (s *Service) DiscardCall(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, duration int) (domain.PhoneCall, bool, error) {
 	return s.DiscardCallWithSlug(ctx, userID, callID, accessHash, reason, "", duration)
 }
@@ -283,7 +291,7 @@ func (s *Service) DiscardCallWithSlug(ctx context.Context, userID, callID, acces
 	if reason != domain.PhoneCallDiscardReasonMigrateConference {
 		reasonSlug = ""
 	}
-	// duration 只在通话真正建立（Confirmed）后才认，防止客户端把振铃时长报成通话时长。
+	// duration is only recognized once the call is actually established (Confirmed), preventing the client from reporting the ringing time as call duration.
 	if e.call.StartDate == 0 || duration < 0 {
 		duration = 0
 	}
@@ -291,10 +299,11 @@ func (s *Service) DiscardCallWithSlug(ctx context.Context, userID, callID, acces
 	return e.call, false, nil
 }
 
-// ExpireDue 把超时的非终态通话迁入终态并返回快照（调用方负责推送与落历史）：
-// Requested/Ringing 超时 → missed（即「未接来电」来源）；Accepted 悬挂（主叫
-// 永不 confirm）→ disconnect。Confirmed 通话没有服务端时长上限，不在此回收。
-// 顺带做 tombstone GC。
+// ExpireDue moves timed-out non-terminal calls into a terminal state and returns snapshots
+// (the caller is responsible for pushing and persisting history): Requested/Ringing timeout →
+// missed (the source of "missed call"); a dangling Accepted (caller never confirms) →
+// disconnect. Confirmed calls have no server-side duration limit and are not reclaimed here.
+// It also does tombstone GC along the way.
 func (s *Service) ExpireDue(ctx context.Context, now time.Time) []domain.PhoneCall {
 	nowUnix := now.Unix()
 	ringSec := int64(s.cfg.RingTimeout / time.Second)
@@ -319,10 +328,12 @@ func (s *Service) ExpireDue(ctx context.Context, now time.Time) []domain.PhoneCa
 	return expired
 }
 
-// Signal 校验并串行转发一条信令。forward 在该通话专属的信令顺序锁内执行
-// （保证转发顺序与受理顺序一致），状态锁不跨 forward 持有。peerDevice 是对端
-// 受理设备锚点（可能为零值/已失效），仅作定向推送 fast-path 提示。
-// drop=true 表示按契约静默吞掉（tombstone 尾包 / 超过速率上限），调用方应返回成功。
+// Signal validates and serially forwards one piece of signaling. forward runs inside the
+// call-specific signaling order lock (guaranteeing the forwarding order matches the receipt
+// order); the state lock is not held across forward. peerDevice is the peer's receiving-device
+// anchor (may be zero/stale) and only serves as a targeted-push fast-path hint. drop=true
+// means it is silently swallowed per contract (tombstone tail packet / over the rate cap),
+// and the caller should return success.
 func (s *Service) Signal(ctx context.Context, userID, callID, accessHash int64, forward func(peerUserID int64, peerDevice domain.SessionRef)) (drop bool, err error) {
 	s.reg.mu.Lock()
 	e, lookupErr := s.lookupLocked(callID, accessHash)
@@ -344,10 +355,11 @@ func (s *Service) Signal(ctx context.Context, userID, callID, accessHash int64, 
 
 	switch state {
 	case domain.PhoneCallStateAccepted, domain.PhoneCallStateConfirmed:
-		// 可转发。DrKLO 在 confirm 前后都可能发信令，Accepted 即放行。
+		// Forwardable. DrKLO may send signaling before or after confirm, so Accepted is let through.
 	case domain.PhoneCallStateDiscarded:
-		// 挂断瞬间的尾包：返回错误会让 TDesktop 把正常挂断渲染成「通话失败」
-		//（其 sendSignalingData 的 .done 校验 mtpIsTrue），静默丢弃。
+		// Tail packet at the moment of hangup: returning an error would make TDesktop render a
+		// normal hangup as "call failed" (its sendSignalingData's .done checks mtpIsTrue), so
+		// it is silently dropped.
 		return true, nil
 	default:
 		return false, ErrPeerInvalid
@@ -368,7 +380,7 @@ func (s *Service) Signal(ctx context.Context, userID, callID, accessHash int64, 
 	return false, nil
 }
 
-// Lookup 返回通话快照（rpc 层宽容校验 setCallRating/saveCallDebug 等晚到请求用）。
+// Lookup returns a call snapshot (used by the rpc layer's lenient checks for late requests such as setCallRating/saveCallDebug).
 func (s *Service) Lookup(ctx context.Context, callID, accessHash int64) (domain.PhoneCall, bool) {
 	s.reg.mu.Lock()
 	defer s.reg.mu.Unlock()
@@ -403,9 +415,11 @@ func validateProtocol(p domain.PhoneCallProtocol) error {
 	return nil
 }
 
-// negotiateProtocol 在 accept 时合并双方 protocol（官方语义：服务端只回「最优」单值
-// library version）。版本无交集时透传被叫列表（被叫是先实例化 tgcalls 的一方，
-// 主叫侧有 kDefaultVersion 兜底）——绝不因版本差异拒绝通话。
+// negotiateProtocol merges both protocols at accept (official semantics: the server returns
+// only the single "best" library version). When the versions do not intersect it passes
+// through the callee's list (the callee is the side that instantiates tgcalls first, and the
+// caller side has kDefaultVersion as a fallback) — it never rejects a call over a version
+// difference.
 func negotiateProtocol(caller, callee domain.PhoneCallProtocol) (domain.PhoneCallProtocol, error) {
 	out := domain.PhoneCallProtocol{
 		UDPP2P:       caller.UDPP2P && callee.UDPP2P,
@@ -424,19 +438,23 @@ func negotiateProtocol(caller, callee domain.PhoneCallProtocol) (domain.PhoneCal
 	return out, nil
 }
 
-// preferredVersions 是交集命中时的优先选择序（读客户端源码定下的硬约束）：
-//   - "9.0.0"=InstanceV2Impl+V2 消息级信令，TDesktop 与 DrKLO 注册表都有，最稳；
-//   - ⚠ 绝不能选 "10.0.0"/"11.0.0"/"12.0.0"/"13.0.0" 当 [0]：DrKLO 的视频可用性
-//     判断是 `"2.7.7".compareTo(versions[0]) <= 0` 的**字符串字典序**比较
-//     （VoIPService.java:3464），"1x.0.0" 字典序小于 "2.7.7" 会让 Android 直接
-//     销毁摄像头采集（视频通话黑屏）；"12/13" 还是 V3 SCTP-over-signaling，
-//     对服务端信令限速不友好；
-//   - 也绝不能选 "2.7.7"/"5.0.0"/"2.4.4"：legacy 实现依赖我们不下发的
-//     reflector endpoints，无路可走。
+// preferredVersions is the priority order when the intersection hits (a hard constraint
+// derived from reading client source):
+//   - "9.0.0"=InstanceV2Impl+V2 message-level signaling, present in both the TDesktop and
+//     DrKLO registries, the most stable;
+//   - ⚠ Never choose "10.0.0"/"11.0.0"/"12.0.0"/"13.0.0" as [0]: DrKLO's video availability
+//     check is a **string lexicographic** comparison of
+//     `"2.7.7".compareTo(versions[0]) <= 0` (VoIPService.java:3464); "1x.0.0" being
+//     lexicographically less than "2.7.7" makes Android tear down the camera capture
+//     outright (black video call); "12/13" are also V3 SCTP-over-signaling, which is
+//     unfriendly to server-side signaling rate limiting;
+//   - Never choose "2.7.7"/"5.0.0"/"2.4.4" either: the legacy implementation depends on
+//     reflector endpoints we do not send, leaving no path.
 var preferredVersions = []string{"9.0.0", "8.0.0", "7.0.0"}
 
-// bestCommonVersion 取两侧版本集合交集：优先 preferredVersions 顺位命中，
-// 否则退化为语义化最高者（容忍未来未知版本集）。
+// bestCommonVersion takes the intersection of both version sets: it prefers a hit in
+// preferredVersions order, otherwise it falls back to the semantically highest (tolerating
+// future unknown version sets).
 func bestCommonVersion(a, b []string) (string, bool) {
 	inB := make(map[string]struct{}, len(b))
 	for _, v := range b {
@@ -462,7 +480,7 @@ func bestCommonVersion(a, b []string) (string, bool) {
 	return best, found
 }
 
-// compareVersion 按点分十进制比较（"9.0.0" < "10.0.0"）；非数字段退化为字符串比较。
+// compareVersion compares dot-separated decimal components ("9.0.0" < "10.0.0"); a non-numeric component falls back to string comparison.
 func compareVersion(a, b string) int {
 	as, bs := strings.Split(a, "."), strings.Split(b, ".")
 	for i := 0; i < len(as) || i < len(bs); i++ {

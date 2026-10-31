@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// UserStore 是 store.UserStore 的内存实现。ID 与 PG identity 使用同一业务起点。
+// UserStore is the in-memory implementation of store.UserStore. Its ID uses the same business starting point as the PG identity.
 type UserStore struct {
 	mu               sync.RWMutex
 	byID             map[int64]domain.User
@@ -19,8 +19,8 @@ type UserStore struct {
 	usernameRegistry *CollectibleUsernameStore
 }
 
-// NewUserStore 创建内存 UserStore。内置系统账号
-// 预置进表，与 postgres 的迁移种子保持双 store 行为一致。
+// NewUserStore creates an in-memory UserStore. The built-in system accounts are
+// pre-populated, matching postgres migration seeds so both stores behave the same.
 func NewUserStore() *UserStore {
 	s := &UserStore{byID: make(map[int64]domain.User), nextID: domain.UserIDSequenceBase}
 	for _, id := range domain.SystemUserIDs() {
@@ -70,7 +70,7 @@ func (s *UserStore) ByIDs(_ context.Context, ids []int64) ([]domain.User, error)
 }
 
 func (s *UserStore) ByPhone(_ context.Context, phone string) (domain.User, bool, error) {
-	// bot/系统账号 phone 可为空串，空查询必须判未找到（与 postgres 行为一致）。
+	// A bot/system account phone may be an empty string, so an empty query must report not-found (matching postgres behavior).
 	if phone == "" {
 		return domain.User{}, false, nil
 	}
@@ -270,8 +270,8 @@ func (s *UserStore) UpdatePersonalChannel(_ context.Context, userID int64, chann
 	return u, nil
 }
 
-// bumpBotInfoVersion 递增 bot 的 bot_info_version（仅 bot 行），返回新值。供同包
-// BotStore 元数据更新调用，与 postgres 的事务内 bump 对齐。
+// bumpBotInfoVersion increments the bot's bot_info_version (bot rows only) and returns the new
+// value. It is called by same-package BotStore metadata updates, aligning with postgres' in-transaction bump.
 func (s *UserStore) bumpBotInfoVersion(userID int64) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,7 +284,7 @@ func (s *UserStore) bumpBotInfoVersion(userID int64) (int, bool) {
 	return u.BotInfoVersion, true
 }
 
-// updateBotProfile 部分更新 bot 的 first_name/about（setBotInfo 的 name/about）。
+// updateBotProfile partially updates the bot's first_name/about (name/about of setBotInfo).
 func (s *UserStore) updateBotProfile(userID int64, setName bool, name string, setAbout bool, about string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -302,7 +302,7 @@ func (s *UserStore) updateBotProfile(userID int64, setName bool, name string, se
 	return true
 }
 
-// SetPremiumUntil 把会员到期时间设为绝对 Unix 秒（0 = 清除会员）。
+// SetPremiumUntil sets the Premium expiry to an absolute Unix second (0 = clear Premium).
 func (s *UserStore) SetPremiumUntil(_ context.Context, userID int64, until int) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,7 +318,7 @@ func (s *UserStore) SetPremiumUntil(_ context.Context, userID int64, until int) 
 	return u, nil
 }
 
-// SetVerified 设置/取消用户认证标记。
+// SetVerified sets/clears the user's verified flag.
 func (s *UserStore) SetVerified(_ context.Context, userID int64, verified bool) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -331,7 +331,7 @@ func (s *UserStore) SetVerified(_ context.Context, userID int64, verified bool) 
 	return u, nil
 }
 
-// SetSupport 设置/取消用户的 support 标记（与 postgres 语义一致）。
+// SetSupport sets/clears the user's support flag (matching postgres semantics).
 func (s *UserStore) SetSupport(_ context.Context, userID int64, support bool) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -344,7 +344,7 @@ func (s *UserStore) SetSupport(_ context.Context, userID int64, support bool) (d
 	return u, nil
 }
 
-// SetScamFake 设置/取消用户的 scam 与 fake 标记（与 postgres 语义一致）。
+// SetScamFake sets/clears the user's scam and fake flags (matching postgres semantics).
 func (s *UserStore) SetScamFake(_ context.Context, userID int64, scam, fake bool) (domain.User, error) {
 	if scam && fake {
 		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
@@ -361,7 +361,7 @@ func (s *UserStore) SetScamFake(_ context.Context, userID int64, scam, fake bool
 	return u, nil
 }
 
-// SweepExpiredPremium 清空到期会员行并返回清理后的用户（与 postgres 语义一致）。
+// SweepExpiredPremium clears expired Premium rows and returns the cleaned-up users (matching postgres semantics).
 func (s *UserStore) SweepExpiredPremium(_ context.Context, now int64, limit int) ([]domain.User, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -384,7 +384,7 @@ func (s *UserStore) SweepExpiredPremium(_ context.Context, now int64, limit int)
 	return out, nil
 }
 
-// UpdateEmojiStatus 更新用户自定义 emoji status（零值表示清除）。
+// UpdateEmojiStatus updates the user's custom emoji status (a zero value clears it).
 func (s *UserStore) UpdateEmojiStatus(_ context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

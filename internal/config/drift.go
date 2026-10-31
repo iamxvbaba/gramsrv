@@ -1,17 +1,22 @@
 package config
 
-// 本文件做 .env 与 .env.example 的启动期比对（配置漂移报告），只读、不写回：
+// This file performs a startup-time comparison of .env against .env.example (the
+// config drift report). It is read-only and never writes back:
 //
-//   - Missing（.env.example 有、.env 与进程环境都没有）：这些设置此刻正跑在代码
-//     默认值上，多数是刻意的（可选项本来就不填），但「新版本加了配置、.env 还是
-//     旧的」这类遗漏也藏在这里，所以只报 INFO。
-//   - Unknown（.env 有、.env.example 没有）：几乎必然是键名笔误或模板滞后——
-//     readEnvFile 接受任何 TELESRV_* 键名，而 Load 只查询自己认识的键，笔误值
-//     会被静默忽略，服务照常带着默认值启动。这类要报 WARN。
+//   - Missing (.env.example has it, neither .env nor the process environment does):
+//     these settings are currently running on the code defaults. Most are intentional
+//     (optional items are simply left unset), but omissions like "a new version added
+//     a setting while .env stayed old" hide here too, so this is only reported at INFO.
+//   - Unknown (.env has it, .env.example doesn't): almost always a key typo or a stale
+//     template -- readEnvFile accepts any TELESRV_* key name, while Load only queries
+//     keys it knows, so a typo'd value is silently ignored and the service starts on
+//     defaults as usual. This is reported at WARN.
 //
-// 比对在 config.Load 成功之后调用（cmd/telesrv/main.go），因此 .env 本身已通过
-// readEnvFile 的校验。绝不自动改写 .env：容器是 read-only rootfs，且生产配置
-// 常走进程环境而非文件；静默改动运维的配置文件比漏报更糟。
+// The comparison is called after config.Load succeeds (cmd/telesrv/main.go), so .env
+// itself has already passed readEnvFile's validation. .env is never rewritten
+// automatically: the container uses a read-only rootfs, and production config often
+// comes from the process environment rather than a file; silently changing the
+// operator's config file is worse than under-reporting.
 
 import (
 	"fmt"
@@ -22,26 +27,31 @@ import (
 )
 
 var (
-	// driftActiveKeyRe / driftCommentedKeyRe 与 procctl 的字段正则同义：模板里
-	// 的字段行要么是激活的 `K=V`，要么是注释掉的可选字段 `# K=V`。
+	// driftActiveKeyRe / driftCommentedKeyRe are equivalent to procctl's field regexes:
+	// a field line in the template is either active `K=V` or a commented-out optional
+	// field `# K=V`.
 	driftActiveKeyRe    = regexp.MustCompile(`^(?:export\s+)?(TELESRV_[A-Z0-9_]+)\s*=`)
 	driftCommentedKeyRe = regexp.MustCompile(`^#\s*(?:export\s+)?(TELESRV_[A-Z0-9_]+)\s*=`)
 )
 
-// EnvDrift 是 .env 相对 .env.example 的差异报告，键保持模板/文件各自的出现顺序。
+// EnvDrift is the report of how .env differs from .env.example; keys keep the
+// order in which they appear in the template/file.
 type EnvDrift struct {
-	// ConfigPath 是被比对的配置文件（TELESRV_CONFIG 或默认 .env）。
+	// ConfigPath is the compared config file (TELESRV_CONFIG or the default .env).
 	ConfigPath string
-	// ExamplePath 是模板文件路径。
+	// ExamplePath is the template file path.
 	ExamplePath string
-	// Missing 在 .env.example 中声明、但 .env 与进程环境都没给出的键。
+	// Missing lists keys declared in .env.example but given by neither .env nor the
+	// process environment.
 	Missing []string
-	// Unknown 在 .env 中出现、但 .env.example 未收录的键（笔误或模板滞后）。
+	// Unknown lists keys present in .env but not covered by .env.example (typo or
+	// stale template).
 	Unknown []string
 }
 
-// DetectEnvDrift 按 Load 相同的规则定位配置文件并比对它与 <配置文件>.example。
-// 模板不存在时返回零值且不报错——生产镜像不带 .env.example，属预期情况。
+// DetectEnvDrift locates the config file by the same rules as Load and compares it
+// with <config file>.example. A missing template returns the zero value without an
+// error -- production images carry no .env.example, which is expected.
 func DetectEnvDrift() (EnvDrift, error) {
 	cfgPath, _ := configFilePath()
 	if cfgPath == "" {
@@ -59,9 +69,11 @@ func envDriftAt(cfgPath, examplePath string) (EnvDrift, error) {
 		}
 		return EnvDrift{}, fmt.Errorf("read %s: %w", examplePath, err)
 	}
-	// .env 缺失时按「全部走默认值」处理：此时通常配置全在进程环境里，下面逐键
-	// 用 os.LookupEnv 过滤，真正缺的才会进入 Missing。与 loadConfigEnv 一致——
-	// 缺省路径的文件不存在不算错误。
+	// When .env is missing, treat it as "everything uses defaults": config then
+	// usually lives entirely in the process environment, which the per-key
+	// os.LookupEnv filter below accounts for, so only genuinely missing keys reach
+	// Missing. Consistent with loadConfigEnv -- a missing file on the default path is
+	// not an error.
 	var envValues envSource
 	if cfgPath != "" {
 		if envValues, err = readEnvFile(cfgPath); err != nil {
@@ -79,7 +91,8 @@ func envDriftAt(cfgPath, examplePath string) (EnvDrift, error) {
 		if _, inFile := envValues[key]; inFile {
 			continue
 		}
-		// 进程环境优先级高于文件（envOr 先查 os.Getenv），设置了就不算缺失。
+		// The process environment takes precedence over the file (envOr checks
+		// os.Getenv first), so being set there means not missing.
 		if _, inEnv := os.LookupEnv(key); inEnv {
 			continue
 		}
@@ -90,13 +103,16 @@ func envDriftAt(cfgPath, examplePath string) (EnvDrift, error) {
 			drift.Unknown = append(drift.Unknown, key)
 		}
 	}
-	// envValues 是 map，遍历顺序随机；排一次让日志与测试都稳定。
+	// envValues is a map with random iteration order; sort once so logs and tests
+	// are stable.
 	sort.Strings(drift.Unknown)
 	return drift, nil
 }
 
-// readExampleKeys 按出现顺序取出模板里全部 TELESRV_* 字段键（激活行与被注释的
-// 可选字段行都算），并去重；模板里的注释、分组头与占位行一律跳过。
+// readExampleKeys returns every TELESRV_* field key in the template in order of
+// appearance (both active lines and commented-out optional field lines count),
+// deduplicated; plain comments, group headers and placeholder lines in the template
+// are always skipped.
 func readExampleKeys(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

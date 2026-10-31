@@ -56,9 +56,9 @@ const (
 	maxDocuments       = 50000
 	maxWorkers         = 128
 	floodWaitMargin    = 5 * time.Second
-	// defaultFetchTimeout 覆盖整个抓取过程：全量文档下载可能很久。
+	// defaultFetchTimeout covers the entire fetch: a full document download can take a long time.
 	defaultFetchTimeout = 4 * time.Hour
-	// defaultLoginTimeout 只需覆盖一次扫码：二维码约 30 秒过期，Auth 会自动换发。
+	// defaultLoginTimeout only needs to cover a single QR scan: the QR code expires in ~30 seconds and Auth reissues it automatically.
 	defaultLoginTimeout = 15 * time.Minute
 )
 
@@ -224,7 +224,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	// SOCKS5 出口被 QR 登录与目录抓取共用，只解析一次。
+	// The SOCKS5 egress is shared by QR login and catalog fetching, so it is resolved only once.
 	opts, err := clientOptions(session)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
@@ -232,7 +232,7 @@ func main() {
 	}
 
 	if *loginQR {
-		// 登录只需要 update 通道接收 loginToken：不抓目录，也不需要 -out。
+		// Login only needs the update channel to receive the loginToken: it does not fetch the catalog and does not need -out.
 		dispatcher := tg.NewUpdateDispatcher()
 		opts.UpdateHandler = dispatcher
 		run(defaultLoginTimeout, opts, func(ctx context.Context, client *telegram.Client) error {
@@ -273,7 +273,7 @@ func main() {
 	})
 }
 
-// run 连接官方 Telegram，并在连接就绪后执行 fn。任一环节失败都以退出码 1 结束。
+// run connects to official Telegram and executes fn once the connection is ready. Any failure aborts with exit code 1.
 func run(timeout time.Duration, opts telegram.Options, fn func(context.Context, *telegram.Client) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -288,8 +288,8 @@ func run(timeout time.Duration, opts telegram.Options, fn func(context.Context, 
 	}
 }
 
-// loginQRToken 用 QR 登录换取授权用户会话并落盘到 SESSION。
-// 不需要手机号和短信码：把 show 打印的二维码在已登录的 Telegram 里扫出来即可。
+// loginQRToken trades a QR login for an authorized user session and persists it to SESSION.
+// No phone number or SMS code is needed: just scan the QR code printed by show from a logged-in Telegram.
 func loginQRToken(ctx context.Context, client *telegram.Client, dispatcher tg.UpdateDispatcher, pngPath string) error {
 	status, err := client.Auth().Status(ctx)
 	if err != nil {
@@ -300,8 +300,8 @@ func loginQRToken(ctx context.Context, client *telegram.Client, dispatcher tg.Up
 		return nil
 	}
 
-	// OnLoginToken 依赖 dispatcher 的 handlers map；map 是引用类型，与 opts.UpdateHandler
-	// 持有的是同一份，因此这里传值副本即可收到 loginToken 更新。
+	// OnLoginToken relies on the dispatcher's handlers map; a map is a reference type, and opts.UpdateHandler
+	// holds the same one, so passing a value copy here still receives loginToken updates.
 	authorization, err := client.QR().Auth(ctx, qrlogin.OnLoginToken(dispatcher), func(_ context.Context, token qrlogin.Token) error {
 		fmt.Println("[qr] scan in Telegram -> Settings -> Devices -> Link Desktop Device")
 		return showLoginQR(token.URL(), pngPath)
@@ -317,7 +317,7 @@ func loginQRToken(ctx context.Context, client *telegram.Client, dispatcher tg.Up
 	return nil
 }
 
-// qrPNGPath 决定二维码 PNG 的落盘位置：默认与 SESSION 同名加后缀。
+// qrPNGPath decides where the QR PNG is written: by default the SESSION name plus a suffix.
 func qrPNGPath(session, override string) string {
 	if override = strings.TrimSpace(override); override != "" {
 		return override
@@ -325,12 +325,12 @@ func qrPNGPath(session, override string) string {
 	return session + ".qr.png"
 }
 
-// showLoginQR 把登录链接渲染成可扫的二维码。
+// showLoginQR renders the login link as a scannable QR code.
 //
-// 官方客户端只把 tg://login?token= 当作二维码内容，没有任何客户端支持把它当链接打开，
-// 所以必须画出来：终端用半块字符直接打印，同时落一份 PNG 供放大后扫描。
+// Official clients treat tg://login?token= only as QR content; no client supports opening it as a link,
+// so it must be drawn: print it directly in the terminal with half-block characters and also write a PNG for zoomed-in scanning.
 func showLoginQR(url, pngPath string) error {
-	// H 级纠错（65% 冗余）模块更多但容错高，终端缩放和手机拍照都更稳。
+	// H-level error correction (65% redundancy) has more modules but tolerates more damage, which is steadier for terminal scaling and phone photos.
 	code, err := qr.Encode(url, qr.H)
 	if err != nil {
 		return fmt.Errorf("encode login qr: %w", err)
@@ -346,10 +346,10 @@ func showLoginQR(url, pngPath string) error {
 	return nil
 }
 
-// renderTerminalQR 用半块字符把二维码画进终端，每个字符承载两行模块。
+// renderTerminalQR draws the QR code into the terminal with half-block characters, each character carrying two rows of modules.
 func renderTerminalQR(code *qr.Code) string {
 	const (
-		quiet = 2 // 静区：至少两个模块的白边，否则手机扫码识别率骤降
+		quiet = 2 // quiet zone: at least two modules of white border, otherwise phone scan recognition drops sharply
 		upper = "▀"
 		lower = "▄"
 		full  = "█"
@@ -378,7 +378,7 @@ func renderTerminalQR(code *qr.Code) string {
 	return out.String()
 }
 
-// clientOptions 组装官方客户端的公共选项：会话文件存储，以及可选的 SOCKS5 出口。
+// clientOptions assembles the common official-client options: session file storage and an optional SOCKS5 egress.
 func clientOptions(session string) (telegram.Options, error) {
 	opts := telegram.Options{
 		SessionStorage: &telegram.FileSessionStorage{Path: session},
@@ -732,9 +732,9 @@ func collectRarity(class tg.StarGiftAttributeRarityClass) (rarityManifest, error
 	}
 }
 
-// starGift.title 是可选字段，Telegram 对「普通礼物」不下发标题（客户端只画贴纸），
-// 售罄的早期限定礼物也可能缺省。缺少标题时后台导入会显示成 "Unnamed official gift"，
-// 这里为固定的普通礼物补上 Telegram 货架上使用的图案名称；ID 稳定，不会随抓取变化。
+// starGift.title is optional; Telegram does not send a title for "regular gifts" (clients just draw the sticker),
+// and early limited gifts that sold out may omit it too. When the title is missing, the admin import shows "Unnamed official gift",
+// so here we fill in the pattern names used on the Telegram store for the fixed regular gifts; the IDs are stable and do not change between fetches.
 var regularGiftTitles = map[int64]string{
 	5170145012310081615: "Heart",
 	5170250947678437525: "Gift Box",
@@ -749,7 +749,7 @@ var regularGiftTitles = map[int64]string{
 	5992502615223568003: "Bear",
 }
 
-// giftTitle 优先使用 Telegram 下发的标题，仅在没有标题的普通礼物上回退到图案名称。
+// giftTitle prefers the title sent by Telegram and falls back to the pattern name only for regular gifts without a title.
 func giftTitle(gift *tg.StarGift) string {
 	if title := strings.TrimSpace(gift.Title); title != "" {
 		return title

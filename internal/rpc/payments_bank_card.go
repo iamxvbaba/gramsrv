@@ -7,10 +7,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// bankCardData 实现 payments.getBankCardData：去掉分组空格和连字符后须为 13–19 位数字并通过
-// Luhn 校验，否则返回官方 BANK_CARD_NUMBER_INVALID。title 是 TDLib 识别卡号时区分的卡组织
-// （domain.BankCardScheme），无法判定时留空而不臆造。telesrv 不接入任何发卡行，open_urls 恒为空；
-// 客户端仍提供复制卡号（DrKLO ChatActivity.didPressBankCard 的 CopyCardNumber）。
+// bankCardData implements payments.getBankCardData: after stripping the grouping
+// spaces and hyphens it must be 13-19 digits and pass the Luhn check, otherwise
+// it returns the official BANK_CARD_NUMBER_INVALID. title is the card scheme that
+// TDLib distinguishes when recognizing a card number (domain.BankCardScheme),
+// left empty rather than invented when it cannot be determined. telesrv is not
+// integrated with any issuer, so open_urls is always empty; the client still
+// offers to copy the card number (CopyCardNumber in DrKLO
+// ChatActivity.didPressBankCard).
 func bankCardData(number string) (*tg.PaymentsBankCardData, error) {
 	digits, ok := domain.BankCardDigits(number)
 	if !ok || len(digits) < domain.MinBankCardDigits || len(digits) > 19 || !domain.BankCardLuhnValid(digits) {

@@ -16,8 +16,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// registerPayments 注册 payments.* RPC：Stars 本地账本（余额/流水真实化）+ 其余
-// gift/auction/revenue 第一阶段兼容桩。
+// registerPayments registers the payments.* RPCs: the local Stars ledger (with real balances/
+// transactions) plus phase-one compatibility stubs for the remaining gift/auction/revenue methods.
 func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsCanPurchaseStoreRequest](d, tlprofile.SemanticMethodPaymentsCanPurchaseStore, func(ctx context.Context, req *tg.PaymentsCanPurchaseStoreRequest) (any, error) {
 		return r.onPaymentsCanPurchaseStore(ctx, req)
@@ -749,10 +749,12 @@ type channelGiftLedgerReader interface {
 	ChannelTonTransactions(ctx context.Context, channelID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
 }
 
-// onPaymentsGetStarsStatus 返回请求 peer 的 Stars/本地 TON 余额。个人与频道账本
-// 严格隔离；频道读取要求 Star Gift 管理权限，不能把频道收益投影到执行 RPC 的管理员。
-// 响应必须是 payments.starsStatus（balance/chats/users 都是必填，空 vector 即可）——
-// 两端客户端无条件读取 balance（DrKLO StarsAmount 反序列化 / TDesktop vbalance()）。
+// onPaymentsGetStarsStatus returns the Stars/local TON balance of the requested peer. Personal
+// and channel ledgers are strictly isolated; reading a channel requires the Star Gift management
+// permission, and channel revenue must not be projected onto the admin executing the RPC. The
+// response must be payments.starsStatus (balance/chats/users are all required; an empty vector is
+// fine) -- both clients unconditionally read balance (DrKLO StarsAmount deserialization /
+// TDesktop vbalance()).
 func (r *Router) onPaymentsGetStarsStatus(ctx context.Context, req *tg.PaymentsGetStarsStatusRequest) (*tg.PaymentsStarsStatus, error) {
 	if req == nil {
 		return nil, peerIDInvalidErr()
@@ -842,8 +844,8 @@ func (r *Router) onPaymentsGetStarsSubscriptions(ctx context.Context, req *tg.Pa
 	return emptyStarsStatus(&tg.StarsAmount{Amount: balance.Balance}), nil
 }
 
-// onPaymentsGetStarsTransactions 返回 keyset 分页的 Stars 流水（同 starsStatus 信封）。
-// 末页必须省略 next_offset（flag 不置），否则 DrKLO 会无限翻页。
+// onPaymentsGetStarsTransactions returns keyset-paginated Stars transactions (same starsStatus
+// envelope). The last page must omit next_offset (flag unset), otherwise DrKLO pages forever.
 func (r *Router) onPaymentsGetStarsTransactions(ctx context.Context, req *tg.PaymentsGetStarsTransactionsRequest) (*tg.PaymentsStarsStatus, error) {
 	if req == nil {
 		return nil, peerIDInvalidErr()
@@ -939,7 +941,7 @@ func (r *Router) onPaymentsGetStarsTransactions(ctx context.Context, req *tg.Pay
 	if page.NextOffset != "" {
 		out.SetNextOffset(page.NextOffset)
 	}
-	// 富化流水中提到的用户对手方（频道对手方进 Chats 留待 paid reaction 阶段）。
+	// Enrich the user counterparts mentioned in the transactions (channel counterparts going into Chats are left for the paid reaction phase).
 	if ids := starsTransactionUserIDs(page.Transactions); len(ids) > 0 {
 		out.Users = tgUsersForViewer(userID, r.domainUsersForIDs(ctx, userID, ids))
 	}
@@ -1042,7 +1044,7 @@ func (r *Router) enrichChannelTonLedgerStatus(ctx context.Context, viewerID, own
 	out.Chats = r.tgChatsForChannelIDs(ctx, viewerID, uniqueInt64(channelIDs))
 }
 
-// emptyStarsStatus 构造一个合法的最小 payments.starsStatus（chats/users 非空 vector 但可空）。
+// emptyStarsStatus builds a valid minimal payments.starsStatus (chats/users are non-nil vectors but may be empty).
 func emptyStarsStatus(balance tg.StarsAmountClass) *tg.PaymentsStarsStatus {
 	return &tg.PaymentsStarsStatus{
 		Balance: balance,
@@ -1051,7 +1053,7 @@ func emptyStarsStatus(balance tg.StarsAmountClass) *tg.PaymentsStarsStatus {
 	}
 }
 
-// tgStarsTransactions 把账本流水投影为 tg.StarsTransaction（amount 带符号：借记为负）。
+// tgStarsTransactions projects ledger transactions into tg.StarsTransaction (amount is signed: debits negative).
 func tgStarsTransactions(in []domain.StarsTransaction) []tg.StarsTransaction {
 	out := make([]tg.StarsTransaction, 0, len(in))
 	for _, t := range in {
@@ -1133,8 +1135,9 @@ func tgTonTransactions(in []domain.TonTransaction) []tg.StarsTransaction {
 	return out
 }
 
-// tgStarsTransactionPeer 选择对手方构造器：grant/topup 走 Fragment（站外充值轨），
-// 真实 peer 走 starsTransactionPeer，其余兜底 Unsupported（Peer 字段必填，不可为 nil）。
+// tgStarsTransactionPeer picks the counterpart constructor: grant/topup use Fragment (the
+// off-site top-up track), a real peer uses starsTransactionPeer, and everything else falls back to
+// Unsupported (the Peer field is required and must not be nil).
 func tgStarsTransactionPeer(t domain.StarsTransaction) tg.StarsTransactionPeerClass {
 	switch t.Reason {
 	case domain.StarsReasonGrant, domain.StarsReasonTopup, domain.StarsReasonDonationDeposit:
@@ -1150,7 +1153,7 @@ func tgStarsTransactionPeer(t domain.StarsTransaction) tg.StarsTransactionPeerCl
 	return &tg.StarsTransactionPeerUnsupported{}
 }
 
-// starsTransactionUserIDs 收集流水中去重的用户类对手方 id。
+// starsTransactionUserIDs collects the deduplicated user-type counterpart ids from the transactions.
 func starsTransactionUserIDs(in []domain.StarsTransaction) []int64 {
 	seen := make(map[int64]struct{}, len(in))
 	ids := make([]int64, 0, len(in))
@@ -1167,7 +1170,7 @@ func starsTransactionUserIDs(in []domain.StarsTransaction) []int64 {
 	return ids
 }
 
-// starsErr 把 Stars 账本领域错误映射为客户端可识别的 tgerr（仿 premiumBoostErr）。
+// starsErr maps Stars ledger domain errors into client-recognizable tgerr (mirroring premiumBoostErr).
 func starsErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrStarsInsufficient):

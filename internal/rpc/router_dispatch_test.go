@@ -23,8 +23,9 @@ import (
 	"time"
 )
 
-// TestDispatchUnwrapsWrappers 验证 Router 能剥离
-// invokeWithLayer(initConnection(help.getConfig)) 并路由到 getConfig handler。
+// TestDispatchUnwrapsWrappers verifies the Router can strip
+// invokeWithLayer(initConnection(help.getConfig)) and route to the getConfig
+// handler.
 func TestDispatchUnwrapsWrappers(t *testing.T) {
 	const (
 		dc    = 2
@@ -959,11 +960,13 @@ func TestDispatchUnwrapsInvokeAfterWrappers(t *testing.T) {
 	}
 }
 
-// TestDispatchUnknownReturnsError 验证未注册 RPC 经 fallback 返回 rpc_error。
+// TestDispatchUnknownReturnsError verifies an unregistered RPC returns an rpc_error
+// through the fallback.
 func TestDispatchUnknownReturnsError(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 
-	// help.getCdnConfig 第一阶段未注册，应走 fallback。
+	// help.getCdnConfig is not registered in the first phase, so it should go
+	// through the fallback.
 	var b bin.Buffer
 	if err := (&tg.HelpGetCDNConfigRequest{}).Encode(&b); err != nil {
 		t.Fatalf("encode: %v", err)
@@ -1141,8 +1144,10 @@ func TestDispatchAnnouncesPresenceWhenSessionIdentityRestored(t *testing.T) {
 	alice := domain.User{ID: 1000000001, AccessHash: 11, FirstName: "Alice"}
 	bob := domain.User{ID: 1000000002, AccessHash: 22, FirstName: "Bob"}
 	dialogs := memory.NewDialogStore()
-	// 私聊 dialog 双向建行：两侧都存。presence 接收者由「主体自己的 dialog 对端 ∩ 在线」
-	// 算出，bob 改状态时需 bob 侧 dialog 含 alice。
+	// A private-chat dialog is written as a row in both directions: it is stored on
+	// both sides. The presence recipients are computed from "the subject's own
+	// dialog peers ∩ online", so when bob changes status the bob-side dialog must
+	// contain alice.
 	if err := dialogs.SaveList(ctx, alice.ID, domain.DialogList{
 		Dialogs: []domain.Dialog{{
 			Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID},
@@ -1190,8 +1195,10 @@ func TestDispatchAnnouncesPresenceWhenSessionIdentityRestored(t *testing.T) {
 	if !reflect.DeepEqual(gotPushes, []int64{bob.ID, alice.ID}) {
 		t.Fatalf("pushed users = %+v, want self and online private dialog peer once", gotPushes)
 	}
-	// 用 lastUserPush（PushToUser* 的内容）而非 snapshot().message：后者还会被
-	// pushOnlinePeerStatusesToCurrentSession 把 alice 的在线状态推给 bob 当前 session 覆盖。
+	// Use lastUserPush (the content of PushToUser*) rather than snapshot().message:
+	// the latter would also be overwritten by
+	// pushOnlinePeerStatusesToCurrentSession pushing alice's online status to bob's
+	// current session.
 	update := pushedUserStatus(t, waitForLastUserPush(t, sessions))
 	if update.UserID != bob.ID {
 		t.Fatalf("status user = %d, want bob", update.UserID)
@@ -1252,7 +1259,8 @@ func TestDispatchPushesOnlinePeerStatusesToRestoredSession(t *testing.T) {
 	}
 }
 
-// TestTDesktopStartupRPCsEncode 验证第一阶段 TDesktop 启动 RPC 均能被路由并编码回包。
+// TestTDesktopStartupRPCsEncode verifies the first-phase TDesktop startup RPCs can
+// all be routed and encoded into a response.
 func TestTDesktopStartupRPCsEncode(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Users: staticUsersService{user: domain.User{
@@ -1535,9 +1543,11 @@ func TestMessagesSearchGlobalCommunityFieldIsAbsentFromLayer227Wire(t *testing.T
 	}
 }
 
-// TestHelpGetDeepLinkInfoReturnsEmpty 回归：help.getDeepLinkInfo 此前未注册 handler，
-// 落 fallback 返回 500 NOT_IMPLEMENTED。客户端遇到无法识别的 tg:// 深链就会发该请求
-// （DrKLO LaunchActivity unsupportedUrl 分支），应返回规范的 deepLinkInfoEmpty 而非报错。
+// TestHelpGetDeepLinkInfoReturnsEmpty regression: help.getDeepLinkInfo previously had
+// no registered handler, fell through to the fallback and returned 500
+// NOT_IMPLEMENTED. A client sends this request when it hits an unrecognized tg://
+// deep link (the DrKLO LaunchActivity unsupportedUrl branch); it should return a
+// proper deepLinkInfoEmpty instead of an error.
 func TestHelpGetDeepLinkInfoReturnsEmpty(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 	req := &tg.HelpGetDeepLinkInfoRequest{Path: "resolve?domain=unknown"}
@@ -1547,7 +1557,7 @@ func TestHelpGetDeepLinkInfoReturnsEmpty(t *testing.T) {
 	}
 	enc, err := r.Dispatch(WithUserID(context.Background(), 1000000001), [8]byte{}, 0, &in)
 	if err != nil {
-		t.Fatalf("dispatch help.getDeepLinkInfo err = %v, want nil (未注册时为 500 NOT_IMPLEMENTED)", err)
+		t.Fatalf("dispatch help.getDeepLinkInfo err = %v, want nil (500 NOT_IMPLEMENTED when unregistered)", err)
 	}
 	var out bin.Buffer
 	if err := enc.Encode(&out); err != nil {

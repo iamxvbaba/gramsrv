@@ -664,11 +664,12 @@ func TestStoryProjectionCacheSurvivesFastDialogBurstWindow(t *testing.T) {
 		return map[domain.Peer]tg.RecentStory{peer: {MaxID: 7}}, map[domain.Peer]bool{peer: true}
 	}
 
-	// 首次:miss → load → 缓存。
+	// First: miss -> load -> cache.
 	if recent, hidden := cache.getMany(ctx, viewerID, []domain.Peer{peer}, load); recent[peer].MaxID != 7 || !hidden[peer] {
 		t.Fatalf("first getMany recent=%+v hidden=%v", recent[peer], hidden[peer])
 	}
-	// 推进 11s(仍在 TTL 内):再次应命中缓存、不再 load。
+	// Advance 11s (still within the TTL): the next call should hit the cache and no
+	// longer load.
 	now = now.Add(11 * time.Second)
 	recent, hidden := cache.getMany(ctx, viewerID, []domain.Peer{peer}, load)
 	if loadCalls != 1 {

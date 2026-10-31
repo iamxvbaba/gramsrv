@@ -41,9 +41,10 @@ func TestBatchCacheCachesPerViewer(t *testing.T) {
 	}
 }
 
-// TestBatchCachePrimeServesWithoutResolver：Prime 预热的 viewer 用户被 UsersForView 直接命中，
-// 不再回落 resolver（fan-out 跨 viewer 投影预热把 per-recipient ByIDs 折叠成一次 ForViewers 的前提）；
-// 且 Prime 不覆盖已解析的同 id（按需解析优先）。
+// TestBatchCachePrimeServesWithoutResolver: a viewer user preheated by Prime is served
+// directly by UsersForView and does not fall back to the resolver (the premise of the fan-out
+// cross-viewer projection preheat folding per-recipient ByIDs into one ForViewers); and Prime
+// does not overwrite an already-resolved same id (on-demand resolution takes priority).
 func TestBatchCachePrimeServesWithoutResolver(t *testing.T) {
 	resolver := &captureUserResolver{
 		users: map[int64]domain.User{
@@ -70,7 +71,7 @@ func TestBatchCachePrimeServesWithoutResolver(t *testing.T) {
 		t.Fatalf("resolver called %d times, want 0 (all served from prime)", len(resolver.calls))
 	}
 
-	// 已解析的 id 不被后续 Prime 覆盖。
+	// An already-resolved id is not overwritten by a later Prime.
 	other := &captureUserResolver{users: map[int64]domain.User{1000000003: {ID: 1000000003, FirstName: "Resolved3"}}}
 	c2 := NewBatchCache(other)
 	if _, err := c2.UsersForView(context.Background(), viewer, []int64{1000000003}); err != nil {

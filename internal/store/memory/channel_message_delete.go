@@ -29,7 +29,7 @@ func (s *ChannelStore) DeleteChannelMessages(_ context.Context, req domain.Delet
 	if err != nil {
 		return domain.DeleteChannelMessagesResult{}, err
 	}
-	// 被删 broadcast post 的讨论组转发根级联删除（服务端动作，creator 权限）。
+	// Cascade-delete the discussion-group forward roots of the deleted broadcast posts (server-side action, creator privilege).
 	var cascades []domain.ChannelCascadeDelete
 	byChannel := make(map[int64][]int)
 	for _, id := range deleted {
@@ -123,9 +123,10 @@ func (s *ChannelStore) DeleteChannelHistory(_ context.Context, req domain.Delete
 	if !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
-	// id=1 是建群服务消息，全员清空必须保留：它是清空后会话仅剩的
-	// top message，没有它客户端会把 lastMessage 视为空并从聊天列表
-	// 隐藏该会话（成员资格仍在，但会话条目对全员消失）。
+	// id=1 is the group-creation service message and must be kept on a delete-all: it is
+	// the only top message left after the clear, and without it the client treats
+	// lastMessage as empty and hides the dialog from the chat list (membership remains,
+	// but the dialog entry vanishes for everyone).
 	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
 	for i := len(s.messages[req.ChannelID]) - 1; i >= 0; i-- {
 		msg := s.messages[req.ChannelID][i]
@@ -168,8 +169,9 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req do
 	if !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
-	// 同全员清空：id=1 建群服务消息不随发送者（创建者）历史一起删除，
-	// 否则会话会因 lastMessage 为空从全员聊天列表隐藏。
+	// Same as delete-all: the id=1 group-creation service message is not deleted along
+	// with the sender's (creator's) history, otherwise the dialog would be hidden from the
+	// chat list for everyone because lastMessage would be empty.
 	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
 	for i := len(s.messages[req.ChannelID]) - 1; i >= 0; i-- {
 		msg := s.messages[req.ChannelID][i]
@@ -221,8 +223,9 @@ func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, membe
 			return nil, domain.ChannelUpdateEvent{}, channel, domain.ErrChannelAdminRequired
 		}
 		if id <= 1 {
-			// id=1 建群服务消息是清空后会话仅剩的兜底 top message，所有
-			// 删除入口统一静默跳过（官方客户端对它禁用删除）。
+			// The id=1 group-creation service message is the fallback top message left
+			// after a clear; every delete entry point skips it silently (official clients
+			// disable deletion for it).
 			continue
 		}
 		msg.Deleted = true
@@ -244,7 +247,7 @@ func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, membe
 	pts := s.nextChannelPtsNLocked(channel.ID, len(deleted))
 	channel.Pts = pts
 	channel.TopMessageID = s.topNonDeletedMessageIDLocked(channel.ID)
-	// 删除即从置顶集合移除（读路径过滤 NOT deleted），重算最新置顶缓存。
+	// Deletion removes it from the pinned set (the read path filters NOT deleted); recompute the latest-pinned cache.
 	channel.PinnedMessageID = s.latestPinnedMessageIDLocked(channel.ID)
 	s.channels[channel.ID] = channel
 	for userID, member := range s.members[channel.ID] {

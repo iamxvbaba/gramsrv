@@ -1,7 +1,9 @@
--- 账号级单例设置（每用户一行）：全局隐私开关、账号自毁期限、敏感内容开关、
--- 联系人注册通知静音。此前这些 account.* RPC 为硬编码回显 stub（不持久化）：
--- account.get/setGlobalPrivacySettings、get/setAccountTTL、get/setContentSettings、
--- get/setContactSignUpNotification。本表落地真实持久化。
+-- Account-level singleton settings (one row per user): global privacy switches,
+-- account self-destruct TTL, sensitive-content switches, contact sign-up
+-- notification mute. Previously these account.* RPCs were hardcoded echo stubs
+-- (not persisted): account.get/setGlobalPrivacySettings, get/setAccountTTL,
+-- get/setContentSettings, get/setContactSignUpNotification. This table provides
+-- real persistence.
 CREATE TABLE public.account_settings (
     user_id bigint NOT NULL,
     archive_and_mute_new_noncontact_peers boolean DEFAULT false NOT NULL,

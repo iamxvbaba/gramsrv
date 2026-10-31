@@ -17,9 +17,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// BotFather 对话状态机：用户发给 BotFather 的每条私聊消息经 app/messages 的
-// responder hook 进入 OnPrivateMessage；用户消息已先行入库，这里只负责生成并
-// 写入 BotFather 的回复（完整 SendPrivateText 链路：双盒+事件+outbox 推送）。
+// BotFather dialog state machine: each private message a user sends to BotFather enters OnPrivateMessage via the
+// app/messages responder hook; the user's message has already been stored first, so here we only generate and
+// write BotFather's reply (the full SendPrivateText chain: both boxes + events + outbox push).
 
 const (
 	botFatherCmdNewBot         = "newbot"
@@ -53,10 +53,11 @@ const (
 	maxTelegramLoginCommandsPerMessage = 32
 )
 
-// botFatherHelpText 与官方 BotFather 一样按功能分区列命令，而不是一张平铺的长表：
-// 客户端里 /help 的可读性直接取决于这个排版。官方有、本服没有的命令（/setuserpic）
-// 在清单里显式标注未支持——帮助文案不承诺做不到的事；本服多出来的 Telegram Login
-// 命令单列一节，避免和官方条目混在一起。
+// botFatherHelpText lists commands grouped by function like the official BotFather, rather than one flat long
+// table: the readability of /help in the client depends directly on this layout. Commands the official BotFather
+// has but this server does not (/setuserpic) are explicitly marked unsupported -- the help text does not promise
+// what cannot be done; the extra Telegram Login commands this server adds are listed in their own section, so
+// they do not mix with the official entries.
 func botFatherHelpText() string {
 	return `I can help you create and manage ` + branding.ProductName() + ` bots.
 
@@ -92,8 +93,8 @@ Telegram Login
 /help - show this message`
 }
 
-// botReply 是内置 service bot 的一条回复。ReplyMarkup 为可选 inline keyboard
-// 快照（@verifybot 的按钮式对话使用）；落库前经 domain.ValidateReplyMarkup 校验。
+// botReply is one reply from a built-in service bot. ReplyMarkup is an optional inline keyboard snapshot (used
+// by @verifybot's button dialog); it is validated via domain.ValidateReplyMarkup before being stored.
 type botReply struct {
 	Text        string
 	Entities    []domain.MessageEntity
@@ -101,7 +102,7 @@ type botReply struct {
 	Media       *domain.MessageMedia
 }
 
-// HandlesBot 报告该收件人是否为内置应答 bot（messages.BotResponder 实现）。
+// HandlesBot reports whether the recipient is a built-in responder bot (messages.BotResponder implementation).
 func (s *Service) HandlesBot(botUserID int64) bool {
 	if s == nil {
 		return false
@@ -121,9 +122,10 @@ func (s *Service) HandlesBot(botUserID int64) bool {
 	}
 }
 
-// OnPrivateMessage 处理投递给内置 bot 的私聊消息（messages.BotResponder 实现）。
-// msg 是 bot 视角的收件 box 行。回复异步生成（不占用户 sendMessage 的 RPC
-// goroutine——官方 bot 回复本就异步到达），失败只记日志，绝不影响用户消息本身。
+// OnPrivateMessage handles private messages delivered to a built-in bot (messages.BotResponder implementation).
+// msg is the recipient box row from the bot's perspective. Replies are generated asynchronously (not occupying
+// the user's sendMessage RPC goroutine -- official bot replies arrive asynchronously anyway); a failure only logs
+// and never affects the user's message itself.
 func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message, session domain.ClientSessionMetadata) {
 	if s == nil || s.messages == nil || !s.HandlesBot(botUserID) {
 		return
@@ -152,9 +154,10 @@ func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg dom
 	}
 }
 
-// respondAsBotFather 生成并写入 BotFather 回复（OnPrivateMessage 在 goroutine 内调用）。
-// 按用户取条带锁串行：状态机 Get→modify→Upsert/Delete 的 RMW 因此原子、回复保序，
-// 不同用户并发不受影响。ctx 用 Background（脱离已返回的用户 RPC），限较长超时。
+// respondAsBotFather generates and writes the BotFather reply (called by OnPrivateMessage inside a goroutine).
+// Serialized per user by stripe lock: the state machine's Get->modify->Upsert/Delete RMW is therefore atomic and
+// replies stay ordered, while different users run concurrently unaffected. ctx uses Background (detached from the
+// already-returned user RPC) with a long timeout.
 func (s *Service) respondAsBotFather(userID int64, body string) {
 	mu := s.serviceBotReplyLock(domain.BotFatherUserID, userID)
 	mu.Lock()
@@ -193,8 +196,9 @@ func (s *Service) sendServiceBotReplyResult(ctx context.Context, botUserID, user
 	}
 	markup := reply.ReplyMarkup
 	if err := domain.ValidateReplyMarkup(markup); err != nil {
-		// 键盘校验必须先于落库（I9）：结构非法的 markup 绝不写库，但正文仍然发出
-		// ——用户至少收到提示文本，不会因为一颗坏按钮而完全失联。
+		// Keyboard validation must precede persistence (I9): a structurally invalid markup is never written to the
+		// store, but the body is still sent -- the user at least receives the prompt text and is not completely cut
+		// off by one bad button.
 		s.log.Error("service bot: invalid reply markup",
 			zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
 		markup = nil
@@ -220,9 +224,9 @@ func (s *Service) sendServiceBotReplyResult(ctx context.Context, botUserID, user
 	return res, true
 }
 
-// botReplyRandomID 为服务端回复构造非零幂等键（(sender, random_id) 唯一索引）。
-// 所有服务 bot 回复按各自 sender 命名空间唯一——用
-// crypto/rand 取 64 位随机数（碰撞概率可忽略），熵源失败时退化为纳秒+单调序列。
+// botReplyRandomID constructs a non-zero idempotency key for a server reply (the (sender, random_id) unique index).
+// All service-bot replies are unique per their own sender namespace -- using crypto/rand for a 64-bit random number
+// (collision probability negligible), falling back to nanoseconds + a monotonic sequence when the entropy source fails.
 func (s *Service) botReplyRandomID() int64 {
 	if v, err := randomInt64(); err == nil && v != 0 {
 		return v
@@ -234,10 +238,11 @@ func (s *Service) botReplyRandomID() int64 {
 	return v
 }
 
-// botFatherGlobalCommands 是任何状态下都优先按命令处理的全局命令。其余以 "/"
-// 开头的文本（如 /empty、或粘贴的 "/start - Begin" 命令列表首行）在收值步骤里
-// 必须作为原始内容透传给状态机，否则 /setcommands 的 /empty 永不可达、且首行
-// 带斜杠的命令列表会被截成命令名 "start" 静默销毁整个流程。
+// botFatherGlobalCommands are global commands handled as commands in any state. Other text starting with "/" (such
+// as /empty, or the pasted first line of a "/start - Begin" command list) must be passed through to the state
+// machine as raw content during a value step; otherwise /setcommands' /empty would be unreachable, and a
+// slash-prefixed command list's first line would be truncated into the command name "start", silently destroying
+// the whole flow.
 var botFatherGlobalCommands = map[string]bool{
 	"start": true, "help": true, "cancel": true, botFatherCmdDone: true,
 	botFatherCmdNewBot: true, "mybots": true,
@@ -256,8 +261,9 @@ func (s *Service) handleBotFather(ctx context.Context, userID int64, text string
 		s.log.Error("botfather: get chat state", zap.Int64("user_id", userID), zap.Error(err))
 		return internalReply()
 	}
-	// 命令拦截：仅当不在收值步骤、或文本是已知全局命令时，才走命令分发。收值步骤
-	// 下的非全局 "/..." 文本（/empty、命令列表首行）必须当原始值透传给状态机。
+	// Command interception: dispatch as a command only when not in a value step, or when the text is a known
+	// global command. Non-global "/..." text during a value step (/empty, a command list's first line) must be
+	// passed through to the state machine as a raw value.
 	if cmd, ok := parseBotCommand(text); ok {
 		inValueStep := found && state.Step == botFatherStepValue
 		if !inValueStep || botFatherGlobalCommands[cmd] {
@@ -265,8 +271,8 @@ func (s *Service) handleBotFather(ctx context.Context, userID int64, text string
 		}
 	}
 	if text == "" {
-		// 空白文本 / 贴纸 / 无 caption 媒体：有活动状态时回当前步骤提示，
-		// 无状态保持沉默（避免对任意非文本消息刷屏）。
+		// Blank text / sticker / captionless media: when there is an active state, return the current step prompt;
+		// when there is no state, stay silent (to avoid spamming on arbitrary non-text messages).
 		if !found {
 			return botReply{}
 		}
@@ -287,13 +293,13 @@ func (s *Service) handleBotFather(ctx context.Context, userID int64, text string
 	case state.Step == botFatherStepValue:
 		return s.handleSetValue(ctx, state, text)
 	default:
-		// 不可达的脏状态：清掉重来，避免用户被卡死。
+		// Unreachable dirty state: clear it and start over, so the user is not stuck.
 		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID)
 		return botReply{Text: "Something went wrong, I forgot what we were doing. Send /help for a list of commands."}
 	}
 }
 
-// pickerCommands 是「先选 bot」的命令集（choose step 后按命令分流）。
+// pickerCommands is the set of "choose a bot first" commands (after the choose step, dispatch by command).
 var pickerPrompts = map[string]string{
 	botFatherCmdToken:          "Choose a bot to get Bot API access token.",
 	botFatherCmdRevoke:         "Choose a bot to revoke the token of. Send the bot's username:",
@@ -311,11 +317,11 @@ var pickerPrompts = map[string]string{
 	botFatherCmdResetLogin:     "Choose a bot whose OIDC Client Secret you want to rotate:",
 }
 
-// startBotPicker 列出 owner 的 bot 并进入 choose step（所有需先选 bot 的命令共用）。
-// 每个 bot 渲染成 reply keyboard（输入框下方、非消息附件）里的一颗 @username 文本
-// 按钮；点一下客户端就发送该用户名，走的正是 handleChooseBot 的手输路径——所以
-// 不需要 callback query，也不存在可伪造/过期的按钮数据。键盘 single_use：选中一个
-// 就自动收起。
+// startBotPicker lists the owner's bots and enters the choose step (shared by all commands that first require
+// choosing a bot). Each bot is rendered as an @username text button in a reply keyboard (below the input box, not
+// a message attachment); tapping it sends the client the username, which goes through exactly the same
+// manual-entry path as handleChooseBot -- so no callback query is needed, and there is no forgeable/expirable
+// button data. The keyboard is single_use: selecting one collapses it automatically.
 func (s *Service) startBotPicker(ctx context.Context, userID int64, cmd string) botReply {
 	owned, err := s.ownedBots(ctx, userID)
 	if err != nil {
@@ -323,18 +329,19 @@ func (s *Service) startBotPicker(ctx context.Context, userID int64, cmd string) 
 		return internalReply()
 	}
 	if len(owned) == 0 {
-		// 这里不清状态：一个 bot 都没有时挂着的只可能是 /newbot 草稿，留着让用户
-		// 继续创建（bot 级步骤会在自己复核 owner 时失败并自行清理）。
+		// Do not clear state here: with no bots at all, the only thing that could be pending is a /newbot draft, so
+		// leave it for the user to continue creating (bot-level steps will fail when they re-check owner themselves
+		// and clean up on their own).
 		return botReply{Text: "You don't have any bots yet. Use /newbot to create one."}
 	}
-	// /setinlinegeo 只对已开启 inline mode 的 bot 有意义，键盘里也只列这些 bot。
+	// /setinlinegeo only makes sense for bots with inline mode enabled, so the keyboard also lists only those bots.
 	if cmd == botFatherCmdSetInlineGeo {
 		owned = botFatherInlineBots(owned)
 		if len(owned) == 0 {
-			// 命令起不来就必须清掉挂着的步骤：否则用户看到「没有 inline bot」后
-			// 随手发的下一条文本，会被上一条命令的步骤当成自己的输入执行——
-			// 例如 /setname 的收值会把那条文本写成 bot 名字，/deletebot 的
-			// confirm 还处于待确认状态。
+			// If the command cannot start, the pending step must be cleared: otherwise, after the user sees "no
+			// inline bot", the next text they casually send would be executed as that prior command's step input --
+			// for example /setname's value collection would write that text as the bot name, or /deletebot's confirm
+			// would still be awaiting confirmation.
 			s.clearState(ctx, userID)
 			return botReply{Text: "You don't have any bots with inline mode enabled. Use /setinline to enable it first."}
 		}
@@ -359,7 +366,7 @@ func (s *Service) startBotPicker(ctx context.Context, userID int64, cmd string) 
 			Text: "@" + b.user.Username,
 		})
 	}
-	// 两颗一行：BotFather 的 bot 列表通常不止一个，两列比一列短一半。
+	// Two per row: an owner usually has more than one bot, and two columns is half as tall as one.
 	var rows [][]domain.MarkupButton
 	for len(buttons) > 0 {
 		n := min(2, len(buttons))
@@ -377,7 +384,7 @@ func (s *Service) startBotPicker(ctx context.Context, userID int64, cmd string) 
 	return reply
 }
 
-// botFatherInlineBots 只保留 inline mode 已开启的 bot（placeholder 非空即开启）。
+// botFatherInlineBots keeps only bots with inline mode enabled (a non-empty placeholder means enabled).
 func botFatherInlineBots(owned []ownedBot) []ownedBot {
 	out := make([]ownedBot, 0, len(owned))
 	for _, b := range owned {
@@ -388,8 +395,8 @@ func botFatherInlineBots(owned []ownedBot) []ownedBot {
 	return out
 }
 
-// botFatherToggleKeyboard 是 Enable/Disable 两键 reply keyboard；点击发送对应文本，
-// 走的正是 applyToggle/applySetInlineGeo 已支持的手输路径。
+// botFatherToggleKeyboard is a two-button Enable/Disable reply keyboard; tapping sends the corresponding text,
+// going through exactly the manual-entry path already supported by applyToggle/applySetInlineGeo.
 func botFatherToggleKeyboard() *domain.MessageReplyMarkup {
 	return &domain.MessageReplyMarkup{
 		Type: domain.MessageReplyMarkupKeyboard,
@@ -404,7 +411,7 @@ func botFatherToggleKeyboard() *domain.MessageReplyMarkup {
 	}
 }
 
-// stepPrompt 返回当前对话步骤的引导文案（空输入兜底用）。
+// stepPrompt returns the guidance text for the current dialog step (used as the fallback for empty input).
 func (s *Service) stepPrompt(state domain.BotChatState) botReply {
 	switch {
 	case state.Command == botFatherCmdNewBot && state.Step == botFatherStepName:
@@ -494,7 +501,7 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 	}
 }
 
-// valuePrompts 是选中 bot 后、value step 的收值提示（按命令）。
+// valuePrompts is the value-collection prompt for the value step after a bot is selected (by command).
 func valuePrompt(cmd, username string) string {
 	switch cmd {
 	case botFatherCmdSetName:
@@ -571,7 +578,7 @@ func (s *Service) handleNewBotUsername(ctx context.Context, state domain.BotChat
 		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, state.UserID)
 		return botReply{Text: fmt.Sprintf("That I cannot do. You have reached the limit of %d bots per account.", domain.MaxBotsPerOwner)}
 	case errors.Is(err, domain.ErrBotNameInvalid):
-		// name 步已校验，这里只可能是脏状态；重新走 name 步。
+		// The name step already validated; this can only be dirty state; re-run the name step.
 		state.Step = botFatherStepName
 		if err := s.bots.UpsertBotChatState(ctx, state); err != nil {
 			s.log.Error("botfather: save chat state", zap.Int64("user_id", state.UserID), zap.Error(err))
@@ -617,8 +624,8 @@ func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState
 	return s.applyBotChoice(ctx, state, *chosen)
 }
 
-// applyBotChoice 在已确认 bot 属于该用户后执行 choose step 对应命令的唯一入口——
-// 直接输入用户名与点击 @username 按钮都走这里。
+// applyBotChoice is the single entry point that executes the command for the choose step after the bot is
+// confirmed to belong to that user -- both direct username entry and tapping the @username button go through here.
 func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState, chosen domain.User) botReply {
 	switch state.Command {
 	case botFatherCmdToken:
@@ -637,8 +644,8 @@ func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState,
 		token, err := s.RevokeBotToken(ctx, state.UserID, chosen.ID)
 		switch {
 		case errors.Is(err, domain.ErrBotSessionsNotRevoked):
-			// token 已换（旧 token 不可再登录），但未能终止已建立的 session——
-			// 诚实告知用户重试，不谎称已止血。
+			// The token has been changed (the old token can no longer log in), but established sessions could not
+			// be terminated -- honestly tell the user to retry, rather than falsely claiming the bleeding has stopped.
 			head := fmt.Sprintf("Token for @%s has been changed, so the old token can no longer log in. But I couldn't terminate sessions that are already logged in — please run /revoke again to make sure they're cut off. New token:\n", chosen.Username)
 			return tokenReply(head, token, "\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
 		case err != nil:
@@ -705,7 +712,7 @@ func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState,
 	case botFatherCmdSetName, botFatherCmdSetDescription, botFatherCmdSetAbout,
 		botFatherCmdSetCommands, botFatherCmdSetInline, botFatherCmdSetInlineGeo,
 		botFatherCmdSetJoinGroups, botFatherCmdSetPrivacy:
-		// 选中 bot 后进入收值 step，把目标 bot 暂存进 Draft。
+		// After selecting a bot, enter the value step and stash the target bot in Draft.
 		state.Step = botFatherStepValue
 		if state.Draft == nil {
 			state.Draft = map[string]string{}
@@ -734,7 +741,7 @@ func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState,
 			case botFatherCmdSetJoinGroups:
 				reply.Text = joinGroupsPrompt(!profile.Nochats)
 			default:
-				// 隐私模式开着时 bot 只看命令/回复，即 profile.ChatHistory=false。
+				// When privacy mode is on, the bot only sees commands/replies, i.e. profile.ChatHistory=false.
 				reply.Text = privacyPrompt(!profile.ChatHistory)
 			}
 			return reply
@@ -742,8 +749,9 @@ func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState,
 			return botReply{Text: valuePrompt(state.Command, chosen.Username)}
 		}
 	case botFatherCmdDeleteBot:
-		// 删号不可逆且会断掉全部 session，因此先停在 confirm step：只有明确的确认词
-		// 才执行，误触发的用户名/空消息一律回到同一句确认提示。
+		// Deleting a bot is irreversible and terminates all its sessions, so stop at the confirm step first: only an
+		// explicit confirmation word proceeds; an accidentally triggered username/empty message returns to the same
+		// confirmation prompt.
 		state.Step = botFatherStepConfirm
 		if state.Draft == nil {
 			state.Draft = map[string]string{}
@@ -761,7 +769,7 @@ func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState,
 	}
 }
 
-// handleBotFatherConfirmCommand 处理显式的 /confirm（无活动 confirm step 时不猜）。
+// handleBotFatherConfirmCommand handles an explicit /confirm (it does not guess when there is no active confirm step).
 func (s *Service) handleBotFatherConfirmCommand(ctx context.Context, userID int64) botReply {
 	state, found, err := s.bots.GetBotChatState(ctx, domain.BotFatherUserID, userID)
 	if err != nil {
@@ -778,8 +786,9 @@ func botDeleteConfirmPrompt(username string) string {
 	return fmt.Sprintf("Are you sure you want to delete @%s? This cannot be undone: the token stops working and every session of the bot is terminated.\n\nSend `confirm` to proceed, or /cancel.", username)
 }
 
-// handleBotConfirm 处理不可逆操作的确认步骤（当前只有 /deletebot）。只有明确的确认词
-// 才动手：任何其他输入都回到同一句确认提示，避免把误触发的消息当成确认。
+// handleBotConfirm handles the confirmation step of an irreversible operation (currently only /deletebot). Only an
+// explicit confirmation word acts: any other input returns to the same confirmation prompt, so accidentally touched
+// messages are not treated as confirmation.
 func (s *Service) handleBotConfirm(ctx context.Context, state domain.BotChatState, text string) botReply {
 	if state.Command != botFatherCmdDeleteBot {
 		s.clearState(ctx, state.UserID)
@@ -796,7 +805,7 @@ func (s *Service) handleBotConfirm(ctx context.Context, state domain.BotChatStat
 		s.clearState(ctx, state.UserID)
 		return botReply{Text: "Something went wrong, I forgot which bot we were deleting. Send /deletebot to start again."}
 	}
-	// 防御性复核 owner（状态是服务端存的，正常已是 owned bot）。
+	// Defensive owner re-check (the state is server-stored; normally it is already an owned bot).
 	if owns, err := s.OwnsBot(ctx, state.UserID, botID); err != nil {
 		s.log.Error("botfather: owns bot", zap.Int64("bot_user_id", botID), zap.Error(err))
 		return internalReply()
@@ -804,7 +813,7 @@ func (s *Service) handleBotConfirm(ctx context.Context, state domain.BotChatStat
 		s.clearState(ctx, state.UserID)
 		return botReply{Text: "That bot is no longer available."}
 	}
-	// DeleteBot 先撤销 session 再删号：撤销失败时什么都没删，如实告知并保留状态让用户重试。
+	// DeleteBot first revokes sessions and then deletes the account: if revocation fails nothing was deleted, so be honest about it and keep the state for the user to retry.
 	if _, err := s.DeleteBot(ctx, botID); err != nil {
 		switch {
 		case errors.Is(err, domain.ErrBotSessionsNotRevoked):
@@ -824,7 +833,7 @@ func (s *Service) handleBotConfirm(ctx context.Context, state domain.BotChatStat
 	return botReply{Text: fmt.Sprintf("Success! @%s has been deleted. Its token no longer works and all of its sessions have been terminated.", username)}
 }
 
-// handleSetValue 处理选中 bot 后的收值步骤（/setname 等）。
+// handleSetValue handles the value-collection step after a bot is selected (/setname etc.).
 func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState, text string) botReply {
 	botID, _ := strconv.ParseInt(state.Draft[botFatherDraftBotID], 10, 64)
 	username := state.Draft[botFatherDraftBotUsername]
@@ -832,7 +841,7 @@ func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState,
 		s.clearState(ctx, state.UserID)
 		return botReply{Text: "Something went wrong, I forgot which bot we were editing. Send /help."}
 	}
-	// 防御性复核 owner（状态是服务端存的，正常已是 owned bot）。
+	// Defensive owner re-check (the state is server-stored; normally it is already an owned bot).
 	if owns, err := s.OwnsBot(ctx, state.UserID, botID); err != nil {
 		s.log.Error("botfather: owns bot", zap.Int64("bot_user_id", botID), zap.Error(err))
 		return internalReply()
@@ -872,7 +881,7 @@ func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState,
 		return internalReply()
 	}
 	if err != nil {
-		// 校验类错误已转成提示文案；非校验错误内部已记日志。保留 state 让用户重试。
+		// Validation errors have already been turned into prompt text; non-validation errors are logged internally. Keep the state so the user can retry.
 		if reply.Text == "" {
 			return internalReply()
 		}
@@ -882,8 +891,8 @@ func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState,
 	return reply
 }
 
-// botFatherCommandListInvalidText 是 /setcommands 的统一拒绝文案：格式错误和内容
-// 非法（命令名/描述不合规）对用户是同一件事——重发一份合规列表或 /empty。
+// botFatherCommandListInvalidText is /setcommands' unified rejection text: format errors and invalid content
+// (non-compliant command names/descriptions) are the same thing to the user -- resend a compliant list or /empty.
 func botFatherCommandListInvalidText() string {
 	return `Sorry, the list of commands is invalid. Please use this format:
 
@@ -893,7 +902,7 @@ command2 - Another description
 You can also send /empty to clear the list or keep it empty.`
 }
 
-// applySetCommands 解析多行 "command - Description"（/empty 清空）并写入。
+// applySetCommands parses multi-line "command - Description" (/empty clears) and writes it.
 func (s *Service) applySetCommands(ctx context.Context, botID int64, text string) (botReply, error) {
 	var commands []domain.BotCommand
 	if strings.TrimSpace(text) != "/empty" {
@@ -918,7 +927,7 @@ func (s *Service) applySetCommands(ctx context.Context, botID int64, text string
 	return botReply{Text: "Success! Command list updated. /help"}, nil
 }
 
-// applySetInline 写入 inline placeholder；/empty 清空并关闭 inline mode。
+// applySetInline writes the inline placeholder; /empty clears it and disables inline mode.
 func (s *Service) applySetInline(ctx context.Context, botID int64, text string) (botReply, error) {
 	placeholder := strings.TrimSpace(text)
 	if placeholder == "/empty" {
@@ -1214,7 +1223,7 @@ func (s *Service) applyTelegramLoginConfiguration(ctx context.Context, botID int
 	return botReply{Text: telegramLoginConfigurationPrompt(username)}, domain.ErrTelegramLoginRequestInvalid
 }
 
-// applyToggle 解析 enable/disable 并设置 joingroups（join=true）或 privacy（join=false）。
+// applyToggle parses enable/disable and sets joingroups (join=true) or privacy (join=false).
 func (s *Service) applyToggle(ctx context.Context, botID int64, text string, join bool) (botReply, error) {
 	var on bool
 	switch strings.ToLower(strings.TrimSpace(text)) {
@@ -1242,7 +1251,7 @@ func (s *Service) applyToggle(ctx context.Context, botID int64, text string, joi
 	return botReply{Text: fmt.Sprintf("Success! The new status is: %s. /help", strings.ToUpper(state))}, nil
 }
 
-// okReply 把 service 调用结果转成提示：err==nil 回成功，否则回校验失败提示。
+// okReply turns a service call result into a prompt: err==nil returns success, otherwise returns the validation-failure prompt.
 func okReply(err error, ok, fail string) botReply {
 	if err != nil {
 		return botReply{Text: fail}
@@ -1250,7 +1259,7 @@ func okReply(err error, ok, fail string) botReply {
 	return botReply{Text: ok}
 }
 
-// clearState 删除 BotFather 对话状态（忽略错误，仅记日志）。
+// clearState deletes the BotFather dialog state (errors ignored, only logged).
 func (s *Service) clearState(ctx context.Context, userID int64) {
 	if err := s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID); err != nil {
 		s.log.Error("botfather: delete chat state", zap.Int64("user_id", userID), zap.Error(err))
@@ -1308,8 +1317,8 @@ func (s *Service) ownedBotUsernames(ctx context.Context, ownerUserID int64) ([]s
 	return out, nil
 }
 
-// tokenReply 拼装带 code entity 的 token 消息（全 ASCII 文本，offset 按字节即按
-// UTF-16 code unit 成立）。
+// tokenReply assembles a token message with a code entity (all-ASCII text, so the offset equals both the byte
+// and UTF-16 code unit offset).
 func tokenReply(head, token, tail string) botReply {
 	return botReply{
 		Text: head + token + tail,
@@ -1323,7 +1332,7 @@ func internalReply() botReply {
 	return botReply{Text: "Something went wrong on my side. Please try again later."}
 }
 
-// parseBotCommand 解析行首 "/cmd"（容忍 "/cmd@BotFather" 与尾随参数），返回小写命令名。
+// parseBotCommand parses a leading "/cmd" (tolerating "/cmd@BotFather" and trailing arguments) and returns the lowercased command name.
 func parseBotCommand(text string) (string, bool) {
 	if !strings.HasPrefix(text, "/") {
 		return "", false

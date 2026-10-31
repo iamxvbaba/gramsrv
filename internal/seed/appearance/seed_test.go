@@ -24,7 +24,7 @@ func TestDefaultCatalogShape(t *testing.T) {
 		t.Fatalf("PeerProfileColors length = %d, want carried-over count 16", len(catalog.PeerProfileColors))
 	}
 
-	// 至少有一张带可下载文档+缩略图的墙纸,且嵌入字节 sha256 对得上。
+	// At least one wallpaper with a downloadable document + thumbnail, and its embedded bytes match the sha256.
 	var withDoc *Wallpaper
 	for i := range catalog.Wallpapers {
 		if catalog.Wallpapers[i].Document.ID != 0 && catalog.Wallpapers[i].Document.Path != "" {
@@ -40,14 +40,14 @@ func TestDefaultCatalogShape(t *testing.T) {
 		assertEmbeddedSHA(t, withDoc.Document.Thumbs[0].Path, withDoc.Document.Thumbs[0].SHA256)
 	}
 
-	// 每个聊天主题至少一个带墙纸文档的设置(官方主题都带主题背景)。
+	// Every chat theme has at least one setting with a wallpaper document (official themes all carry a theme background).
 	for _, ct := range catalog.ChatThemes {
 		if len(ct.Settings) == 0 {
 			t.Fatalf("chat theme %q has no settings", ct.Emoticon)
 		}
 	}
 
-	// 沿用的配色调色板结构保持不变。
+	// The carried-over color palette structure stays unchanged.
 	if catalog.PeerColors[0].Colors != nil {
 		t.Fatalf("PeerColors[0].Colors = %+v, want nil default palette", catalog.PeerColors[0].Colors)
 	}

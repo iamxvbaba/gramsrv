@@ -8,16 +8,16 @@ import (
 	"telesrv/internal/domain"
 )
 
-// editGroupCallParticipant 权限矩阵（M2 完整版）：
+// editGroupCallParticipant permission matrix (full M2 version):
 //
-//	操作          自己→自己                普通成员→他人          admin/creator→他人
-//	muted=true   muted, can_self_unmute   overrides.muted_by_you  muted_by_admin（禁言）
-//	muted=false  仅当 can_self_unmute       清 overrides           允许发言（清 muted_by_admin+举手）
-//	volume       忽略                      overrides.volume        volume_by_admin（全员）
-//	raise_hand   rating=全局单调序号        ✗                      admin 放下他人手
+//	operation    self→self                 member→other           admin/creator→other
+//	muted=true   muted, can_self_unmute    overrides.muted_by_you  muted_by_admin (mute)
+//	muted=false  only when can_self_unmute  clear overrides        allow to speak (clear muted_by_admin + raised hand)
+//	volume       ignored                   overrides.volume        volume_by_admin (everyone)
+//	raise_hand   rating = global monotonic counter  ✗             admin lowers another's hand
 //
-// ⚠ P1-5：self 的 video_stopped/video_paused 一律接受/忽略转发，绝不返回错误
-// （edit 失败在客户端有 rejoin 风暴风险）。
+// ⚠ P1-5: self's video_stopped/video_paused are always accepted/forwarded-ignored, never returning
+// an error (a failed edit risks a rejoin storm on the client).
 func (r *Router) onPhoneEditGroupCallParticipant(ctx context.Context, req *tg.PhoneEditGroupCallParticipantRequest) (tg.UpdatesClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
@@ -48,9 +48,11 @@ func (r *Router) onPhoneEditGroupCallParticipant(ctx context.Context, req *tg.Ph
 	}
 }
 
-// editSelfParticipant 处理 self 维度（mute 自由翻转、举手、视频开关/暂停）。
-// ⚠ P1-5：video/presentation 维度的 self-edit 绝不返回错误（edit 失败有客户端
-// rejoin 风暴风险；幂等重放也回成功空 Updates 而非 GROUPCALL_NOT_MODIFIED）。
+// editSelfParticipant handles the self dimension (free mute toggling, raised hand, video
+// on/off/pause).
+// ⚠ P1-5: a self-edit on the video/presentation dimension never returns an error (a failed edit
+// risks a rejoin storm on the client; an idempotent replay also returns a successful empty Updates
+// rather than GROUPCALL_NOT_MODIFIED).
 func (r *Router) editSelfParticipant(ctx context.Context, scope *groupCallScope, req *tg.PhoneEditGroupCallParticipantRequest, self domain.GroupCallParticipant) (tg.UpdatesClass, error) {
 	update := domain.GroupCallParticipantUpdate{Now: int(r.clock.Now().Unix())}
 	if raise, ok := req.GetRaiseHand(); ok {
@@ -67,14 +69,16 @@ func (r *Router) editSelfParticipant(ctx context.Context, scope *groupCallScope,
 	}
 	if muted, ok := req.GetMuted(); ok {
 		if self.MutedByAdmin && !muted {
-			// 被管理员压制时不能自行 unmute（客户端此时只会发 raise_hand）。
+			// When suppressed by an admin the user cannot unmute themselves (the client only sends
+			// raise_hand at this point).
 			return nil, groupCallForbiddenErr()
 		}
 		update.Muted = &muted
 	}
 	videoEdit := false
-	// video_stopped：翻转 video 字段的出现/消失。endpoint 与 source_groups 来自
-	// join 时的存档（开关摄像头不重发 join），缺档（极老会话）静默容忍。
+	// video_stopped: toggles the appearance/disappearance of the video field. The endpoint and
+	// source_groups come from the archive made at join (toggling the camera does not re-send join);
+	// a missing archive (a very old session) is silently tolerated.
 	if stopped, ok := req.GetVideoStopped(); ok {
 		videoEdit = true
 		if st, found := decodeVideoState(self.VideoJSON); found {
@@ -86,7 +90,7 @@ func (r *Router) editSelfParticipant(ctx context.Context, scope *groupCallScope,
 			update.VideoJSON = &raw
 		}
 	}
-	// video_paused：video 字段保留、置 paused（观看端渲染占位）。
+	// video_paused: keep the video field and set paused (the viewer renders a placeholder).
 	if paused, ok := req.GetVideoPaused(); ok {
 		videoEdit = true
 		if st, found := decodeVideoState(self.VideoJSON); found && st.Active {
@@ -125,24 +129,25 @@ func (r *Router) editSelfParticipant(ctx context.Context, scope *groupCallScope,
 		}, []int64{scope.userID}), nil
 }
 
-// adminEditParticipant 处理 admin→他人（禁言/允许发言/全局音量/放下举手）。
+// adminEditParticipant handles admin->other (mute/allow to speak/global volume/lower raised hand).
 func (r *Router) adminEditParticipant(ctx context.Context, scope *groupCallScope, req *tg.PhoneEditGroupCallParticipantRequest, target domain.GroupCallParticipant) (tg.UpdatesClass, error) {
 	update := domain.GroupCallParticipantUpdate{Now: int(r.clock.Now().Unix())}
 	if muted, ok := req.GetMuted(); ok {
 		mutedByAdmin := muted
 		update.MutedByAdmin = &mutedByAdmin
 		if muted {
-			// 禁言：muted=true 且 can_self_unmute=false。
+			// Mute: muted=true and can_self_unmute=false.
 			update.Muted = &muted
 		} else {
-			// "允许发言"：只恢复 can_self_unmute 并清举手，不替用户开麦
-			//（官方语义：用户收到后仍是 muted，需自行 unmute）。
+			// "Allow to speak": only restore can_self_unmute and clear the raised hand; it does not
+			// unmute on the user's behalf (official semantics: the user is still muted after
+			// receiving it and must unmute themselves).
 			zero := int64(0)
 			update.RaiseHandRating = &zero
 		}
 	}
 	if raise, ok := req.GetRaiseHand(); ok && !raise {
-		// admin 放下他人举手。
+		// Admin lowers another's raised hand.
 		zero := int64(0)
 		update.RaiseHandRating = &zero
 	}
@@ -152,8 +157,8 @@ func (r *Router) adminEditParticipant(ctx context.Context, scope *groupCallScope
 	return r.applyParticipantMutation(ctx, scope, target.UserID, update)
 }
 
-// memberOverrideParticipant 处理普通成员→他人（本地静音/本地音量，per-viewer，
-// 仅 setter 自己可见，不进全房间 version）。
+// memberOverrideParticipant handles member->other (local mute/local volume, per-viewer, visible
+// only to the setter themselves, not advancing the whole-room version).
 func (r *Router) memberOverrideParticipant(ctx context.Context, scope *groupCallScope, req *tg.PhoneEditGroupCallParticipantRequest, targetID int64) (tg.UpdatesClass, error) {
 	ov, _, err := r.deps.GroupCalls.ParticipantOverride(ctx, scope.call.ID, scope.userID, targetID)
 	if err != nil {
@@ -179,7 +184,8 @@ func (r *Router) memberOverrideParticipant(ctx context.Context, scope *groupCall
 	if err := r.deps.GroupCalls.SetParticipantOverride(ctx, scope.call.ID, scope.userID, targetID, ov, clear); err != nil {
 		return nil, internalErr()
 	}
-	// per-viewer：只推给 setter 自己（其全部设备，带 min flag 防覆盖本地状态）。
+	// per-viewer: push only to the setter themselves (all their devices, with the min flag to avoid
+	// overwriting local state).
 	target, found, err := r.deps.GroupCalls.Participant(ctx, scope.call.ID, targetID)
 	if err != nil || !found {
 		return tgEmptyUpdates(int(r.clock.Now().Unix())), nil
@@ -188,14 +194,15 @@ func (r *Router) memberOverrideParticipant(ctx context.Context, scope *groupCall
 	update := &tg.UpdateGroupCallParticipants{
 		Call:         &tg.InputGroupCall{ID: scope.call.ID, AccessHash: scope.call.AccessHash},
 		Participants: []tg.GroupCallParticipant{row},
-		Version:      scope.call.Version, // overrides 不推进 version
+		Version:      scope.call.Version, // overrides do not advance version
 	}
 	out := r.groupCallUpdateContainer(ctx, scope.userID, scope.channel, update, []int64{targetID})
 	r.pushUserMessage(ctx, scope.userID, "group call override", out)
 	return out, nil
 }
 
-// applyParticipantMutation 把全房间维度的字段级更新落库并扇出（version++）。
+// applyParticipantMutation persists and fans out a field-level update on the whole-room dimension
+// (version++).
 func (r *Router) applyParticipantMutation(ctx context.Context, scope *groupCallScope, targetID int64, update domain.GroupCallParticipantUpdate) (tg.UpdatesClass, error) {
 	mut, changed, err := r.deps.GroupCalls.UpdateParticipant(ctx, scope.call.ID, targetID, update)
 	if err != nil {
@@ -249,7 +256,7 @@ func (r *Router) onPhoneToggleGroupCallSettings(ctx context.Context, req *tg.Pho
 	}
 	joinMuted, ok := req.GetJoinMuted()
 	if !ok {
-		// reset_invite_hash / messages_enabled 等范围外开关：无变化语义。
+		// Out-of-scope switches such as reset_invite_hash / messages_enabled: no change semantics.
 		return nil, groupCallNotModifiedErr()
 	}
 	call, changed, err := r.deps.GroupCalls.SetJoinMuted(ctx, scope.call.ID, joinMuted)
@@ -266,8 +273,9 @@ func (r *Router) onPhoneToggleGroupCallSettings(ctx context.Context, req *tg.Pho
 
 const maxInviteToGroupCallUsers = 10
 
-// onPhoneInviteToGroupCall 发 messageActionInviteToGroupCall 服务消息（带频道 pts），
-// 被邀请者通过正常频道消息收到可点入会卡片；不直接拉人入会。
+// onPhoneInviteToGroupCall sends a messageActionInviteToGroupCall service message (with channel
+// pts); the invitee receives a tappable join card as a normal channel message. It does not pull
+// anyone into the call directly.
 func (r *Router) onPhoneInviteToGroupCall(ctx context.Context, req *tg.PhoneInviteToGroupCallRequest) (tg.UpdatesClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
@@ -291,7 +299,7 @@ func (r *Router) onPhoneInviteToGroupCall(ctx context.Context, req *tg.PhoneInvi
 		if !found || u.ID == 0 {
 			return nil, userIDInvalidErr()
 		}
-		// 目标必须是本群成员。
+		// The target must be a member of this group.
 		member, err := r.deps.Channels.GetParticipant(ctx, scope.userID, scope.channel.ID, u.ID)
 		if err != nil || member.Status != domain.ChannelMemberActive {
 			return nil, tgerr400("USER_NOT_PARTICIPANT")
@@ -317,7 +325,7 @@ func (r *Router) onPhoneInviteToGroupCall(ctx context.Context, req *tg.PhoneInvi
 	return out, nil
 }
 
-// groupCallParticipantTarget 解析 editGroupCallParticipant 的目标（仅 user peer）。
+// groupCallParticipantTarget resolves editGroupCallParticipant's target (user peers only).
 func (r *Router) groupCallParticipantTarget(ctx context.Context, currentUserID int64, peer tg.InputPeerClass) (int64, error) {
 	switch v := peer.(type) {
 	case *tg.InputPeerSelf:

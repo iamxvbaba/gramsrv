@@ -37,7 +37,7 @@ func (m *countingMetrics) OutboundResend(int, error)  {}
 func (m *countingMetrics) OutboundDropped(string)     {}
 func (m *countingMetrics) OutboundQueueWait(int, int) {}
 
-// TestMetricsHooks 验证 M5：连接、握手、RPC 的 metrics 钩子被正确调用。
+// TestMetricsHooks verifies M5: the connection, handshake and RPC metrics hooks are called correctly.
 func TestMetricsHooks(t *testing.T) {
 	const dc = 2
 	m := &countingMetrics{}
@@ -61,8 +61,10 @@ func TestMetricsHooks(t *testing.T) {
 	if got := m.inbound.Load(); got != 1 {
 		t.Errorf("InboundRPCStarted called %d times, want 1", got)
 	}
-	// new_session_created 已经跨过 required-control 物理写屏障；msgs_ack 仍是异步控制帧，
-	// 因而这里只轮询等待最终发送计数。具体 boundary→RPC 顺序由 session boundary 测试锁定。
+	// new_session_created has already crossed the required-control physical write
+	// barrier; msgs_ack is still an asynchronous control frame, so here we only poll
+	// for the final send count. The exact boundary→RPC order is pinned by the
+	// session boundary test.
 	deadline := time.Now().Add(2 * time.Second)
 	for m.outbound.Load() < 3 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)

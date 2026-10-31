@@ -15,8 +15,10 @@ func (r *Router) forumSendAsPeer(ctx context.Context, peerInput, sendAsInput tg.
 	if err != nil {
 		return nil, internalErr()
 	}
-	// 复用统一的 send-as 校验：群内自己→nil（以自己发言），当前频道/群→匿名/广播自帖，
-	// 自己拥有的其它广播频道→按目标与频道资格校验。forum topic 与普通消息走同一套资格判定。
+	// Reuse the unified send-as validation: self within a group -> nil (post as yourself), the
+	// current channel/group -> anonymous/broadcast self-post, another broadcast channel you own ->
+	// validated against the target and channel eligibility. Forum topics and ordinary messages use
+	// the same eligibility rules.
 	return r.sendAsPeerFromInput(ctx, userID, peer, sendAsInput)
 }
 
@@ -92,12 +94,12 @@ func (r *Router) sendAsPeerFromInput(ctx context.Context, userID int64, to domai
 		return nil, nil
 	case domain.PeerTypeChannel:
 		if sendAs.ID == to.ID {
-			// 以当前频道/群本身发言（广播自帖、匿名管理员）。
+			// Post as the current channel/group itself (broadcast self-post, anonymous admin).
 			if err := r.validateCurrentChannelSendAs(ctx, userID, to.ID); err != nil {
 				return nil, err
 			}
 		} else {
-			// 以自己拥有的其它广播频道身份发言。
+			// Post as another broadcast channel you own.
 			if err := r.validateForeignChannelSendAs(ctx, userID, to.ID, sendAs.ID); err != nil {
 				return nil, err
 			}
@@ -135,9 +137,10 @@ func (r *Router) validateForeignChannelSendAs(ctx context.Context, userID, toCha
 	return nil
 }
 
-// canSendAsForeignChannel 判定 view 描述的频道能否被当前用户「作为身份」在别的群里发言：
-// 仅限广播频道，且用户是 creator 或持 PostMessages 权的 admin（以自己拥有的 megagroup 身份发言
-// 不是真实的 Telegram 能力，故排除）。
+// canSendAsForeignChannel reports whether the channel described by view can be used by the current
+// user to "post as" in another group: broadcast channels only, and the user must be the creator or
+// an admin holding PostMessages (posting as a megagroup you own is not a real Telegram capability,
+// so it is excluded).
 func canSendAsForeignChannel(view domain.ChannelView) bool {
 	if !view.Channel.Broadcast {
 		return false
@@ -151,7 +154,8 @@ func canSendAsForeignChannel(view domain.ChannelView) bool {
 	return false
 }
 
-// userIsPremium 报告用户当前是否为有效会员（PremiumActiveAt 即时派生）。
+// userIsPremium reports whether the user is currently an active subscriber (derived from
+// PremiumActiveAt on the fly).
 func (r *Router) userIsPremium(ctx context.Context, userID int64) bool {
 	if r.deps.Users == nil || userID == 0 {
 		return false

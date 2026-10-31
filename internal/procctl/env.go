@@ -1,12 +1,16 @@
-// Package procctl 提供管理 web 面板「Environment (.env)」编辑器所需的 .env 解析
-// 与改写能力。它只做本仓库需要的子集：从 .env.example 读取可编辑字段分组
-// （ReadEnvGroups），把面板保存的值回写进 .env（WriteEnvValues）——不含进程管理
-// （启动/停止/重启/更新）、PID 状态文件、git 操作与 docker 探测等更重的功能。
+// Package procctl provides the .env parsing and rewriting needed by the admin web
+// panel's "Environment (.env)" editor. It implements only the subset this repo needs:
+// reading editable field groups from .env.example (ReadEnvGroups) and writing values
+// saved by the panel back into .env (WriteEnvValues) -- it does not include the heavier
+// features of process management (start/stop/restart/update), PID state files, git
+// operations or docker probing.
 //
-// 约定与脚本/面板一致：.env.example 用 `## 标题 -- 说明` 行切分组、`# ====...`
-// 行断区间、`#` 注释段紧跟字段作为其描述，`TELESRV_*` 字段行可激活（`K=V`）或
-// 注释掉（`# K=V`）。写回的基石是「以 .env.example 为底本、原位替换已知键的值」，
-// 这样注释、布局与未触及的键都原样保留——绝不重新 dump 键值对。
+// The conventions match the scripts/panel: .env.example splits groups with `## Title --
+// description` lines, breaks sections with `# ====...` lines, and the `#` comment block
+// immediately preceding a field acts as its description; a `TELESRV_*` field line is
+// either active (`K=V`) or commented out (`# K=V`). The foundation of writing back is
+// "use .env.example as the base and replace the values of known keys in place", so
+// comments, layout and untouched keys all survive -- never re-dump key/value pairs.
 package procctl
 
 import (
@@ -21,35 +25,38 @@ var (
 	activeFieldRe    = regexp.MustCompile(`^(TELESRV_[A-Z0-9_]+)=(.*)$`)
 	commentedFieldRe = regexp.MustCompile(`^#\s*(TELESRV_[A-Z0-9_]+)=(.*)$`)
 	sensitiveKeyRe   = regexp.MustCompile(`(PASSWORD|SECRET|_TOKEN|API_KEY)`)
-	// sensitiveKeyExceptRe 排除敏感词匹配里的 "SECRET" 命中但其实指的是 Telegram
-	// 私密聊天功能、而非凭据的键（如 TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD）：
-	// 那里没有可掩码的内容，只是普通布尔开关。
+	// sensitiveKeyExceptRe excludes keys where the sensitive-word match "SECRET" actually
+	// refers to Telegram's secret-chat feature rather than a credential (e.g.
+	// TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD): there is nothing to mask there,
+	// it is just an ordinary boolean switch.
 	sensitiveKeyExceptRe = regexp.MustCompile(`SECRET_CHAT`)
 	groupHeaderRe        = regexp.MustCompile(`^##\s*(.+?)\s*--\s*(.+)$`)
 	sectionBreakRe       = regexp.MustCompile(`^#\s*={10,}\s*$`)
 )
 
-// EnvField 是单个可编辑环境变量在面板中的呈现：默认值、说明、是否默认启用、是否敏感
-// （值应在 UI 掩码显示），以及当前生效值。
+// EnvField is the presentation of a single editable environment variable in the panel:
+// default value, description, whether it is enabled by default, whether it is sensitive
+// (its value should be masked in the UI), and the currently effective value.
 type EnvField struct {
 	Key              string `json:"key"`
 	DefaultValue     string `json:"default_value"`
 	Description      string `json:"description"`
 	EnabledByDefault bool   `json:"enabled_by_default"`
 	Sensitive        bool   `json:"sensitive"`
-	// Value 是字段的当前生效值：.env 有设置则取 .env，否则是该字段默认值
-	// （仅当 EnabledByDefault 时），再否则为空。
+	// Value is the field's currently effective value: .env if it is set there, otherwise
+	// the field's default value (only when EnabledByDefault), and empty otherwise.
 	Value string `json:"value"`
 }
 
-// EnvGroup 是一个字段分组，对应 .env.example 中的一段 `## 标题 -- 说明`。
+// EnvGroup is a field group, corresponding to a `## Title -- description` block in
+// .env.example.
 type EnvGroup struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	Fields      []EnvField `json:"fields"`
 }
 
-// Manager 基于仓库根目录（Root）下的 .env 与 .env.example 工作。
+// Manager works against the .env and .env.example under the repo root (Root).
 type Manager struct {
 	Root string
 }
@@ -58,9 +65,10 @@ func NewManager(root string) *Manager {
 	return &Manager{Root: root}
 }
 
-// ReadEnvGroups 把 .env.example 解析成面板可见的分组（header/格式规则见
-// server-panel.py 的 parse_env_template()，两者一致），再用 .env 的当前值回填每个
-// 字段的生效值。模板文件不存在时返回空分组（不报错）。
+// ReadEnvGroups parses .env.example into the panel-visible groups (the header/format
+// rules match server-panel.py's parse_env_template()), then back-fills each field's
+// effective value from the current values in .env. A missing template file returns no
+// groups (without an error).
 func (m *Manager) ReadEnvGroups() ([]EnvGroup, error) {
 	tmplPath := filepath.Join(m.Root, ".env.example")
 	tmplData, err := os.ReadFile(tmplPath)
@@ -179,12 +187,15 @@ func (m *Manager) readEnvFile() (map[string]string, error) {
 	return values, nil
 }
 
-// WriteEnvValues 以 .env.example 的原文为底本、原位替换每个已知键的值后回写 .env——
-// 这样注释与布局原样保留。只有出现在 values 里的键才被改写；其余键一律保持当前
-// .env 的值（.env 从未设置过的键才落到模板自身默认值）——早前版本曾对任何不在本次
-// 保存载荷里的键直接回退到模板默认，使每次只改一个分组的保存都把其他已定制的设置
-// （如 TELESRV_ADMIN_UI_PASSWORD）静默清掉。模板里注释掉的可选字段：给出非空值则
-// 取消注释并写入，给出空值则原样保留注释行。
+// WriteEnvValues writes back to .env using .env.example's text as the base and
+// replacing the values of each known key in place -- so comments and layout survive.
+// Only keys present in values are rewritten; every other key keeps its current .env
+// value (only keys .env never set fall back to the template's own default) -- an
+// earlier version fell back to the template default for any key absent from the save
+// payload, so a save touching only one group silently wiped other customized settings
+// (e.g. TELESRV_ADMIN_UI_PASSWORD). For an optional field commented out in the
+// template: a non-empty value uncomments it and writes it, while an empty value leaves
+// the commented line as-is.
 func (m *Manager) WriteEnvValues(values map[string]string) error {
 	tmplPath := filepath.Join(m.Root, ".env.example")
 	tmplData, err := os.ReadFile(tmplPath)
@@ -196,8 +207,9 @@ func (m *Manager) WriteEnvValues(values map[string]string) error {
 		return err
 	}
 	lines := strings.Split(string(tmplData), "\n")
-	// Split() 对末尾 "\n" 会留下一个空尾元素；砍掉它，避免下面拼接时在尾部多加
-	// 一行空行（本函数末尾本来就会补一个换行）。
+	// Split() leaves an empty trailing element for a final "\n"; drop it so the join
+	// below doesn't add an extra blank line at the end (this function already appends a
+	// newline at the end).
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
@@ -227,8 +239,9 @@ func (m *Manager) WriteEnvValues(values map[string]string) error {
 				}
 				continue
 			}
-			// 之前已启用的可选字段：模板里仍是注释行，但当前 .env 已有激活行——
-			// 保持启用并沿用其现值。
+			// An optional field enabled before: the template still has it commented, but
+			// the current .env already has an active line -- keep it enabled and reuse its
+			// current value.
 			if v, ok := existing[c[1]]; ok {
 				seen[c[1]] = true
 				out = append(out, c[1]+"="+v)

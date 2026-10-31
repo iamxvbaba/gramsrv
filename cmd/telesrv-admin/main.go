@@ -127,15 +127,17 @@ type uiConfig struct {
 	ServerPort int
 }
 
-// loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
-// 并转换为 telesrv-admin 需要的 uiConfig。环境变量优先级高于 .env 文件。
+// loadConfig loads the .env config file and environment variables via
+// internal/config.Load(), and converts them into the uiConfig that
+// telesrv-admin needs. Environment variables take precedence over the .env file.
 func loadConfig() (uiConfig, error) {
 	appCfg, err := config.Load()
 	if err != nil {
 		return uiConfig{}, fmt.Errorf("load config: %w", err)
 	}
-	// 管理面板也能按手机号建号，必须与 telesrv 主进程使用同一套格式策略，
-	// 否则面板写入的号码主进程会当成非法号。
+	// The admin panel can also create accounts by phone number, so it must use
+	// the same format policy as the telesrv main process; otherwise a number
+	// written by the panel would be treated as invalid by the main process.
 	domain.ConfigurePhoneFormatCheck(appCfg.CheckNumberFormat)
 
 	adminAPIAddr := appCfg.AdminAPIAddr

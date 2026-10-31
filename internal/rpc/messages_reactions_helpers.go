@@ -193,8 +193,10 @@ func channelReactionErr(err error) error {
 	case errors.Is(err, domain.ErrReactionInvalid):
 		return reactionInvalidErr()
 	case errors.Is(err, domain.ErrReactionsTooMany):
-		// 官方：消息去重 emoji 种类已达 reactions_uniq_max（或 chat 自定义 reactions_limit）时
-		// 新种类 reaction 报 400 REACTIONS_TOO_MANY，追加已有种类不受限。
+		// Official behavior: when a message's deduplicated emoji count has reached
+		// reactions_uniq_max (or the chat's custom reactions_limit), a new reaction
+		// type returns 400 REACTIONS_TOO_MANY; appending an existing type is not
+		// limited.
 		return tgerr400("REACTIONS_TOO_MANY")
 	default:
 		return channelInvalidErr(err)

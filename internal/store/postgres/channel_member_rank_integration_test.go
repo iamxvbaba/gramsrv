@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestChannelStoreEditMemberRank 验证 rank-only 编辑在 PG 上的持久化、权限矩阵、
-// 以及 participant_edit_rank 通过 channel_admin_log_events_type_check 约束（0086）。
+// TestChannelStoreEditMemberRank verifies rank-only editing persistence in PG, the permission matrix,
+// and that participant_edit_rank passes the channel_admin_log_events_type_check constraint (0086).
 func TestChannelStoreEditMemberRank(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -44,7 +44,7 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 	}
 	channelID = created.Channel.ID
 
-	// creator 给普通成员设 tag：角色不变、rank 持久化。
+	// The creator sets a tag on an ordinary member: the role is unchanged, the rank is persisted.
 	res, err := channels.EditChannelMemberRank(ctx, domain.EditChannelMemberRankRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
@@ -66,7 +66,7 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("stored participant = %+v, want member role with navigator rank", stored)
 	}
 
-	// 普通成员改自己：开关开 → 成功；default_banned_rights.edit_rank=true → 拒绝。
+	// An ordinary member edits themself: switch on → success; default_banned_rights.edit_rank=true → rejected.
 	if _, err := channels.EditChannelMemberRank(ctx, domain.EditChannelMemberRankRequest{
 		UserID:    member.ID,
 		ChannelID: channelID,
@@ -100,7 +100,7 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 	}); !errors.Is(err, domain.ErrChannelRightForbidden) {
 		t.Fatalf("member self edit with switch off err = %v, want ErrChannelRightForbidden", err)
 	}
-	// 普通成员改别人 → 需要管理权限。
+	// An ordinary member editing someone else → requires admin rights.
 	if _, err := channels.EditChannelMemberRank(ctx, domain.EditChannelMemberRankRequest{
 		UserID:    member.ID,
 		ChannelID: channelID,
@@ -111,7 +111,7 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("member edits creator err = %v, want creator/admin-required rejection", err)
 	}
 
-	// manage_ranks 管理员权限位经 PG round-trip。
+	// The manage_ranks admin right bit round-trips through PG.
 	if _, err := channels.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
 		UserID:      owner.ID,
 		ChannelID:   channelID,
@@ -129,7 +129,7 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("promoted admin rights = %+v, want manage_ranks=true round-trip", promoted.AdminRights)
 	}
 
-	// admin log：participant_edit_rank 行已通过 0086 CHECK 落库，filter 可检索。
+	// admin log: the participant_edit_rank row is persisted through the 0086 CHECK and is searchable by filter.
 	log, err := channels.ListAdminLog(ctx, domain.ChannelAdminLogRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
@@ -154,8 +154,8 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("admin log ranks = %q,%q, want pilot,navigator (desc order)", log.Events[0].NewString, log.Events[1].NewString)
 	}
 
-	// 重进是全新 participant：admin（manage_ranks + rank）退群重进后为普通成员、
-	// 无 admin rights、无 rank；部分限制名单独立于在群与否、重进后仍生效。
+	// Re-entry is a brand-new participant: an admin (manage_ranks + rank) becomes an ordinary member after leaving and rejoining,
+	// with no admin rights and no rank; some restriction lists are independent of membership and remain in effect after re-entry.
 	if _, err := channels.EditChannelBanned(ctx, domain.EditChannelBannedRequest{
 		UserID:       owner.ID,
 		ChannelID:    channelID,
@@ -185,8 +185,8 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("rejoined member joined_at/inviter = %d/%d, want fresh join date and no inviter", rejoined.JoinedAt, rejoined.InviterUserID)
 	}
 
-	// creator 离开会把 owner 交给其他活跃成员；旧 creator 重进是普通成员，
-	// 不保留 creator tag。
+	// The creator leaving hands ownership to another active member; the old creator rejoining is an ordinary member,
+	// keeping no creator tag.
 	if _, err := channels.EditChannelMemberRank(ctx, domain.EditChannelMemberRankRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
@@ -217,7 +217,7 @@ func TestChannelStoreEditMemberRank(t *testing.T) {
 		t.Fatalf("rejoined old creator = %+v, want plain member without rank", creatorBack)
 	}
 
-	// 成员 Tag 是 megagroup 专属：broadcast 上 creator/self 一律 MEGAGROUP_ID_INVALID。
+	// Member Tags are megagroup-only: on a broadcast, creator/self always get MEGAGROUP_ID_INVALID.
 	var broadcastID int64
 	t.Cleanup(func() {
 		if broadcastID != 0 {

@@ -10,8 +10,9 @@ import (
 	"telesrv/internal/store"
 )
 
-// PinPrivateMessage 与 PG 实现同语义：非 pm_oneside 的 pin 双侧置位，
-// unpin 恒双侧清除，状态未变化时幂等 no-op；服务消息不可置顶。
+// PinPrivateMessage has the same semantics as the PG implementation: a non-pm_oneside pin
+// sets both sides, unpin always clears both sides, it is an idempotent no-op when the state
+// is unchanged, and service messages cannot be pinned.
 func (s *MessageStore) PinPrivateMessage(_ context.Context, req domain.PinPrivateMessageRequest) (domain.PinPrivateMessageResult, error) {
 	res := domain.PinPrivateMessageResult{OwnerUserID: req.OwnerUserID}
 	if req.OwnerUserID == 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == 0 {
@@ -115,8 +116,8 @@ func (s *MessageStore) PinPrivateMessage(_ context.Context, req domain.PinPrivat
 	return res, nil
 }
 
-// UnpinAllPrivateMessages 与 PG 实现同语义：本侧整批清除并经 UID 同步
-// 清除对端共享置顶。
+// UnpinAllPrivateMessages has the same semantics as the PG implementation: it clears the
+// whole batch on this side and, via UID, also clears the peer's shared pins.
 func (s *MessageStore) UnpinAllPrivateMessages(_ context.Context, req domain.UnpinAllPrivateMessagesRequest) (domain.PinPrivateMessageResult, error) {
 	res := domain.PinPrivateMessageResult{OwnerUserID: req.OwnerUserID}
 	if req.OwnerUserID == 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == 0 {
@@ -133,7 +134,7 @@ func (s *MessageStore) UnpinAllPrivateMessages(_ context.Context, req domain.Unp
 	}
 	events.mu.Lock()
 	defer events.mu.Unlock()
-	// 与 PG 同语义：按 box_id 降序取一批清除，剩余批次以 Offset=1 续清。
+	// Same semantics as PG: take one batch to clear in descending box_id, and clear the remaining batches with Offset=1.
 	pinnedIdx := make([]int, 0)
 	for i, msg := range s.m[req.OwnerUserID] {
 		if msg.Peer == req.Peer && msg.Pinned {

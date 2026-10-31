@@ -34,7 +34,7 @@ const (
 	passwordRecoveryCASRetries    = 32
 )
 
-// Service 提供账号安全配置查询。
+// Service provides account security configuration lookups.
 type Service struct {
 	passwords   store.PasswordStore
 	reactions   store.AccountReactionSettingsStore
@@ -44,7 +44,7 @@ type Service struct {
 	stickerSets store.UserStickerSetStore
 	savedMusic  store.SavedMusicStore
 	business    store.BusinessAutomationStore
-	// users 仅用于登录邮箱的 phone→user 解析（sendCode 检测 / login-setup / reset 走 phone）。
+	// users is used only for login-email phone->user resolution (sendCode detection / login-setup / reset go through phone).
 	users                     store.UserStore
 	userCache                 store.UserCache
 	authorizations            store.AuthorizationStore
@@ -64,67 +64,67 @@ type Service struct {
 	loginEmailCodeLength      int
 }
 
-// ServiceOption 调整 account 服务依赖。
+// ServiceOption adjusts the account service dependencies.
 type ServiceOption func(*Service)
 
-// WithReactionSettings 注入账号级 reaction 设置持久化。
+// WithReactionSettings injects account-level reaction settings persistence.
 func WithReactionSettings(reactions store.AccountReactionSettingsStore) ServiceOption {
 	return func(s *Service) {
 		s.reactions = reactions
 	}
 }
 
-// WithAccountSettings 注入账号级单例设置（全局隐私/TTL/敏感内容/注册通知）持久化。
+// WithAccountSettings injects account-level singleton settings (global privacy / TTL / sensitive content / sign-up notification) persistence.
 func WithAccountSettings(settings store.AccountSettingsStore) ServiceOption {
 	return func(s *Service) {
 		s.settings = settings
 	}
 }
 
-// WithNotifySettings 注入 per-scope 通知设置持久化。
+// WithNotifySettings injects per-scope notification settings persistence.
 func WithNotifySettings(notify store.NotifySettingsStore) ServiceOption {
 	return func(s *Service) {
 		s.notify = notify
 	}
 }
 
-// WithStickerCollections 注入个人贴纸/GIF 集合持久化（faved/recent/gif）。
+// WithStickerCollections injects personal sticker/GIF collection persistence (faved/recent/gif).
 func WithStickerCollections(stickers store.StickerCollectionStore) ServiceOption {
 	return func(s *Service) {
 		s.stickers = stickers
 	}
 }
 
-// WithUserStickerSets 注入账号级 installed sticker set 状态持久化。
+// WithUserStickerSets injects account-level installed sticker set state persistence.
 func WithUserStickerSets(stickerSets store.UserStickerSetStore) ServiceOption {
 	return func(s *Service) {
 		s.stickerSets = stickerSets
 	}
 }
 
-// WithSavedMusic 注入账号级 profile music 列表持久化。
+// WithSavedMusic injects account-level profile music list persistence.
 func WithSavedMusic(savedMusic store.SavedMusicStore) ServiceOption {
 	return func(s *Service) {
 		s.savedMusic = savedMusic
 	}
 }
 
-// WithBusinessAutomation 注入账号级 Business Profile/Quick Replies/Chat Links 持久化。
+// WithBusinessAutomation injects account-level Business Profile/Quick Replies/Chat Links persistence.
 func WithBusinessAutomation(business store.BusinessAutomationStore) ServiceOption {
 	return func(s *Service) {
 		s.business = business
 	}
 }
 
-// WithUsers 注入用户读存储，供登录邮箱的 phone→user 解析使用。
+// WithUsers injects the user read store, used for login-email phone->user resolution.
 func WithUsers(users store.UserStore) ServiceOption {
 	return func(s *Service) {
 		s.users = users
 	}
 }
 
-// WithPhoneChange 注入改号所需的授权校验、一次性验证码、原子 user+update
-// 写入与基础用户缓存失效依赖。
+// WithPhoneChange injects the authorization check, one-time code, atomic user+update write,
+// and base user cache invalidation dependencies required for phone changes.
 func WithPhoneChange(phoneChanges store.PhoneChangeStore, authorizations store.AuthorizationStore, codes store.CodeStore, cache store.UserCache, fixedCode string, ttl time.Duration, maxAttempts int) ServiceOption {
 	return func(s *Service) {
 		s.phoneChanges = phoneChanges
@@ -182,7 +182,7 @@ func WithAccountLifecycle(lifecycle store.AccountLifecycleStore) ServiceOption {
 	}
 }
 
-// NewService 创建 account 服务。
+// NewService creates the account service.
 func NewService(passwords store.PasswordStore, opts ...ServiceOption) *Service {
 	s := &Service{
 		passwords:                 passwords,
@@ -236,7 +236,8 @@ func (s *Service) GetSavedMusicByIDs(ctx context.Context, userID int64, ids []in
 	return s.savedMusic.GetSavedMusicByIDs(ctx, userID, ids)
 }
 
-// GetPassword 返回当前账号 2FA 配置。未登录或无记录时返回持久化策略的默认 no-password 配置。
+// GetPassword returns the current account's 2FA configuration. When not logged in or with no record,
+// it returns the persisted policy's default no-password configuration.
 func (s *Service) GetPassword(ctx context.Context, userID int64) (domain.PasswordSettings, error) {
 	if s == nil || s.passwords == nil || userID == 0 {
 		return defaultPasswordSettings(), nil
@@ -290,8 +291,9 @@ func normalizePasswordSettings(settings domain.PasswordSettings) domain.Password
 	if settings.RecoveryEmail != "" {
 		settings.HasRecovery = true
 	}
-	// login_email_pattern 始终从已确认的登录邮箱派生，与 2FA 恢复邮箱 RecoveryEmail
-	// 解耦（历史实现曾把恢复邮箱掩码误写进此字段，导致客户端把恢复邮箱当成登录邮箱显示）。
+	// login_email_pattern is always derived from the confirmed login email and is decoupled from the
+	// 2FA recovery email RecoveryEmail (a historical implementation mistakenly wrote the recovery email
+	// mask into this field, causing clients to display the recovery email as the login email).
 	settings.LoginEmail = normalizeLoginEmail(settings.LoginEmail)
 	settings.LoginEmailPattern = emailPattern(settings.LoginEmail)
 	return settings
@@ -733,7 +735,7 @@ func normalizeLoginEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// validLoginEmail 是登录邮箱的最小校验：非空且含 '@'。开发环境不做更严格的 RFC 校验。
+// validLoginEmail is the minimal login-email validation: non-empty and containing '@'. The development environment does not apply stricter RFC validation.
 func validLoginEmail(email string) bool {
 	email = normalizeLoginEmail(email)
 	return email != "" && strings.Contains(email, "@")
@@ -1009,8 +1011,8 @@ func (s *Service) invalidateLoginCode(ctx context.Context, hash, phone string) {
 	_, _ = s.codes.InvalidateLoginCode(cleanupCtx, hash, phone)
 }
 
-// SetLoginEmail 为已登录用户写入登录邮箱（authed 的 emailVerifyPurposeLoginChange）。
-// 账号无 2FA 也可设置：account_passwords 行可在 has_password=false 下仅承载登录邮箱。
+// SetLoginEmail writes the login email for an authenticated user (authed's emailVerifyPurposeLoginChange).
+// It can be set even without 2FA: an account_passwords row can carry just the login email with has_password=false.
 func (s *Service) SetLoginEmail(ctx context.Context, userID int64, email string) error {
 	if s == nil || s.passwords == nil || userID == 0 {
 		return domain.ErrEmailInvalid
@@ -1037,7 +1039,7 @@ func (s *Service) ValidLoginEmail(email string) bool {
 	return validLoginEmail(normalizeLoginEmail(email))
 }
 
-// LoginEmail 返回已登录用户的登录邮箱原始地址（用于 verifyEmail 回显 emailVerified.email）。
+// LoginEmail returns the raw login email of an authenticated user (used by verifyEmail to echo emailVerified.email).
 func (s *Service) LoginEmail(ctx context.Context, userID int64) (string, bool, error) {
 	if s == nil || s.passwords == nil || userID == 0 {
 		return "", false, nil
@@ -1052,7 +1054,7 @@ func (s *Service) LoginEmail(ctx context.Context, userID int64) (string, bool, e
 	return normalizeLoginEmail(settings.LoginEmail), true, nil
 }
 
-// LoginEmailByPhone 按手机号返回登录邮箱原始地址，供 auth.sendCode 检测是否改投邮箱。
+// LoginEmailByPhone returns the raw login email by phone number, so auth.sendCode can detect whether to deliver to email instead.
 func (s *Service) LoginEmailByPhone(ctx context.Context, phone string) (string, bool, error) {
 	userID, found, err := s.userIDByPhone(ctx, phone)
 	if err != nil || !found {
@@ -1162,7 +1164,7 @@ func (s *Service) saveReactionSettings(ctx context.Context, userID int64, settin
 	return settings, s.reactions.SaveReactionSettings(ctx, userID, settings)
 }
 
-// GetAccountSettings 返回账号级单例设置（未持久化时回落默认）。
+// GetAccountSettings returns the account-level singleton settings (falls back to defaults when not persisted).
 func (s *Service) GetAccountSettings(ctx context.Context, userID int64) (domain.AccountSettings, error) {
 	if s == nil || s.settings == nil || userID == 0 {
 		return domain.DefaultAccountSettings(), nil
@@ -1213,7 +1215,7 @@ func (s *Service) GetAccountSettingsBatch(ctx context.Context, userIDs []int64) 
 	return out, nil
 }
 
-// SetGlobalPrivacy 持久化账号全局隐私开关，返回合并后的完整设置。
+// SetGlobalPrivacy persists the account's global privacy switches and returns the merged complete settings.
 func (s *Service) SetGlobalPrivacy(ctx context.Context, userID int64, privacy domain.GlobalPrivacy) (domain.AccountSettings, error) {
 	settings, err := s.GetAccountSettings(ctx, userID)
 	if err != nil {
@@ -1226,7 +1228,7 @@ func (s *Service) SetGlobalPrivacy(ctx context.Context, userID int64, privacy do
 	return s.saveAccountSettings(ctx, userID, settings)
 }
 
-// SetAccountTTL 持久化账号自毁期限（钳制 >0）。
+// SetAccountTTL persists the account self-destruct period (clamped >0).
 func (s *Service) SetAccountTTL(ctx context.Context, userID int64, days int) (domain.AccountSettings, error) {
 	settings, err := s.GetAccountSettings(ctx, userID)
 	if err != nil {
@@ -1237,7 +1239,7 @@ func (s *Service) SetAccountTTL(ctx context.Context, userID int64, days int) (do
 	return s.saveAccountSettings(ctx, userID, settings)
 }
 
-// SetSensitiveContent 持久化敏感内容查看开关。
+// SetSensitiveContent persists the sensitive-content viewing switch.
 func (s *Service) SetSensitiveContent(ctx context.Context, userID int64, enabled bool) (domain.AccountSettings, error) {
 	settings, err := s.GetAccountSettings(ctx, userID)
 	if err != nil {
@@ -1247,7 +1249,7 @@ func (s *Service) SetSensitiveContent(ctx context.Context, userID int64, enabled
 	return s.saveAccountSettings(ctx, userID, settings)
 }
 
-// SetContactSignUpSilent 持久化“联系人注册时是否静音通知”。
+// SetContactSignUpSilent persists "whether to silently notify on contact sign-up".
 func (s *Service) SetContactSignUpSilent(ctx context.Context, userID int64, silent bool) (domain.AccountSettings, error) {
 	settings, err := s.GetAccountSettings(ctx, userID)
 	if err != nil {
@@ -1296,7 +1298,7 @@ func (s *Service) GetNotifySettings(ctx context.Context, ownerUserID int64, scop
 	return settings, nil
 }
 
-// SaveNotifySettings 持久化某作用域的通知设置。
+// SaveNotifySettings persists one scope's notification settings.
 func (s *Service) SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error {
 	if s == nil || s.notify == nil || ownerUserID == 0 {
 		return nil
@@ -1304,7 +1306,7 @@ func (s *Service) SaveNotifySettings(ctx context.Context, ownerUserID int64, sco
 	return s.notify.SaveNotifySettings(ctx, ownerUserID, scope, settings)
 }
 
-// ResetNotifySettings 清空该用户全部作用域的通知设置（恢复默认）。
+// ResetNotifySettings clears all of the user's scope notification settings (restoring defaults).
 func (s *Service) ResetNotifySettings(ctx context.Context, ownerUserID int64) error {
 	if s == nil || s.notify == nil || ownerUserID == 0 {
 		return nil
@@ -1312,7 +1314,7 @@ func (s *Service) ResetNotifySettings(ctx context.Context, ownerUserID int64) er
 	return s.notify.ResetNotifySettings(ctx, ownerUserID)
 }
 
-// PeerNotifySettings 批量取一组 peer 的整-peer 通知设置（dialog 列表投影）。
+// PeerNotifySettings returns the whole-peer notification settings for a batch of peers (dialog list projection).
 func (s *Service) PeerNotifySettings(ctx context.Context, ownerUserID int64, peers []domain.Peer) (map[domain.Peer]domain.PeerNotifySettings, error) {
 	if s == nil || s.notify == nil || ownerUserID == 0 || len(peers) == 0 {
 		return nil, nil
@@ -1320,7 +1322,7 @@ func (s *Service) PeerNotifySettings(ctx context.Context, ownerUserID int64, pee
 	return s.notify.GetPeerNotifySettings(ctx, ownerUserID, peers)
 }
 
-// AllPeerNotifySettings 一次取该用户全部整-peer 通知设置（per-user notify 缓存的加载源）。
+// AllPeerNotifySettings returns all of the user's whole-peer notification settings in one call (the load source for the per-user notify cache).
 func (s *Service) AllPeerNotifySettings(ctx context.Context, ownerUserID int64) (map[domain.Peer]domain.PeerNotifySettings, error) {
 	if s == nil || s.notify == nil || ownerUserID == 0 {
 		return nil, nil
@@ -1328,7 +1330,7 @@ func (s *Service) AllPeerNotifySettings(ctx context.Context, ownerUserID int64) 
 	return s.notify.AllPeerNotifySettings(ctx, ownerUserID)
 }
 
-// ListNotifyExceptions 列出该用户全部 per-peer 非默认通知设置（getNotifyExceptions）。
+// ListNotifyExceptions lists all of the user's per-peer non-default notification settings (getNotifyExceptions).
 func (s *Service) ListNotifyExceptions(ctx context.Context, ownerUserID int64) ([]domain.NotifyException, error) {
 	if s == nil || s.notify == nil || ownerUserID == 0 {
 		return nil, nil
@@ -1336,7 +1338,7 @@ func (s *Service) ListNotifyExceptions(ctx context.Context, ownerUserID int64) (
 	return s.notify.ListNotifyExceptions(ctx, ownerUserID)
 }
 
-// SaveStickerCollectionItem 收藏/最近/GIF 集合的加入或移除（最新置顶、按类别上界截断）。
+// SaveStickerCollectionItem adds or removes an item in the faved/recent/GIF collection (newest on top, truncated by the per-kind upper bound).
 func (s *Service) SaveStickerCollectionItem(ctx context.Context, userID int64, kind domain.StickerCollectionKind, documentID int64, unsave bool, now int) error {
 	if s == nil || s.stickers == nil || userID == 0 {
 		return nil
@@ -1344,7 +1346,7 @@ func (s *Service) SaveStickerCollectionItem(ctx context.Context, userID int64, k
 	return s.stickers.SaveStickerCollectionItem(ctx, userID, kind, documentID, unsave, now, domain.MaxStickerCollectionItems(kind))
 }
 
-// ListStickerCollection 取某类个人贴纸集合（最新在前）。
+// ListStickerCollection returns one kind of personal sticker collection (newest first).
 func (s *Service) ListStickerCollection(ctx context.Context, userID int64, kind domain.StickerCollectionKind, limit int) ([]domain.StickerCollectionItem, error) {
 	if s == nil || s.stickers == nil || userID == 0 {
 		return nil, nil
@@ -1352,7 +1354,7 @@ func (s *Service) ListStickerCollection(ctx context.Context, userID int64, kind 
 	return s.stickers.ListStickerCollection(ctx, userID, kind, limit)
 }
 
-// ClearStickerCollection 清空某类个人贴纸集合。
+// ClearStickerCollection clears one kind of personal sticker collection.
 func (s *Service) ClearStickerCollection(ctx context.Context, userID int64, kind domain.StickerCollectionKind) error {
 	if s == nil || s.stickers == nil || userID == 0 {
 		return nil
@@ -1360,7 +1362,7 @@ func (s *Service) ClearStickerCollection(ctx context.Context, userID int64, kind
 	return s.stickers.ClearStickerCollection(ctx, userID, kind)
 }
 
-// InstallUserStickerSet 安装或重新激活一个贴纸集，安装态是 per-user 事实。
+// InstallUserStickerSet installs or reactivates a sticker set; the installed state is a per-user fact.
 func (s *Service) InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error {
 	if s == nil || s.stickerSets == nil || userID == 0 || setID == 0 {
 		return nil

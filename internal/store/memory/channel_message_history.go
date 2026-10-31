@@ -21,7 +21,7 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 	}
 	items := append([]domain.ChannelMessage(nil), s.messages[filter.ChannelID]...)
 	sort.Slice(items, func(i, j int) bool { return items[i].ID > items[j].ID })
-	// 静态过滤（不含 offset 锚点的方向条件），结果保持 id 降序。
+	// Static filtering (without the offset-anchor direction condition); the result keeps IDs in descending order.
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	matched := make([]domain.ChannelMessage, 0, len(items))
 	monoforumUserView := channel.Monoforum && !member.CanManageDirectMessages()
@@ -115,10 +115,10 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 			Count:    len(matched),
 		}, nil
 	}
-	// add_offset 决定加载方向（对齐 postgres ListChannelHistory）：
-	//   >= 0           backward：锚点更旧方向（不含锚点），先跳过 add_offset 条
-	//   < 0 且 +limit>0 around：以锚点为中心，向更新取 -add_offset 条 + 向更旧（含锚点）取 limit+add_offset 条
-	//   否则           forward：仅锚点更新方向
+	// add_offset determines the load direction (aligned with postgres ListChannelHistory):
+	//   >= 0           backward: toward older than the anchor (excluding the anchor), skipping add_offset entries first
+	//   < 0 and +limit>0 around: centered on the anchor, take -add_offset toward newer + limit+add_offset toward older (including the anchor)
+	//   otherwise      forward: only toward newer than the anchor
 	newerThanAnchor := func(msg domain.ChannelMessage) bool {
 		if filter.OffsetDate > 0 {
 			return msg.Date >= filter.OffsetDate
@@ -144,7 +144,7 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 		if limit <= 0 {
 			return nil
 		}
-		// 升序收集锚点更新方向最近的 limit 条，再反转回降序。
+		// Collect the nearest limit entries newer than the anchor in ascending order, then reverse back to descending.
 		asc := make([]domain.ChannelMessage, 0, limit)
 		for i := len(matched) - 1; i >= 0; i-- {
 			if !newerThanAnchor(matched[i]) {
@@ -330,8 +330,10 @@ func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int6
 func (s *ChannelStore) GetChannelMessages(_ context.Context, viewerUserID, channelID int64, ids []int) (domain.ChannelHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// viewer 口径：公开频道非成员可预览读取(与 ListChannelHistory 一致 + 与 PG 实现对齐)，
-	// 否则查看他人公开「个人频道」时 channels.getMessages 被拒、资料页整块不显示。
+	// Viewer convention: non-members can preview-read a public channel (consistent with
+	// ListChannelHistory and aligned with the PG implementation); otherwise
+	// channels.getMessages is rejected when viewing another user's public personal channel
+	// and the whole profile section fails to render.
 	channel, member, _, err := s.channelForViewerLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelHistory{}, err

@@ -10,9 +10,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// BotStore 是 store.BotStore 的内存实现。bot 的 users 行经注入的 UserStore 创建，
-// 与 postgres 实现（单事务建 users+bots 两行）保持可见性一致。
-// 内置 service bots 的 bots 行预置（token 为空 = 不可登录），对齐迁移种子。
+// BotStore is the in-memory implementation of store.BotStore. A bot's users row is
+// created through the injected UserStore, keeping visibility consistent with the postgres
+// implementation (both users+bots rows in a single transaction).
+// Built-in service bots' bots rows are pre-seeded (empty token = cannot log in), matching the migration seed.
 type BotStore struct {
 	mu             sync.RWMutex
 	users          *UserStore
@@ -43,7 +44,7 @@ type requestedButtonKey struct {
 	reqID     string
 }
 
-// NewBotStore 创建内存 BotStore。
+// NewBotStore creates an in-memory BotStore.
 func NewBotStore(users *UserStore) *BotStore {
 	s := &BotStore{
 		users:          users,
@@ -131,9 +132,10 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 	if user.BotInfoVersion < 1 {
 		user.BotInfoVersion = 1
 	}
-	// 持 BotStore.mu 跨「复核计数 → 建 users 行 → 写 profile」，与 postgres 的
-	// advisory lock + 事务内复核对齐，封死 count-then-insert TOCTOU。锁顺序
-	// BotStore.mu → UserStore.mu（UserStore 不反向引用 BotStore，无死锁）。
+	// Hold BotStore.mu across "re-check the count -> create the users row -> write the
+	// profile", matching postgres's advisory lock + in-transaction re-check and closing
+	// the count-then-insert TOCTOU. Lock order is BotStore.mu -> UserStore.mu
+	// (UserStore never references BotStore back, so no deadlock).
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	owned := 0
@@ -231,8 +233,9 @@ func (s *BotStore) UpdateBotTokenSecret(_ context.Context, botUserID int64, secr
 	return nil
 }
 
-// editProfile 在 BotStore.mu 内改 bots 行字段，随后 bump users 的 bot_info_version。
-// 与 postgres 不同（非单事务），但 memory 仅测试替身、元数据更新低频，可接受。
+// editProfile changes bots row fields under BotStore.mu, then bumps the users
+// bot_info_version. Unlike postgres (not a single transaction), but memory is only a
+// test double and metadata updates are infrequent, so this is acceptable.
 func (s *BotStore) editProfile(botUserID int64, fn func(p *domain.BotProfile)) (int, error) {
 	s.mu.Lock()
 	p, ok := s.byID[botUserID]
@@ -682,7 +685,7 @@ func (s *BotStore) PutWebViewCustomMethodQuery(_ context.Context, query domain.B
 	return nil
 }
 
-// GetBotProfile 是 GetBot 的同步只读快照（editProfile 前置存在性检查用）。
+// GetBotProfile is a synchronous read-only snapshot of GetBot (used for the existence pre-check in editProfile).
 func (s *BotStore) GetBotProfile(botUserID int64) (domain.BotProfile, bool) {
 	s.mu.RLock()
 	p, ok := s.byID[botUserID]

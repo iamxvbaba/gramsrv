@@ -7,12 +7,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelStoreEnablingDirectMessagesCreatesMonoforum 回归迁移 0020 + monoforum 生命周期:
-// 开启频道私信(Direct Messages)为广播母频道事务内建/关联一个 monoforum 虚拟频道,
-// 新列(monoforum/linked_monoforum_id)经共享 channelColumns + scan 正确往返;再次开启复用、
-// 同步价格;非广播不建。门控于 TELESRV_TEST_POSTGRES_DSN。
+// TestChannelStoreEnablingDirectMessagesCreatesMonoforum regression for migration 0020 + monoforum lifecycle:
+// enabling channel Direct Messages creates/links a monoforum virtual channel for a parent broadcast within the transaction,
+// and the new columns (monoforum/linked_monoforum_id) round-trip correctly through the shared channelColumns + scan; re-enabling reuses it and
+// syncs the price; a non-broadcast does not create one. Gated on TELESRV_TEST_POSTGRES_DSN.
 func TestChannelStoreEnablingDirectMessagesCreatesMonoforum(t *testing.T) {
-	pool := testPool(t) // 未设 DSN 会 t.Skip
+	pool := testPool(t) // an unset DSN makes it t.Skip
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -49,7 +49,7 @@ func TestChannelStoreEnablingDirectMessagesCreatesMonoforum(t *testing.T) {
 	monoID := updated.LinkedMonoforumID
 	channelIDs = append(channelIDs, monoID)
 
-	// 母频道新列经 scan 读回(scanChannelWithMember 路径)。
+	// The parent channel's new columns are read back via scan (the scanChannelWithMember path).
 	view, err := channels.GetChannel(ctx, owner.ID, created.Channel.ID)
 	if err != nil {
 		t.Fatalf("get parent: %v", err)
@@ -58,7 +58,7 @@ func TestChannelStoreEnablingDirectMessagesCreatesMonoforum(t *testing.T) {
 		t.Fatalf("parent view = monoforum %v linked %d, want not-monoforum linked %d", view.Channel.Monoforum, view.Channel.LinkedMonoforumID, monoID)
 	}
 
-	// monoforum 行:monoforum=true、反向关联母频道、价格、creator。
+	// monoforum row: monoforum=true, reverse-links the parent channel, price, creator.
 	var mfMono, mfBroadcast, mfMegagroup bool
 	var mfLinked, mfStars, mfCreator int64
 	var mfTop, mfPts int
@@ -93,8 +93,8 @@ SELECT EXISTS (
 	if memberExists || dialogExists {
 		t.Fatalf("synthetic monoforum read persisted member/dialog = %v/%v", memberExists, dialogExists)
 	}
-	// 同批下发母广播频道(TDesktop 据此 resolve linked_monoforum_id 并派生 MonoforumAdmin
-	// 渲染 Direct-Messages 容器):GetChannelDialogs([mono]) 的 chats[] 必须同时带 mono 与母频道。
+	// Deliver the parent broadcast channel in the same batch (TDesktop uses this to resolve linked_monoforum_id and derive MonoforumAdmin
+	// to render the Direct-Messages container): the chats[] of GetChannelDialogs([mono]) must include both the mono and the parent channel.
 	coDelivery, err := channels.GetChannelDialogs(ctx, owner.ID, []int64{monoID})
 	if err != nil {
 		t.Fatalf("get channel dialogs: %v", err)
@@ -127,10 +127,10 @@ SELECT EXISTS (
 	if !foundMono {
 		t.Fatalf("dialogs after enable do not include admin-visible monoforum %d: %+v", monoID, dialogs.Dialogs)
 	}
-	// monoforum 只有一条创建服务消息(TDesktop 渲染 "Direct messages were enabled in this channel.",
-	// lng_action_created_monoforum)。开关/价格变更的 paid_messages_price 只进母广播频道(在 broadcast
-	// 历史里渲染 "Channel enabled/disabled Direct Messages"),绝不进 mono——否则 mono 是 megagroup,
-	// 同一 action 会渲染成错误的"消息免费/设价"文案。
+	// A monoforum has only one creation service message (TDesktop renders "Direct messages were enabled in this channel.",
+	// lng_action_created_monoforum). The paid_messages_price for toggling/price changes goes only into the parent broadcast channel (rendered in broadcast
+	// history as "Channel enabled/disabled Direct Messages"), never into the mono—otherwise, since the mono is a megagroup,
+	// the same action would render the wrong "messages free / price" text.
 	var actionType string
 	var monoMsgCount int
 	assertMonoSoleCreation := func(label string) {
@@ -185,10 +185,10 @@ LIMIT 1`, created.Channel.ID).Scan(&parentActionType, &parentActionAllowed, &par
 	if repaired.LinkedMonoforumID != monoID {
 		t.Fatalf("repair linked = %d, want stable %d", repaired.LinkedMonoforumID, monoID)
 	}
-	// 修复后 monoforum 重新获得一条创建消息。
+	// After the repair, the monoforum regains a creation message.
 	assertMonoSoleCreation("after legacy repair")
 
-	// 幂等 + 价格同步:再次开启不新建 monoforum,价格改 8;变更只进母频道。
+	// Idempotency + price sync: re-enabling creates no second monoforum and changes the price to 8; changes go only to the parent channel.
 	againResult, err := channels.SetPaidMessagesPrice(ctx, owner.ID, created.Channel.ID, 8, true)
 	if err != nil {
 		t.Fatalf("re-enable: %v", err)
@@ -219,14 +219,14 @@ LIMIT 1`, created.Channel.ID).Scan(&parentActionType, &parentActionAllowed, &par
 	if disabledResult.ServiceMessage == nil || disabledResult.ServiceMessage.Event.Pts == 0 {
 		t.Fatalf("disable service result = %+v, want paid_messages_price event", disabledResult.ServiceMessage)
 	}
-	// 关闭只进母频道(+monoforumDisabled 状态);monoforum 仍只有创建消息那一条。
+	// Disabling goes only to the parent channel (+ the monoforumDisabled state); the monoforum still has only the creation message.
 	assertMonoSoleCreation("after disable")
 	readParentAction()
 	if parentActionType != string(domain.ChannelActionPaidMessagesPrice) || parentActionAllowed || parentActionStars != 0 {
 		t.Fatalf("parent latest action after disable = %q/%v/%d, want paid_messages_price/false/0", parentActionType, parentActionAllowed, parentActionStars)
 	}
 
-	// 超级群(非广播)开 paid messages 不建 monoforum。
+	// A supergroup (non-broadcast) enabling paid messages does not create a monoforum.
 	group, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID, Title: "Mono SG " + suffix, Megagroup: true, Date: 1700000902,
 	})

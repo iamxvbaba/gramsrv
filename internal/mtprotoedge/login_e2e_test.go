@@ -34,8 +34,10 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestLoginRegisterFlow 是登录注册闭环的端到端验证：telegram.Client 连本地 server，
-// 依次 sendCode → signIn(需注册) → signUp → getUsers(self)，验证注册后能用 self 查回自己。
+// TestLoginRegisterFlow is an end-to-end check of the login/registration loop:
+// a telegram.Client connects to the local server and goes sendCode → signIn
+// (registration required) → signUp → getUsers(self), verifying that self can be
+// looked up after registration.
 func TestLoginRegisterFlow(t *testing.T) {
 	const (
 		dc        = 2
@@ -58,8 +60,9 @@ func TestLoginRegisterFlow(t *testing.T) {
 	authzStore := memory.NewAuthorizationStore()
 	authKeyStore := memory.NewAuthKeyStore()
 	helpStore := memory.NewHelpStore()
-	// seed hash 必须高于 help service 的代码默认 hash（低于默认值的 store 行会被
-	// 视为陈旧 seed 残留而被默认 config 覆盖），否则断言拿到的是默认 config。
+	// The seed hash must be higher than the help service's code default hash (a
+	// store row below the default is treated as stale seed residue and overwritten
+	// by the default config), otherwise the assertion would get the default config.
 	const seedAppConfigHash = 1_000_000
 	if err := helpStore.UpsertAppConfig(context.Background(), domain.AppConfig{
 		Client: "tdesktop",
@@ -129,7 +132,7 @@ func TestLoginRegisterFlow(t *testing.T) {
 		}
 		hash := sentCode.PhoneCodeHash
 
-		// 2) signIn → 新用户应得 SignUpRequired
+		// 2) signIn → a new user should get SignUpRequired
 		signInRes, err := raw.AuthSignIn(ctx, &tg.AuthSignInRequest{
 			PhoneNumber:   phone,
 			PhoneCodeHash: hash,
@@ -142,7 +145,7 @@ func TestLoginRegisterFlow(t *testing.T) {
 			t.Fatalf("signIn result = %T, want *tg.AuthAuthorizationSignUpRequired", signInRes)
 		}
 
-		// 3) signUp → 创建用户并返回授权
+		// 3) signUp → create the user and return the authorization
 		signUpRes, err := raw.AuthSignUp(ctx, &tg.AuthSignUpRequest{
 			PhoneNumber:   phone,
 			PhoneCodeHash: hash,
@@ -164,7 +167,7 @@ func TestLoginRegisterFlow(t *testing.T) {
 			t.Fatalf("signUp user = %+v, want self FirstName=Test Phone=%s", newUser, wantPhone)
 		}
 
-		// 4) getUsers(self) → 注册后能查回自己
+		// 4) getUsers(self) → self can be looked up after registration
 		got, err := raw.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUserSelf{}})
 		if err != nil {
 			return err
@@ -180,13 +183,15 @@ func TestLoginRegisterFlow(t *testing.T) {
 			t.Fatalf("getUsers self = %+v, want id=%d FirstName=Test Phone=%s", self, newUser.ID, wantPhone)
 		}
 
-		// 5) 启动配置、账号安全和登录后的空账号 RPC 走业务服务并可编码。
+		// 5) Startup config, account security and post-login empty-account RPCs go
+		// through the business services and are encodable.
 		appConfig, err := raw.HelpGetAppConfig(ctx, 0)
 		if err != nil {
 			return err
 		}
-		// 注意：client.Run 回调里 t.Fatalf 只会杀当前 goroutine、测试主协程
-		// 会等到 ctx 超时——断言失败用 return fmt.Errorf 让 Run 立即返回。
+		// Note: inside the client.Run callback, t.Fatalf only kills the current
+		// goroutine while the test's main goroutine waits until the ctx times out—so
+		// on assertion failure use return fmt.Errorf to make Run return immediately.
 		cfg, ok := appConfig.(*tg.HelpAppConfig)
 		if !ok || cfg.Hash != seedAppConfigHash {
 			return fmt.Errorf("help.getAppConfig = %T %+v, want seeded base hash=%d", appConfig, appConfig, seedAppConfigHash)

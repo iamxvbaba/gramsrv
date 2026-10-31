@@ -28,7 +28,7 @@ type callbackRegistry struct {
 
 type pendingCallback struct {
 	ch        chan domain.BotCallbackAnswer
-	done      chan struct{} // deregister 时关闭：唤醒超时退出的等待者，消除「答案投递到已离开 select 的 ch」竞态
+	done      chan struct{} // closed on deregister: wakes a waiter that exited on timeout, removing the "answer delivered to a ch whose waiter already left select" race
 	botUserID int64
 	userID    int64
 }
@@ -41,8 +41,9 @@ func newCallbackRegistry(shared ...store.BotCallbackRegistryStore) *callbackRegi
 	return &callbackRegistry{pending: make(map[int64]*pendingCallback), shared: sharedStore}
 }
 
-// register 登记一次挂起的 callback，返回全局唯一 query_id 与接收通道。调用方必须
-// defer deregister(queryID)，无论是否收到答案（超时三件套之一，防 goroutine/表泄漏）。
+// register records one pending callback and returns a globally unique query_id and a receive
+// channel. The caller must defer deregister(queryID), whether or not an answer arrives (one of
+// the timeout trio, preventing goroutine/table leaks).
 func (c *callbackRegistry) register(botUserID, userID int64) (int64, *pendingCallback) {
 	queryID, pending, _ := c.registerContext(context.Background(), time.Now(), botUserID, userID, botCallbackTimeout)
 	return queryID, pending
@@ -82,8 +83,9 @@ func (c *callbackRegistry) registerContext(ctx context.Context, now time.Time, b
 	return 0, nil, fmt.Errorf("allocate bot callback query id")
 }
 
-// deregister 移除挂起条目并关闭 done（超时/解挂后必调，幂等）。关闭 done 让仍在
-// select 的等待者立即醒来，避免 resolve 把答案投递到一个等待者已离开的 ch（TOCTOU）。
+// deregister removes the pending entry and closes done (must be called after timeout/unblock,
+// idempotent). Closing done immediately wakes a waiter still in select, preventing resolve from
+// delivering an answer to a ch whose waiter has left (TOCTOU).
 func (c *callbackRegistry) deregister(queryID int64) {
 	c.deregisterContext(context.Background(), 0, queryID)
 }
@@ -112,15 +114,16 @@ func (c *callbackRegistry) removeLocal(queryID int64) {
 	c.mu.Unlock()
 }
 
-// size 返回当前挂起条目数（测试用：断言超时/解挂后归零、无泄漏）。
+// size returns the current number of pending entries (for tests: asserting it drops to zero after timeout/unblock, no leak).
 func (c *callbackRegistry) size() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.pending)
 }
 
-// resolve 把 bot 的答案投递给等待者。鉴权：仅该 query 的属主 bot 可解挂（callerBotID
-// 必须等于注册时的 botUserID，I6）。返回是否成功投递（query 未注册/已超时/非属主 → false）。
+// resolve delivers the bot's answer to the waiter. Authorization: only the query's owning bot may
+// unblock (callerBotID must equal the botUserID at registration, I6). Returns whether delivery
+// succeeded (query unregistered/expired/non-owner -> false).
 func (c *callbackRegistry) resolve(callerBotID, queryID int64, ans domain.BotCallbackAnswer) bool {
 	resolved, _ := c.resolveContext(context.Background(), callerBotID, queryID, ans)
 	return resolved
@@ -147,7 +150,7 @@ func (c *callbackRegistry) deliver(callerBotID, queryID int64, ans domain.BotCal
 	}
 	delete(c.pending, queryID)
 	c.mu.Unlock()
-	// ch 有 1 容量缓冲，非阻塞投递；等待者已超时退出时缓冲被 GC，不阻塞。
+	// ch has a 1-slot buffer, so delivery is non-blocking; when the waiter has already exited on timeout the buffer is GC'd, no blocking.
 	select {
 	case p.ch <- ans:
 	default:
@@ -186,9 +189,11 @@ func (r *Router) RunBotCallbackAnswerSubscriber(ctx context.Context) {
 	}
 }
 
-// randomNonZeroInt64 取密码学随机非零 int64。register 在持锁下调用，故此处禁止
-// 无限重试——熵源异常时退化为单调序列兜底（query_id 只需进程内唯一，register 的
-// 撞键复核会再保证唯一性），绝不卡住整个 registry。
+// randomNonZeroInt64 returns a cryptographically random non-zero int64. register calls it while
+// holding the lock, so unbounded retrying is forbidden here -- on entropy source failure it
+// degrades to a monotonic sequence as a fallback (query_id only needs to be unique within the
+// process, and register's collision re-check guarantees uniqueness anyway), never stalling the
+// whole registry.
 func randomNonZeroInt64() int64 {
 	var buf [8]byte
 	for i := 0; i < 8; i++ {
@@ -205,11 +210,12 @@ func randomNonZeroInt64() int64 {
 	return 1
 }
 
-// callbackFallbackSeq 是熵源失败时的单调兜底序列（极罕见路径）。
+// callbackFallbackSeq is the monotonic fallback sequence used when the entropy source fails (an extremely rare path).
 var callbackFallbackSeq atomic.Int64
 
-// chatInstanceFor 为 (bot,user) 私聊派生稳定的 chat_instance（同一对话多次 callback
-// 间恒定，I8）。当前用确定性 hash 派生（持久化记 todo）。
+// chatInstanceFor derives a stable chat_instance for a (bot,user) private chat (constant across
+// multiple callbacks in the same conversation, I8). Currently derived with a deterministic hash
+// (persistence is a todo).
 func chatInstanceFor(botUserID, userID int64) int64 {
 	h := fnv.New64a()
 	var buf [16]byte

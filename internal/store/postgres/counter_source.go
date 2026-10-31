@@ -7,13 +7,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// MessageBoxCounterSource 从 message_boxes durable log 恢复某 owner 的当前最大 box_id。
+// MessageBoxCounterSource recovers an owner's current max box_id from the message_boxes durable log.
 type MessageBoxCounterSource struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewMessageBoxCounterSource 创建 Redis BoxIDAllocator 的 PG 恢复源。
+// NewMessageBoxCounterSource creates the PG recovery source for the Redis BoxIDAllocator.
 func NewMessageBoxCounterSource(db sqlcgen.DBTX) *MessageBoxCounterSource {
 	return &MessageBoxCounterSource{db: db, q: sqlcgen.New(db)}
 }
@@ -57,12 +57,12 @@ func (s *MessageBoxCounterSource) Current(ctx context.Context, userID int64) (in
 	return int(v), nil
 }
 
-// ChannelIDCounterSource 从 channels durable 表恢复全局 channel id。
+// ChannelIDCounterSource recovers the global channel id from the durable channels table.
 type ChannelIDCounterSource struct {
 	db sqlcgen.DBTX
 }
 
-// NewChannelIDCounterSource 创建 Redis ChannelIDAllocator 的 PG 恢复源。
+// NewChannelIDCounterSource creates the PG recovery source for the Redis ChannelIDAllocator.
 func NewChannelIDCounterSource(db sqlcgen.DBTX) *ChannelIDCounterSource {
 	return &ChannelIDCounterSource{db: db}
 }
@@ -90,7 +90,7 @@ func (s *ChannelIDCounterSource) CurrentBatch(ctx context.Context, userIDs []int
 	return out, nil
 }
 
-// ChannelMessageIDCounterSource 从 channel_messages 恢复某 channel 的当前最大 message id。
+// ChannelMessageIDCounterSource recovers a channel's current max message id from channel_messages.
 type ChannelMessageIDCounterSource struct {
 	db sqlcgen.DBTX
 }

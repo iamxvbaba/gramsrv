@@ -132,8 +132,11 @@ func (r *Router) onChannelsDeleteChannel(ctx context.Context, input tg.InputChan
 	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
 	updates := r.channelStateUpdates(userID, res.Channel)
-	// 母频道随带删的 monoforum 必须同样以 ChannelForbidden 墓碑下发,否则在线客户端会留着 mono 会话
-	// (isMonoforum=true 但 link 已不可解析)继续渲染崩溃。对操作者本设备(updates)与所有接收方都补一条。
+	// The monoforum deleted together with the parent must also be sent as a
+	// ChannelForbidden tombstone, otherwise an online client keeps the mono
+	// conversation (isMonoforum=true but the link is no longer resolvable) and keeps
+	// rendering a crash. Add one for both the operator's own device (updates) and all
+	// recipients.
 	if mono := res.LinkedMonoforum; mono != nil {
 		r.invalidateChannelFullBotInfoCacheForChannel(mono.ID)
 		appendChannelStateUpdates(updates, r.channelStateUpdates(userID, *mono))
@@ -170,18 +173,18 @@ func (r *Router) onMessagesUnpinAllMessages(ctx context.Context, req *tg.Message
 		return nil, err
 	}
 	if peer.Type != domain.PeerTypeChannel || peer.ID == 0 {
-		// 私聊置顶按账号 pts 记账；返回 0 会让 Android 误判 pts 空洞多拉
-		// 一轮 difference。
+		// Private-chat pins are accounted on the account pts; returning 0 would make
+		// Android misjudge a pts hole and pull an extra difference round.
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		if peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 			return r.affectedHistory(ctx, authKeyID, userID, 0)
 		}
 		if topMsgID, ok := req.GetTopMsgID(); ok && topMsgID > 0 {
-			// 私聊无 forum topic 维度，按无置顶可清处理。
+			// A private chat has no forum topic dimension, so treat it as having no pin to clear.
 			return r.affectedHistory(ctx, authKeyID, userID, 0)
 		}
 		if _, ok := req.GetSavedPeerID(); ok {
-			// Saved Messages 子会话置顶维度未实现，避免误清全局置顶。
+			// The Saved Messages sub-session pin dimension is not implemented; avoid wrongly clearing global pins.
 			return r.affectedHistory(ctx, authKeyID, userID, 0)
 		}
 		return r.unpinAllPrivateMessages(ctx, userID, peer)
@@ -316,8 +319,9 @@ func (r *Router) recordChannelReadInbox(ctx context.Context, userID int64, read 
 		FolderID:         read.Dialog.FolderID,
 		PtsCount:         1,
 	}
-	// event.Pts 是账号 pts 槽位，只能来自真实 durable 记录；channel pts
-	// 永远只放 ChannelPts，混填会让 pts 簿记把 channel 序列当账号序列。
+	// event.Pts is the account pts slot and may only come from a real durable record;
+	// channel pts is always put only into ChannelPts, and mixing them would make the
+	// pts bookkeeping treat the channel sequence as the account sequence.
 	recordedEvent := event
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
@@ -351,8 +355,10 @@ func (r *Router) channelFanoutRecipients(ctx context.Context, scope channelFanou
 	if !ok {
 		return uniqueRecipientIDs(explicit)
 	}
-	// 实时推送按 MaxChannelRealtimeFanout 封顶：每个收件人都要逐 viewer 重建 payload
-	// 并批量解析 users，放开会把高频操作（如 reaction）放大成 O(全部在线成员) 的逐条推送。
+	// Real-time push is capped at MaxChannelRealtimeFanout: each recipient needs the
+	// payload rebuilt per viewer and users batch-resolved, so leaving it open would
+	// amplify high-frequency operations (e.g. reaction) into per-item pushes to
+	// O(all online members).
 	var online []int64
 	switch scope {
 	case channelFanoutMembers:
@@ -476,9 +482,12 @@ func (r *Router) tgUsersForIDs(ctx context.Context, currentUserID int64, ids []i
 	}
 	users, err := r.deps.Users.ByIDs(ctx, currentUserID, unique)
 	if err != nil {
-		// 批量解析失败（通常是 DB 故障）不静默丢弃：批量语义下无部分结果，记日志便于排查。
-		// update 仍以空 users 列表推送，客户端用本地缓存或后续 getUser 补齐，不致命。
-		// 不降级逐个查询以免 DB 抖动时把一次失败放大成 N 次查询。
+		// A batch resolution failure (usually a DB fault) is not silently dropped:
+		// batch semantics have no partial result, so log it for diagnosis. The update
+		// is still pushed with an empty users list, and the client tops it up from its
+		// local cache or a later getUser, so it is not fatal. Do not degrade to
+		// per-item queries, to avoid amplifying one failure into N queries during a DB
+		// hiccup.
 		r.log.Warn("batch resolve users for channel update failed",
 			zap.Int("count", len(unique)), zap.Error(err))
 		return nil
@@ -629,9 +638,12 @@ func (r *Router) channelIDFromInput(ctx context.Context, userID int64, input tg.
 	if !ref.CheckAccessHash || r.deps.Channels == nil {
 		return ref.ID, nil
 	}
-	// 只校验 access_hash + 返回 ID：走轻量 ResolveChannel（省 dialog/读态/boost 这 3 条查询）。
-	// 本函数被 23 个频道 RPC 复用，其中 getChannelDifference 被客户端按打开频道每秒轮询——是
-	// 完整 GetChannel 投影放大的主源头。返回契约不变（仅 ID + 越权校验）。
+	// Only validate access_hash + return the ID: go through the lightweight
+	// ResolveChannel (saving the 3 queries for dialog/read state/boost). This
+	// function is reused by 23 channel RPCs, among which getChannelDifference is
+	// polled by the client every second for an open channel -- the main source of
+	// full GetChannel projection amplification. The return contract is unchanged
+	// (ID only + authorization check).
 	view, err := r.deps.Channels.ResolveChannel(ctx, userID, ref.ID)
 	if err != nil {
 		return 0, channelInvalidErr(err)
@@ -758,7 +770,7 @@ func channelDeleteErr(err error) error {
 	case errors.Is(err, domain.ErrMessageAuthorRequired):
 		return messageAuthorRequiredErr()
 	case errors.Is(err, domain.ErrChannelAdminRequired):
-		// 官方对 channels.deleteMessages 的越权删除返回该错误码。
+		// The official error code for an unauthorized delete via channels.deleteMessages.
 		return tgerr400("MESSAGE_DELETE_FORBIDDEN")
 	default:
 		return channelInvalidErr(err)

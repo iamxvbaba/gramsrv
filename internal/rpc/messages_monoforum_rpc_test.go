@@ -105,9 +105,11 @@ func TestMonoforumSendUpdatesFailsClosedOnIncompleteUserEnvelope(t *testing.T) {
 	}
 }
 
-// TestMonoforumSavedDialogsAndHistory 验证频道私信(monoforum)读侧 RPC：管理员经
-// getSavedDialogs/getSavedHistory 看订阅者子会话，parent_peer 同时兼容 TDesktop 实际发送的
-// 母广播频道和虚拟 monoforum；订阅者经普通 getHistory 只看自己的子会话。
+// TestMonoforumSavedDialogsAndHistory verifies the channel private-message
+// (monoforum) read-side RPCs: a manager sees subscriber sub-dialogs via
+// getSavedDialogs/getSavedHistory, with parent_peer accepting both the parent
+// broadcast channel TDesktop actually sends and the virtual monoforum; a
+// subscriber sees only its own sub-dialog via ordinary getHistory.
 func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -164,8 +166,9 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 		Description:    "Verified monoforum peer",
 	}
 
-	// TDesktop 点 Direct Messages 入口会先按 monoforum peer 拉普通 channel history。
-	// 主历史只应返回 monoforum 自身的 service messages,不能混入 saved_peer 子会话消息。
+	// Clicking the Direct Messages entry in TDesktop first pulls ordinary channel
+	// history by the monoforum peer. The main history should return only the
+	// monoforum's own service messages, not mixing in saved_peer sub-dialog messages.
 	var raw bin.Buffer
 	if err := (&tg.MessagesGetHistoryRequest{Peer: monoInput, Limit: 20}).Encode(&raw); err != nil {
 		t.Fatalf("encode getHistory(monoforum): %v", err)
@@ -186,8 +189,10 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 	if !ok {
 		t.Fatalf("main monoforum message = %T, want MessageService", mainHistory.Messages[0])
 	}
-	// monoforum 的首条服务消息是创建消息;TDesktop 对 monoforum 渲染为 "Direct messages were
-	// enabled in this channel."(lng_action_created_monoforum)。paid_messages_price 只进母广播频道。
+	// The monoforum's first service message is the creation message; TDesktop
+	// renders it for a monoforum as "Direct messages were enabled in this
+	// channel." (lng_action_created_monoforum). paid_messages_price only goes into
+	// the parent broadcast channel.
 	if _, ok := service.Action.(*tg.MessageActionChannelCreate); !ok {
 		t.Fatalf("main monoforum action = %T %+v, want MessageActionChannelCreate", service.Action, service.Action)
 	}
@@ -227,9 +232,9 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 		t.Fatalf("non-admin history saved_peer_id = %#v, want self %d", subscriberSavedPeer, sub.ID)
 	}
 
-	// 管理员看私信列表。
+	// The manager views the private-message list.
 	dreq := &tg.MessagesGetSavedDialogsRequest{}
-	// TDesktop SavedSublist::loadAround() 的 parentChat()->input() 是母广播频道。
+	// TDesktop SavedSublist::loadAround()'s parentChat()->input() is the parent broadcast channel.
 	dreq.SetParentPeer(parentInput)
 	dres, err := r.onMessagesGetSavedDialogs(WithUserID(ctx, owner.ID), dreq)
 	if err != nil {
@@ -259,7 +264,7 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 		t.Fatalf("getSavedDialogs users missing subscriber %d", sub.ID)
 	}
 
-	// 管理员看某订阅者会话历史。
+	// The manager views a subscriber's dialog history.
 	hreq := &tg.MessagesGetSavedHistoryRequest{Peer: &tg.InputPeerUser{UserID: sub.ID}}
 	hreq.SetParentPeer(parentInput)
 	hres, err := r.onMessagesGetSavedHistory(WithUserID(ctx, owner.ID), hreq)
@@ -296,7 +301,7 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 		t.Fatalf("saved_peer_id = %#v, want sub %d", sp, sub.ID)
 	}
 
-	// 虚拟 monoforum peer 仍是合法的等价入口，两个 parent 不能落到不同数据集。
+	// The virtual monoforum peer is still a valid equivalent entry point; the two parents must not land on different data sets.
 	directMonoReq := &tg.MessagesGetSavedHistoryRequest{Peer: &tg.InputPeerUser{UserID: sub.ID}}
 	directMonoReq.SetParentPeer(monoInput)
 	directMonoRes, err := r.onMessagesGetSavedHistory(WithUserID(ctx, owner.ID), directMonoReq)
@@ -308,15 +313,17 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 		t.Fatalf("getSavedHistory(direct monoforum) = %#v, want same single-message topic", directMonoRes)
 	}
 
-	// 非管理员(订阅者本人)经管理员入口看列表被拒。
+	// A non-manager (the subscriber itself) viewing the list through the manager entry is denied.
 	if _, err := r.onMessagesGetSavedDialogs(WithUserID(ctx, sub.ID), dreq); err == nil {
 		t.Fatalf("non-admin getSavedDialogs(monoforum) = nil err, want denied")
 	}
 }
 
-// TestMonoforumSendMessageWritePath 验证写侧:订阅者按 TDesktop 实际请求仅以
-// peer=monoforum 发到自己的子会话;管理员必须显式指定目标订阅者;suggested_post 被持久化返回;
-// 订阅者不能写他人子会话。
+// TestMonoforumSendMessageWritePath verifies the write side: a subscriber, per
+// TDesktop's actual request, sends only to its own sub-dialog with
+// peer=monoforum; a manager must explicitly specify the target subscriber;
+// suggested_post is persisted and returned; a subscriber cannot write another's
+// sub-dialog.
 func TestMonoforumSendMessageWritePath(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -354,7 +361,7 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 	monoInput := &tg.InputPeerChannel{ChannelID: monoID, AccessHash: mono.AccessHash}
 	monoChannelInput := &tg.InputChannel{ChannelID: monoID, AccessHash: mono.AccessHash}
 
-	// 订阅者不是 monoforum 成员，但 TDesktop 打开会话时必须能读取 full channel shell。
+	// A subscriber is not a monoforum member, but TDesktop must be able to read the full channel shell when opening the dialog.
 	full, err := r.onChannelsGetFullChannel(WithUserID(ctx, sub.ID), monoChannelInput)
 	if err != nil {
 		t.Fatalf("subscriber getFullChannel(monoforum): %v", err)
@@ -363,12 +370,12 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 		t.Fatalf("subscriber getFullChannel(monoforum) = %#v, want full chat", full)
 	}
 
-	// monoforum 永远不能通过 join 变成普通频道成员，否则会生成错误的 joined service message。
+	// A monoforum can never become an ordinary channel member via join, otherwise it would generate a wrong joined service message.
 	if _, err := r.onChannelsJoinChannel(WithUserID(ctx, sub.ID), monoChannelInput); err == nil || !strings.Contains(err.Error(), "CHANNEL_MONOFORUM_UNSUPPORTED") {
 		t.Fatalf("subscriber joinChannel(monoforum) err = %v, want CHANNEL_MONOFORUM_UNSUPPORTED", err)
 	}
 
-	// TDesktop 在发送前保存相同 suggested_post 草稿；它必须可写、可恢复，不能变成 CHANNEL_PRIVATE。
+	// TDesktop saves an identical suggested_post draft before sending; it must be writable and recoverable, not turn into CHANNEL_PRIVATE.
 	draftSuggested := tg.SuggestedPost{}
 	draftSuggested.SetPrice(&tg.StarsAmount{Amount: 10})
 	draftSuggested.SetScheduleDate(1_700_100_000)
@@ -390,7 +397,7 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 		t.Fatalf("under-authorized paid message err = %v, want ALLOW_PAYMENT_REQUIRED_10", err)
 	}
 
-	// TDesktop 的订阅者请求不携带 InputReplyToMonoForum;服务端必须从调用者推导 saved_peer=self。
+	// TDesktop's subscriber request does not carry InputReplyToMonoForum; the server must derive saved_peer=self from the caller.
 	subReq := &tg.MessagesSendMessageRequest{Peer: monoInput, Message: "hi from sub telesrv://resolve?domain=Owner", RandomID: 555}
 	subReq.ClearDraft = true
 	subReq.SetAllowPaidStars(20)
@@ -456,8 +463,9 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 		t.Fatalf("subscriber paid replay balance = %d, want 990 without a second debit", duplicateBalance)
 	}
 
-	// 管理员回复到该订阅者的子会话：同一个 inputReplyToMessage 同时携带真实 reply id
-	// 和 monoforum target，两部分都必须保留。
+	// The admin replies to that subscriber's sub-dialog: the same
+	// inputReplyToMessage carries both a real reply id and a monoforum target, and
+	// both parts must be preserved.
 	adminReq := &tg.MessagesSendMessageRequest{Peer: monoInput, Message: "admin reply", RandomID: 556}
 	adminReply := &tg.InputReplyToMessage{ReplyToMsgID: subMessageID}
 	adminReply.SetMonoforumPeerID(&tg.InputPeerUser{UserID: sub.ID})
@@ -482,7 +490,7 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 		}
 	}
 
-	// 带媒体的 suggested post 必须走同一 monoforum 子会话，不能退化为普通频道消息或丢 flags。
+	// A suggested post with media must go through the same monoforum sub-dialog and not degrade into an ordinary channel message or lose flags.
 	mediaSuggested := tg.SuggestedPost{}
 	mediaSuggested.SetPrice(&tg.StarsAmount{Amount: 15})
 	mediaReq := &tg.MessagesSendMediaRequest{
@@ -495,14 +503,14 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 		t.Fatalf("subscriber sendMedia(monoforum): %v", err)
 	}
 
-	// 订阅者不能写他人(owner)的子会话。
+	// A subscriber cannot write another (owner)'s sub-dialog.
 	sneaky := &tg.MessagesSendMessageRequest{Peer: monoInput, Message: "sneaky", RandomID: 557}
 	sneaky.SetReplyTo(&tg.InputReplyToMonoForum{MonoforumPeerID: &tg.InputPeerUser{UserID: owner.ID}})
 	if _, err := r.onMessagesSendMessage(WithUserID(ctx, sub.ID), sneaky); err == nil {
 		t.Fatalf("subscriber writing another's sublist = nil err, want REPLY_TO_MONOFORUM_PEER_INVALID")
 	}
 
-	// 经管理员读历史:子会话含三条(订阅者文本 + 管理员回复 + 订阅者媒体),倒序。
+	// Read history as the manager: the sub-dialog has three entries (subscriber text + admin reply + subscriber media), in reverse order.
 	hreq := &tg.MessagesGetSavedHistoryRequest{Peer: &tg.InputPeerUser{UserID: sub.ID}}
 	hreq.SetParentPeer(monoInput)
 	hres, err := r.onMessagesGetSavedHistory(WithUserID(ctx, owner.ID), hreq)
@@ -565,10 +573,12 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 	}
 }
 
-// TestMonoforumForwardSuggestedPostAndMessageMetadataPaths 回归 DrKLO 的四条真实路径：
-// Add Offer 用 forwardMessages+suggested_post 新建建议，Edit Price/Edit Time 再回复原建议；
-// getMessagesViews 与 get/send reaction 必须允许无 member 行的订阅者访问自己的 saved_peer，
-// 且不能按猜测 id 跨到另一订阅者的子会话。
+// TestMonoforumForwardSuggestedPostAndMessageMetadataPaths regresses four real
+// DrKLO paths: Add Offer creates a proposal with
+// forwardMessages+suggested_post, Edit Price/Edit Time replies to the original
+// proposal; getMessagesViews and get/send reaction must let a subscriber with no
+// member row access its own saved_peer, and must not cross by a guessed id into
+// another subscriber's sub-dialog.
 func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -623,9 +633,10 @@ func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 		t.Fatalf("seed other subscriber message: %v", err)
 	}
 
-	// DrKLO 会为带 views/replies 的可见消息每 5 秒批量刷新一次。返回向量必须
-	// 保持请求位置，同时不能因 synthetic viewer 无 channel_members 行而报 CHANNEL_PRIVATE，
-	// 也不能让猜测到的其它 saved_peer 消息被读取或递增。
+	// DrKLO batch-refreshes visible messages with views/replies every 5 seconds.
+	// The returned vector must preserve the request positions, must not report
+	// CHANNEL_PRIVATE because a synthetic viewer has no channel_members row, and
+	// must not let a guessed other saved_peer message be read or incremented.
 	messageViews, err := r.onMessagesGetMessagesViews(WithUserID(ctx, sub.ID), &tg.MessagesGetMessagesViewsRequest{
 		Peer:      monoInput,
 		ID:        []int{original.Message.ID, otherMessage.Message.ID},
@@ -667,8 +678,9 @@ func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 		t.Fatalf("admin second saved-peer views = %d/%v, want 1/true", got, ok)
 	}
 
-	// Android 打开 reaction 状态时会先发 getMessagesReactions。订阅者没有 channel_members
-	// 行，但自己的 saved_peer 消息必须正常返回，并携带 saved_peer_id 供客户端归组。
+	// Android sends getMessagesReactions first when opening reaction state. A
+	// subscriber has no channel_members row, but its own saved_peer messages must
+	// be returned normally with saved_peer_id for the client to group them.
 	reactionState, err := r.onMessagesGetMessagesReactions(WithUserID(ctx, sub.ID), &tg.MessagesGetMessagesReactionsRequest{
 		Peer: monoInput,
 		ID:   []int{original.Message.ID},
@@ -716,8 +728,9 @@ func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 		t.Fatalf("cross-saved-peer sendReaction err = %v, want MESSAGE_ID_INVALID", err)
 	}
 
-	// Add Offer：源消息和目标会话都是 monoforum，自身 topic 由
-	// inputReplyToMonoForum(self) 选择；这不是普通 forum reply root。
+	// Add Offer: both the source message and the target dialog are the monoforum,
+	// and the own topic is selected by inputReplyToMonoForum(self); this is not an
+	// ordinary forum reply root.
 	addOffer := &tg.MessagesForwardMessagesRequest{
 		FromPeer: monoInput,
 		ID:       []int{original.Message.ID},
@@ -760,8 +773,9 @@ func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 		t.Fatalf("proposal price = %#v, want 25 Stars", price)
 	}
 
-	// Edit Price/Edit Time：Android 同时带 reply_to、monoforum_peer_id 和冗余
-	// top_msg_id；服务端保留真实 reply，接受相等的冗余值但不制造 forum topic root。
+	// Edit Price/Edit Time: Android carries reply_to, monoforum_peer_id and a
+	// redundant top_msg_id at the same time; the server preserves the real reply,
+	// accepts the equal redundant value but does not create a forum topic root.
 	editOffer := &tg.MessagesForwardMessagesRequest{
 		FromPeer: monoInput,
 		ID:       []int{proposal.ID},
@@ -836,7 +850,7 @@ func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 		t.Fatalf("conflicting Edit Offer replay err = %v, want RANDOM_ID_DUPLICATE", err)
 	}
 
-	// 精确 id 查询必须服从 saved_peer 过滤，不能把其它订阅者的消息作为转发源。
+	// An exact id lookup must obey the saved_peer filter and must not use another subscriber's message as a forward source.
 	crossSource := &tg.MessagesForwardMessagesRequest{
 		FromPeer: monoInput,
 		ID:       []int{otherMessage.Message.ID},
@@ -850,7 +864,7 @@ func TestMonoforumForwardSuggestedPostAndMessageMetadataPaths(t *testing.T) {
 		t.Fatalf("cross-saved-peer forward source err = %v, want MESSAGE_ID_INVALID", err)
 	}
 
-	// 管理员可见全部子会话，但目标仍必须显式指定，写入同一 subscriber saved_peer。
+	// The manager can see all sub-dialogs, but the target must still be specified explicitly, writing to the same subscriber saved_peer.
 	adminOffer := &tg.MessagesForwardMessagesRequest{
 		FromPeer: monoInput,
 		ID:       []int{original.Message.ID},

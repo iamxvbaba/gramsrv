@@ -17,7 +17,8 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// groupCallSessions 在推送捕获之上叠加 OnlineUserProvider（群通话扇出需要）。
+// groupCallSessions layers OnlineUserProvider on top of the push capture (needed for group-call
+// fan-out).
 type groupCallSessions struct {
 	phoneCaptureSessions
 	online []int64
@@ -123,7 +124,7 @@ func groupCallJoinParams(t *testing.T, ssrc int32) tg.DataJSON {
 		"fingerprints": []map[string]any{
 			{"hash": "sha-256", "fingerprint": "AA:BB:CC:DD", "setup": "passive"},
 		},
-		// TDesktop join 可能携带的多余字段：解析必须容忍。
+		// Extra fields TDesktop's join may carry: parsing must tolerate them.
 		"ssrc-groups": []map[string]any{},
 	}
 	data, err := json.Marshal(payload)
@@ -149,13 +150,15 @@ func findUpdate[T tg.UpdateClass](t *testing.T, updates tg.UpdatesClass) T {
 	return zero
 }
 
-// TestGroupCallPushSkipsNonMemberOnlineCandidates 验证群通话推送收件人必须过一次
-// PG active 成员复核：在线成员索引 stale（如踢人窗口内、或索引维护缺口）时，
-// 非成员绝不能收到通话状态/参与者名单（信息泄漏），真实成员照常收到。
+// TestGroupCallPushSkipsNonMemberOnlineCandidates verifies group-call push recipients must pass a
+// PG active-member recheck: when the online-member index is stale (e.g. inside a kick window, or
+// an index maintenance gap), a non-member must never receive the call state/participant list
+// (information leak), while real members still receive it.
 func TestGroupCallPushSkipsNonMemberOnlineCandidates(t *testing.T) {
 	f := newGroupCallFixture(t)
 	ownerCtx := f.userCtx(f.owner, 11)
-	// 模拟 stale 在线索引：outsider 不是频道成员却出现在候选里。
+	// Simulate a stale online index: outsider is not a channel member yet appears among the
+	// candidates.
 	f.sessions.online = []int64{f.owner.ID, f.member.ID, f.outsider.ID}
 
 	createRes, err := f.router.onPhoneCreateGroupCall(ownerCtx, &tg.PhoneCreateGroupCallRequest{
@@ -210,7 +213,7 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	if !ok || call.ID == 0 || call.AccessHash == 0 || call.Version != 1 {
 		t.Fatalf("created call = %+v", callUpdate.Call)
 	}
-	// started 服务消息（带频道 pts、messageActionGroupCall 无 duration）。
+	// started service message (carries channel pts; messageActionGroupCall has no duration).
 	newMsg := findUpdate[*tg.UpdateNewChannelMessage](t, createRes)
 	svc, ok := newMsg.Message.(*tg.MessageService)
 	if !ok {
@@ -228,7 +231,7 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	}
 	inputCall := tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash}
 
-	// banner 数据源：channel 行已挂 ActiveCall。
+	// banner data source: the channel row now carries ActiveCall.
 	full, err := f.router.deps.Channels.GetChannel(f.ctx, f.member.ID, f.channel.ID)
 	if err != nil || full.Channel.ActiveCallID != call.ID || full.Channel.ActiveCallNotEmpty {
 		t.Fatalf("channel active call = %+v err=%v", full.Channel, err)
@@ -239,7 +242,7 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	joinRes, err := f.router.onPhoneJoinGroupCall(ownerCtx, &tg.PhoneJoinGroupCallRequest{
 		Call:   &inputCall,
 		JoinAs: &tg.InputPeerSelf{},
-		Params: groupCallJoinParams(t, -100200300), // 负数 ssrc：uint32 按位转 int32
+		Params: groupCallJoinParams(t, -100200300), // negative ssrc: uint32 bit-reinterpreted as int32
 	})
 	if err != nil {
 		t.Fatalf("joinGroupCall: %v", err)
@@ -260,7 +263,8 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(conn.Params.Data), &params); err != nil {
 		t.Fatalf("connection params not parseable: %v\n%s", err, conn.Params.Data)
 	}
-	// ⚠ P2-6：M0 下发的 transport JSON 必须语法完备（合法 ufrag/pwd/sha-256 指纹 + 空 candidates）。
+	// ⚠ P2-6: the transport JSON issued by M0 must be syntactically complete (valid
+	// ufrag/pwd/sha-256 fingerprint + empty candidates).
 	if params.Transport.Ufrag == "" || params.Transport.Pwd == "" ||
 		len(params.Transport.Fingerprints) != 1 ||
 		params.Transport.Fingerprints[0].Hash != "sha-256" ||
@@ -280,7 +284,7 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// --- member join：在线成员收到 version=3 增量 ---
+	// --- member join: online members receive the version=3 increment ---
 	if _, err := f.router.onPhoneJoinGroupCall(memberCtx, &tg.PhoneJoinGroupCallRequest{
 		Call:   &inputCall,
 		JoinAs: &tg.InputPeerSelf{},
@@ -309,21 +313,21 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	if !sawParticipants {
 		t.Fatalf("owner must receive member-join participants update, got %+v", f.sessions.records())
 	}
-	// call_not_empty 翻转已写回 channel。
+	// The call_not_empty flip has been written back to the channel.
 	view, _ := f.router.deps.Channels.GetChannel(f.ctx, f.owner.ID, f.channel.ID)
 	if !view.Channel.ActiveCallNotEmpty {
 		t.Fatalf("call_not_empty should flip after first join")
 	}
 	f.sessions.reset()
 
-	// --- checkGroupCall：在会返回自己的 ssrc 子集；未在会返回空 ---
+	// --- checkGroupCall: in the call returns the subset of own ssrcs; not in the call returns empty ---
 	ssrcs, err := f.router.onPhoneCheckGroupCall(memberCtx, &tg.PhoneCheckGroupCallRequest{
 		Call: &inputCall, Sources: []int{500600700, 42},
 	})
 	if err != nil || len(ssrcs) != 1 || ssrcs[0] != 500600700 {
 		t.Fatalf("checkGroupCall = %v err=%v", ssrcs, err)
 	}
-	// getGroupParticipants 携带当前 version。
+	// getGroupParticipants carries the current version.
 	parts, err := f.router.onPhoneGetGroupParticipants(memberCtx, &tg.PhoneGetGroupParticipantsRequest{
 		Call: &inputCall, Limit: 10,
 	})
@@ -331,7 +335,7 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 		t.Fatalf("getGroupParticipants = %+v err=%v", parts, err)
 	}
 
-	// --- 自我静音（M0 self-edit）---
+	// --- self mute (M0 self-edit) ---
 	editRes, err := f.router.onPhoneEditGroupCallParticipant(memberCtx, &tg.PhoneEditGroupCallParticipantRequest{
 		Call:        &inputCall,
 		Participant: &tg.InputPeerSelf{},
@@ -363,9 +367,9 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 		t.Fatalf("leave participants = %+v", leaveParts.Participants[0])
 	}
 
-	// --- discard（owner）---
+	// --- discard (owner) ---
 	f.sessions.reset()
-	f.clk.Advance(90 * time.Second) // 让 ended 服务消息有非零 duration
+	f.clk.Advance(90 * time.Second) // give the ended service message a non-zero duration
 	discardRes, err := f.router.onPhoneDiscardGroupCall(ownerCtx, &inputCall)
 	if err != nil {
 		t.Fatalf("discard: %v", err)
@@ -383,7 +387,7 @@ func TestGroupCallM0Lifecycle(t *testing.T) {
 	if view.Channel.ActiveCallID != 0 || view.Channel.ActiveCallNotEmpty {
 		t.Fatalf("channel active call must clear after discard, got %+v", view.Channel)
 	}
-	// 重复 discard。
+	// Duplicate discard.
 	if _, err := f.router.onPhoneDiscardGroupCall(ownerCtx, &inputCall); err == nil {
 		t.Fatalf("double discard must fail")
 	}
@@ -395,7 +399,7 @@ func TestGroupCallM0Permissions(t *testing.T) {
 	memberCtx := f.userCtx(f.member, 22)
 	outsiderCtx := f.userCtx(f.outsider, 33)
 
-	// 普通成员建会：CHAT_ADMIN_REQUIRED。
+	// Ordinary member creating a call: CHAT_ADMIN_REQUIRED.
 	_, err := f.router.onPhoneCreateGroupCall(memberCtx, &tg.PhoneCreateGroupCallRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
 	})
@@ -410,31 +414,31 @@ func TestGroupCallM0Permissions(t *testing.T) {
 	call := findUpdate[*tg.UpdateGroupCall](t, createRes).Call.(*tg.GroupCall)
 	inputCall := tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash}
 
-	// 重复建会。
+	// Duplicate create.
 	_, err = f.router.onPhoneCreateGroupCall(ownerCtx, &tg.PhoneCreateGroupCallRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
 	})
 	assertPhoneRPCErr(t, err, "GROUPCALL_ALREADY_STARTED")
 
-	// 非群成员。
+	// Non-group-member.
 	_, err = f.router.onPhoneJoinGroupCall(outsiderCtx, &tg.PhoneJoinGroupCallRequest{
 		Call: &inputCall, JoinAs: &tg.InputPeerSelf{}, Params: groupCallJoinParams(t, 123),
 	})
 	assertPhoneRPCErr(t, err, "GROUPCALL_FORBIDDEN")
 
-	// access_hash 不符。
+	// access_hash mismatch.
 	_, err = f.router.onPhoneGetGroupCall(memberCtx, &tg.PhoneGetGroupCallRequest{
 		Call: &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash + 1}, Limit: 10,
 	})
 	assertPhoneRPCErr(t, err, "GROUPCALL_INVALID")
 
-	// ⚠ P1-6：slug 变体（conference 路径）须返回 GROUPCALL_INVALID 而非 panic。
+	// ⚠ P1-6: the slug variant (conference path) must return GROUPCALL_INVALID instead of panicking.
 	_, err = f.router.onPhoneGetGroupCall(memberCtx, &tg.PhoneGetGroupCallRequest{
 		Call: &tg.InputGroupCallSlug{Slug: "x"}, Limit: 10,
 	})
 	assertPhoneRPCErr(t, err, "GROUPCALL_INVALID")
 
-	// ssrc 撞车：member 用 owner 的 ssrc。
+	// ssrc collision: member uses the owner's ssrc.
 	if _, err := f.router.onPhoneJoinGroupCall(ownerCtx, &tg.PhoneJoinGroupCallRequest{
 		Call: &inputCall, JoinAs: &tg.InputPeerSelf{}, Params: groupCallJoinParams(t, 777),
 	}); err != nil {
@@ -445,7 +449,8 @@ func TestGroupCallM0Permissions(t *testing.T) {
 	})
 	assertPhoneRPCErr(t, err, "GROUPCALL_SSRC_DUPLICATE_MUCH")
 
-	// 普通成员 mute 他人：M2 起为 per-viewer 本地覆盖（合法，详见 TestGroupCallM2MemberOverride）。
+	// Ordinary member muting another: from M2 this is a per-viewer local override (valid; see
+	// TestGroupCallM2MemberOverride).
 	muteOther := &tg.PhoneEditGroupCallParticipantRequest{
 		Call:        &inputCall,
 		Participant: &tg.InputPeerUser{UserID: f.owner.ID, AccessHash: f.owner.AccessHash},
@@ -455,7 +460,7 @@ func TestGroupCallM0Permissions(t *testing.T) {
 		t.Fatalf("member local-mute other: %v", err)
 	}
 
-	// 普通成员结束通话 / 改标题。
+	// Ordinary member ending the call / changing the title.
 	_, err = f.router.onPhoneDiscardGroupCall(memberCtx, &inputCall)
 	assertPhoneRPCErr(t, err, "CHAT_ADMIN_REQUIRED")
 	_, err = f.router.onPhoneEditGroupCallTitle(memberCtx, &tg.PhoneEditGroupCallTitleRequest{Call: &inputCall, Title: "x"})
@@ -481,26 +486,28 @@ func TestGroupCallSweeper(t *testing.T) {
 	}
 	dispatcher := NewGroupCallSweepDispatcher(f.router, zaptest.NewLogger(t), 10*time.Second, 45*time.Second)
 
-	// 30s：心跳未过期，不清。
+	// 30s: the heartbeat has not expired, not swept.
 	f.clk.Advance(30 * time.Second)
 	dispatcher.DispatchOnce(f.ctx)
 	if ssrcs, err := f.router.onPhoneCheckGroupCall(ownerCtx, &tg.PhoneCheckGroupCallRequest{Call: &inputCall, Sources: []int{9001}}); err != nil || len(ssrcs) != 1 {
 		t.Fatalf("participant swept too early: %v err=%v", ssrcs, err)
 	}
-	// checkGroupCall 刷新水位后再过 30s：仍不清（水位以最后心跳为准）。
+	// Another 30s after checkGroupCall refreshes the watermark: still not swept (the watermark
+	// follows the last heartbeat).
 	f.clk.Advance(30 * time.Second)
 	dispatcher.DispatchOnce(f.ctx)
 	if ssrcs, _ := f.router.onPhoneCheckGroupCall(ownerCtx, &tg.PhoneCheckGroupCallRequest{Call: &inputCall, Sources: []int{9001}}); len(ssrcs) != 1 {
 		t.Fatalf("heartbeat-refreshed participant must survive, got %v", ssrcs)
 	}
-	// 46s 无心跳：清掉；checkGroupCall 返回空集触发客户端 rejoin。
+	// 46s without a heartbeat: swept; checkGroupCall returns an empty set, triggering a client
+	// rejoin.
 	f.clk.Advance(46 * time.Second)
 	dispatcher.DispatchOnce(f.ctx)
 	ssrcs, err := f.router.onPhoneCheckGroupCall(ownerCtx, &tg.PhoneCheckGroupCallRequest{Call: &inputCall, Sources: []int{9001}})
 	if err != nil || len(ssrcs) != 0 {
 		t.Fatalf("stale participant must be swept, got %v err=%v", ssrcs, err)
 	}
-	// rejoin（换 ssrc）恢复。
+	// rejoin (swapping ssrc) recovers.
 	if _, err := f.router.onPhoneJoinGroupCall(ownerCtx, &tg.PhoneJoinGroupCallRequest{
 		Call: &inputCall, JoinAs: &tg.InputPeerSelf{}, Params: groupCallJoinParams(t, 9002),
 	}); err != nil {
@@ -508,10 +515,11 @@ func TestGroupCallSweeper(t *testing.T) {
 	}
 }
 
-// 防御未来误删：fmt 占位避免 unused import（findUpdate 泛型在部分场景未实例化时）。
+// Guard against future accidental deletion: an fmt placeholder to avoid an unused import (when the
+// findUpdate generic is not instantiated in some scenarios).
 var _ = fmt.Sprintf
 
-// TestGroupCallM2MuteMatrix 覆盖 editGroupCallParticipant 权限矩阵全表。
+// TestGroupCallM2MuteMatrix covers the full editGroupCallParticipant permission matrix.
 func TestGroupCallM2MuteMatrix(t *testing.T) {
 	f := newGroupCallFixture(t)
 	ownerCtx := f.userCtx(f.owner, 11)
@@ -537,7 +545,7 @@ func TestGroupCallM2MuteMatrix(t *testing.T) {
 	}
 	memberPeer := &tg.InputPeerUser{UserID: f.member.ID, AccessHash: f.member.AccessHash}
 
-	// --- admin 禁言成员：muted=true 且 can_self_unmute=false ---
+	// --- admin mutes member: muted=true and can_self_unmute=false ---
 	muteReq := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: memberPeer}
 	muteReq.SetMuted(true)
 	res, err := f.router.onPhoneEditGroupCallParticipant(ownerCtx, muteReq)
@@ -549,13 +557,14 @@ func TestGroupCallM2MuteMatrix(t *testing.T) {
 		t.Fatalf("admin-muted row = %+v, want muted && !can_self_unmute", row)
 	}
 
-	// --- 被禁言成员自行 unmute：forbidden（客户端此时只会发 raise_hand）---
+	// --- muted member unmuting themselves: forbidden (the client only sends raise_hand at this
+	// point) ---
 	selfUnmute := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: &tg.InputPeerSelf{}}
 	selfUnmute.SetMuted(false)
 	_, err = f.router.onPhoneEditGroupCallParticipant(memberCtx, selfUnmute)
 	assertPhoneRPCErr(t, err, "GROUPCALL_FORBIDDEN")
 
-	// --- 举手：rating 单调、versioned 推送 ---
+	// --- raise hand: monotonic rating, versioned push ---
 	raise := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: &tg.InputPeerSelf{}}
 	raise.SetRaiseHand(true)
 	res, err = f.router.onPhoneEditGroupCallParticipant(memberCtx, raise)
@@ -568,7 +577,8 @@ func TestGroupCallM2MuteMatrix(t *testing.T) {
 		t.Fatalf("raise hand row = %+v, want rating > 0", row)
 	}
 
-	// --- admin 允许发言（muted=false）：恢复 can_self_unmute、清举手、不替用户开麦 ---
+	// --- admin allows to speak (muted=false): restore can_self_unmute, clear the raised hand, do
+	// not unmute on the user's behalf ---
 	allow := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: memberPeer}
 	allow.SetMuted(false)
 	res, err = f.router.onPhoneEditGroupCallParticipant(ownerCtx, allow)
@@ -583,12 +593,12 @@ func TestGroupCallM2MuteMatrix(t *testing.T) {
 		t.Fatalf("allow-to-speak must clear raise hand, got %+v", row)
 	}
 
-	// --- 现在成员可自行 unmute ---
+	// --- the member can now unmute themselves ---
 	if _, err := f.router.onPhoneEditGroupCallParticipant(memberCtx, selfUnmute); err != nil {
 		t.Fatalf("self unmute after allow: %v", err)
 	}
 
-	// --- admin 设全局音量 ---
+	// --- admin sets global volume ---
 	vol := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: memberPeer}
 	vol.SetVolume(5000)
 	res, err = f.router.onPhoneEditGroupCallParticipant(ownerCtx, vol)
@@ -601,7 +611,8 @@ func TestGroupCallM2MuteMatrix(t *testing.T) {
 	}
 }
 
-// TestGroupCallM2MemberOverride 覆盖普通成员的本地静音/音量（per-viewer overrides）。
+// TestGroupCallM2MemberOverride covers an ordinary member's local mute/volume (per-viewer
+// overrides).
 func TestGroupCallM2MemberOverride(t *testing.T) {
 	f := newGroupCallFixture(t)
 	ownerCtx := f.userCtx(f.owner, 11)
@@ -631,7 +642,7 @@ func TestGroupCallM2MemberOverride(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// member 本地静音 owner。
+	// member locally mutes owner.
 	localMute := &tg.PhoneEditGroupCallParticipantRequest{
 		Call:        &inputCall,
 		Participant: &tg.InputPeerUser{UserID: f.owner.ID, AccessHash: f.owner.AccessHash},
@@ -641,21 +652,21 @@ func TestGroupCallM2MemberOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("local mute: %v", err)
 	}
-	// ⚠ P2-7：推给 setter 的行必须带 min flag + muted_by_you，防 setter 其它设备
-	// 用该行覆盖本地 muted/volume 状态。
+	// ⚠ P2-7: the row pushed to the setter must carry the min flag + muted_by_you, to prevent the
+	// setter's other devices from overwriting local muted/volume state with this row.
 	row := findUpdate[*tg.UpdateGroupCallParticipants](t, res).Participants[0]
 	if !row.Min || !row.MutedByYou {
 		t.Fatalf("override row = %+v, want min && muted_by_you", row)
 	}
-	// overrides 不推进全房间 version。
+	// overrides do not advance the whole-room version.
 	if c, found, _ := f.router.deps.GroupCalls.Get(f.ctx, call.ID); !found || c.Version != versionBefore {
 		t.Fatalf("override must not bump version: %d → %d", versionBefore, c.Version)
 	}
-	// target 自身权威态不受影响。
+	// The target's own authoritative state is unaffected.
 	if p, found, _ := f.router.deps.GroupCalls.Participant(f.ctx, call.ID, f.owner.ID); !found || p.Muted {
 		t.Fatalf("target authoritative state polluted: %+v", p)
 	}
-	// 推送只发给 setter 自己。
+	// The push goes only to the setter themselves.
 	for _, rec := range f.sessions.records() {
 		if rec.userID != f.member.ID {
 			t.Fatalf("override pushed to %d, want setter only", rec.userID)
@@ -663,7 +674,7 @@ func TestGroupCallM2MemberOverride(t *testing.T) {
 	}
 }
 
-// TestGroupCallM2Invite 覆盖 inviteToGroupCall 服务消息。
+// TestGroupCallM2Invite covers the inviteToGroupCall service message.
 func TestGroupCallM2Invite(t *testing.T) {
 	f := newGroupCallFixture(t)
 	ownerCtx := f.userCtx(f.owner, 11)
@@ -677,7 +688,7 @@ func TestGroupCallM2Invite(t *testing.T) {
 	call := findUpdate[*tg.UpdateGroupCall](t, createRes).Call.(*tg.GroupCall)
 	inputCall := tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash}
 
-	// 邀请群成员：产生带频道 pts 的 messageActionInviteToGroupCall。
+	// Invite a group member: produces a messageActionInviteToGroupCall carrying channel pts.
 	res, err := f.router.onPhoneInviteToGroupCall(ownerCtx, &tg.PhoneInviteToGroupCallRequest{
 		Call:  &inputCall,
 		Users: []tg.InputUserClass{&tg.InputUser{UserID: f.member.ID, AccessHash: f.member.AccessHash}},
@@ -697,7 +708,7 @@ func TestGroupCallM2Invite(t *testing.T) {
 		t.Fatalf("invite action users = %v", action.Users)
 	}
 
-	// 邀请非群成员。
+	// Invite a non-group-member.
 	_, err = f.router.onPhoneInviteToGroupCall(ownerCtx, &tg.PhoneInviteToGroupCallRequest{
 		Call:  &inputCall,
 		Users: []tg.InputUserClass{&tg.InputUser{UserID: f.outsider.ID, AccessHash: f.outsider.AccessHash}},

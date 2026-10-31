@@ -1,5 +1,7 @@
-// Package memory 提供 store 各接口的内存实现，用作测试替身与本地开发兜底。
+// Package memory provides in-memory implementations of the store interfaces,
+// used as test doubles and a local-development fallback.
 //
-// 与 store/postgres、store/redisstore 对称：store 主包只定义接口与 DTO，
-// 三种后端实现各自独立成包。
+// It is symmetric with store/postgres and store/redisstore: the store root
+// package only defines interfaces and DTOs; each of the three backends lives in
+// its own package.
 package memory

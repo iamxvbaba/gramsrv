@@ -11,14 +11,16 @@ import (
 	"path/filepath"
 )
 
-// rsaKeyBits 是 server RSA 私钥位数。MTProto 要求 2048-bit。
+// rsaKeyBits is the bit length of the server RSA private key. MTProto requires 2048-bit.
 const rsaKeyBits = 2048
 
-// LoadOrGenerateRSAKey 从 path 加载 PEM 编码的 server RSA 私钥；
-// 不存在则生成 2048-bit 新密钥并持久化（含父目录）。
+// LoadOrGenerateRSAKey loads the PEM-encoded server RSA private key from path;
+// if it does not exist, it generates a new 2048-bit key and persists it
+// (including the parent directory).
 //
-// server RSA 私钥用于 MTProto 密钥交换；其公钥 fingerprint 需 patch 进 TDesktop
-// （记录于 docs/tdesktop-patch-notes.md）。
+// The server RSA private key is used for the MTProto key exchange; its public key
+// fingerprint must be patched into TDesktop (recorded in
+// docs/tdesktop-patch-notes.md).
 func LoadOrGenerateRSAKey(path string) (*rsa.PrivateKey, error) {
 	data, err := os.ReadFile(path)
 	switch {
@@ -29,7 +31,7 @@ func LoadOrGenerateRSAKey(path string) (*rsa.PrivateKey, error) {
 		}
 		return key, nil
 	case errors.Is(err, os.ErrNotExist):
-		// 继续生成。
+		// Continue with generation.
 	default:
 		return nil, fmt.Errorf("read %q: %w", path, err)
 	}

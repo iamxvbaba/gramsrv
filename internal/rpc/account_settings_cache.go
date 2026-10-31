@@ -16,8 +16,8 @@ const (
 	accountSettingsCacheTTL = 24 * time.Hour
 )
 
-// accountSettingsCache 缓存 userID→AccountSettings，避免设置页 4 个 get handler 各查
-// 一次同一行（N+1）。AccountSettings 全值类型，无需深拷贝。
+// accountSettingsCache caches userID -> AccountSettings to avoid the settings page's 4 get
+// handlers each querying the same row (N+1). AccountSettings is an all-value type, so no deep copy is needed.
 type accountSettingsCache struct {
 	cache *readmodelcache.Cache[int64, domain.AccountSettings]
 }
@@ -118,7 +118,7 @@ func (c *accountSettingsCache) getOrLoadBatch(
 	)
 }
 
-// cachedAccountSettings 取（缓存的）账号单例设置；服务未接通返回默认。
+// cachedAccountSettings returns the (cached) account singleton settings; returns the default when the service is not wired.
 func (r *Router) cachedAccountSettings(ctx context.Context, userID int64) (domain.AccountSettings, error) {
 	svc, ok := r.accountSettingsSvc()
 	if !ok {

@@ -29,15 +29,15 @@ func newOwner(t *testing.T, users *memory.UserStore, phone string) domain.User {
 	return u
 }
 
-// sendToBotFather 同步驱动 responder（绕过 OnPrivateMessage 的 goroutine 派发以
-// 保证单测确定性；异步派发由 mtprotoedge bot e2e 覆盖），返回 BotFather 最新回复文本。
+// sendToBotFather drives the responder synchronously (bypassing OnPrivateMessage's goroutine dispatch to keep
+// unit tests deterministic; async dispatch is covered by the mtprotoedge bot e2e), returning BotFather's latest reply text.
 func sendToBotFather(t *testing.T, svc *Service, messages *memory.MessageStore, owner domain.User, text string) string {
 	t.Helper()
 	return latestBotFatherMessage(t, svc, messages, owner, text).Body
 }
 
-// latestBotFatherMessage 与 sendToBotFather 相同，但返回整条消息（含 ReplyMarkup），
-// 供按钮式对话的断言使用。
+// latestBotFatherMessage is the same as sendToBotFather but returns the whole message (including
+// ReplyMarkup), for button-dialog assertions.
 func latestBotFatherMessage(t *testing.T, svc *Service, messages *memory.MessageStore, owner domain.User, text string) domain.Message {
 	t.Helper()
 	ctx := context.Background()
@@ -78,7 +78,7 @@ func TestBotFatherNewBotFlow(t *testing.T) {
 	if reply := sendToBotFather(t, svc, messages, owner, "My Test Bot"); !strings.Contains(reply, "username") {
 		t.Fatalf("name reply = %q, want username prompt", reply)
 	}
-	// 非法 username：不以 bot 结尾。
+	// Invalid username: does not end with bot.
 	if reply := sendToBotFather(t, svc, messages, owner, "mytest"); !strings.Contains(reply, "invalid") {
 		t.Fatalf("invalid username reply = %q, want invalid notice", reply)
 	}
@@ -108,7 +108,7 @@ func TestBotFatherNewBotFlow(t *testing.T) {
 	if fmt.Sprintf("%d", created.ID) != match[1] || profile.TokenSecret != match[2] {
 		t.Fatalf("token %q does not match stored bot %d/%q", match[0], created.ID, profile.TokenSecret)
 	}
-	// 状态机已复位：普通文本回兜底提示。
+	// State machine has reset: plain text returns the fallback prompt.
 	if reply := sendToBotFather(t, svc, messages, owner, "hello"); !strings.Contains(reply, "/help") {
 		t.Fatalf("post-done reply = %q, want fallback", reply)
 	}
@@ -222,7 +222,7 @@ func TestBotFatherCancelAndUnknown(t *testing.T) {
 	if reply := sendToBotFather(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "cancelled") {
 		t.Fatalf("active /cancel reply = %q", reply)
 	}
-	// 取消后名字输入不再被当作 newbot 步骤。
+	// After cancel, name input is no longer treated as a newbot step.
 	if reply := sendToBotFather(t, svc, messages, owner, "Some Name"); !strings.Contains(reply, "/help") {
 		t.Fatalf("post-cancel reply = %q, want fallback", reply)
 	}
@@ -243,7 +243,7 @@ func TestBotFatherUsernameTaken(t *testing.T) {
 	if reply := sendToBotFather(t, svc, messages, owner, "taken_bot"); !strings.Contains(reply, "already taken") {
 		t.Fatalf("taken username reply = %q", reply)
 	}
-	// 状态保留：可继续尝试新 username。
+	// State preserved: a new username can still be attempted.
 	if reply := sendToBotFather(t, svc, messages, owner, "second_bot"); !strings.Contains(reply, "telesrv.net/second_bot") {
 		t.Fatalf("retry username reply = %q", reply)
 	}
@@ -319,7 +319,7 @@ func TestBotFatherTokenAndRevoke(t *testing.T) {
 		t.Fatalf("stored secret %q does not match revoked token %q", profile.TokenSecret, newToken)
 	}
 
-	// 选择不属于自己的 bot。
+	// Select a bot that is not yours.
 	sendToBotFather(t, svc, messages, owner, "/token")
 	if reply := sendToBotFather(t, svc, messages, owner, "@nosuch_bot"); !strings.Contains(reply, "don't see that bot") {
 		t.Fatalf("unknown choose reply = %q", reply)
@@ -393,11 +393,11 @@ func TestBotFatherReplyRespectsBlock(t *testing.T) {
 
 	svc.respondAsBotFather(owner.ID, "/help")
 
-	// IsBlocked 参数语义：owner(userID) 是否 block 了 BotFather(blockedUserID)。
+	// IsBlocked parameter semantics: whether owner(userID) has blocked BotFather(blockedUserID).
 	if blocker.gotUser != owner.ID || blocker.gotPeer != domain.BotFatherUserID {
 		t.Fatalf("IsBlocked called with (user=%d, peer=%d), want (%d, %d)", blocker.gotUser, blocker.gotPeer, owner.ID, domain.BotFatherUserID)
 	}
-	// 被 block：回复不投递到 owner 收件箱。
+	// Blocked: the reply is not delivered to the owner's inbox.
 	list, err := messages.ListByUser(ctx, owner.ID, domain.MessageFilter{
 		HasPeer: true,
 		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: domain.BotFatherUserID},
@@ -412,7 +412,7 @@ func TestBotFatherReplyRespectsBlock(t *testing.T) {
 		}
 	}
 
-	// 未 block：回复正常投递。
+	// Not blocked: the reply is delivered normally.
 	blocker.blocked = false
 	other := newOwner(t, users, "+1098")
 	svc.respondAsBotFather(other.ID, "/help")

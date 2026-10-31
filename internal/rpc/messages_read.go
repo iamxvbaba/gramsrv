@@ -59,8 +59,9 @@ func (r *Router) onMessagesReadMessageContents(ctx context.Context, ids []int) (
 			Seq:     0,
 		})
 	}
-	// voice/round 的对端发送者收到自己视角 box id 的内容已读回执，
-	// 让 sender 端的"未听"蓝点消失；reliable outbox 部署下由 worker 投递。
+	// The peer sender of a voice/round message receives a content-read receipt
+	// carrying its own-view box id, clearing the sender's "unheard" blue dot; under
+	// a reliable outbox deployment it is delivered by the worker.
 	for _, event := range read.SenderEvents {
 		if update := tgOtherUpdateFromEvent(event); update != nil {
 			r.pushUserUpdatesIfNoReliableDispatch(ctx, event.UserID, &tg.Updates{
@@ -237,9 +238,11 @@ func (r *Router) pushCurrentReadHistoryEvent(ctx context.Context, event domain.U
 	})
 }
 
-// bookkeepAuxPtsForCurrentSession 把 aux 事件占用的账号 pts 同步给发起
-// session：可靠 outbox 投递排除了当前 session，而这些 RPC 的响应多为
-// Bool/无 pts 容器，不补这一条当前设备的水位会落后并误判后续空洞。
+// bookkeepAuxPtsForCurrentSession syncs the account pts consumed by aux events
+// to the initiating session: reliable outbox delivery excludes the current
+// session, and these RPCs mostly return Bool/pts-less containers, so omitting
+// this entry would leave the current device's watermark behind and misjudge later
+// gaps.
 func (r *Router) bookkeepAuxPtsForCurrentSession(ctx context.Context, events ...domain.UpdateEvent) {
 	updates := make([]tg.UpdateClass, 0, len(events))
 	date := 0
@@ -279,9 +282,10 @@ func tgReadHistoryInbox(event domain.UpdateEvent) *tg.UpdateReadHistoryInbox {
 
 func tgReadHistoryInboxUpdate(event domain.UpdateEvent) tg.UpdateClass {
 	if event.Peer.Type == domain.PeerTypeChannel && event.Peer.ID != 0 {
-		// updateReadChannelInbox.pts 只能是 channel pts；账号 pts 在这里
-		// 是错误语义（TDesktop 拿它与本地 channel pts 比较），缺失时宁可
-		// 填 0 让客户端回退本地估算。
+		// updateReadChannelInbox.pts may only be channel pts; an account pts here
+		// is wrong semantics (TDesktop compares it with its local channel pts), so
+		// when missing it is better to fill 0 and let the client fall back to its
+		// local estimate.
 		update := &tg.UpdateReadChannelInbox{
 			ChannelID:        event.Peer.ID,
 			MaxID:            event.MaxID,

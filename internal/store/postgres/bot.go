@@ -16,18 +16,18 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// BotStore 用 PostgreSQL 实现 store.BotStore。
+// BotStore implements store.BotStore with PostgreSQL.
 type BotStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewBotStore 基于 pgx 连接池（或事务）创建 BotStore。
+// NewBotStore creates a BotStore backed by a pgx pool (or transaction).
 func NewBotStore(db sqlcgen.DBTX) *BotStore {
 	return &BotStore{db: db, q: sqlcgen.New(db)}
 }
 
-// CreateBotAccount 在单事务内创建 users 行（is_bot=true, phone 空）与 bots 行。
+// CreateBotAccount creates the users row (is_bot=true, empty phone) and the bots row in a single transaction.
 func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile) (domain.User, domain.BotProfile, error) {
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
@@ -40,10 +40,10 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
 
-	// 事务内对 owner 取 advisory lock 后复核计数，封死 service 层 count-then-insert
-	// 的 TOCTOU（多设备/并发 /newbot 各自读到 count<limit 后超额落库）。key 用
-	// owner_user_id，可能与私聊发送锁共享 key 空间，但 bot 创建低频，最坏只是偶发
-	// 串行化、无正确性影响。
+	// Take an advisory lock on the owner inside the transaction, then re-check the count, closing the
+	// service layer's count-then-insert TOCTOU (multiple devices/concurrent /newbot each reading count<limit and then
+	// over-inserting). The key is owner_user_id, which may share key space with the private-chat send
+	// lock, but bot creation is infrequent so at worst it causes occasional serialization with no correctness impact.
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", profile.OwnerUserID); err != nil {
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: lock owner: %w", err)
 	}
@@ -283,7 +283,7 @@ func (s *BotStore) UpdateBotTokenSecret(ctx context.Context, botUserID int64, se
 	return nil
 }
 
-// withBumpTx 在单事务内执行 update 闭包后 bump bot 的 bot_info_version，返回新版本。
+// withBumpTx runs the update closure and bumps the bot's bot_info_version in a single transaction, returning the new version.
 func (s *BotStore) withBumpTx(ctx context.Context, botUserID int64, fn func(q *sqlcgen.Queries) error) (int, error) {
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
@@ -517,7 +517,7 @@ func botProfileFromModel(r sqlcgen.Bot) domain.BotProfile {
 		},
 	}
 	if len(r.Commands) > 0 {
-		// commands 列损坏不阻断读路径：botInfo 退化为空命令列表。
+		// A corrupt commands column does not block the read path: botInfo degrades to an empty command list.
 		_ = json.Unmarshal(r.Commands, &p.Commands)
 	}
 	return p

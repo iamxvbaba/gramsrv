@@ -13,7 +13,7 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// UpdateEventStore 用 PostgreSQL 实现 store.UpdateEventStore。
+// UpdateEventStore implements store.UpdateEventStore with PostgreSQL.
 type UpdateEventStore struct {
 	db  sqlcgen.DBTX
 	q   *sqlcgen.Queries
@@ -22,14 +22,14 @@ type UpdateEventStore struct {
 
 type UpdateEventStoreOption func(*UpdateEventStore)
 
-// WithUpdateEventLogger 注入 durable update log 的日志器。
+// WithUpdateEventLogger injects the logger for the durable update log.
 func WithUpdateEventLogger(log *zap.Logger) UpdateEventStoreOption {
 	return func(s *UpdateEventStore) {
 		s.log = log
 	}
 }
 
-// NewUpdateEventStore 基于 pgx 连接池（或事务）创建 UpdateEventStore。
+// NewUpdateEventStore creates an UpdateEventStore on top of a pgx pool (or transaction).
 func NewUpdateEventStore(db sqlcgen.DBTX, opts ...UpdateEventStoreOption) *UpdateEventStore {
 	s := &UpdateEventStore{db: db, q: sqlcgen.New(db)}
 	for _, opt := range opts {
@@ -50,8 +50,8 @@ func (s *UpdateEventStore) AppendAllocated(ctx context.Context, userID int64, ev
 	return s.append(ctx, userID, event, false, [8]byte{}, 0, true)
 }
 
-// AppendAllocatedWithDispatch 在同一个 PG 事务里完成 pts 分配、durable event 写入与
-// dispatch outbox 入队，返回带最终 pts 的事件。
+// AppendAllocatedWithDispatch completes pts allocation, the durable event write and the dispatch
+// outbox enqueue in the same PG transaction, returning the event with its final pts.
 func (s *UpdateEventStore) AppendAllocatedWithDispatch(ctx context.Context, userID int64, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, error) {
 	return s.append(ctx, userID, event, true, excludeAuthKeyID, excludeSessionID, true)
 }
@@ -499,8 +499,8 @@ LIMIT 1`, userID, string(domain.UpdateEventNewMessage), messageBoxID).Scan(&pts)
 	return events[0], true, nil
 }
 
-// MaxContiguousPts 见 store.UpdateEventStore 接口说明。PG 写路径保证水位与
-// durable event 同事务提交；缺行代表该账号还没有 update。
+// MaxContiguousPts is documented on the store.UpdateEventStore interface. The PG write path commits
+// the watermark and the durable event in the same transaction; a missing row means the account has no updates yet.
 func (s *UpdateEventStore) MaxContiguousPts(ctx context.Context, userID int64) (int, error) {
 	pts, err := s.q.GetUserUpdateWatermark(ctx, userID)
 	if err == nil {
@@ -512,8 +512,8 @@ func (s *UpdateEventStore) MaxContiguousPts(ctx context.Context, userID int64) (
 	return 0, nil
 }
 
-// BatchByCursor 按 (user_id, pts) 一次性批量取多条账号事件，供 outbox worker 取代逐条 ListAfter。
-// 返回顺序不保证与 cursors 一致，调用方按 (UserID,Pts) 自行索引。
+// BatchByCursor fetches multiple account events at once by (user_id, pts), replacing the per-item
+// ListAfter for the outbox worker. The return order is not guaranteed to match cursors; the caller indexes by (UserID,Pts) itself.
 func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.EventCursor) ([]domain.UpdateEvent, error) {
 	if len(cursors) == 0 {
 		return nil, nil
@@ -741,8 +741,8 @@ func usersFromUpdateEventRow(row sqlcgen.ListUserUpdateEventsAfterRow) []domain.
 	)
 }
 
-// usersFromBatchDispatchRow 与 usersFromUpdateEventRow 等价，只是行类型为 BatchListDispatchEventsRow
-// （两条查询列完全一致；改一处列时务必同步另一处）。
+// usersFromBatchDispatchRow is equivalent to usersFromUpdateEventRow, only the row type is
+// BatchListDispatchEventsRow (the two queries have identical columns; when changing a column in one, be sure to sync the other).
 func usersFromBatchDispatchRow(row sqlcgen.BatchListDispatchEventsRow) []domain.User {
 	return mergeEventUsers(
 		domain.User{
@@ -812,7 +812,7 @@ func usersFromBatchDispatchRow(row sqlcgen.BatchListDispatchEventsRow) []domain.
 	)
 }
 
-// mergeEventUsers 合并事件依赖用户，跳过 ID=0 并按 ID 去重。
+// mergeEventUsers merges event dependency users, skipping ID=0 and deduplicating by ID.
 func mergeEventUsers(items ...domain.User) []domain.User {
 	users := make([]domain.User, 0, len(items))
 	add := func(u domain.User) {

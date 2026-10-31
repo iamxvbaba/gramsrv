@@ -7,12 +7,13 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
-// registerPhone 注册通话域 RPC。
+// registerPhone registers the call-domain RPCs.
 //
-// 归属约定（跨任务协调，群聊 M0 落地时遵守）：本文件是 phone.* 的唯一注册点；
-// tlprofile.Dispatcher 对同一 semantic method 重复注册会失败，群聊 stub
-// 清单不得覆盖此处已注册的真实现。messages.getDhConfig 属通话域（DH 参数下发），
-// 注册在这里而非 messages_register.go。
+// Ownership convention (cross-task coordination, honored when group-call M0 landed): this file is
+// the sole registration point for phone.*; tlprofile.Dispatcher fails on a duplicate registration of
+// the same semantic method, so the group-call stub list must not override the real implementations
+// registered here. messages.getDhConfig belongs to the call domain (DH parameter distribution) and
+// is registered here rather than in messages_register.go.
 func (r *Router) registerPhone(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesGetDhConfigRequest](d, tlprofile.SemanticMethodMessagesGetDhConfig, func(ctx context.Context, layerRequest *tg.MessagesGetDhConfigRequest) (any, error) {
 		return r.onMessagesGetDhConfig(ctx, layerRequest)
@@ -43,14 +44,15 @@ func (r *Router) registerPhone(d *tlprofile.Dispatcher) {
 		return r.onPhoneSaveCallDebug(ctx, layerRequest)
 	})
 	registerRPC[*tg.PhoneGetCallConfigRequest](d, tlprofile.SemanticMethodPhoneGetCallConfig, func(ctx context.Context, layerRequest *
-	// tgcalls 对空配置走默认值；需要精调（audio_max_bitrate 等）时再填键值。
+	// tgcalls uses defaults for an empty config; fill in key/values only when fine-tuning
+	// (audio_max_bitrate, etc.).
 	tg.PhoneGetCallConfigRequest) (any, error) {
 
 		return &tg.DataJSON{Data: "{}"}, nil
 	})
 	registerRPC[
 
-	// 超级群语音聊天（group call）。
+	// Supergroup voice chats (group calls).
 	*tg.PhoneCreateGroupCallRequest](d, tlprofile.SemanticMethodPhoneCreateGroupCall, func(ctx context.Context, layerRequest *tg.PhoneCreateGroupCallRequest) (any, error) {
 		return r.onPhoneCreateGroupCall(ctx, layerRequest)
 	})
@@ -84,7 +86,7 @@ func (r *Router) registerPhone(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.PhoneToggleGroupCallSettingsRequest](d, tlprofile.SemanticMethodPhoneToggleGroupCallSettings, func(ctx context.Context, layerRequest *tg.PhoneToggleGroupCallSettingsRequest) (
 
-		// 定时通话（scheduled video chat）。
+		// Scheduled video chats.
 		any, error) {
 		return r.onPhoneToggleGroupCallSettings(ctx, layerRequest)
 	})
@@ -96,7 +98,7 @@ func (r *Router) registerPhone(d *tlprofile.Dispatcher) {
 			Call)
 	})
 	registerRPC[*tg.PhoneToggleGroupCallStartSubscriptionRequest](d, tlprofile.SemanticMethodPhoneToggleGroupCallStartSubscription, func(ctx context.Context,
-		// Ad-hoc E2E conference call（P2P 通话升级/拉人路径）。
+		// Ad-hoc E2E conference call (the P2P call upgrade/invite path).
 		layerRequest *tg.PhoneToggleGroupCallStartSubscriptionRequest) (any, error) {
 		return r.onPhoneToggleGroupCallStartSubscription(ctx, layerRequest)
 	})
@@ -114,7 +116,7 @@ func (r *Router) registerPhone(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.PhoneDeclineConferenceCallInviteRequest](d, tlprofile.SemanticMethodPhoneDeclineConferenceCallInvite, func(ctx context.Context, layerRequest *tg.PhoneDeclineConferenceCallInviteRequest) (any, error) {
 
-		// 屏幕共享（M4）：同参与者第二媒体连接。
+		// Screen sharing (M4): the same participant's second media connection.
 		return r.onPhoneDeclineConferenceCallInvite(ctx, layerRequest.
 			MsgID)
 	})

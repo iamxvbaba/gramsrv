@@ -7,7 +7,7 @@ import (
 
 // TestStarGiftCatalogWriteValidateLifecycleAuthoring covers the operator
 // authoring boundary shared by the auction panel and the scheduled-release
-// ("отложенный дроп") surfaces.
+// ("delayed drop") surfaces.
 func TestStarGiftCatalogWriteValidateLifecycleAuthoring(t *testing.T) {
 	const now = 1_000_000
 

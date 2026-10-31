@@ -65,18 +65,18 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 		t.Fatalf("outbox count = %d, want 0", outboxCount)
 	}
 
-	// 同号重试是幂等读，不得产生 PTS/event/outbox。
+	// Retrying the same number is an idempotent read and must not produce PTS/event/outbox.
 	retry, err := changes.ChangePhone(ctx, domain.PhoneChangeRequest{UserID: u1.ID, Phone: newPhone, Date: 1700000002})
 	if err != nil || retry.Changed || retry.User.Phone != newPhone {
 		t.Fatalf("idempotent retry = %+v err=%v", retry, err)
 	}
-	// 改号不分配账号 PTS（updateUserPhone 无 pts），重试同样不得产生
-	// PTS/event/outbox。
+	// A phone change allocates no account PTS (updateUserPhone has no pts), and a retry must likewise
+	// produce no PTS/event/outbox.
 	if pts, err := events.MaxContiguousPts(ctx, u1.ID); err != nil || pts != 0 {
 		t.Fatalf("pts after retry = %d err=%v", pts, err)
 	}
 
-	// 冲突更新整体回滚：号码不变，也不产生 PTS/event。
+	// A conflicting update rolls back entirely: the number is unchanged and no PTS/event is produced.
 	if _, err := changes.ChangePhone(ctx, domain.PhoneChangeRequest{UserID: u2.ID, Phone: newPhone}); !errors.Is(err, domain.ErrPhoneNumberOccupied) {
 		t.Fatalf("occupied change err = %v", err)
 	}

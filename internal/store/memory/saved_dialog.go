@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// savedDialogTopsLocked 聚合 self-chat 按 saved_peer 分组的 top message。
-// 返回按 top box id 降序。
+// savedDialogTopsLocked aggregates the top message per saved_peer group in the self-chat.
+// It returns them in descending top box id order.
 func (s *MessageStore) savedDialogTopsLocked(userID int64) []domain.Message {
 	tops := make(map[domain.Peer]domain.Message)
 	selfPeer := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
@@ -58,8 +58,8 @@ func (s *MessageStore) ListSavedDialogs(_ context.Context, userID int64, filter 
 		limit = domain.MaxSavedDialogsLimit
 	}
 	offsetID := filter.OffsetID
-	// DrKLO Android 首页发 offset_id = MaxMessageBoxID（int32 max），用 >= 命中首页
-	// 分支，避免被误判为续页跳过置顶块（与 postgres 对齐）。
+	// DrKLO Android sends offset_id = MaxMessageBoxID (int32 max) for the first page so that
+	// the >= branch matches the first page, avoiding misclassification as a continuation page that skips the pin block (matching postgres).
 	firstPage := offsetID <= 0 || offsetID >= domain.MaxMessageBoxID
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -68,7 +68,7 @@ func (s *MessageStore) ListSavedDialogs(_ context.Context, userID int64, filter 
 	for _, msg := range tops {
 		topByPeer[msg.SavedPeer] = msg
 	}
-	// 首页且不排除置顶：置顶块按 pinned_order 在前。
+	// First page and pins are not excluded: the pin block comes first by pinned_order.
 	if firstPage && !filter.ExcludePinned {
 		for _, peer := range s.savedPins[userID] {
 			if len(out.Dialogs) >= limit {
@@ -79,7 +79,7 @@ func (s *MessageStore) ListSavedDialogs(_ context.Context, userID int64, filter 
 			}
 		}
 	}
-	// 普通块恒排除置顶（置顶只随首页返回）。
+	// The normal block always excludes pins (pins are only returned with the first page).
 	hasMore := false
 	for _, msg := range tops {
 		if len(out.Dialogs) >= limit {
@@ -205,7 +205,7 @@ func (s *MessageStore) ReorderPinnedSavedDialogs(_ context.Context, userID int64
 		next = append(next, peer)
 	}
 	if !force {
-		// 非 force：order 之外的既有置顶保持原相对顺序排在后面。
+		// Non-force: existing pins outside order keep their relative order and are appended after.
 		for _, peer := range s.savedPins[userID] {
 			if _, ok := seen[peer]; !ok {
 				next = append(next, peer)
@@ -252,7 +252,7 @@ func (s *MessageStore) DeleteSavedHistory(_ context.Context, req domain.DeleteSa
 		}
 	}
 	if len(deleted) > 0 && !more {
-		// 子会话删空时清掉它的置顶行（与 PG 实现同语义）。
+		// When a sub-conversation is emptied, clear its pin row (same semantics as the PG implementation).
 		alive := false
 		for _, msg := range s.m[req.OwnerUserID] {
 			if msg.Peer == selfPeer && msg.SavedPeer == req.SavedPeer {

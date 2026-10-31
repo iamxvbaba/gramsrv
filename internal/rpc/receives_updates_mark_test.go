@@ -43,10 +43,13 @@ func dispatchForReceivesUpdates(t *testing.T, sessions SessionBinder, wrapWithou
 	return ctx
 }
 
-// TestDispatchMarksSessionReceivesUpdates 验证已登录连接发出的裸 RPC（未包
-// invokeWithoutUpdates）即视为 updates 接收声明。仅靠 updates.getState/getDifference
-// 置位会漏掉热恢复重连的客户端：它不重建同步基线，置位永不发生时主动推送一直
-// 暂存直至超时丢弃，表现为另一端消息不再实时同步。
+// TestDispatchMarksSessionReceivesUpdates verifies that a plain RPC sent by a
+// logged-in connection (not wrapped in invokeWithoutUpdates) counts as declaring
+// receipt of updates. Relying only on updates.getState/getDifference to set the
+// flag would miss clients that reconnect after a warm recovery: they do not
+// rebuild the sync baseline, so the flag would never be set and proactive pushes
+// would stay buffered until they time out and are dropped, showing up as the other
+// side's messages no longer syncing in real time.
 func TestDispatchMarksSessionReceivesUpdates(t *testing.T) {
 	sessions := &captureSessions{}
 	ctx := dispatchForReceivesUpdates(t, sessions, false, true)
@@ -216,8 +219,9 @@ func TestBootstrapProbeReleasedWhenCallbackRegistrationFails(t *testing.T) {
 	}
 }
 
-// TestDispatchSkipsReceivesUpdatesForInvokeWithoutUpdates 验证 invokeWithoutUpdates
-// 包装的请求（media/temp 连接）不会把该 session 标记为 updates 接收者。
+// TestDispatchSkipsReceivesUpdatesForInvokeWithoutUpdates verifies that a request
+// wrapped in invokeWithoutUpdates (media/temp connections) does not mark the
+// session as an updates recipient.
 func TestDispatchSkipsReceivesUpdatesForInvokeWithoutUpdates(t *testing.T) {
 	sessions := &captureSessions{}
 	ctx := dispatchForReceivesUpdates(t, sessions, true, true)
@@ -338,7 +342,8 @@ func TestInvokeWithoutUpdatesBaselineCommitsResultAndSecretEventsWithoutSubscrib
 	}
 }
 
-// TestDispatchSkipsReceivesUpdatesWhenLoggedOut 验证未登录连接的 RPC 不置位。
+// TestDispatchSkipsReceivesUpdatesWhenLoggedOut verifies that an RPC from a
+// not-logged-in connection does not set the flag.
 func TestDispatchSkipsReceivesUpdatesWhenLoggedOut(t *testing.T) {
 	sessions := &captureSessions{}
 	ctx := dispatchForReceivesUpdates(t, sessions, false, false)

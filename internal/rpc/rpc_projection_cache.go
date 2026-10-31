@@ -13,9 +13,11 @@ const (
 	rpcProjectionCacheMaxEntries = 100000
 )
 
-// userFullProjectionCache / peerSettingsProjectionCache / channelFullProjectionCache 是三个
-// 结构同形的 per-viewer TTL 投影缓存,统一收敛到 projectionCache[K,V](epoch 守卫 / LRU 单条
-// 驱逐 / TTL / clone 由 readmodelcache 原语承载)。各自仅在键/值类型、clone、失效维度上不同。
+// userFullProjectionCache / peerSettingsProjectionCache / channelFullProjectionCache
+// are three structurally identical per-viewer TTL projection caches, all converged
+// onto projectionCache[K,V] (epoch guard / LRU single-entry eviction / TTL / clone
+// are carried by the readmodelcache primitive). Each differs only in key/value
+// type, clone and invalidation dimension.
 
 type userFullProjectionKey struct {
 	viewerUserID int64
@@ -39,7 +41,8 @@ func (c *userFullProjectionCache) Lookup(viewerUserID, targetUserID int64) (tg.U
 	return c.lookup(userFullProjectionKey{viewerUserID: viewerUserID, targetUserID: targetUserID})
 }
 
-// StoreIfEpoch 仅在 epoch 未变(构建期间没有失效)时写入。
+// StoreIfEpoch writes only when the epoch is unchanged (no invalidation during the
+// build).
 func (c *userFullProjectionCache) StoreIfEpoch(viewerUserID, targetUserID int64, full tg.UserFull, loadEpoch uint64) {
 	if c == nil || viewerUserID == 0 || targetUserID == 0 {
 		return
@@ -74,7 +77,7 @@ type peerSettingsProjectionKey struct {
 }
 
 type peerSettingsProjectionCache struct {
-	// domain.PeerSettings 为扁平值(无共享可变字段),故 Clone=nil。
+	// domain.PeerSettings is a flat value (no shared mutable fields), so Clone=nil.
 	*projectionCache[peerSettingsProjectionKey, domain.PeerSettings]
 }
 
@@ -91,7 +94,8 @@ func (c *peerSettingsProjectionCache) Lookup(viewerUserID int64, peer domain.Pee
 	return c.lookup(peerSettingsProjectionKey{viewerUserID: viewerUserID, peer: peer})
 }
 
-// StoreIfEpoch 仅在 epoch 未变(构建期间没有失效)时写入。
+// StoreIfEpoch writes only when the epoch is unchanged (no invalidation during the
+// build).
 func (c *peerSettingsProjectionCache) StoreIfEpoch(viewerUserID int64, peer domain.Peer, settings domain.PeerSettings, loadEpoch uint64) {
 	if c == nil || viewerUserID == 0 || peer.ID == 0 {
 		return
@@ -151,7 +155,8 @@ func (c *channelFullProjectionCache) Lookup(viewerUserID, channelID int64) (chan
 	return c.lookup(channelFullProjectionKey{viewerUserID: viewerUserID, channelID: channelID})
 }
 
-// StoreIfEpoch 仅在 epoch 未变(构建期间没有失效)时写入。
+// StoreIfEpoch writes only when the epoch is unchanged (no invalidation during the
+// build).
 func (c *channelFullProjectionCache) StoreIfEpoch(viewerUserID, channelID int64, value channelFullProjection, loadEpoch uint64) {
 	if c == nil || viewerUserID == 0 || channelID == 0 {
 		return

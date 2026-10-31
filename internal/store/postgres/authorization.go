@@ -14,13 +14,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// AuthorizationStore 用 PostgreSQL 实现 store.AuthorizationStore。
+// AuthorizationStore implements store.AuthorizationStore with PostgreSQL.
 type AuthorizationStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewAuthorizationStore 基于 pgx 连接池（或事务）创建 AuthorizationStore。
+// NewAuthorizationStore creates an AuthorizationStore backed by a pgx pool (or transaction).
 func NewAuthorizationStore(db sqlcgen.DBTX) *AuthorizationStore {
 	return &AuthorizationStore{db: db, q: sqlcgen.New(db)}
 }
@@ -38,16 +38,17 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 	return nil
 }
 
-// bindAuthorization 把 auth_key→user 绑定和设备 update baseline 作为同一个状态边界提交。
+// bindAuthorization commits the auth_key→user binding and the device update baseline as one state boundary.
 //
-// 锁顺序固定为：目标 user advisory/row → auth_keys 母行 →
-// user_update_watermarks → user_update_retention → 目标 update_states。其中 watermark
-// 与 retention 两个 row lock 的顺序和 pruneConfirmedUserPrefixTx 一致，使新授权的
-// observed baseline 和 retained floor 不会交叉提交成静默空洞。母行锁又能在首次
-// authorization 尚不存在时串行化同一
-// raw auth key 的并发登录/换号。user 锁与账号 tombstone 使用同一顺序；因此 Bind
-// 要么先提交并被随后删除事务撤销，要么等删除提交后看见 tombstone 并拒绝，不能在
-// 删除事务枚举 authorization 之后重新绑定账号。
+// The lock order is fixed: target user advisory/row → auth_keys parent row →
+// user_update_watermarks → user_update_retention → target update_states. The order of the watermark
+// and retention row locks matches pruneConfirmedUserPrefixTx, so the new authorization's
+// observed baseline and retained floor cannot cross-commit into a silent hole. The parent-row
+// lock also serializes concurrent logins/account switches on the same raw auth key while the
+// first authorization does not yet exist. The user lock uses the same order as the account
+// tombstone; therefore Bind either commits first and is undone by a subsequent delete
+// transaction, or waits for the delete to commit and then sees the tombstone and rejects it. It
+// cannot rebind the account after the delete transaction has enumerated authorizations.
 func bindAuthorization(ctx context.Context, db sqlcgen.DBTX, a domain.Authorization) error {
 	keyID := authKeyIDToInt64(a.AuthKeyID)
 	tx, ok := db.(pgx.Tx)
@@ -132,10 +133,10 @@ FOR UPDATE`, a.UserID).Scan(&retainedFloor); err != nil {
 		)
 	}
 
-	// 每次 Bind 都是一次显式登录 baseline：delivered pts 推进到已锁定的账号连续水位；
-	// observed 只推进到已删除的 retained floor，不把 live tail 伪装成客户端确认。
-	// 历史遗留的 state 若超出账号 contiguous watermark，必须 fail-fast；不得用
-	// GREATEST 把非法 future cursor 保留下来。WHERE 也封住“预检后并发插入”的竞态。
+	// Every Bind is an explicit login baseline: delivered pts advance to the locked account's contiguous watermark;
+	// observed advances only to the deleted retained floor, not disguising the live tail as client acknowledgement.
+	// A legacy state exceeding the account's contiguous watermark must fail fast; GREATEST must not
+	// be used to preserve an illegal future cursor. The WHERE also closes the "concurrent insert after pre-check" race.
 	tag, err := db.Exec(ctx, `
 INSERT INTO update_states (auth_key_id, user_id, pts, qts, date, seq, observed_pts)
 VALUES ($1, $2, $3, 0, EXTRACT(EPOCH FROM now())::int, 0, $4)
@@ -281,10 +282,10 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 	return a, true, nil
 }
 
-// RevokeByHash 是远程踢设备的持久化事实入口：删除业务 authorization 与
-// device update state，但保留 permanent/temp 协议 key 和 binding。这样被踢客户端
-// 重连后仍可完成 MTProto 解密，并由 RPC gate 返回 AUTH_KEY_UNREGISTERED；若先删除
-// 协议 key，客户端只能收到 transport -404，无法可靠清理本地登录态。
+// RevokeByHash is the persistence entry point for remote device kick: it deletes the business authorization and
+// the device update state, but keeps the permanent/temp protocol key and binding. This way a kicked client
+// can still complete MTProto decryption after reconnecting and gets AUTH_KEY_UNREGISTERED from the RPC gate; if
+// the protocol key were deleted first, the client would only get a transport -404 and could not reliably clear its local login state.
 func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
 	var (
 		a     domain.Authorization
@@ -379,8 +380,8 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 	return out, nil
 }
 
-// RevokeByUserExcept 批量删除业务 authorization，保留 keepAuthKeyID 对应的当前设备；
-// 被撤销设备的协议 key/binding 保留，以便重连后取得 RPC 401 并完成客户端退出。
+// RevokeByUserExcept bulk-deletes business authorizations, keeping the current device for keepAuthKeyID;
+// the revoked devices' protocol key/binding is kept so they get an RPC 401 on reconnect and complete the client logout.
 func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
 	var out []domain.Authorization
 	err := withAuthIdentityTx(ctx, s.db, "revoke authorizations by user", func(tx pgx.Tx) error {

@@ -10,17 +10,21 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 链接预览异步回填（P3）：发送时挂的 pending 占位（见 webpage_url_extract.go）由这里带外
-// 解析为已解析卡片，并经 messages.EditMessage 的 WebPageResolve 模式就地替换——只换 media、
-// 生成 updateWebPage（按 webPage id 与占位关联，不标记「已编辑」、不翻倍扇出）。投递与
-// difference 复用既有 dispatch_outbox + 通用消息事件路径。
+// Link-preview async backfill (P3): the pending placeholder attached at send time (see
+// webpage_url_extract.go) is resolved out-of-band here into a resolved card and swapped
+// in place via messages.EditMessage's WebPageResolve mode - only the media is replaced,
+// an updateWebPage is generated (associated with the placeholder by webPage id, without
+// marking "edited" and without doubling the fan-out). Delivery and difference reuse the
+// existing dispatch_outbox + generic message event path.
 
 const (
 	webPageResolveConcurrency = 16
 	webPageResolveTimeout     = 30 * time.Second
-	// webPagePendingLifetime 是客户端在重新拉取 pending 消息前等待的窗口。
-	// TDesktop 与 DrKLO 都把 webPagePending.date 解释为绝对截止时间，而不是处理开始时间；
-	// 该窗口必须严格大于 resolver 的最大执行时间，避免正常的慢解析被客户端提前标记为失败。
+	// webPagePendingLifetime is the window the client waits before re-fetching a pending
+	// message. TDesktop and DrKLO both interpret webPagePending.date as an absolute
+	// deadline rather than a processing start time; the window must be strictly greater
+	// than the resolver's maximum execution time, so a normal slow resolve is not marked
+	// as failed by the client prematurely.
 	webPagePendingLifetime = 2 * time.Minute
 )
 
@@ -44,8 +48,9 @@ type webPageResolveKey struct {
 	expectedID int64
 }
 
-// maybeEnqueueWebPageResolve 若刚发出的消息（私聊或频道）携带 pending 链接预览占位，
-// 异步排入解析。msgID 为发送方视角的消息 id，media 为该消息媒体。
+// maybeEnqueueWebPageResolve asynchronously enqueues a resolve when a just-sent message
+// (private or channel) carries a pending link-preview placeholder. msgID is the message
+// id from the sender's perspective and media is that message's media.
 func (r *Router) maybeEnqueueWebPageResolve(senderID int64, peer domain.Peer, msgID int, media *domain.MessageMedia) {
 	if msgID == 0 || (peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel) {
 		return
@@ -65,8 +70,10 @@ func (r *Router) maybeEnqueueWebPageResolve(senderID int64, peer domain.Peer, ms
 	})
 }
 
-// enqueueWebPageResolve 在并发上限内异步处理一个解析任务；满则丢弃（消息留 pending，
-// 兜底靠客户端重开会话 getHistory 读到当时仍 pending 的占位——WIP 可接受，P4 加清扫）。
+// enqueueWebPageResolve asynchronously processes one resolve task within the concurrency
+// limit; when full the task is dropped (the message stays pending, and the fallback is
+// the client reopening the session and reading via getHistory the placeholder that is
+// still pending at that point - acceptable for WIP, with cleanup added in P4).
 func (r *Router) enqueueWebPageResolve(job webPageResolveJob) {
 	if r.webPageResolveSem == nil {
 		return
@@ -94,9 +101,12 @@ func (r *Router) enqueueWebPageResolve(job webPageResolveJob) {
 	}()
 }
 
-// resolvePendingWebPage 解析链接并就地把消息的 pending 占位替换为已解析卡片（同步，可测）。
-// 瞬时抓取失败返回 error（消息留 pending，不毒化热门链接）；幂等冲突（消息已删/已改/已被
-// 解析）经 ErrMessageNotModified 静默成功。done 与 empty 两态都替换（empty 让客户端停止转圈）。
+// resolvePendingWebPage resolves the link and swaps the message's pending placeholder
+// into a resolved card in place (synchronous, testable). A transient fetch failure
+// returns an error (the message stays pending, without poisoning a popular link); an
+// idempotent conflict (message deleted/edited/already resolved) silently succeeds via
+// ErrMessageNotModified. Both done and empty states are swapped (empty stops the client
+// spinner).
 func (r *Router) resolvePendingWebPage(ctx context.Context, job webPageResolveJob) error {
 	if r.deps.Files == nil {
 		return nil
@@ -115,7 +125,8 @@ func (r *Router) resolvePendingWebPage(ctx context.Context, job webPageResolveJo
 			zap.Int64("expected_id", job.expectedID),
 			zap.Error(err))
 	}
-	// 保留发送时占位上的 wrapper 偏好（force large/small），它们不在抓取结果里。
+	// Preserve the wrapper preferences (force large/small) from the placeholder at send
+	// time; they are not in the fetch result.
 	if job.expectedID != 0 {
 		resolved.ID = job.expectedID
 	}
@@ -145,7 +156,8 @@ func (r *Router) resolvePendingWebPage(ctx context.Context, job webPageResolveJo
 		if err != nil {
 			return err
 		}
-		// 复用频道编辑扇出（投影 updateChannelWebPage）触达成员；difference 走通用回放。
+		// Reuse the channel edit fan-out (projecting updateChannelWebPage) to reach
+		// members; difference goes through the generic replay.
 		r.enqueueChannelEditMessageFanout(ctx, job.senderID, res)
 		return nil
 	case domain.PeerTypeUser:

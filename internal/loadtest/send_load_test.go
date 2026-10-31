@@ -28,8 +28,9 @@ import (
 	"telesrv/internal/store/redisstore"
 )
 
-// 第一阶段单机 SLO 目标，来自 docs/message-module.md 的 Next Execution Plan。
-// 默认仅作为信息打印；设 TELESRV_LOAD_ENFORCE_SLO=1 时超标会 fail（用于回归门禁）。
+// Phase-1 single-machine SLO targets, from the Next Execution Plan in
+// docs/message-module.md. By default they are only printed as information; when
+// TELESRV_LOAD_ENFORCE_SLO=1 an overrun fails (used as a regression gate).
 const (
 	sloSendP99     = 150 * time.Millisecond
 	sloDiffP99     = 100 * time.Millisecond
@@ -38,12 +39,15 @@ const (
 	diffSampleGoal = 500
 )
 
-// TestMessageSendBaseline 用真实 PostgreSQL + Redis 压测私聊文本发送热路径，
-// 并发跑 outbox dispatcher 排空在线推送，最后采样 getDifference 读路径。
+// TestMessageSendBaseline load-tests the private-text send hot path with real
+// PostgreSQL + Redis, runs an outbox dispatcher concurrently to drain online
+// pushes, and finally samples the getDifference read path.
 //
-// 这是 closed-loop 饱和压测：concurrency 个 worker 各自不停发，直到发满 messages 条。
-// 吞吐 = messages / wallclock，延迟分位反映该并发下的饱和延迟。
-// 固定到达率（open-loop）的版本留作后续细化（见 docs/message-module.md）。
+// This is a closed-loop saturation load test: concurrency workers each send
+// continuously until messages have been sent. Throughput = messages / wallclock,
+// and the latency percentiles reflect the saturation latency at that concurrency.
+// A fixed-arrival-rate (open-loop) version is left for later refinement (see
+// docs/message-module.md).
 func TestMessageSendBaseline(t *testing.T) {
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	redisAddr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
@@ -51,8 +55,10 @@ func TestMessageSendBaseline(t *testing.T) {
 		t.Skip("set TELESRV_TEST_POSTGRES_DSN and TELESRV_TEST_REDIS_ADDR to run message load baseline")
 	}
 
-	// 默认用户池取较大值：用户太少会把写集中到少数 dialog/message_box 行造成行锁争用，
-	// 拉高 send 尾延迟（这是小池假象，生产 20 万用户分散后争用极低）。
+	// The default user pool is large: too few users concentrate writes onto a handful
+	// of dialog/message_box rows and cause row-lock contention, inflating send tail
+	// latency (a small-pool artifact; with 200k users spread out, contention is tiny
+	// in production).
 	users := envInt("TELESRV_LOAD_USERS", 1000)
 	if users < 2 {
 		users = 2
@@ -89,7 +95,8 @@ func TestMessageSendBaseline(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	// 装配与 main.go 一致的消息热路径：Redis box_id 分配器 + PG 消息存储 + transactional outbox。
+	// Wire the message hot path exactly as main.go does: Redis box_id allocator +
+	// PG message store + transactional outbox.
 	userStore := postgres.NewUserStore(pool)
 	updateEventStore := postgres.NewUpdateEventStore(pool)
 	dispatchOutboxStore := postgres.NewDispatchOutboxStore(pool, postgres.WithLeaseTimeout(leaseTimeout))
@@ -98,12 +105,15 @@ func TestMessageSendBaseline(t *testing.T) {
 	messageStore := postgres.NewMessageStore(pool, postgres.WithMessageAllocators(boxIDAllocator))
 	svc := messageapp.NewService(messageStore, dialogStore)
 
-	// 创建独立的测试用户池；用随机 salt 隔离历史残留，结束按 FK 依赖序清理。
+	// Create an isolated test user pool; use a random salt to isolate leftover
+	// history, and clean up in FK dependency order at the end.
 	ids := seedUsers(t, ctx, userStore, users)
 	t.Cleanup(func() { cleanup(t, pool, rdb, ids) })
 
-	// 在线推送 binder 用真实 SessionManager（零连接），PushToUserExceptSession 返回 0，
-	// 让 outbox 走完整 claim→ListAfter→MarkDelivered 的 PG 往返，测排空而非网络 fanout。
+	// The online-push binder uses a real SessionManager (zero connections);
+	// PushToUserExceptSession returns 0, so the outbox does the full
+	// claim->ListAfter->MarkDelivered PG round trip, measuring draining rather than
+	// network fanout.
 	binder := mtprotoedge.NewSessionManager(zap.NewNop())
 	metrics := &loadMetrics{}
 	projectionRouter := rpc.New(rpc.Config{}, rpc.Deps{
@@ -124,13 +134,16 @@ func TestMessageSendBaseline(t *testing.T) {
 			close(dispDone)
 		}()
 	}
-	// deferDispatch=1 时先不投递，让发送把积压攒满，再在发送结束后启动 dispatcher，
-	// 以隔离测量「纯排空上限」（否则 dispatcher 实时跟上发送、积压近 0 量不出天花板）。
+	// With deferDispatch=1, don't dispatch first: let sending build the backlog to the
+	// max, then start the dispatcher after sending ends, to isolate the "pure drain
+	// ceiling" (otherwise the dispatcher keeps up in real time, backlog stays near 0,
+	// and the ceiling is unmeasurable).
 	if !deferDispatch {
 		startDispatcher()
 	}
 
-	// 后台采样 outbox 积压（pending+dispatching），记录运行期峰值。
+	// Sample the outbox backlog (pending+dispatching) in the background, recording the
+	// runtime peak.
 	var maxBacklog atomic.Int64
 	sampleCtx, stopSampler := context.WithCancel(ctx)
 	sampleDone := make(chan struct{})
@@ -150,7 +163,8 @@ func TestMessageSendBaseline(t *testing.T) {
 		}
 	}()
 
-	// 随机 RandomID 基址，保证 (sender,random_id) 幂等唯一且跨重跑不撞。
+	// Random RandomID base, ensuring (sender,random_id) is idempotently unique and
+	// does not collide across reruns.
 	randBase := int64(randomUint64(t) & 0x7fff_ffff_ffff)
 	nowUnix := int(time.Now().Unix())
 	body := "telesrv load baseline message body"
@@ -159,8 +173,10 @@ func TestMessageSendBaseline(t *testing.T) {
 	var sent, dup, sendErr atomic.Int64
 	var counter atomic.Int64
 
-	// 预热：先并发发一批不计时的消息，热连接池（MinConns→MaxConns）与 PG plan 缓存，
-	// 让后续计时窗口反映稳态而非冷启动尾延迟（池过冷时首批 32 并发会挤少量连接）。
+	// Warmup: concurrently send a batch of un-timed messages first, warming the
+	// connection pool (MinConns->MaxConns) and the PG plan cache, so the later timed
+	// window reflects steady state rather than cold-start tail latency (with an
+	// over-cold pool the first 32 concurrent requests squeeze through few connections).
 	warmup := envInt("TELESRV_LOAD_WARMUP", min(users*10, 1000))
 	if warmup > 0 {
 		var wwg sync.WaitGroup
@@ -229,12 +245,14 @@ func TestMessageSendBaseline(t *testing.T) {
 	sendWall := time.Since(start)
 	deliveredAtSendEnd := metrics.delivered.Load()
 	if deferDispatch {
-		// 发送已把全部积压攒满，此刻才启动 dispatcher：drain 阶段即纯排空，drainRate 反映排空上限。
+		// Sending has built the backlog to the max, so start the dispatcher now: the
+		// drain phase is pure draining, and drainRate reflects the drain ceiling.
 		startDispatcher()
 	}
 
-	// 等 outbox 排空（积压回 0），记录排空耗时，再停采样和 dispatcher。
-	// 用「发送结束后」单独排空的速率隔离 dispatcher 吞吐，去掉发送期对 PG 的争用。
+	// Wait for the outbox to drain (backlog back to 0), record the drain time, then
+	// stop the sampler and dispatcher. Measuring the drain rate alone "after sending
+	// ends" isolates dispatcher throughput without the send-phase contention on PG.
 	drainStart := time.Now()
 	drained := waitDrain(ctx, pool, ids, drainTimeout)
 	drainWall := time.Since(drainStart)
@@ -244,14 +262,14 @@ func TestMessageSendBaseline(t *testing.T) {
 	stopDispatcher()
 	<-dispDone
 
-	// 合并发送延迟样本并排序。
+	// Merge and sort the send latency samples.
 	latencies := make([]time.Duration, 0, totalMsgs)
 	for _, l := range perWorkerLat {
 		latencies = append(latencies, l...)
 	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 
-	// 采样 getDifference 读路径（ListAfter 从 pts=0 拉账号事件）。
+	// Sample the getDifference read path (ListAfter pulling account events from pts=0).
 	diffLat := sampleGetDifference(t, ctx, updateEventStore, ids)
 	sort.Slice(diffLat, func(i, j int) bool { return diffLat[i] < diffLat[j] })
 
@@ -285,24 +303,26 @@ func TestMessageSendBaseline(t *testing.T) {
 		throughput, sloThroughput, pass(throughput >= sloThroughput))
 	t.Logf("=======================================")
 
-	// 正确性硬断言：发送不应出错、不应有意外重复、outbox 必须排空且无终态失败。
+	// Hard correctness assertions: sending must not error, there must be no unexpected
+	// duplicates, and the outbox must drain with no terminal failures.
 	if sendErr.Load() != 0 {
 		t.Fatalf("send errors = %d, want 0", sendErr.Load())
 	}
 	if dup.Load() != 0 {
-		t.Fatalf("duplicates = %d, want 0 (random_id 应唯一)", dup.Load())
+		t.Fatalf("duplicates = %d, want 0 (random_id must be unique)", dup.Load())
 	}
 	if okSent != int64(totalMsgs) {
 		t.Fatalf("sent ok = %d, want %d", okSent, totalMsgs)
 	}
 	if !drained {
-		t.Fatalf("outbox 未在 %s 内排空，残留积压 %d", drainTimeout, backlog(ctx, pool, ids))
+		t.Fatalf("outbox did not drain within %s, residual backlog %d", drainTimeout, backlog(ctx, pool, ids))
 	}
 	if metrics.failed.Load() != 0 {
 		t.Fatalf("outbox failed = %d, want 0", metrics.failed.Load())
 	}
 
-	// 性能 SLO：默认信息化，门禁模式（TELESRV_LOAD_ENFORCE_SLO=1）才硬失败。
+	// Performance SLO: informational by default; only gate mode
+	// (TELESRV_LOAD_ENFORCE_SLO=1) fails hard.
 	if enforceSLO {
 		if sendP99 >= sloSendP99 {
 			t.Errorf("send p99 %s >= SLO %s", sendP99, sloSendP99)
@@ -316,7 +336,7 @@ func TestMessageSendBaseline(t *testing.T) {
 	}
 }
 
-// loadMetrics 实现 rpc.Metrics，统计 outbox claim/deliver/fail。
+// loadMetrics implements rpc.Metrics, counting outbox claim/deliver/fail.
 type loadMetrics struct {
 	claimed   atomic.Int64
 	delivered atomic.Int64
@@ -368,9 +388,11 @@ func seedUsers(t *testing.T, ctx context.Context, store *postgres.UserStore, n i
 	return ids
 }
 
-// cleanup 按 FK 依赖序删除测试数据：outbox→events→boxes→private_messages→dialogs→users，
-// 再清 Redis box_id 计数。message_boxes.from_user_id 为 ON DELETE RESTRICT，必须先删盒子。
-// cleanup 在断言之后运行，出错只告警不影响已得结果。
+// cleanup deletes test data in FK dependency order:
+// outbox->events->boxes->private_messages->dialogs->users, then clears the Redis
+// box_id counters. message_boxes.from_user_id is ON DELETE RESTRICT, so the boxes
+// must be deleted first. cleanup runs after the assertions; errors only warn and do
+// not affect results already obtained.
 func cleanup(t *testing.T, pool *pgxpool.Pool, rdb *redis.Client, ids []int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -396,7 +418,8 @@ func cleanup(t *testing.T, pool *pgxpool.Pool, rdb *redis.Client, ids []int64) {
 	}
 }
 
-// backlog 返回测试用户集当前未投递（pending+dispatching）的 outbox 行数。
+// backlog returns the current number of undelivered (pending+dispatching) outbox
+// rows for the test user set.
 func backlog(ctx context.Context, pool *pgxpool.Pool, ids []int64) int64 {
 	var n int64
 	if err := pool.QueryRow(ctx,
@@ -408,7 +431,7 @@ func backlog(ctx context.Context, pool *pgxpool.Pool, ids []int64) int64 {
 	return n
 }
 
-// waitDrain 轮询 backlog 直到归零或超时，返回是否排空。
+// waitDrain polls backlog until it reaches zero or times out, returning whether it drained.
 func waitDrain(ctx context.Context, pool *pgxpool.Pool, ids []int64, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {

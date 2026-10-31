@@ -56,8 +56,10 @@ func (s *ChannelStore) DeleteChannel(_ context.Context, req domain.DeleteChannel
 	channel.Deleted = true
 	channel.Username = ""
 	s.channels[req.ChannelID] = channel
-	// 连带软删关联 monoforum(频道私信容器),与 PG store 等价:仅当 counterpart 是 monoforum 时级联,
-	// 防止删 mono 反向误删真实母频道。不级联会留下指向已删父频道的孤儿 mono。
+	// Also soft-delete the associated monoforum (channel DM container), equivalent to the
+	// PG store: cascade only when the counterpart is a monoforum, so deleting a mono does
+	// not wrongly delete the real parent channel. Without the cascade it would leave an
+	// orphan mono pointing at a deleted parent.
 	var linkedMono *domain.Channel
 	if channel.LinkedMonoforumID != 0 {
 		if mono, ok := s.channels[channel.LinkedMonoforumID]; ok && mono.Monoforum && !mono.Deleted {
@@ -482,8 +484,9 @@ func (s *ChannelStore) dialogForMemberLocked(userID int64, channel domain.Channe
 	dialog.TopMessageID = s.visibleTopMessageIDForMemberLocked(channel, member)
 	dialog.HistoryClearAnchorID = member.HistoryClearAnchorID
 	dialog.HistoryClearAnchorDate = member.HistoryClearAnchorDate
-	// TopMessageDate 必须从可见 top 消息派生(不能继承空缓存的 0),否则会话排序/分页与预览
-	// dialog 的日期全错。与 postgres GetChannelDialogs 用 getChannelMessage 设 date 对齐。
+	// TopMessageDate must be derived from the visible top message (not inherited as 0 from
+	// an empty cache), otherwise dialog ordering/pagination and the preview date are all
+	// wrong. Aligned with postgres GetChannelDialogs, which sets the date via getChannelMessage.
 	dialog.TopMessageDate = 0
 	if dialog.TopMessageID > 0 {
 		if top, ok := s.channelMessageForMemberLocked(userID, channel.ID, dialog.TopMessageID); ok {
@@ -498,7 +501,7 @@ func (s *ChannelStore) dialogForMemberLocked(userID int64, channel domain.Channe
 	if member.ReadOutboxMaxID > dialog.ReadOutboxMaxID {
 		dialog.ReadOutboxMaxID = member.ReadOutboxMaxID
 	}
-	// 公共已读水位派生：即使实时 fanout 被截断，read_outbox 真值仍前进。
+	// Derive the public read watermark: even when real-time fanout is truncated, the read_outbox truth still advances.
 	if derived := s.readMarks[channel.ID].forSender(userID); derived > dialog.ReadOutboxMaxID {
 		dialog.ReadOutboxMaxID = derived
 	}
@@ -582,9 +585,11 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	// 与 postgres ChannelStore 同口径:top_msg_id 只是话题落点提示,不是回复有效性判据,
-	// reply_to_msg_id 已唯一指向存在的消息,线程根由服务端推导。客户端带无关 top_msg_id
-	// (TDesktop 发媒体回复时下发)不再拒绝整个回复。
+	// Same convention as the postgres ChannelStore: top_msg_id is only a topic-placement
+	// hint, not a validity criterion for the reply; reply_to_msg_id already uniquely points
+	// at an existing message and the thread root is derived by the server. An unrelated
+	// top_msg_id from the client (sent by TDesktop when replying with media) no longer
+	// rejects the whole reply.
 	if channel.Forum && reply.TopMessageID > 0 {
 		if topic, ok := s.topics[req.ChannelID][reply.TopMessageID]; ok && !topic.Hidden {
 			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {

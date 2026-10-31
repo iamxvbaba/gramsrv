@@ -12,7 +12,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// Service 提供 update 状态查询。
+// Service provides update state queries.
 type Service struct {
 	states store.UpdateStateStore
 	events store.UpdateEventStore
@@ -31,17 +31,17 @@ type userUpdateRetentionCheckpointStore interface {
 	UserUpdateRetentionCheckpoint(ctx context.Context, authKeyID [8]byte, userID int64) (pts, date int, ok bool, err error)
 }
 
-// ServiceOption 调整 updates 服务的运行时依赖。
+// ServiceOption adjusts the updates service's runtime dependencies.
 type ServiceOption func(*Service)
 
-// WithLogger 注入 update 状态机日志器，用于追踪 pts 分配、append 失败和 difference gap。
+// WithLogger injects the update state machine logger, used to trace pts allocation, append failures, and difference gaps.
 func WithLogger(log *zap.Logger) ServiceOption {
 	return func(s *Service) {
 		s.log = log
 	}
 }
 
-// NewService 创建 updates 服务。
+// NewService creates the updates service.
 func NewService(states store.UpdateStateStore, events store.UpdateEventStore, opts ...ServiceOption) *Service {
 	s := &Service{states: states}
 	s.events = events
@@ -54,7 +54,7 @@ func NewService(states store.UpdateStateStore, events store.UpdateEventStore, op
 	return s
 }
 
-// UsesReliableDispatch 表示设置类 update 已写入 transactional outbox，由 outbox worker 投递在线 session。
+// UsesReliableDispatch reports that settings-class updates are written to the transactional outbox and delivered to online sessions by the outbox worker.
 func (s *Service) UsesReliableDispatch() bool {
 	if s == nil || s.events == nil {
 		return false
@@ -63,13 +63,15 @@ func (s *Service) UsesReliableDispatch() bool {
 	return ok
 }
 
-// GetState 返回当前 auth_key + user 维度已确认的 update 状态。
-// user_update_events 是账号级 durable log；auth_key 维度只保存设备已经通过
-// getDifference 确认到的状态，不能在 getState 中直接推进到账号最新水位。
+// GetState returns the confirmed update state for the current auth_key + user scope.
+// user_update_events is an account-level durable log; the auth_key scope only stores
+// the state the device has confirmed via getDifference, so getState must not advance it
+// directly to the account's latest watermark.
 func (s *Service) GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error) {
 	now := int(time.Now().Unix())
-	// 私聊阶段不维护账号级 seq：对外 UpdateState.Seq 恒为 0，客户端仅靠 pts 同步、
-	// 跳过 seq gap 检测（推送信封 seq 同样恒 0）。
+	// The private-chat phase maintains no account-level seq: UpdateState.Seq is always 0
+	// externally, the client syncs purely via pts and skips seq gap detection (the push
+	// envelope seq is likewise always 0).
 	if s.states == nil {
 		current, err := s.currentPts(ctx, userID)
 		if err != nil {
@@ -99,7 +101,7 @@ func (s *Service) GetState(ctx context.Context, authKeyID [8]byte, userID int64)
 	return st, nil
 }
 
-// CurrentState 返回账号当前最大连续 update 状态，不修改任何设备已确认水位。
+// CurrentState returns the account's current maximum contiguous update state without modifying any device's confirmed watermark.
 func (s *Service) CurrentState(ctx context.Context, userID int64) (domain.UpdateState, error) {
 	return s.currentState(ctx, userID)
 }
@@ -118,9 +120,11 @@ func (s *Service) ConfirmedState(ctx context.Context, authKeyID [8]byte, userID 
 	return st, found, nil
 }
 
-// ConfirmEvent 把一个已在其它业务事务中原子提交的事件标记为当前设备已消费。
-// 典型调用是 account.changePhone：RPC result 已携最新 User，当前设备不应再收
-// updateUserPhone，但仍需把设备确认水位推进到该事件 pts。
+// ConfirmEvent marks an event already atomically committed in another business
+// transaction as consumed by the current device. The typical caller is
+// account.changePhone: the RPC result already carries the latest User, so the current
+// device should not receive updateUserPhone again, but its confirmed watermark still
+// needs to advance to that event's pts.
 func (s *Service) ConfirmEvent(ctx context.Context, authKeyID [8]byte, userID int64, event domain.UpdateEvent) error {
 	if event.UserID != 0 && event.UserID != userID {
 		return fmt.Errorf("confirm update event user mismatch: event=%d caller=%d", event.UserID, userID)
@@ -165,14 +169,16 @@ func (s *Service) CommitDeliveredState(ctx context.Context, authKeyID [8]byte, u
 	return s.states.CommitDeliveredState(ctx, authKeyID, userID, st, mode)
 }
 
-// getDifferenceLimit 是单次 getDifference 返回的最大连续事件数；超出置 Partial 让客户端翻页。
+// getDifferenceLimit is the maximum number of contiguous events a single getDifference returns; exceeding it sets Partial so the client paginates.
 const getDifferenceLimit = 100
 
-// GetDifference 返回当前 user 从 from 状态之后的增量事件。
+// GetDifference returns the incremental events for the current user after the from state.
 //
-// 对齐 MTProto：只返回从 from.Pts 起「连续」的事件（遇空洞即截断），State.Pts 取最后连续值，
-// 绝不让客户端跳过异常空洞而丢消息；正常写路径在 PG 事务内推进 pts 和 durable event。
-// 连续事件填满 limit 时置 Partial（映射 differenceSlice），客户端据返回 State 继续翻页。
+// Aligning with MTProto: it returns only the "contiguous" events starting at from.Pts
+// (truncating at a hole), with State.Pts taking the last contiguous value, never letting a
+// client skip an anomalous hole and lose messages; the normal write path advances pts and
+// the durable event within a PG transaction. When contiguous events fill the limit it sets
+// Partial (mapped to differenceSlice), and the client uses the returned State to keep paginating.
 func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateDifference, error) {
 	st, err := s.currentState(ctx, userID)
 	if err != nil {
@@ -181,9 +187,10 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	// Computation is pure with respect to device confirmed/observed state. The
 	// request observer and physical-delivery commit are explicit caller phases.
 	from = clampDifferenceState(from, st)
-	// TDesktop 不支持账号级 updates.differenceTooLong。retention 只能删除所有授权
-	// 设备都已确认的共同前缀；当前设备若仍带更旧 pts，用一个空的普通
-	// differenceSlice 把 IntermediateState 推进到已确认 checkpoint，再从 live tail 续拉。
+	// TDesktop does not support account-level updates.differenceTooLong. Retention can only
+	// delete the common prefix all authorized devices have confirmed; if the current device
+	// still carries an older pts, an empty ordinary differenceSlice advances IntermediateState
+	// to the confirmed checkpoint, then it continues from the live tail.
 	if checkpoint, found, err := s.retainedPrefixCheckpoint(ctx, authKeyID, userID, from, st); err != nil {
 		return domain.UpdateDifference{}, err
 	} else if found {
@@ -236,7 +243,7 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	}
 	out := st
 	out.Pts = last
-	out.Seq = 0 // seq 恒 0，见 GetState 注释
+	out.Seq = 0 // seq is always 0, see GetState comment
 	if len(contiguous) > 0 {
 		out.Date = contiguous[len(contiguous)-1].Date
 	}
@@ -309,8 +316,9 @@ func (s *Service) observeClientState(ctx context.Context, authKeyID [8]byte, use
 	return s.states.ObserveClientState(ctx, authKeyID, userID, st)
 }
 
-// contiguousPrefix 返回从 from 起 pts 严格连续（from+1, from+2, ...）的事件前缀。
-// 先按 pts 升序排序以兼容存储返回顺序，遇到空洞即停。
+// contiguousPrefix returns the prefix of events whose pts is strictly contiguous from
+// from (from+1, from+2, ...). It first sorts by ascending pts to tolerate the store's
+// return order, and stops at a hole.
 func contiguousPrefix(events []domain.UpdateEvent, from int) []domain.UpdateEvent {
 	out, _, _ := contiguousPrefixAndGap(events, from)
 	return out
@@ -341,8 +349,8 @@ func contiguousPrefixAndGap(events []domain.UpdateEvent, from int) ([]domain.Upd
 	return out, nil, 0
 }
 
-// ClearAuthKey 清理某 auth_key 的设备状态。
-// user_update_events 是账号级 durable log，不能因设备退出登录被删除。
+// ClearAuthKey clears the device state for an auth_key.
+// user_update_events is an account-level durable log and must not be deleted because a device logged out.
 func (s *Service) ClearAuthKey(ctx context.Context, authKeyID [8]byte) error {
 	if s.states != nil {
 		if err := s.states.DeleteAuthKey(ctx, authKeyID); err != nil {
@@ -352,7 +360,7 @@ func (s *Service) ClearAuthKey(ctx context.Context, authKeyID [8]byte) error {
 	return nil
 }
 
-// RecordNewMessage 推进 update 状态并追加一条 new_message 事件。
+// RecordNewMessage advances the update state and appends a new_message event.
 func (s *Service) RecordNewMessage(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = msg.OwnerUserID
@@ -536,7 +544,7 @@ func (s *Service) RecordQuickReplyMutation(ctx context.Context, stateAuthKeyID [
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, event, true, excludeSessionID)
 }
 
-// RecordReadHistory 推进 update 状态并追加一条 read_history_inbox 事件。
+// RecordReadHistory advances the update state and appends a read_history_inbox event.
 func (s *Service) RecordReadHistory(ctx context.Context, stateAuthKeyID [8]byte, userID int64, read domain.ReadHistoryResult, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = read.OwnerUserID
@@ -553,8 +561,9 @@ func (s *Service) RecordReadHistory(ctx context.Context, stateAuthKeyID [8]byte,
 	}, true, excludeSessionID)
 }
 
-// RecordChannelState 记录当前账号与某频道成员关系变化（leave/kick），
-// 离线设备经 difference 收到 updateChannel 后重拉 channel 状态。
+// RecordChannelState records a change in the current account's channel membership
+// (leave/kick); offline devices receive updateChannel via difference and re-fetch the
+// channel state.
 func (s *Service) RecordChannelState(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventChannelState,
@@ -563,7 +572,7 @@ func (s *Service) RecordChannelState(ctx context.Context, stateAuthKeyID [8]byte
 	}, true, excludeSessionID)
 }
 
-// RecordContactsReset 记录通讯录视角变化，供离线设备通过 updates.getDifference 触发重拉。
+// RecordContactsReset records a change in the contact-list view so offline devices re-fetch it via updates.getDifference.
 func (s *Service) RecordContactsReset(ctx context.Context, stateAuthKeyID [8]byte, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventContactsReset,
@@ -585,9 +594,10 @@ func (s *Service) RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]b
 	}, true, excludeSessionID)
 }
 
-// RecordDraftMessage 记录某会话云草稿变化（保存/清空都是同一事件——草稿是绝对
-// 状态，重放时按 peer 重载当前值）。updateDraftMessage 无 pts 字段，走 LacksWirePts
-// aux 簿记；topMsgID 是 forum 话题草稿键（复用 MaxID 列持久化）。
+// RecordDraftMessage records a dialog's cloud draft change (save/clear are the same
+// event — the draft is absolute state, reloaded by peer on replay). updateDraftMessage
+// has no pts field, so it uses LacksWirePts aux bookkeeping; topMsgID is the forum topic
+// draft key (persisted by reusing the MaxID column).
 func (s *Service) RecordDraftMessage(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, topMsgID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDraftMessage,
@@ -597,8 +607,9 @@ func (s *Service) RecordDraftMessage(ctx context.Context, stateAuthKeyID [8]byte
 	}, true, excludeSessionID)
 }
 
-// RecordDialogPinned 记录单个会话置顶状态变化；folderID 是会话所在 folder
-// （0 主列表/1 归档），缺失会让离线设备把归档内置顶重放到主列表。
+// RecordDialogPinned records a single dialog's pin state change; folderID is the folder
+// the dialog lives in (0 main list/1 archived), and omitting it would make offline devices
+// replay an archived pin into the main list.
 func (s *Service) RecordDialogPinned(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, pinned bool, folderID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogPinned,
@@ -609,7 +620,7 @@ func (s *Service) RecordDialogPinned(ctx context.Context, stateAuthKeyID [8]byte
 	}, true, excludeSessionID)
 }
 
-// RecordPinnedDialogs 记录指定 folder 内置顶顺序变化，并把新顺序持久化给 getDifference/outbox。
+// RecordPinnedDialogs records a pin-order change within the given folder and persists the new order for getDifference/outbox.
 func (s *Service) RecordPinnedDialogs(ctx context.Context, stateAuthKeyID [8]byte, userID int64, folderID int, order []domain.Peer, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPinnedDialogs,
@@ -619,7 +630,7 @@ func (s *Service) RecordPinnedDialogs(ctx context.Context, stateAuthKeyID [8]byt
 	}, true, excludeSessionID)
 }
 
-// RecordSavedDialogPinned 记录收藏夹单个子会话置顶状态变化。
+// RecordSavedDialogPinned records a single saved-dialog child's pin state change.
 func (s *Service) RecordSavedDialogPinned(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, pinned bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventSavedDialogPinned,
@@ -629,7 +640,7 @@ func (s *Service) RecordSavedDialogPinned(ctx context.Context, stateAuthKeyID [8
 	}, true, excludeSessionID)
 }
 
-// RecordPinnedSavedDialogs 记录收藏夹置顶顺序变化，新顺序持久化给 getDifference/outbox。
+// RecordPinnedSavedDialogs records a saved-dialogs pin-order change, persisting the new order for getDifference/outbox.
 func (s *Service) RecordPinnedSavedDialogs(ctx context.Context, stateAuthKeyID [8]byte, userID int64, order []domain.Peer, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPinnedSavedDialogs,
@@ -638,7 +649,7 @@ func (s *Service) RecordPinnedSavedDialogs(ctx context.Context, stateAuthKeyID [
 	}, true, excludeSessionID)
 }
 
-// RecordDialogUnreadMark 记录手动未读标记变化。
+// RecordDialogUnreadMark records a manual unread mark change.
 func (s *Service) RecordDialogUnreadMark(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, unread bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogUnreadMark,
@@ -658,8 +669,9 @@ func (s *Service) RecordChannelViewForumAsMessages(ctx context.Context, stateAut
 	}, true, excludeSessionID)
 }
 
-// RecordChannelDiscussionInbox 记录 forum 话题级已读（updateReadChannelDiscussionInbox），
-// 占一个账号 pts（LacksWirePts），供自己其它设备在线同步与离线差分恢复。
+// RecordChannelDiscussionInbox records a forum topic-level read
+// (updateReadChannelDiscussionInbox), spending one account pts (LacksWirePts), for the
+// account's other devices to sync online and recover offline via difference.
 func (s *Service) RecordChannelDiscussionInbox(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, topicID, maxID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventReadChannelDiscussionInbox,
@@ -670,7 +682,7 @@ func (s *Service) RecordChannelDiscussionInbox(ctx context.Context, stateAuthKey
 	}, true, excludeSessionID)
 }
 
-// RecordPeerSettings 记录 peer settings 变化。
+// RecordPeerSettings records a peer settings change.
 func (s *Service) RecordPeerSettings(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, settings domain.PeerSettings, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPeerSettings,
@@ -680,7 +692,7 @@ func (s *Service) RecordPeerSettings(ctx context.Context, stateAuthKeyID [8]byte
 	}, true, excludeSessionID)
 }
 
-// RecordPeerStoryBlocked 记录当前账号 story blocklist 对某个 peer 的可见状态变化。
+// RecordPeerStoryBlocked records a change in the current account's story blocklist visibility for a peer.
 func (s *Service) RecordPeerStoryBlocked(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, blocked bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPeerStoryBlocked,
@@ -690,7 +702,7 @@ func (s *Service) RecordPeerStoryBlocked(ctx context.Context, stateAuthKeyID [8]
 	}, true, excludeSessionID)
 }
 
-// RecordDialogFilter 记录单个 filter 的创建、更新或删除；folder 为 nil 表示删除。
+// RecordDialogFilter records a single filter's creation, update or deletion; folder nil means deletion.
 func (s *Service) RecordDialogFilter(ctx context.Context, stateAuthKeyID [8]byte, userID int64, folderID int, folder *domain.DialogFolder, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	var copyFolder *domain.DialogFolder
 	if folder != nil {
@@ -705,7 +717,7 @@ func (s *Service) RecordDialogFilter(ctx context.Context, stateAuthKeyID [8]byte
 	}, true, excludeSessionID)
 }
 
-// RecordDialogFilterOrder 记录 filter 顺序变化。
+// RecordDialogFilterOrder records a filter order change.
 func (s *Service) RecordDialogFilterOrder(ctx context.Context, stateAuthKeyID [8]byte, userID int64, order []int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:        domain.UpdateEventDialogFilterOrder,
@@ -714,7 +726,7 @@ func (s *Service) RecordDialogFilterOrder(ctx context.Context, stateAuthKeyID [8
 	}, true, excludeSessionID)
 }
 
-// RecordDialogFiltersReload 通知其他设备重新拉取 filter 列表。
+// RecordDialogFiltersReload notifies other devices to re-fetch the filter list.
 func (s *Service) RecordDialogFiltersReload(ctx context.Context, stateAuthKeyID [8]byte, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogFilters,
@@ -722,7 +734,7 @@ func (s *Service) RecordDialogFiltersReload(ctx context.Context, stateAuthKeyID 
 	}, true, excludeSessionID)
 }
 
-// RecordFolderPeers 记录归档/还原会话的 folder_id 变化。
+// RecordFolderPeers records the folder_id change of archived/restored dialogs.
 func (s *Service) RecordFolderPeers(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peers []domain.FolderPeerUpdate, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:        domain.UpdateEventFolderPeers,
@@ -798,8 +810,9 @@ func (s *Service) recordEventCore(ctx context.Context, stateAuthKeyID, excludeAu
 	return event, st, nil
 }
 
-// currentPts 供 GetState 报告「当前 pts」。对齐 MTProto：报告最大连续已提交 pts，
-// PG 实现中该值由同一事务内的 pts 分配 + durable event 写入共同维护。
+// currentPts supplies the "current pts" reported by GetState. Aligning with MTProto: it
+// reports the maximum contiguous committed pts; in the PG implementation that value is
+// maintained jointly by pts allocation + durable event write within the same transaction.
 func (s *Service) currentPts(ctx context.Context, userID int64) (int, error) {
 	if s.events != nil {
 		return s.events.MaxContiguousPts(ctx, userID)

@@ -2,10 +2,10 @@ package domain
 
 import "time"
 
-// UserIDSequenceBase 是普通用户 ID 的起始值。
+// UserIDSequenceBase is the starting value of ordinary user IDs.
 //
-// 取 2026-06-01 00:00:00 Asia/Shanghai 的 Unix 秒级时间戳。
-// 777000 等兼容系统账号低于该区间，业务注册用户从这里开始递增。
+// It is the Unix second timestamp of 2026-06-01 00:00:00 Asia/Shanghai.
+// Compatible system accounts such as 777000 are below this range, and business-registered users increment from here.
 const UserIDSequenceBase int64 = 1780243200
 
 // PeerColor is a domain-only representation of Telegram peerColor.
@@ -88,8 +88,8 @@ func (c PeerColor) Empty() bool {
 	return !c.HasColor && c.BackgroundEmojiID == 0
 }
 
-// User 是一个账号。第一阶段仅保留登录链路必须字段；
-// access_hash 为任何 InputUser 校验所必须，不可省。
+// User is an account. Phase one keeps only the fields required by the login path;
+// access_hash is required for any InputUser validation and cannot be omitted.
 type User struct {
 	ID          int64
 	AccessHash  int64
@@ -115,32 +115,32 @@ type User struct {
 	// viewer-independent base-user cache.
 	ContactNote         string
 	ContactNoteEntities []MessageEntity
-	// Bot 标识 bot 账号；置位时 BotInfoVersion 必须 ≥1（TDesktop 只认
-	// user TL 是否携带 bot_info_version 字段，且与 bot flag 共用 bit14）。
+	// Bot marks a bot account; when set, BotInfoVersion must be ≥1 (TDesktop only recognizes
+	// whether the user TL carries the bot_info_version field, which shares bit14 with the bot flag).
 	Bot            bool
 	BotInfoVersion int
-	// PremiumUntil 是会员到期 Unix 秒；0 表示非会员。premium 状态的唯一权威
-	// 来源是该字段，由读取路径经 PremiumActiveAt 即时派生——到期后无需等
-	// 后台 sweeper 翻转即停止下发 premium（sweeper 只负责清理与通知推送）。
+	// PremiumUntil is the Premium expiry in Unix seconds; 0 means non-member. This field is the single authoritative
+	// source of Premium state, derived on the fly by the read path via PremiumActiveAt — after expiry, Premium is
+	// no longer sent without waiting for the background sweeper to flip it (the sweeper only handles cleanup and notification pushes).
 	PremiumUntil int
-	// EmojiStatusDocumentID / EmojiStatusUntil 是用户自定义 emoji status
-	//（premium 专属，account.updateEmojiStatus）。DocumentID==0 表示未设置；
-	// Until==0 表示永久。EmojiStatusCollectible 非零时 DocumentID 必须等于
-	// collectible 的 model document id。
+	// EmojiStatusDocumentID / EmojiStatusUntil are the user's custom emoji status
+	// (Premium-only, account.updateEmojiStatus). DocumentID==0 means unset;
+	// Until==0 means permanent. When EmojiStatusCollectible is non-zero, DocumentID must equal
+	// the collectible's model document id.
 	EmojiStatusDocumentID  int64
 	EmojiStatusUntil       int
 	EmojiStatusCollectible EmojiStatusCollectible
-	// Birthday 是用户公开生日（account.updateBirthday）。零值表示未设置。
+	// Birthday is the user's public birthday (account.updateBirthday). The zero value means unset.
 	Birthday Birthday
-	// PersonalChannelID 是资料页展示的「个人频道」（account.updatePersonalChannel）；
-	// 0 表示未设置。资料投影时按它取频道对象与最新一帖。
+	// PersonalChannelID is the "personal channel" shown on the profile page (account.updatePersonalChannel);
+	// 0 means unset. Profile projection uses it to fetch the channel object and its latest post.
 	PersonalChannelID int64
 	// LinkedCommunityID is the single Community containing this bot. Ordinary
 	// users must keep it zero; the community aggregate enforces that invariant.
 	LinkedCommunityID int64
 	Color             PeerColor
 	ProfileColor      PeerColor
-	// Profile photo fields are filled by app-layer user projection. PhotoID==0 表示无头像。
+	// Profile photo fields are filled by app-layer user projection. PhotoID==0 means no avatar.
 	PhotoID       int64
 	PhotoDCID     int
 	PhotoStripped []byte
@@ -182,15 +182,15 @@ func AccountFrozenRestrictionReasons() []UserRestrictionReason {
 	}}
 }
 
-// PremiumActiveAt 报告用户在 now（Unix 秒）时刻是否为有效会员。
-// bot 永不为会员（官方语义；授予路径同样排除 bot，这里是双保险）。
+// PremiumActiveAt reports whether the user is an active Premium member at time now (Unix seconds).
+// A bot is never a Premium member (official semantics; the grant path also excludes bots, this is belt and suspenders).
 func (u User) PremiumActiveAt(now int64) bool {
 	return !u.Bot && u.PremiumUntil > 0 && int64(u.PremiumUntil) > now
 }
 
-// EmojiStatusActiveAt 报告用户在 now（Unix 秒）时刻是否有生效的 emoji status
-// （已设置且未过期；Until==0 表示永久）。emoji status 是 premium 专属，到期
-// 降级后即便列仍有残值也不再下发。
+// EmojiStatusActiveAt reports whether the user has an active emoji status at time now
+// (Unix seconds) (set and unexpired; Until==0 means permanent). Emoji status is Premium-only, and after
+// a downgrade on expiry it is no longer sent even if the column still holds a residual value.
 func (u User) EmojiStatusActiveAt(now int64) bool {
 	if !u.PremiumActiveAt(now) || !u.EmojiStatus().Valid() || u.EmojiStatusDocumentID == 0 {
 		return false
@@ -269,19 +269,19 @@ func ApproximateUserStatus(lastSeenAt, now int) UserStatus {
 	}
 }
 
-// Birthday 是用户公开生日。Day/Month 为 0 表示未设置；Year 为 0 表示只填了月日不含年份。
+// Birthday is the user's public birthday. Day/Month 0 means unset; Year 0 means only month/day were given without a year.
 type Birthday struct {
 	Day   int
 	Month int
 	Year  int
 }
 
-// IsSet 报告生日是否已设置（必须有合法月日）。
+// IsSet reports whether the birthday is set (a valid month/day is required).
 func (b Birthday) IsSet() bool {
 	return b.Day != 0 && b.Month != 0
 }
 
-// ValidBirthday 校验月/日（年份可选）是否在合法范围内。清除生日传零值即可（IsSet 为 false）。
+// ValidBirthday validates whether the month/day (year optional) is within legal range. Pass the zero value to clear the birthday (IsSet is false).
 func ValidBirthday(b Birthday) bool {
 	if b.Month < 1 || b.Month > 12 || b.Day < 1 || b.Day > 31 {
 		return false
@@ -292,7 +292,7 @@ func ValidBirthday(b Birthday) bool {
 	return true
 }
 
-// UserProfileUpdate 描述 account.updateProfile 的可选字段更新。
+// UserProfileUpdate describes the optional field updates of account.updateProfile.
 type UserProfileUpdate struct {
 	FirstName    string
 	HasFirstName bool

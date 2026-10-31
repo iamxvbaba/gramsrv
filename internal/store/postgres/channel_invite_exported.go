@@ -78,8 +78,8 @@ WHERE channel_id = $1 AND admin_user_id = $2 AND permanent AND NOT revoked`, req
 	return domain.ExportChannelInviteResult{Channel: channel, Invite: invite}, nil
 }
 
-// EnsurePermanentInvite 幂等返回 (channel, admin) 当前未撤销的永久邀请；缺失则创建。
-// advisory lock 串行化同频道并发 ensure，防止重复主链接。
+// EnsurePermanentInvite idempotently returns the (channel, admin) permanent invite that is not currently revoked, creating it if missing.
+// An advisory lock serializes concurrent ensures for the same channel, preventing duplicate primary links.
 func (s *ChannelStore) EnsurePermanentInvite(ctx context.Context, channelID, adminUserID int64, date int) (domain.ChannelInvite, error) {
 	if channelID == 0 || adminUserID == 0 {
 		return domain.ChannelInvite{}, domain.ErrChannelInvalid
@@ -383,8 +383,8 @@ func (s *ChannelStore) DeleteRevokedExportedInvites(ctx context.Context, req dom
 	if limit <= 0 || limit > domain.MaxChannelHideJoinRequests {
 		limit = domain.MaxChannelHideJoinRequests
 	}
-	// channel_invites 是普通非分区表；先在带 channel_id 的子查询里按主键 (channel_id, invite_id)
-	// 选出 LIMIT 条待删的已撤销邀请，再按主键删除并级联清理 channel_invite_hashes。
+	// channel_invites is an ordinary non-partitioned table; first select up to LIMIT revoked invites
+	// to delete in a subquery carrying channel_id by primary key (channel_id, invite_id), then delete by primary key and cascade-clean channel_invite_hashes.
 	if _, err := s.db.Exec(ctx, `
 WITH victims AS (
     SELECT channel_id, invite_id FROM channel_invites

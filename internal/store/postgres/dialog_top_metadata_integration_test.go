@@ -8,10 +8,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestDialogTopMessageCarriesFullMetadata 回归 getDialogs/getPeerDialogs 的 top-message
-// 投影完整性：dialog 列表的 top message 是独立查询（dialog.sql，不复用 message.sql），
-// 必须带 grouped_id / effect / reply_markup / rich_message —— TDesktop 把 getDialogs
-// 返回的消息入缓存且不被后续 getHistory 覆盖，缺任一字段都让最新那条消息永久按缺失态渲染。
+// TestDialogTopMessageCarriesFullMetadata regresses the top-message projection completeness of
+// getDialogs/getPeerDialogs: the dialog list's top message is a separate query (dialog.sql, not
+// reusing message.sql) and must carry grouped_id / effect / reply_markup / rich_message —
+// TDesktop caches getDialogs messages and does not overwrite them with later getHistory, so any
+// missing field makes the latest message render permanently in its missing state.
 func TestDialogTopMessageCarriesFullMetadata(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -93,10 +94,11 @@ func TestDialogTopMessageCarriesFullMetadata(t *testing.T) {
 	check("recipient", recipient.ID, res.RecipientMessage.ID)
 }
 
-// TestSavedDialogTopMessageCarriesFullMetadata 回归 getSavedDialogs 的 top-message 投影：
-// 收藏夹子会话(Saved Messages)的 top message 是另一组独立查询(saved_dialog.sql,3 条),
-// 同样不复用 message.sql，必须带 grouped_id/effect/reply_markup/rich_message(转发相册/
-// bot 键盘/富文本进收藏夹后子会话最新一条会缺失)。
+// TestSavedDialogTopMessageCarriesFullMetadata regresses the top-message projection of
+// getSavedDialogs: the Saved Messages sub-conversation top message comes from another set of
+// separate queries (saved_dialog.sql, 3 of them), also not reusing message.sql, and must carry
+// grouped_id/effect/reply_markup/rich_message (a forwarded album / bot keyboard / rich text
+// entering Saved Messages would be missing from the sub-conversation's latest entry).
 func TestSavedDialogTopMessageCarriesFullMetadata(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -123,7 +125,7 @@ func TestSavedDialogTopMessageCarriesFullMetadata(t *testing.T) {
 	}}}
 	rich := &domain.MessageRichMessage{Part: true, Blocks: []byte{0x44, 0x55}}
 
-	// 直发笔记 → saved_peer = self；子会话 top 即这条。
+	// A directly sent note → saved_peer = self; the sub-conversation top is this message.
 	note, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:    alice.ID,
 		RecipientUserID: alice.ID,

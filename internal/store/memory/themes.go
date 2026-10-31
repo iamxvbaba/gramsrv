@@ -8,13 +8,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// ThemeStore 是 store.ThemeStore 的内存实现(测试/单实例)。
+// ThemeStore is the in-memory implementation of store.ThemeStore (tests/single instance).
 type ThemeStore struct {
 	mu       sync.RWMutex
 	byID     map[int64]domain.Theme
 	bySlug   map[string]int64
-	installs map[int64]map[int64]themeInstall // userID -> themeID -> 安装项
-	seq      int64                             // 单调序,模拟 postgres installed_at 排序
+	installs map[int64]map[int64]themeInstall // userID -> themeID -> install entry
+	seq      int64                             // monotonic sequence, mimicking postgres installed_at ordering
 }
 
 type themeInstall struct {
@@ -22,7 +22,7 @@ type themeInstall struct {
 	order int64
 }
 
-// NewThemeStore 创建内存主题 store。
+// NewThemeStore creates an in-memory theme store.
 func NewThemeStore() *ThemeStore {
 	return &ThemeStore{
 		byID:     make(map[int64]domain.Theme),

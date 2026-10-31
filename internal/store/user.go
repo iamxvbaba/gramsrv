@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// UserStore 持久化用户。实现见 store/memory（测试替身）、store/postgres。
+// UserStore persists users. See store/memory (test double) and store/postgres for implementations.
 type UserStore interface {
 	ByID(ctx context.Context, id int64) (domain.User, bool, error)
 	ByIDs(ctx context.Context, ids []int64) ([]domain.User, error)
@@ -18,27 +18,28 @@ type UserStore interface {
 	UpdateUsername(ctx context.Context, userID int64, username string) (domain.User, error)
 	UpdatePhone(ctx context.Context, userID int64, phone string) (domain.User, error)
 	UpdateLastSeen(ctx context.Context, userID int64, lastSeenAt int) error
-	// Create 创建用户并返回分配了 ID 的副本。
+	// Create creates a user and returns the copy with an ID assigned.
 	Create(ctx context.Context, u domain.User) (domain.User, error)
-	// SetPremiumUntil 把会员到期时间设为绝对 Unix 秒（0 = 清除会员）。
-	// 续期累加语义由 app 层先读后算，这里只落绝对值。
+	// SetPremiumUntil sets the Premium expiry to an absolute Unix timestamp (0 = clear Premium).
+	// Renewal accumulation semantics are computed read-then-write in the app layer; here only the
+	// absolute value is stored.
 	SetPremiumUntil(ctx context.Context, userID int64, until int) (domain.User, error)
-	// SetVerified 设置/取消用户认证标记。认证是用户基础事实，读取投影统一下发。
+	// SetVerified sets/clears the user's verified flag. Verification is a base user fact, delivered uniformly by read projections.
 	SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error)
-	// SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。
+	// SetScamFake sets/clears the user's scam and fake flags (bots reuse the same path).
 	SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error)
-	// SetSupport 设置/取消用户的 support 标记（官方客服账号）。
+	// SetSupport sets/clears the user's support flag (official support account).
 	SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error)
-	// SweepExpiredPremium 把到期（premium_expires_at <= now）的会员行清空并
-	// 返回清理后的用户（供推送 updateUser）；单次最多处理 limit 行。
+	// SweepExpiredPremium clears expired (premium_expires_at <= now) Premium rows and returns
+	// the cleaned users (for pushing updateUser); at most limit rows per call.
 	SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error)
-	// UpdateEmojiStatus 更新用户自定义 emoji status。零值清除；collectible
-	// 必须是完整且与 DocumentID 一致的不可变快照。
+	// UpdateEmojiStatus updates the user's custom emoji status. A zero value clears it; a
+	// collectible must be a complete immutable snapshot consistent with DocumentID.
 	UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error)
 	UpdateColor(ctx context.Context, userID int64, forProfile bool, color domain.PeerColor) (domain.User, error)
-	// UpdateBirthday 更新用户生日（零值 Birthday 表示清除）。
+	// UpdateBirthday updates the user's birthday (a zero Birthday clears it).
 	UpdateBirthday(ctx context.Context, userID int64, birthday domain.Birthday) (domain.User, error)
-	// UpdatePersonalChannel 设置/清除资料页个人频道（channelID=0 表示清除）。
+	// UpdatePersonalChannel sets/clears the profile personal channel (channelID=0 clears it).
 	UpdatePersonalChannel(ctx context.Context, userID int64, channelID int64) (domain.User, error)
 }
 
@@ -65,8 +66,8 @@ type UserEmojiStatusEventStore interface {
 	UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, domain.UpdateEvent, error)
 }
 
-// UserCache 缓存 viewer 无关的 users 表基础资料。
-// 联系人备注、隐私裁剪、头像选择和 presence 不应写入该缓存。
+// UserCache caches viewer-independent base user profile data.
+// Contact notes, privacy clipping, photo selection, and presence must not be written to this cache.
 type UserCache interface {
 	GetByIDs(ctx context.Context, ids []int64) (map[int64]domain.User, error)
 	PutMany(ctx context.Context, users []domain.User) error

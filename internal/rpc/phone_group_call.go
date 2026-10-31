@@ -11,10 +11,11 @@ import (
 	"telesrv/internal/sfu"
 )
 
-// 超级群语音聊天（group call）核心 RPC。信令真值在 GroupCallStore（version 单调），
-// 媒体面经 deps.SFU（M0 为 Disabled：纯信令，客户端停留在 Connecting 属预期）。
+// Core RPCs for supergroup voice chats (group calls). The signaling source of truth is
+// GroupCallStore (monotonic version); the media plane goes through deps.SFU (M0 is Disabled: pure
+// signaling, so the client staying in Connecting is expected).
 
-// groupCallErr 把 domain 群通话错误映射为 RPC_ERROR。
+// groupCallErr maps domain group-call errors to RPC_ERROR.
 func groupCallErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrGroupCallInvalid):
@@ -34,7 +35,7 @@ func groupCallErr(err error) error {
 	}
 }
 
-// groupCallScope 是群通话 handler 的通用前置解析结果。
+// groupCallScope is the common pre-resolved result for group-call handlers.
 type groupCallScope struct {
 	userID  int64
 	call    domain.GroupCall
@@ -49,8 +50,9 @@ func (s *groupCallScope) canManage() bool {
 	return channelMemberIsAdmin(s.member)
 }
 
-// groupCallScopeFrom 解析 InputGroupCallClass 并校验访问权。普通 group call 继续
-// 走频道成员资格；conference call 走 creator/participant/invite/slug 访问模型。
+// groupCallScopeFrom parses InputGroupCallClass and validates access. Ordinary group calls
+// continue through channel membership; conference calls go through the
+// creator/participant/invite/slug access model.
 func (r *Router) groupCallScopeFrom(ctx context.Context, in tg.InputGroupCallClass) (*groupCallScope, error) {
 	if r.deps.GroupCalls == nil {
 		return nil, notImplementedErr()
@@ -116,9 +118,10 @@ func (r *Router) groupCallScopeFrom(ctx context.Context, in tg.InputGroupCallCla
 	return &groupCallScope{userID: userID, call: call, channel: view.Channel, member: view.Self}, nil
 }
 
-// groupCallJoinAsChannelID 解析 joinGroupCall.join_as：self（缺省/自己）→0；
-// 本频道本身且 viewer 是 admin（匿名管理员/创建者语义，TDesktop RTMP createBox
-// 对 creator 硬编码 joinAs=peer）→ channelID；其余身份返回 JOIN_AS_PEER_INVALID。
+// groupCallJoinAsChannelID resolves joinGroupCall.join_as: self (default/self) -> 0; the channel
+// itself when the viewer is an admin (anonymous admin/creator semantics; TDesktop's RTMP createBox
+// hard-codes joinAs=peer for the creator) -> channelID; any other identity returns
+// JOIN_AS_PEER_INVALID.
 func (r *Router) groupCallJoinAsChannelID(scope *groupCallScope, joinAs tg.InputPeerClass) (int64, error) {
 	switch v := joinAs.(type) {
 	case nil, *tg.InputPeerSelf, *tg.InputPeerEmpty:
@@ -135,8 +138,9 @@ func (r *Router) groupCallJoinAsChannelID(scope *groupCallScope, joinAs tg.Input
 	return 0, tgerr400("JOIN_AS_PEER_INVALID")
 }
 
-// onPhoneGetGroupCallJoinAs 返回入会可选身份：所有人可用自己；频道 admin 额外
-// 可用频道本身（匿名身份）。TDesktop 在候选 >1 时显示 "join as" 选择框。
+// onPhoneGetGroupCallJoinAs returns the selectable join identities: everyone can use themselves;
+// a channel admin can additionally use the channel itself (anonymous identity). TDesktop shows a
+// "join as" chooser when there is more than one candidate.
 func (r *Router) onPhoneGetGroupCallJoinAs(ctx context.Context, peer tg.InputPeerClass) (*tg.PhoneJoinAsPeers, error) {
 	userID, err := r.phoneRequireUser(ctx)
 	if err != nil {
@@ -194,7 +198,8 @@ func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreate
 	now := int(r.clock.Now().Unix())
 	scheduleDate, _ := req.GetScheduleDate()
 	if scheduleDate < 0 || (scheduleDate > 0 && scheduleDate <= now) {
-		// TDesktop 选择器只给未来时间；过去时间直接拒绝（容忍在途秒差由客户端保证）。
+		// The TDesktop picker only offers future times; past times are rejected outright (tolerating
+		// in-flight second-level skew is left to the client).
 		return nil, tgerr400("SCHEDULE_DATE_INVALID")
 	}
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
@@ -211,16 +216,17 @@ func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreate
 	if view.Self.Status != domain.ChannelMemberActive || !channelMemberIsAdmin(view.Self) {
 		return nil, tgerr400("CHAT_ADMIN_REQUIRED")
 	}
-	// 广播频道直播、以及任意 RTMP 直播：参与者都是纯观众（listener），入会即
-	// 强制静音且不可自解（join_muted）。RTMP 尤其关键——TDesktop 在 stream 模式下
-	// 若发现 self 行非 force-muted 会每 3s `Rejoin after unforcemute`，导致死循环。
+	// Broadcast-channel livestreams and any RTMP livestream: participants are pure listeners, forced
+	// muted on join and unable to unmute themselves (join_muted). RTMP is especially critical — in
+	// stream mode, if TDesktop finds the self row not force-muted it does `Rejoin after unforcemute`
+	// every 3s, causing an infinite loop.
 	joinMuted := !view.Channel.Megagroup || req.RtmpStream
 	call, err := r.deps.GroupCalls.Create(ctx, view.Channel.ID, userID, req.Title, req.RtmpStream, joinMuted, scheduleDate, now)
 	if err != nil {
 		return nil, groupCallErr(err)
 	}
-	// 服务消息（带频道 pts，离线成员经 channels difference 补收）：
-	// 定时通话发 scheduled（"预约了视频聊天"），立即通话发 started。
+	// Service message (carries channel pts, so offline members catch up via channels difference):
+	// a scheduled call sends scheduled ("scheduled a video chat"), an immediate call sends started.
 	serviceAction := domain.ChannelMessageAction{
 		Type:           domain.ChannelActionGroupCall,
 		CallID:         call.ID,
@@ -243,13 +249,14 @@ func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreate
 		channel.ActiveCallID = call.ID
 		channel.ActiveCallAccessHash = call.AccessHash
 	}
-	// 扇出：banner flag 刷新 + updateGroupCall + 服务消息。
+	// Fan-out: banner flag refresh + updateGroupCall + service message.
 	r.pushChannelStateToMembers(ctx, userID, channel)
 	r.pushGroupCallUpdate(ctx, channel, call)
 	if serviceRes.Event.Pts != 0 {
 		r.pushGroupCallServiceMessage(ctx, userID, serviceRes)
 	}
-	// 响应：updateGroupCall + 服务消息（发起设备视角）。TDesktop 创建后自行 joinGroupCall。
+	// Response: updateGroupCall + service message (from the initiating device's perspective).
+	// TDesktop calls joinGroupCall itself after creating.
 	update := &tg.UpdateGroupCall{Call: tgGroupCall(call, userID, true, r.cfg.PublicBaseURL)}
 	update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 	out := r.groupCallUpdateContainer(ctx, userID, channel, update, []int64{userID})
@@ -279,13 +286,14 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 	if err != nil {
 		return nil, err
 	}
-	// 解析上行 join JSON（容忍 video_stopped 等 flag 与 ssrc-groups——TDesktop join 即带）。
+	// Parse the uplink join JSON (tolerate flags such as video_stopped and ssrc-groups — TDesktop
+	// includes them on join).
 	offer, ssrc, err := parseGroupCallJoinPayload(req.Params.Data)
 	if err != nil {
 		r.log.Warn("group call join payload", zap.Error(err))
 		return nil, groupCallInvalidErr()
 	}
-	// 房间上限（演示规模）：rejoin（已在会换 ssrc）不受限。
+	// Room cap (demo scale): a rejoin (already in the call, swapping ssrc) is not limited.
 	if max := r.cfg.GroupCallMaxParticipants; max > 0 && scope.call.ParticipantsCount >= max {
 		if p, found, _ := r.deps.GroupCalls.Participant(ctx, scope.call.ID, scope.userID); !found || p.Left {
 			return nil, groupCallForbiddenErr()
@@ -300,9 +308,10 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 	if block, ok := req.GetBlock(); ok {
 		joinBlock = append([]byte(nil), block...)
 	}
-	// 视频内部状态：endpoint 服务端铸造（join 响应 video.endpoint 与日后
-	// participant.video.endpoint 必须逐字节一致）；ssrc-groups 无论摄像头开关都
-	// 存档——video_stopped=false（join flag 或后续 self-edit）时原样回放。
+	// Internal video state: the endpoint is minted server-side (the join response's video.endpoint
+	// and later participant.video.endpoint must be byte-for-byte identical); ssrc-groups are archived
+	// regardless of the camera switch — replayed verbatim when video_stopped=false (join flag or a
+	// later self-edit).
 	endpoint := groupCallEndpointID(sfu.EndpointMain, offer.AudioSSRC)
 	videoState := participantVideoState{
 		Endpoint:     endpoint,
@@ -324,15 +333,17 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 	if err != nil {
 		return nil, groupCallErr(err)
 	}
-	// 媒体面：SFU 分配 endpoint（M0 Disabled：语法完备空 candidates，客户端保持
-	// Connecting 并以 4s checkGroupCall 心跳维持保活——M0 sweeper 判据依赖该行为）。
+	// Media plane: the SFU allocates an endpoint (M0 Disabled: syntactically complete empty
+	// candidates; the client stays in Connecting and keeps alive with a 4s checkGroupCall heartbeat
+	// — the M0 sweeper criterion depends on this behavior).
 	sfuService := r.deps.SFU
 	if sfuService == nil {
 		sfuService = sfu.Disabled()
 	}
 	answer, err := sfuService.Join(ctx, scope.call.ID, scope.userID, sfu.EndpointMain, offer)
 	if err != nil {
-		// 媒体面失败回滚信令侧（保持两面一致），返回 500。
+		// If the media plane fails, roll back the signaling side (keeping the two sides consistent)
+		// and return 500.
 		_, _ = r.deps.GroupCalls.Leave(ctx, scope.call.ID, scope.userID, now)
 		r.log.Warn("group call sfu join", zap.Error(err))
 		return nil, internalErr()
@@ -362,9 +373,11 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 		conferenceJoinBlock = block
 		hasConferenceJoinBlock = true
 	}
-	// 扇出给房间/在线群成员（操作者其它设备含其中；本设备从 RPC 返回拿）。
+	// Fan out to the room/online group members (the operator's other devices are included; this
+	// device takes it from the RPC response).
 	channel := r.groupCallMutationFanout(ctx, scope.channel, mut)
-	// 响应（TDesktop 从本 RPC 返回的 Updates 摘取 updateGroupCallConnection，不会等推送）：
+	// Response (TDesktop pulls updateGroupCallConnection from this RPC's returned Updates; it does
+	// not wait for a push):
 	out := r.groupCallUpdateContainer(ctx, scope.userID, channel,
 		&tg.UpdateGroupCallParticipants{
 			Call:         &tg.InputGroupCall{ID: mut.Call.ID, AccessHash: mut.Call.AccessHash},
@@ -397,7 +410,7 @@ func (r *Router) onPhoneLeaveGroupCall(ctx context.Context, req *tg.PhoneLeaveGr
 	now := int(r.clock.Now().Unix())
 	mut, err := r.deps.GroupCalls.Leave(ctx, scope.call.ID, scope.userID, now)
 	if errors.Is(err, domain.ErrGroupCallNotJoined) {
-		// 幂等：重复 leave / sweeper 已清，返回当前快照。
+		// Idempotent: duplicate leave / already cleared by the sweeper, return the current snapshot.
 		return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel,
 			groupCallUpdateFor(scope.channel, scope.call, scope.userID, false, r.cfg.PublicBaseURL), nil), nil
 	}
@@ -441,11 +454,12 @@ func (r *Router) onPhoneDiscardGroupCall(ctx context.Context, in tg.InputGroupCa
 		return r.groupCallUpdateContainer(ctx, scope.userID, domain.Channel{},
 			groupCallUpdateFor(domain.Channel{}, call, scope.userID, true, r.cfg.PublicBaseURL), nil), nil
 	}
-	// RTMP 直播结束：断开推流并清空缓冲（观众后续拉流转 resync/停止）。
+	// RTMP livestream ended: disconnect the stream and flush the buffer (viewers then resync/stop on
+	// their next fetch).
 	if call.RtmpStream && r.deps.LiveStreams != nil {
 		r.deps.LiveStreams.DropChannel(scope.channel.ID)
 	}
-	// 清 channel 关联 + ended 服务消息（带 duration）。
+	// Clear the channel association + ended service message (with duration).
 	channel := scope.channel
 	if updated, err := r.deps.Channels.SetActiveCall(ctx, channel.ID, 0, 0, false); err == nil {
 		channel = updated
@@ -500,7 +514,8 @@ func (r *Router) onPhoneGetGroupCall(ctx context.Context, req *tg.PhoneGetGroupC
 	if !scope.call.Conference() {
 		chats = append(chats, tgChannel(scope.userID, scope.channel, &scope.member))
 	}
-	// 定时通话：回填 viewer 自己的开播提醒订阅（客户端 reload 全量重建本地状态）。
+	// Scheduled call: backfill the viewer's own start-reminder subscription (the client reloads and
+	// rebuilds local state in full).
 	call := r.applyScheduleSubscription(ctx, scope.call, scope.userID)
 	return &tg.PhoneGroupCall{
 		Call:                   tgGroupCall(call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL),
@@ -531,7 +546,8 @@ func (r *Router) onPhoneGetGroupParticipants(ctx context.Context, req *tg.PhoneG
 	for _, p := range page.Participants {
 		userIDs = append(userIDs, p.UserID)
 	}
-	// 响应 version=当前值：客户端 version 跳号后据此重建本地状态并恢复增量应用。
+	// The response's version = the current value: after a version jump the client rebuilds local
+	// state from it and resumes applying increments.
 	chats := []tg.ChatClass{}
 	if !scope.call.Conference() {
 		chats = append(chats, tgChannel(scope.userID, scope.channel, &scope.member))
@@ -546,9 +562,11 @@ func (r *Router) onPhoneGetGroupParticipants(ctx context.Context, req *tg.PhoneG
 	}, nil
 }
 
-// onPhoneCheckGroupCall 是保活与「踢人/重启恢复」的统一出口：返回入参 sources 中
-// 仍属于该用户活跃 endpoint 的子集；自己的 ssrc 不在 ⇒ 客户端自动 rejoin。
-// 注意：客户端只在 Connecting 态调它（媒体连通后心跳停止），不可据此单独判死。
+// onPhoneCheckGroupCall is the unified outlet for keep-alive and "kick/restart recovery": it
+// returns the subset of the input sources that still belong to the user's active endpoint; if the
+// user's own ssrc is absent the client rejoins automatically. Note: the client only calls it in the
+// Connecting state (the heartbeat stops once media is connected), so it must not be used alone to
+// declare a participant dead.
 func (r *Router) onPhoneCheckGroupCall(ctx context.Context, req *tg.PhoneCheckGroupCallRequest) ([]int, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
@@ -569,9 +587,10 @@ func (r *Router) onPhoneCheckGroupCall(ctx context.Context, req *tg.PhoneCheckGr
 	for _, ssrc := range active {
 		activeSet[int(int32(uint32(ssrc)))] = struct{}{}
 	}
-	// presentation 的全部 ssrc（音频+视频层+RTX）也属于活跃 endpoint：TDesktop 把
-	// screen ssrc 一并塞进 sources，DrKLO 用 presentation.audio_source（缺省退化
-	// 取首个视频 ssrc）——任一不在返回集合都会触发 4s 循环重建屏幕实例。
+	// All of presentation's ssrcs (audio + video layers + RTX) also belong to the active endpoint:
+	// TDesktop stuffs the screen ssrc into sources too, while DrKLO uses presentation.audio_source
+	// (falling back to the first video ssrc by default) — any that is missing from the returned set
+	// triggers a 4s loop rebuilding the screen instance.
 	if p, found, err := r.deps.GroupCalls.Participant(ctx, scope.call.ID, scope.userID); err == nil && found && !p.Left {
 		if st, ok := decodeVideoState(p.PresentationJSON); ok && st.Active {
 			if st.AudioSource != 0 {

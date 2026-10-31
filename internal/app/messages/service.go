@@ -9,7 +9,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// Service 提供消息历史、搜索与已读业务。
+// Service provides message history, search, and read-state business logic.
 type Service struct {
 	messages  store.MessageStore
 	dialogs   store.DialogStore
@@ -46,13 +46,13 @@ type RecipientUserReader interface {
 	ByID(ctx context.Context, userID int64) (domain.User, bool, error)
 }
 
-// BotResponder 响应投递给服务端内置 bot（BotFather）的私聊消息。
-// 实现方在用户消息已成功入库后被同步调用；回复失败只能记日志，
-// 绝不允许影响用户消息发送结果。
+// BotResponder responds to private messages delivered to a server-side built-in bot (BotFather).
+// The implementation is called synchronously after the user message has been persisted
+// successfully; a reply failure can only be logged and must never affect the user's send result.
 type BotResponder interface {
-	// HandlesBot 报告 botUserID 是否为该 responder 负责的内置 bot。
+	// HandlesBot reports whether botUserID is a built-in bot this responder handles.
 	HandlesBot(botUserID int64) bool
-	// OnPrivateMessage 处理一条投递给内置 bot 的消息；msg 为 bot 视角收件 box 行。
+	// OnPrivateMessage handles a message delivered to a built-in bot; msg is the inbox row from the bot's perspective.
 	OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message, session domain.ClientSessionMetadata)
 }
 
@@ -82,7 +82,7 @@ func WithCollectiblePhoneProvider(p userprojection.CollectiblePhoneProvider) Opt
 	return func(s *Service) { s.phones = p }
 }
 
-// WithBotResponder 启用服务端内置 bot（BotFather）对私聊消息的自动应答。
+// WithBotResponder enables automatic replies from the server-side built-in bot (BotFather) to private messages.
 func WithBotResponder(r BotResponder) Option {
 	return func(s *Service) { s.botResponder = r }
 }
@@ -102,7 +102,7 @@ func WithReadModelVersions(v store.ReadModelVersionStore) Option {
 	return func(s *Service) { s.versions = v }
 }
 
-// NewService 创建 messages 服务。
+// NewService creates the messages service.
 func NewService(messages store.MessageStore, dialogs store.DialogStore, opts ...Option) *Service {
 	s := &Service{
 		messages:               messages,
@@ -131,7 +131,7 @@ func (s *Service) ProjectsMessageUsersForViewer() bool {
 	return s != nil && s.viewerProjectionComplete
 }
 
-// SendPrivateText 发送一条私聊文本消息。
+// SendPrivateText sends a private text message.
 func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.SendPrivateTextResult{}, nil
@@ -145,10 +145,12 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 	return s.sendPrivateText(ctx, userID, req)
 }
 
-// PostPrivateServiceMessage 让服务端自己落一条私聊服务消息，它的发送者不是当前
-// 认证用户。Bot Stars 付款凭证属于这一类：消息来自付款人，落到 bot 的会话里，
-// 而服务器此时 acting 的身份是 bot 本身，SendPrivateText 的发送者校验无法表达它。
-// 不开认证作用域检查是安全的——调用方是服务端逻辑，没有请求方可控的入口。
+// PostPrivateServiceMessage lets the server itself persist a private service message whose
+// sender is not the current authenticated user. Bot Stars payment receipts are one such case:
+// the message comes from the payer and lands in the bot's chat, while the identity the server
+// is acting as at that point is the bot itself, which SendPrivateText's sender check cannot
+// express. Not enforcing the auth scope is safe — the caller is server logic with no
+// request-controlled entry point.
 func (s *Service) PostPrivateServiceMessage(ctx context.Context, recipientUserID, fromUserID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
 	if s == nil || s.messages == nil || recipientUserID == 0 || fromUserID == 0 {
 		return domain.SendPrivateTextResult{}, domain.ErrMessageEmpty
@@ -195,9 +197,11 @@ func (s *Service) sendPrivateText(ctx context.Context, userID int64, req domain.
 	if err == nil && !res.Duplicate && automationOK {
 		s.runBusinessAutomation(ctx, req, res, automation)
 	}
-	// 内置 bot 应答：用户消息已提交（幂等重放除外）后同步触发；responder 自行
-	// 兜错，不回传失败。bot 自己发出的消息不触发（SenderUserID 不会是内置 bot
-	// 的对话对象集合里关心的方向——hook 只看收件人）。
+	// Built-in bot reply: triggered synchronously after the user message is committed
+	// (except for idempotent replays); the responder swallows its own errors and does not
+	// propagate failures. Messages sent by the bot itself do not trigger it (SenderUserID is
+	// never the direction the built-in bot's conversation-partner set cares about — the hook
+	// only looks at the recipient).
 	if err == nil && !res.Duplicate && req.BusinessAutomationKind == "" && s.botResponder != nil && s.botResponder.HandlesBot(req.RecipientUserID) {
 		s.botResponder.OnPrivateMessage(ctx, req.RecipientUserID, res.RecipientMessage, req.OriginClientSession)
 	}
@@ -360,7 +364,7 @@ func chatThemeServiceMessageRandomID(userID, peerUserID int64, emoticon string, 
 	return id
 }
 
-// ForwardPrivateMessages 转发当前账号可见的私聊文本消息。
+// ForwardPrivateMessages forwards private text messages visible to the current account.
 func (s *Service) ForwardPrivateMessages(ctx context.Context, userID int64, req domain.ForwardPrivateMessagesRequest) (domain.ForwardPrivateMessagesResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.ForwardPrivateMessagesResult{OwnerUserID: userID}, nil
@@ -412,17 +416,17 @@ func (s *Service) GetMessageByUID(ctx context.Context, userID, uid int64) (domai
 	return list.Messages[0], true, nil
 }
 
-// GetHistory 返回当前账号某个 peer 的历史消息。
+// GetHistory returns the history messages of a peer for the current account.
 func (s *Service) GetHistory(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
 	return s.list(ctx, userID, filter)
 }
 
-// Search 返回当前账号消息搜索结果。Query 为空时等价于历史列表过滤。
+// Search returns the current account's message search results. An empty Query is equivalent to a history list filter.
 func (s *Service) Search(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
 	return s.list(ctx, userID, filter)
 }
 
-// SearchPrivateMedia 返回某私聊会话中属于给定媒体类别的消息(共享媒体标签页)。
+// SearchPrivateMedia returns messages in a private chat that belong to the given media category (the shared media tab).
 func (s *Service) SearchPrivateMedia(ctx context.Context, userID, peerID int64, req domain.MediaSearchRequest) (domain.MessageList, error) {
 	if s == nil || s.messages == nil || userID == 0 || peerID == 0 {
 		return domain.MessageList{}, nil
@@ -434,7 +438,7 @@ func (s *Service) SearchPrivateMedia(ctx context.Context, userID, peerID int64, 
 	return s.projectMessageUsers(ctx, userID, list)
 }
 
-// CountPrivateMediaCategories 返回某私聊会话按基础媒体类别聚合的精确计数。
+// CountPrivateMediaCategories returns exact counts per base media category for a private chat.
 func (s *Service) CountPrivateMediaCategories(ctx context.Context, userID, peerID int64) (domain.MediaCategoryCounts, error) {
 	if s == nil || s.messages == nil || userID == 0 || peerID == 0 {
 		return domain.MediaCategoryCounts{}, nil
@@ -442,7 +446,7 @@ func (s *Service) CountPrivateMediaCategories(ctx context.Context, userID, peerI
 	return s.cachedPrivateMediaCounts(ctx, userID, peerID)
 }
 
-// ReadHistory 将当前账号某个 peer 的 inbox 标记为已读，并为发送方生成 outbox 已读回执。
+// ReadHistory marks the current account's inbox for a peer as read and generates an outbox read receipt for the sender.
 func (s *Service) ReadHistory(ctx context.Context, userID int64, req domain.ReadHistoryRequest) (domain.ReadHistoryResult, error) {
 	if s == nil || userID == 0 {
 		return domain.ReadHistoryResult{Peer: req.Peer, MaxID: req.MaxID}, nil
@@ -479,7 +483,7 @@ func (s *Service) ReadMessageContents(ctx context.Context, userID int64, req dom
 	return s.messages.ReadMessageContents(ctx, req)
 }
 
-// GetOutboxReadDate 返回当前账号某条 outgoing 私聊消息被对端读到的时间。
+// GetOutboxReadDate returns the time a given outgoing private message of the current account was read by the peer.
 func (s *Service) GetOutboxReadDate(ctx context.Context, userID int64, req domain.OutboxReadDateRequest) (int, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return 0, domain.ErrMessageIDInvalid
@@ -504,7 +508,7 @@ func (s *Service) SetMessageReactions(ctx context.Context, userID int64, req dom
 	return s.messages.SetMessageReactions(ctx, req)
 }
 
-// VoteMessagePoll 给私聊消息上的 poll 投票（options 为空 = 撤票）。
+// VoteMessagePoll votes on a poll attached to a private message (empty options = retract vote).
 func (s *Service) VoteMessagePoll(ctx context.Context, userID int64, req domain.VotePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.PrivateMessagePollResult{}, domain.ErrMessageIDInvalid
@@ -518,7 +522,7 @@ func (s *Service) VoteMessagePoll(ctx context.Context, userID int64, req domain.
 	return s.messages.VoteMessagePoll(ctx, req)
 }
 
-// CloseMessagePoll 关闭私聊消息上的 poll（仅 poll 创建者）。
+// CloseMessagePoll closes a poll attached to a private message (only the poll creator).
 func (s *Service) CloseMessagePoll(ctx context.Context, userID int64, req domain.ClosePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.PrivateMessagePollResult{}, domain.ErrMessageIDInvalid
@@ -576,7 +580,7 @@ func (s *Service) UpdateSavedReactionTag(ctx context.Context, userID int64, tag 
 	return s.messages.UpsertSavedReactionTag(ctx, tag)
 }
 
-// EditMessage 编辑当前账号发出的私聊文本消息。
+// EditMessage edits a private text message sent by the current account.
 func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.EditMessageRequest) (domain.EditMessageResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.EditMessageResult{OwnerUserID: userID}, nil
@@ -592,8 +596,8 @@ func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.Edit
 	return s.messages.EditMessage(ctx, req)
 }
 
-// PinPrivateMessage 翻转当前账号可见私聊消息的置顶状态；非 pm_oneside
-// 时同步翻转对端视角。
+// PinPrivateMessage toggles the pin state of a private message visible to the current
+// account; when not pm_oneside it also flips the peer's view.
 func (s *Service) PinPrivateMessage(ctx context.Context, userID int64, req domain.PinPrivateMessageRequest) (domain.PinPrivateMessageResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.PinPrivateMessageResult{OwnerUserID: userID}, domain.ErrMessageIDInvalid
@@ -634,7 +638,7 @@ func (s *Service) PinPrivateMessage(ctx context.Context, userID int64, req domai
 	return res, err
 }
 
-// UnpinAllPrivateMessages 清空当前账号与某私聊 peer 的全部置顶。
+// UnpinAllPrivateMessages clears all pins between the current account and a private peer.
 func (s *Service) UnpinAllPrivateMessages(ctx context.Context, userID int64, req domain.UnpinAllPrivateMessagesRequest) (domain.PinPrivateMessageResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.PinPrivateMessageResult{OwnerUserID: userID}, domain.ErrMessageIDInvalid
@@ -648,7 +652,7 @@ func (s *Service) UnpinAllPrivateMessages(ctx context.Context, userID int64, req
 	return s.messages.UnpinAllPrivateMessages(ctx, req)
 }
 
-// DeleteMessages 删除当前账号视角下的一组消息；revoke 时同步删除对端私聊盒子。
+// DeleteMessages deletes a set of messages from the current account's perspective; when revoke is set it also deletes the peer's private box.
 func (s *Service) DeleteMessages(ctx context.Context, userID int64, req domain.DeleteMessagesRequest) (domain.DeleteMessagesResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.DeleteMessagesResult{OwnerUserID: userID}, nil
@@ -659,7 +663,7 @@ func (s *Service) DeleteMessages(ctx context.Context, userID int64, req domain.D
 	return s.messages.DeleteMessages(ctx, req)
 }
 
-// DeleteHistory 清空当前账号与某个 peer 的历史；revoke 时同步删除对端私聊盒子。
+// DeleteHistory clears the current account's history with a peer; when revoke is set it also deletes the peer's private box.
 func (s *Service) DeleteHistory(ctx context.Context, userID int64, req domain.DeleteHistoryRequest) (domain.DeleteMessagesResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.DeleteMessagesResult{OwnerUserID: userID}, nil
@@ -670,7 +674,7 @@ func (s *Service) DeleteHistory(ctx context.Context, userID int64, req domain.De
 	return s.messages.DeleteHistory(ctx, req)
 }
 
-// GetSavedDialogs 返回收藏夹子会话分页（messages.getSavedDialogs）。
+// GetSavedDialogs returns a page of saved-message subdialogs (messages.getSavedDialogs).
 func (s *Service) GetSavedDialogs(ctx context.Context, userID int64, filter domain.SavedDialogsFilter) (domain.SavedDialogList, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.SavedDialogList{Full: true}, nil
@@ -678,7 +682,7 @@ func (s *Service) GetSavedDialogs(ctx context.Context, userID int64, filter doma
 	return s.messages.ListSavedDialogs(ctx, userID, filter)
 }
 
-// GetPinnedSavedDialogs 返回全部置顶收藏夹子会话（messages.getPinnedSavedDialogs）。
+// GetPinnedSavedDialogs returns all pinned saved-message subdialogs (messages.getPinnedSavedDialogs).
 func (s *Service) GetPinnedSavedDialogs(ctx context.Context, userID int64) (domain.SavedDialogList, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.SavedDialogList{Full: true}, nil
@@ -686,7 +690,7 @@ func (s *Service) GetPinnedSavedDialogs(ctx context.Context, userID int64) (doma
 	return s.messages.ListPinnedSavedDialogs(ctx, userID)
 }
 
-// GetSavedDialogsByPeers 返回指定收藏夹子会话（messages.getSavedDialogsByID）。
+// GetSavedDialogsByPeers returns the specified saved-message subdialogs (messages.getSavedDialogsByID).
 func (s *Service) GetSavedDialogsByPeers(ctx context.Context, userID int64, peers []domain.Peer) (domain.SavedDialogList, error) {
 	if s == nil || s.messages == nil || userID == 0 || len(peers) == 0 {
 		return domain.SavedDialogList{Full: true}, nil
@@ -694,7 +698,7 @@ func (s *Service) GetSavedDialogsByPeers(ctx context.Context, userID int64, peer
 	return s.messages.ListSavedDialogsByPeers(ctx, userID, peers)
 }
 
-// ToggleSavedDialogPin 翻转收藏夹子会话置顶状态，返回是否实际变化。
+// ToggleSavedDialogPin toggles a saved-message subdialog's pin state and returns whether it actually changed.
 func (s *Service) ToggleSavedDialogPin(ctx context.Context, userID int64, peer domain.Peer, pinned bool) (bool, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return false, nil
@@ -702,7 +706,7 @@ func (s *Service) ToggleSavedDialogPin(ctx context.Context, userID int64, peer d
 	return s.messages.ToggleSavedDialogPin(ctx, userID, peer, pinned)
 }
 
-// ReorderPinnedSavedDialogs 全量重排收藏夹置顶顺序。
+// ReorderPinnedSavedDialogs fully reorders the pinned saved-message ordering.
 func (s *Service) ReorderPinnedSavedDialogs(ctx context.Context, userID int64, order []domain.Peer, force bool) error {
 	if s == nil || s.messages == nil || userID == 0 {
 		return nil
@@ -710,7 +714,7 @@ func (s *Service) ReorderPinnedSavedDialogs(ctx context.Context, userID int64, o
 	return s.messages.ReorderPinnedSavedDialogs(ctx, userID, order, force)
 }
 
-// DeleteSavedHistory 删除收藏夹一个子会话的消息（单批）。
+// DeleteSavedHistory deletes a saved-message subdialog's messages (single batch).
 func (s *Service) DeleteSavedHistory(ctx context.Context, userID int64, req domain.DeleteSavedHistoryRequest) (domain.DeleteSavedHistoryResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {
 		return domain.DeleteSavedHistoryResult{}, nil
@@ -932,7 +936,7 @@ type privateUnreadReactionsStore interface {
 	ReadPeerReactions(ctx context.Context, ownerUserID int64, peer domain.Peer) (int, error)
 }
 
-// ListUnreadReactionMessages 返回私聊 peer 下带未读 reaction 的消息。
+// ListUnreadReactionMessages returns messages with unread reactions under a private peer.
 func (s *Service) ListUnreadReactionMessages(ctx context.Context, userID int64, peer domain.Peer, limit int) ([]domain.Message, error) {
 	store, ok := s.messages.(privateUnreadReactionsStore)
 	if !ok || userID == 0 {
@@ -941,7 +945,7 @@ func (s *Service) ListUnreadReactionMessages(ctx context.Context, userID int64, 
 	return store.ListUnreadReactionMessages(ctx, userID, peer, limit)
 }
 
-// ReadPeerReactions 清理私聊 peer 下的全部未读 reaction。
+// ReadPeerReactions clears all unread reactions under a private peer.
 func (s *Service) ReadPeerReactions(ctx context.Context, userID int64, peer domain.Peer) (int, error) {
 	store, ok := s.messages.(privateUnreadReactionsStore)
 	if !ok || userID == 0 {

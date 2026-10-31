@@ -1,6 +1,6 @@
--- Telegram 会对已售罄的限定礼物下发 permille=0 的属性：它仍属于礼物池（保留下来才能
--- 渲染已有藏品），但永远不会被随机抽到。放宽 CHECK 以接受 0；抽取路径本来就过滤
--- rarity_permille <= 0，因此不会抽到这些属性。
+-- Telegram sends permille=0 attributes for sold-out limited gifts: they still belong to the gift pool
+-- (keeping them is required to render existing collectibles) but are never randomly drawn. Loosen the
+-- CHECK to accept 0; the draw path already filters rarity_permille <= 0, so these attributes are never drawn.
 ALTER TABLE public.star_gift_collectible_models
     DROP CONSTRAINT star_gift_collectible_model_rarity_check,
     ADD CONSTRAINT star_gift_collectible_model_rarity_check CHECK (
@@ -21,9 +21,10 @@ ALTER TABLE public.star_gift_collectible_backdrops
         rarity_kind = 'permille' AND rarity_permille BETWEEN 0 AND 1000
     );
 
--- 激活触发器只把权重 > 0 的属性计入预览池：升级预览采样与抽取都跳过 0 权重属性。
--- 否则一个可抽取背景加若干 0 权重背景的 revision 也能激活，预览里却只剩一个背景，
--- TDesktop 的升级动画停不下来（见 0132/0219）。
+-- The activation trigger counts only attributes with weight > 0 toward the preview pool: upgrade preview
+-- sampling and the draw both skip 0-weight attributes. Otherwise a revision with one drawable backdrop plus
+-- several 0-weight backdrops could still activate, leaving only one backdrop in the preview and making the
+-- TDesktop upgrade animation never stop (see 0132/0219).
 CREATE OR REPLACE FUNCTION public.telesrv_validate_collectible_preview_activation() RETURNS trigger
     LANGUAGE plpgsql AS $$
 DECLARE

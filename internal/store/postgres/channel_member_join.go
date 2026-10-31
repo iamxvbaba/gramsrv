@@ -60,13 +60,13 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	}
 	preJoinTopID := channel.TopMessageID
 	minID := channelInitialAvailableMinID(channel)
-	// 自加入：inviter 即本人（对齐官方 channelParticipantSelf.inviter_id == user_id）。客户端据此
-	// （TDesktop requestSelf→getParticipant→channel->inviter）生成本地「您加入了此频道」服务消息，
-	// 进而把广播频道补进会话列表（广播加入无服务端服务消息，靠这条本地消息物化会话）。
+	// Self-join: inviter is the user themself (matching the official channelParticipantSelf.inviter_id == user_id). The client uses this
+	// (TDesktop requestSelf→getParticipant→channel->inviter) to generate a local "You joined this channel" service message,
+	// which then adds the broadcast channel to the chat list (broadcast joins have no server service message; this local message materializes the dialog).
 	member := domain.ChannelMember{ChannelID: channelID, UserID: userID, InviterUserID: userID, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive, JoinedAt: date, AvailableMinID: minID, AvailableMinPts: channelInitialAvailableMinPts(channel), ReadInboxMaxID: maxInt(minID, preJoinTopID)}
 	if existingErr == nil {
-		// 重进是全新 participant，但部分限制名单独立于在群与否、重进后仍生效；
-		// 只有 channel 当前 owner 仍是该账号时，才保留 creator 身份。
+		// Re-entry is a brand-new participant, but some restriction lists are independent of membership and remain in effect after re-entry;
+		// the creator identity is kept only when the channel's current owner is still this account.
 		member.BannedRights = existing.BannedRights
 		if existing.Role == domain.ChannelRoleCreator && channel.CreatorUserID == userID {
 			member.Role = domain.ChannelRoleCreator
@@ -77,8 +77,8 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 重新入群(含首次)时归还纯 prehistory 来源的读边界:upsert 是 GREATEST,不显式下调的
-	// 话,"隐藏历史期间入群"的成员即使频道后来关闭了隐藏历史也永远看不到旧消息。
+	// On re-join (including the first time), return the purely prehistory-sourced read boundary: the upsert is GREATEST, so without an explicit
+	// lowering, a member who "joined while history was hidden" would never see old messages even after the channel later disables hidden history.
 	if err := resetPrehistoryBoundaryTx(ctx, tx, channel, userID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
@@ -123,11 +123,11 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, userID, member.ReadInboxMaxI
 	if err := upsertChannelDialogTx(ctx, tx, userID, channel, msg, member.ReadInboxMaxID, member.ReadOutboxMaxID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 按新的 available_min_id 重算未读 reaction 计数:重进是全新 participant,旧
-	// channel_dialogs.unread_reactions_count 是从不在 join 路径重算的存储列,
-	// PreHistoryHidden/broadcast 重进后 available_min_id 越过旧 reaction,陈旧计数会残留
-	// 成幽灵角标。refreshChannelUnreadReactionsCountTx 门控 cm.id>available_min_id,对
-	// PreHistoryHidden/broadcast 算出 0(清幽灵)、对 prehistory-visible(min_id 仍 0)保留真实计数。
+	// Recompute the unread reaction count by the new available_min_id: re-entry is a brand-new participant, and the old
+	// channel_dialogs.unread_reactions_count is a stored column never recomputed on the join path, so on
+	// PreHistoryHidden/broadcast re-entry the available_min_id moves past the old reactions and the stale count lingers
+	// as a ghost badge. refreshChannelUnreadReactionsCountTx gates on cm.id>available_min_id, computing 0
+	// for PreHistoryHidden/broadcast (clearing the ghost) and keeping the real count for prehistory-visible (min_id still 0).
 	if err := refreshChannelUnreadReactionsCountTx(ctx, tx, userID, channelID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}

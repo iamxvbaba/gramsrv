@@ -9,9 +9,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelReactionsViewerUpdatesMin 回归：channel reaction fan-out 中，
-// 非发起者 viewer 收到的 updateMessageReactions 必须是 min 形态（不带发起者的
-// chosen/My），否则 TDesktop 会把发起者的 reaction 高亮成接收者自己的。
+// TestChannelReactionsViewerUpdatesMin regression: in channel reaction fan-out,
+// the updateMessageReactions a non-initiator viewer receives must be the min form
+// (without the initiator's chosen/My), otherwise TDesktop highlights the
+// initiator's reaction as the receiver's own.
 func TestChannelReactionsViewerUpdatesMin(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -21,7 +22,7 @@ func TestChannelReactionsViewerUpdatesMin(t *testing.T) {
 		Results: []domain.ChannelMessageReactionCount{{
 			Reaction:    domain.MessageReaction{Type: domain.MessageReactionEmoji, Emoticon: "\U0001F44D"},
 			Count:       1,
-			ChosenOrder: 1, // 发起者视角烘焙的 chosen
+			ChosenOrder: 1, // chosen baked from the initiator's view
 		}},
 		Recent: []domain.ChannelMessagePeerReaction{{
 			UserID:      owner.ID,
@@ -52,7 +53,7 @@ func TestChannelReactionsViewerUpdatesMin(t *testing.T) {
 		return nil
 	}
 
-	// 发起者本人：全量视角，chosen 保留。
+	// The initiator itself: full view, chosen preserved.
 	self := findUpdate(r.channelReactionsViewerUpdates(ctx, owner.ID, owner.ID, res, ids))
 	if self.Reactions.Min {
 		t.Fatal("requester's own update must not be min")
@@ -61,7 +62,8 @@ func TestChannelReactionsViewerUpdatesMin(t *testing.T) {
 		t.Fatal("requester's own update should keep chosen_order")
 	}
 
-	// 其他 viewer：min 形态，chosen/My 全剥离（deps.Channels 为 nil 时作者分支也落 min）。
+	// Other viewers: min form, chosen/My fully stripped (when deps.Channels is
+	// nil the author branch also falls to min).
 	other := findUpdate(r.channelReactionsViewerUpdates(ctx, owner.ID, friend.ID, res, ids))
 	if !other.Reactions.Min {
 		t.Fatal("other viewer's update must be min")
@@ -80,7 +82,7 @@ func TestChannelReactionsViewerUpdatesMin(t *testing.T) {
 		t.Fatalf("min update should keep counts, got %d", count)
 	}
 
-	// 原 res 不得被 minify 污染（请求者响应还要用全量视角）。
+	// The original res must not be polluted by minify (the requester's response still needs the full view).
 	if res.Message.Reactions.Results[0].ChosenOrder != 1 || !res.Message.Reactions.Recent[0].My {
 		t.Fatalf("minify must not mutate the original result: %+v", res.Message.Reactions)
 	}

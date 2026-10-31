@@ -490,9 +490,11 @@ func (c *Catalog) load() (*snapshot, error) {
 
 func validRarity(rarity Rarity, crafted bool) bool {
 	if rarity.Kind == "permille" {
-		// permille 为 0 是 Telegram 会真实下发的合法取值：属性仍属于礼物池
-		// （需要保留以便渲染已有收藏品），但不会出现在随机抽取里——例如已售罄
-		// 限定礼物中不再可获得的旧变体。因此这里只拦截越界权重，不再要求 > 0。
+		// permille 0 is a legitimate value Telegram actually sends: the attribute
+		// still belongs to the gift's pool (it must be kept so existing collectibles
+		// render), but it never appears in random draws -- for example, old variants
+		// that are no longer obtainable in a sold-out limited gift. So only
+		// out-of-range weights are rejected here; > 0 is no longer required.
 		return !crafted && rarity.Permille != nil && *rarity.Permille >= 0 && *rarity.Permille <= 1000
 	}
 	return crafted && rarity.Permille == nil && (rarity.Kind == "uncommon" || rarity.Kind == "rare" || rarity.Kind == "epic" || rarity.Kind == "legendary")

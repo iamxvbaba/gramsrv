@@ -111,8 +111,9 @@ func (s *ChannelStore) ReadChannelMessageContents(_ context.Context, req domain.
 	if len(cleared) > 0 {
 		s.refreshChannelUnreadReactionsDialogLocked(req.UserID, req.ChannelID)
 	}
-	// 视口内容已读同步翻转 mention 未读：客户端本地已减计数，服务端
-	// 不落库角标会在下一次 getDialogs 复活。
+	// Marking the viewport contents as read also flips mention unread state: the client has
+	// already decremented the count locally, and if the server does not persist the badge it
+	// resurrects on the next getDialogs.
 	clearedMentions := make([]int, 0, len(messages))
 	mentionFlipped := false
 	for _, msg := range messages {
@@ -420,7 +421,7 @@ func (s *ChannelStore) channelThreadUnreadCountLocked(viewerUserID, channelID in
 		}
 		if channelReplyBelongsToRoot(msg, channelID, rootID) {
 			unread++
-			// 钳到 MaxDialogUnreadCount（P1-v），与 postgres 的 LIMIT 子查询同 min(actual,cap) 语义。
+			// Clamp to MaxDialogUnreadCount (P1-v), the same min(actual, cap) semantics as postgres's LIMIT subquery.
 			if unread >= domain.MaxDialogUnreadCount {
 				break
 			}
@@ -439,7 +440,7 @@ func (s *ChannelStore) channelUnreadCountLocked(viewerUserID, channelID int64, r
 			continue
 		}
 		unread++
-		// 钳到 MaxDialogUnreadCount（P1-v），与 postgres 的 LIMIT 子查询同 min(actual,cap) 语义。
+		// Clamp to MaxDialogUnreadCount (P1-v), the same min(actual, cap) semantics as postgres's LIMIT subquery.
 		if unread >= domain.MaxDialogUnreadCount {
 			break
 		}
@@ -565,7 +566,7 @@ func (s *ChannelStore) populateChannelMessageUnreadFlagsLocked(viewerUserID int6
 	}
 }
 
-// clearChannelMentionsForUserLocked 在离开/被踢时清空该用户的提及状态。
+// clearChannelMentionsForUserLocked clears the user's mention state on leave/kick.
 func (s *ChannelStore) clearChannelMentionsForUserLocked(channelID, userID int64) {
 	if byChannel := s.mentions[userID]; byChannel != nil {
 		delete(byChannel, channelID)

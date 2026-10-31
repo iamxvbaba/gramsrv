@@ -10,8 +10,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// jsonRoundTripMedia 复刻 postgres 媒体 codec（json.Marshal/Unmarshal）以验证
-// 新增的 web_page 字段经 JSONB 列字节级 round-trip 后 Kind 与载荷不丢失。
+// jsonRoundTripMedia replicates the postgres media codec (json.Marshal/Unmarshal)
+// to verify the new web_page field survives a byte-level JSONB column round trip
+// without losing Kind or payload.
 func jsonRoundTripMedia(t *testing.T, m *domain.MessageMedia) *domain.MessageMedia {
 	t.Helper()
 	raw, err := json.Marshal(m)
@@ -28,8 +29,9 @@ func jsonRoundTripMedia(t *testing.T, m *domain.MessageMedia) *domain.MessageMed
 	return &out
 }
 
-// TestTgMessageMediaWebPageDone 验证 done 形态投影为 messageMediaWebPage{webPage}，
-// 字段齐全且能二进制编码（捕获非可选 id/url/display_url/hash 缺失）。
+// TestTgMessageMediaWebPageDone verifies the done shape projects to
+// messageMediaWebPage{webPage}, with all fields present and binary-encodable
+// (catching missing non-optional id/url/display_url/hash).
 func TestTgMessageMediaWebPageDone(t *testing.T) {
 	src := &domain.MessageMedia{
 		Kind: domain.MessageMediaKindWebPage,
@@ -90,8 +92,9 @@ func TestTgMessageMediaWebPageDone(t *testing.T) {
 		t.Errorf("GetPhoto = %T, want *tg.Photo", photo)
 	}
 
-	// 二进制编码确认非可选字段齐全（messageMediaWebPage.EncodeBare 会在 webpage
-	// 为 nil 或缺非可选字段时报错）。
+	// Binary encoding confirms the non-optional fields are present
+	// (messageMediaWebPage.EncodeBare errors when webpage is nil or a non-optional
+	// field is missing).
 	var buf bin.Buffer
 	if err := wrap.Encode(&buf); err != nil {
 		t.Fatalf("encode messageMediaWebPage: %v", err)
@@ -131,7 +134,7 @@ func TestTgMessageMediaWebPageAiComposeToneAttribute(t *testing.T) {
 	}
 }
 
-// TestTgMessageMediaWebPagePending 验证 pending 形态投影为 webPagePending{id,url,date}。
+// TestTgMessageMediaWebPagePending verifies the pending shape projects to webPagePending{id,url,date}.
 func TestTgMessageMediaWebPagePending(t *testing.T) {
 	src := &domain.MessageMedia{
 		Kind: domain.MessageMediaKindWebPage,
@@ -163,7 +166,7 @@ func TestTgMessageMediaWebPagePending(t *testing.T) {
 	}
 }
 
-// TestTgMessageMediaWebPageEmpty 验证 empty 形态投影为 webPageEmpty{id}。
+// TestTgMessageMediaWebPageEmpty verifies the empty shape projects to webPageEmpty{id}.
 func TestTgMessageMediaWebPageEmpty(t *testing.T) {
 	src := &domain.MessageMedia{
 		Kind: domain.MessageMediaKindWebPage,
@@ -191,7 +194,7 @@ func TestTgMessageMediaWebPageEmpty(t *testing.T) {
 	}
 }
 
-// TestTgMessageMediaWebPageNilGuards 验证 nil WebPage 不会 panic 且回退空媒体。
+// TestTgMessageMediaWebPageNilGuards verifies a nil WebPage does not panic and falls back to empty media.
 func TestTgMessageMediaWebPageNilGuards(t *testing.T) {
 	got := tgMessageMedia(&domain.MessageMedia{Kind: domain.MessageMediaKindWebPage})
 	if _, ok := got.(*tg.MessageMediaEmpty); !ok {

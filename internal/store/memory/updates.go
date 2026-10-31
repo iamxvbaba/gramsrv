@@ -7,14 +7,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// UpdateStateStore 是 store.UpdateStateStore 的内存实现。
+// UpdateStateStore is the in-memory implementation of store.UpdateStateStore.
 type UpdateStateStore struct {
 	mu       sync.RWMutex
 	states   map[updateStateKey]domain.UpdateState
 	observed map[updateStateKey]domain.UpdateState
 }
 
-// UpdateEventStore 是 store.UpdateEventStore 的内存实现。
+// UpdateEventStore is the in-memory implementation of store.UpdateEventStore.
 type UpdateEventStore struct {
 	mu         sync.RWMutex
 	events     map[int64][]domain.UpdateEvent
@@ -32,7 +32,7 @@ type updateStateKey struct {
 	userID    int64
 }
 
-// NewUpdateEventStore 创建内存 UpdateEventStore。
+// NewUpdateEventStore creates an in-memory UpdateEventStore.
 func NewUpdateEventStore() *UpdateEventStore {
 	return &UpdateEventStore{
 		events:     make(map[int64][]domain.UpdateEvent),
@@ -157,7 +157,7 @@ func cloneUpdateQuickReplyMessage(in domain.QuickReplyMessage) domain.QuickReply
 	return out
 }
 
-// MaxContiguousPts 返回从 1 起无空洞的最大 pts（内存版按 pts_count 连续扫描）。
+// MaxContiguousPts returns the largest gap-free pts starting from 1 (the in-memory version scans contiguously by pts_count).
 func (s *UpdateEventStore) MaxContiguousPts(_ context.Context, userID int64) (int, error) {
 	s.mu.RLock()
 	nextByStart := make(map[int]int, len(s.events[userID]))
@@ -180,7 +180,7 @@ func (s *UpdateEventStore) MaxContiguousPts(_ context.Context, userID int64) (in
 	return contiguous, nil
 }
 
-// NewUpdateStateStore 创建内存 UpdateStateStore。
+// NewUpdateStateStore creates an in-memory UpdateStateStore.
 func NewUpdateStateStore() *UpdateStateStore {
 	return &UpdateStateStore{
 		states:   make(map[updateStateKey]domain.UpdateState),
@@ -198,9 +198,9 @@ func (s *UpdateStateStore) Get(_ context.Context, id [8]byte, userID int64) (dom
 func (s *UpdateStateStore) Save(_ context.Context, id [8]byte, userID int64, st domain.UpdateState) error {
 	s.mu.Lock()
 	key := updateStateKey{authKeyID: id, userID: userID}
-	// 确认水位只增不减（与 PG 的 GREATEST upsert 对齐）：一个旧 from（较小 pts）
-	// 的 getDifference 不得把设备已确认水位回退，否则 getPeerDialogs.state 会下发
-	// 倒退的 pts 基线。
+	// The acknowledged watermark only increases (aligning with PG's GREATEST upsert): a
+	// getDifference from an old `from` (smaller pts) must not roll back the device's acknowledged
+	// watermark, otherwise getPeerDialogs.state would hand out a regressed pts baseline.
 	prev := s.states[key]
 	if st.Pts < prev.Pts {
 		st.Pts = prev.Pts
@@ -257,7 +257,7 @@ func monotonicUpdateState(prev, next domain.UpdateState) domain.UpdateState {
 	return next
 }
 
-// ObservedClientState 暴露给同包/服务测试验证 retention 安全水位；业务读路径仍用 Get。
+// ObservedClientState is exposed to same-package/service tests to verify the retention safety watermark; the business read path still uses Get.
 func (s *UpdateStateStore) ObservedClientState(id [8]byte, userID int64) (domain.UpdateState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

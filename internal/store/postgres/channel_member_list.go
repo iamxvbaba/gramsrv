@@ -28,8 +28,8 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 		limit = domain.MaxChannelParticipantsLimit
 	}
 	count := channel.ParticipantsCount
-	// 广播频道订阅者列表仅管理员可枚举（与隐藏成员同一门控）：非管理员只拿到计数，
-	// admins filter 仍放行（消息管理员徽章数据源），bots 返回空。
+	// A broadcast channel's subscriber list is enumerable only by admins (the same gate as hidden members): non-admins get only the count,
+	// the admins filter is still allowed (the message admin badge data source), and bots return empty.
 	if channel.MembersListAdminOnly() && !isChannelAdmin(viewer) {
 		switch filter.Kind {
 		case domain.ChannelParticipantsAdmins:
@@ -47,8 +47,8 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
 	case "", domain.ChannelParticipantsRecent, domain.ChannelParticipantsContacts, domain.ChannelParticipantsMentions:
 		where = append(where, "m.status = 'active'")
 	case domain.ChannelParticipantsAdmins:
-		// Layer 225 起 admins filter 同时是消息徽章数据源：客户端把整个返回
-		// （含 rank）灌进 badge 缓存，因此带成员 Tag 的普通成员也必须返回。
+		// Since Layer 225 the admins filter is also the message badge data source: the client pours the whole response
+		// (including rank) into the badge cache, so ordinary members bearing a member Tag must also be returned.
 		where = append(where, "m.status = 'active'", "(m.role IN ('creator','admin') OR m.rank <> '')")
 		count = 0
 	case domain.ChannelParticipantsKicked:

@@ -19,7 +19,7 @@ func TestGrantPremiumSemantics(t *testing.T) {
 	}
 	svc := NewService(store)
 
-	// 首次授予：从 now 起算 3 个月。
+	// First grant: starts from now for 3 months.
 	granted, err := svc.GrantPremium(ctx, u.ID, 3)
 	if err != nil {
 		t.Fatalf("GrantPremium: %v", err)
@@ -30,7 +30,7 @@ func TestGrantPremiumSemantics(t *testing.T) {
 		t.Fatalf("first grant until = %d, want ~now+3mo [%d,%d]", granted.PremiumUntil, wantMin, wantMax)
 	}
 
-	// 未过期续期：在现有到期时间上累加。
+	// Renewal before expiry: accumulates onto the existing expiry time.
 	renewed, err := svc.GrantPremium(ctx, u.ID, 1)
 	if err != nil {
 		t.Fatalf("renew: %v", err)
@@ -40,7 +40,7 @@ func TestGrantPremiumSemantics(t *testing.T) {
 		t.Fatalf("renew until = %d, want %d (accumulated)", got, want)
 	}
 
-	// 清除。
+	// Clear.
 	cleared, err := svc.GrantPremium(ctx, u.ID, 0)
 	if err != nil {
 		t.Fatalf("clear: %v", err)
@@ -49,7 +49,7 @@ func TestGrantPremiumSemantics(t *testing.T) {
 		t.Fatalf("cleared until = %d, want 0", cleared.PremiumUntil)
 	}
 
-	// 已过期重授：从 now 起算而非累加。
+	// Re-grant after expiry: starts from now rather than accumulating.
 	if _, err := store.SetPremiumUntil(ctx, u.ID, int(time.Now().Add(-time.Hour).Unix())); err != nil {
 		t.Fatalf("seed expired: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestGrantPremiumSemantics(t *testing.T) {
 		t.Fatalf("regrant until = %d, want from now (≥%d)", regranted.PremiumUntil, wantMin)
 	}
 
-	// bot 拒绝授予。
+	// A bot is refused a grant.
 	if _, err := svc.GrantPremium(ctx, domain.BotFatherUserID, 3); !errors.Is(err, domain.ErrPremiumBotUnsupported) {
 		t.Fatalf("grant bot err = %v, want ErrPremiumBotUnsupported", err)
 	}
@@ -86,14 +86,14 @@ func TestSweepExpiredPremium(t *testing.T) {
 		t.Fatalf("sweep: %v", err)
 	}
 	if len(swept) != 1 || swept[0].ID != expired.ID || swept[0].PremiumUntil != 0 {
-		t.Fatalf("swept = %+v, want 仅过期用户且 until 清零", swept)
+		t.Fatalf("swept = %+v, want only expired users with until cleared", swept)
 	}
-	// 幂等：第二轮无事可做。
+	// Idempotent: the second round has nothing to do.
 	again, err := svc.SweepExpiredPremium(ctx, now, 100)
 	if err != nil || len(again) != 0 {
 		t.Fatalf("second sweep = %+v err %v, want empty", again, err)
 	}
-	// 活跃用户不受影响。
+	// Active users are unaffected.
 	got, _, _ := store.ByID(ctx, active.ID)
 	if got.PremiumUntil != int(now+3600) {
 		t.Fatalf("active until = %d, want untouched", got.PremiumUntil)
@@ -106,12 +106,12 @@ func TestUpdateEmojiStatusPremiumGate(t *testing.T) {
 	u, _ := store.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000104", FirstName: "S"})
 	svc := NewService(store)
 
-	// 非会员设置被拒（PREMIUM_ACCOUNT_REQUIRED）。
+	// A non-Premium set is refused (PREMIUM_ACCOUNT_REQUIRED).
 	if _, err := svc.UpdateEmojiStatus(ctx, u.ID, domain.UserEmojiStatus{DocumentID: 42}); !errors.Is(err, domain.ErrPremiumRequired) {
 		t.Fatalf("non-premium set err = %v, want ErrPremiumRequired", err)
 	}
 
-	// 会员可设置；到期清理后残值不再下发，但显式清除仍允许。
+	// A Premium user can set it; after expiry cleanup the leftover value is no longer delivered, but an explicit clear is still allowed.
 	if _, err := store.SetPremiumUntil(ctx, u.ID, int(time.Now().Add(time.Hour).Unix())); err != nil {
 		t.Fatalf("grant: %v", err)
 	}

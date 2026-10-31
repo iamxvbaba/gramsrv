@@ -7,11 +7,13 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-// TestReceivesUpdatesForAuthKeyRequiresMembershipSync 验证「完全就绪」查询同时要求
-// receivesUpdates 与 channel membership 路由建立成功。membership 同步失败时该查询
-// 必须返回 false，让按 RPC 置位的短路放行重试——否则该 session 会以「已置位但
-// byMemberChannel 缺失」的状态静默漏收超级群推送，且 channel 维度没有 pts 缺口
-// 信号可供客户端自愈。
+// TestReceivesUpdatesForAuthKeyRequiresMembershipSync verifies that the
+// "fully ready" query requires both receivesUpdates and a successfully established
+// channel membership route. When membership sync fails the query must return false,
+// letting the RPC-driven flag set short-circuit through and retry—otherwise the
+// session would silently miss supergroup pushes in the state of "flagged ready but
+// byMemberChannel missing", and there is no channel-dimension pts gap signal for
+// the client to self-heal from.
 func TestReceivesUpdatesForAuthKeyRequiresMembershipSync(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{1, 2, 3}
@@ -32,20 +34,21 @@ func TestReceivesUpdatesForAuthKeyRequiresMembershipSync(t *testing.T) {
 		t.Fatal("not ready after successful membership sync")
 	}
 
-	// 没有任何频道的账号：空列表的成功同步同样算就绪。
+	// An account with no channels: a successful empty-list sync also counts as ready.
 	sm.SetSessionChannelMemberships(raw, 42, 100, nil, sm.ChannelMembershipGeneration(raw, 42))
 	if !sm.ReceivesUpdatesForAuthKey(raw, 42) {
 		t.Fatal("not ready after successful empty membership sync")
 	}
 
-	// userID 与连接当前绑定不一致（换号竞态）时不算就绪，等正确身份重试。
+	// When userID does not match the connection's current binding (account-switch
+	// race) it does not count as ready; retry with the correct identity.
 	sm.SetSessionChannelMemberships(raw, 42, 999, []int64{7}, sm.ChannelMembershipGeneration(raw, 42))
 	if sm.ReceivesUpdatesForAuthKey(raw, 42) {
 		t.Fatal("ready after membership sync for mismatched user")
 	}
 	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{7}, sm.ChannelMembershipGeneration(raw, 42))
 
-	// 登出清除就绪标志。
+	// Logout clears the ready flag.
 	sm.BindUserForAuthKey(raw, 42, 0)
 	if sm.ReceivesUpdatesForAuthKey(raw, 42) {
 		t.Fatal("still ready after user unbind")

@@ -30,20 +30,23 @@ const (
 	maxPollVotesOffsetLength = 128
 	maxTodoItems             = 30
 	maxTodoTitleLength       = 200
-	// maxTodoItemID 是清单项 id 的防御上限：协议字段是 int32，WebA 会用 8 位左右
-	// 的稀疏本地 id，不能用条目数上限或顺序分配假设当 id 边界。
+	// maxTodoItemID is a defensive upper bound on checklist item ids: the protocol
+	// field is int32, and WebA uses sparse local ids of around 8 digits, so the item
+	// count limit or a sequential-allocation assumption cannot serve as the id bound.
 	maxTodoItemID          = 1<<31 - 1
 	maxVenueTitleLength    = 256
 	maxVenueAddressLength  = 512
 	maxVenueProviderLength = 64
 	maxVenueIDLength       = 256
-	// live location 有效期边界（官方 60s..1d；0x7FFFFFFF = 手动停止前一直共享）。
+	// live location period bounds (official 60s..1d; 0x7FFFFFFF = share until
+	// stopped manually).
 	minLiveLocationPeriod     = 60
 	maxLiveLocationPeriod     = 86400
 	foreverLiveLocationPeriod = 0x7FFFFFFF
 	maxLiveLocationHeading    = 360
 	maxProximityRadiusMeters  = 100000
-	// maxGeoAccuracyRadiusMeters 与 proximity radius 同量级上限；越界静默归零（按未知精度处理）。
+	// maxGeoAccuracyRadiusMeters shares the proximity radius's order of magnitude;
+	// out-of-range values silently clamp to zero (treated as unknown accuracy).
 	maxGeoAccuracyRadiusMeters = 100000
 	maxCommonChatsLimit        = domain.MaxCommonChannelsLimit
 	maxStickerSearchQLength    = 128

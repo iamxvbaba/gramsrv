@@ -21,7 +21,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// fakeFiles 是 FilesService 的最小测试替身：贴纸文档可解析，上传图片返回固定 Photo。
+// fakeFiles is the minimal test double for FilesService: sticker documents resolve, and an uploaded image returns a fixed Photo.
 type fakeFiles struct {
 	// lastDocumentSpec is the spec of the latest CreateDocumentFromUpload or
 	// CreateDocumentFromBytes call.
@@ -934,7 +934,7 @@ func TestSendMultiMediaPartialFailureSubsetRetryKeepsReservedGroupedID(t *testin
 		Message:  "first",
 	}
 	second := tg.InputSingleMedia{
-		// 首次请求时 556 尚不存在，使第一条已提交后第二条解析失败。
+		// On the first request 556 does not exist yet, so the second item fails to resolve after the first has been committed.
 		Media:    &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 556, AccessHash: 6}},
 		RandomID: 41002,
 		Message:  "second",

@@ -17,43 +17,58 @@ import (
 
 const tdesktopClient = "tdesktop"
 
-// upload_markup_video=true 即官方默认（emoji/sticker 头像由客户端本地渲染 mp4 后随
-// markup 一起上传）。显式下发是为了把曾收到过 false 的客户端持久化配置洗回默认——
-// 客户端对缺失的 key 会保留本地旧值，仅删除 key 无法恢复。
-// emojies_send_dice 是客户端把「单 emoji 消息」转成 InputMediaDice 的白名单；
-// 必须与 rpc 层 diceValueSides 的取值表保持同步（⚽ 用裸码点，客户端会自行匹配变体形态）。
-// tdesktop_config_map 是 TDesktop 位置选点器（WebView+Mapbox GL）与 business 位置设置的
-// Mapbox access token：maps/geo=聊天附件选点（地图瓦片/地理编码），bmaps/bgeo=business 位置。
-// 该 token 必须来自运行期配置；未配置时不下发 tdesktop_config_map，避免公共源码携带第三方 token。
-// premium 相关 key（docs/premium-module.md）：
-//   - premium_purchase_blocked=false 必须显式下发：DrKLO(ProfileActivity:12059)与 TDesktop
-//     (window_peer_menu.cpp:1549)把「Send a Gift」(star gift)入口与 premiumCanBuy()=
-//     !premium_purchase_blocked 耦合在同一 flag——置 true 会同时隐藏送礼入口。star gift
-//     已实现(Stars 账本)，故必须 false 才能送礼；副作用是 premium 购买 UI 重现，但 premium
-//     已自动授予(0094)、购买流走 stub getPaymentForm 优雅报错，可接受。
-//   - stars_purchase_blocked=false 必须显式下发：DrKLO 缺省 starsLocked=true，余额不足
-//     送礼时若缺此 key 会走 showNoSupportDialog，误弹「所在国家无法购买星星」。该 flag 只解
-//     客户端充值/购买入口，实际 gift 扣款仍由 Stars 账本余额与 BALANCE_TOO_LOW 约束。
-//   - stargifts_blocked=false 必须显式下发：DrKLO MessagesController:1752 缺省 stargiftsBlocked=
-//     true(屏蔽)，GiftSheet:967 据此隐藏整个 star gift 送礼网格——缺 key 则送礼选择器恒空。
-//   - reactions_user_max_premium=3 与服务端 domain.MaxMessageReactionsPerUserPremium
-//     联动：premium 用户可在同一消息放 3 个 reaction，服务端档位必须 ≥ 该宣告值。
-//   - boosts_channel_level_max=100 必须显式下发：DrKLO 的频道自定义 reaction 编辑页
-//     用它作为可选 reaction 个数的本地 LengthFilter 上限。缺 key 会保留旧偏好值；实测
-//     旧值为 4 时，频道已选 4 个 reaction 后继续点新 emoji 会被客户端本地静默挡掉。
-//   - dialog_filters_enabled=true 必须显式下发：TDesktop settings_main.cpp:394 据此(或账号
-//     已有文件夹)才在 Settings 显示「Folders」入口，缺 key → 新账号看不到文件夹管理、无法
-//     建文件夹/采纳 getSuggestedDialogFilters 模板。
-//   - *_limit_default/_premium 双档限额对齐官方值；其中 about/dialogs_pinned/
-//     dialogs_folder_pinned 有服务端 enforcement 双档，其余（channels/saved_gifs/
-//     stickers_faved/dialog_filters/caption/fileparts 等）服务端为宽兜底或未 enforce，
-//     客户端按 self premium flag 自限。bots_create_limit 故意不下发（服务端统一 20，
-//     见 compatibility-matrix todo）；chatlist_update_period 与 chatlist 双档限额
-//     对齐 shared folders 最小真实实现。story 配额/商业化 key 不下发
-//     （功能全族未实现，下发会诱导客户端走进未实现路径）。stories_stealth_* 是客户端
-//     隐身模式本地 UI/乐观状态用的时间常量，与当前 bounded stealth update stub 保持一致。
-//   - aicompose_tone_* 与 domain/app/ai 默认值一致：TDesktop/DrKLO 创建/预览 tone 时
-//     直接读取这些 key 做本地输入限制和示例数量。
+// upload_markup_video=true is the official default (emoji/sticker avatars are rendered
+// locally by the client as mp4 and uploaded along with the markup). It is sent explicitly
+// to scrub clients that ever received false back to the default — a client keeps its local
+// old value for a missing key, so merely deleting the key cannot restore it.
+// emojies_send_dice is the whitelist the client uses to turn a "single-emoji message" into
+// InputMediaDice; it must stay in sync with the rpc layer's diceValueSides value table
+// (⚽ uses the bare code point; the client matches variant forms itself).
+// tdesktop_config_map is the Mapbox access token shared by TDesktop's location picker
+// (WebView+Mapbox GL) and business location settings: maps/geo=chat attachment picker (map
+// tiles/geocoding), bmaps/bgeo=business location. The token must come from runtime config;
+// when unset, tdesktop_config_map is not sent, so the public source carries no third-party token.
+// premium-related keys (docs/premium-module.md):
+//   - premium_purchase_blocked=false must be sent explicitly: DrKLO(ProfileActivity:12059)
+//     and TDesktop (window_peer_menu.cpp:1549) couple the "Send a Gift" (star gift) entry
+//     with premiumCanBuy()=!premium_purchase_blocked under the same flag — setting true also
+//     hides the gifting entry. star gift is implemented (Stars ledger), so it must be false to
+//     allow gifting; the side effect is that the premium purchase UI reappears, but premium is
+//     auto-granted (0094) and the purchase flow goes through a stub getPaymentForm that fails
+//     gracefully, which is acceptable.
+//   - stars_purchase_blocked=false must be sent explicitly: DrKLO defaults starsLocked=true,
+//     and when the balance is insufficient for gifting and this key is missing it goes through
+//     showNoSupportDialog, wrongly popping "cannot purchase stars in your country". This flag
+//     only unlocks the client top-up/purchase entry; the actual gift debit is still constrained
+//     by the Stars ledger balance and BALANCE_TOO_LOW.
+//   - stargifts_blocked=false must be sent explicitly: DrKLO MessagesController:1752 defaults
+//     stargiftsBlocked=true (blocked), and GiftSheet:967 hides the entire star gift grid based
+//     on it — a missing key leaves the gift picker permanently empty.
+//   - reactions_user_max_premium=3 is linked with domain.MaxMessageReactionsPerUserPremium: a
+//     premium user can place 3 reactions on the same message, so the server tier must be ≥ that
+//     advertised value.
+//   - boosts_channel_level_max=100 must be sent explicitly: DrKLO's channel custom-reaction
+//     edit page uses it as the local LengthFilter cap on the number of selectable reactions.
+//     A missing key keeps the old preference value; in practice, with the old value 4, once the
+//     channel has 4 reactions selected, clicking a new emoji is silently blocked locally by the
+//     client.
+//   - dialog_filters_enabled=true must be sent explicitly: TDesktop settings_main.cpp:394 shows
+//     the "Folders" entry in Settings only based on this (or the account already having
+//     folders); a missing key → a new account sees no folder management and cannot create
+//     folders/adopt getSuggestedDialogFilters templates.
+//   - *_limit_default/_premium dual-tier limits align with the official values; about/
+//     dialogs_pinned/dialogs_folder_pinned have server-side dual-tier enforcement, while the
+//     rest (channels/saved_gifs/stickers_faved/dialog_filters/caption/fileparts, etc.) are
+//     either a loose fallback or not enforced server-side, and the client self-limits by its
+//     self premium flag. bots_create_limit is deliberately not sent (server-wide 20, see
+//     compatibility-matrix todo); chatlist_update_period and the dual-tier chatlist limits
+//     align with the minimal real implementation of shared folders. story quota/commercial
+//     keys are not sent (the whole feature family is unimplemented; sending them would lure
+//     clients into unimplemented paths). stories_stealth_* are time constants used by the
+//     client's stealth-mode local UI/optimistic state, consistent with the current bounded
+//     stealth update stub.
+//   - aicompose_tone_* match the domain/app/ai defaults: TDesktop/DrKLO read these keys
+//     directly when creating/previewing a tone, for local input limits and example counts.
 //
 // WebK directly calls Array.some on fragment_prefixes while rendering user profiles,
 // so this compatibility key must always remain an array, even when it is empty.
@@ -75,14 +90,17 @@ func starGiftResaleAppConfigFragment() string {
 	return `,"stars_stargift_resale_amount_min":` + strconv.FormatInt(domain.MinStarGiftResaleStars, 10)
 }
 
-const defaultAppConfigHash = 37 // 默认 app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+const defaultAppConfigHash = 37 // must be incremented when the default app config content changes, otherwise caching clients only receive notModified.
 
-// Service 提供客户端启动配置与国家区号目录。
+// Service provides the client startup config and the country dialing-code catalog.
 //
-// app config 与国家区号属「启动后基本不变」的参考目录:运行期无写入(UpsertAppConfig/
-// UpsertCountries 仅 seed/迁移用),故各加载一次缓存进内存,之后所有 RPC 走内存、不再查库
-// (登录页/启动配置是高频握手路径)。运维改库需重启生效。timezones/emoji 等其余目录走
-// internal/seed/catalog(go:embed 一次解析),本就在内存。
+// The app config and country codes are reference catalogs that are "basically unchanged
+// after startup": there are no runtime writes (UpsertAppConfig/UpsertCountries are used only
+// for seed/migration), so each is loaded and cached in memory once, and every subsequent RPC
+// stays in memory without hitting the DB (the login page/startup config is a high-frequency
+// handshake path). Operators changing the DB must restart for it to take effect. Other
+// catalogs such as timezones/emoji go through internal/seed/catalog (parsed once via
+// go:embed) and are already in memory.
 type Service struct {
 	appConfigs              store.AppConfigStore
 	countries               store.CountryStore
@@ -98,7 +116,7 @@ type Service struct {
 	countriesCache domain.CountriesList
 }
 
-// Option 配置 help 服务运行期默认目录。
+// Option configures the help service's runtime default catalogs.
 type Option func(*Service)
 
 // AccountFreezeProvider supplies account-specific read-only state without
@@ -113,7 +131,7 @@ func WithAccountFreezeProvider(provider AccountFreezeProvider) Option {
 	}
 }
 
-// WithMapboxToken 设置 TDesktop appConfig 与地图缩略图代理共用的 Mapbox token。
+// WithMapboxToken sets the Mapbox token shared by the TDesktop appConfig and the map thumbnail proxy.
 func WithMapboxToken(token string) Option {
 	return func(s *Service) {
 		s.mapboxToken = token
@@ -144,7 +162,7 @@ func WithInternalWalletTransfers(enabled bool) Option {
 	return func(s *Service) { s.walletInternalTransfers = enabled }
 }
 
-// NewService 创建 help 服务。
+// NewService creates the help service.
 func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, opts ...Option) *Service {
 	s := &Service{
 		appConfigs: appConfigs,
@@ -298,9 +316,12 @@ func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 			return
 		}
 		cfg, found, err := s.appConfigs.GetAppConfig(ctx, tdesktopClient)
-		// DB 行允许运维覆盖，但 hash 落后于代码默认值时视为陈旧（历史 seed 残留），
-		// 以默认值为准——否则新增配置 key 永远被旧行遮蔽（曾导致 emojies_send_dice 未下发）。
-		// 读失败也回退默认值(默认值恒有效),不让一次瞬时 DB 抖动污染整个进程生命周期的缓存。
+		// The DB row may be overridden by operators, but a hash behind the code default is
+		// treated as stale (leftover from an old seed) and the default wins — otherwise newly
+		// added config keys are forever shadowed by the old row (this once caused
+		// emojies_send_dice not to be sent). A read failure also falls back to the default
+		// (the default is always valid), so a single transient DB blip never poisons the cache
+		// for the whole process lifetime.
 		if err != nil || !found || cfg.Hash < defaultAppConfigHash {
 			cfg = defaultCfg
 		}
@@ -309,7 +330,7 @@ func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 	return s.appConfigCache
 }
 
-// GetCountries 返回国家区号目录，hash 命中时返回 notModified。首次调用加载一次后缓存。
+// GetCountries returns the country dialing-code catalog, or notModified on a hash hit. It is loaded once and cached on first call.
 func (s *Service) GetCountries(ctx context.Context, langCode string, hash int) (domain.CountriesList, bool, error) {
 	list := s.loadCountries(ctx)
 	return list, hash != 0 && hash == list.Hash, nil
@@ -329,8 +350,10 @@ func (s *Service) loadCountries(ctx context.Context) domain.CountriesList {
 	return s.countriesCache
 }
 
-// defaultCountries 返回内置国家区号目录:优先用 catalog 固化的官方全量(~235 国),
-// 未 seed 时回退最小集(US/CN)。countries 表通常为空,故这就是生产实际下发的目录。
+// defaultCountries returns the built-in country dialing-code catalog: it prefers the
+// official full set (~235 countries) baked into catalog, falling back to a minimal set
+// (US/CN) when unseeded. The countries table is usually empty, so this is the catalog
+// actually served in production.
 func defaultCountries() domain.CountriesList {
 	if c := catalog.Countries(); len(c.Countries) > 0 {
 		return c

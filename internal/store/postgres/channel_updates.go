@@ -184,7 +184,8 @@ func (s *ChannelStore) listChannelDifferenceAttempt(ctx context.Context, req dom
 	if err := populateChannelDifferenceUnreadFlags(ctx, s.db, req.UserID, diff.NewMessages, base); err != nil {
 		return domain.ChannelDifference{}, false, err
 	}
-	// OtherUpdates 里带消息的事件未读/提及标记一次批量回填（原来逐事件一条 SQL 的 N+1）。
+	// Batch-fill the unread/mention flags for message-bearing events in OtherUpdates in one go
+	// (previously an N+1 of one SQL per event).
 	otherMsgs := make([]domain.ChannelMessage, 0, len(diff.OtherUpdates))
 	otherIdx := make([]int, 0, len(diff.OtherUpdates))
 	for i := range diff.OtherUpdates {

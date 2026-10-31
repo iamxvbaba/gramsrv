@@ -1,5 +1,5 @@
--- messages.getRecentLocations 复用共享媒体 seek index，避免在 peer 历史上扫描 JSONB。
--- category=10 是服务端内部 geo_live 类别，不暴露给普通 messages.search filter。
+-- messages.getRecentLocations reuses the shared media seek index, avoiding a JSONB scan over peer history.
+-- category=10 is the server-internal geo_live category, not exposed to ordinary messages.search filters.
 INSERT INTO message_box_media (owner_user_id, box_id, peer_id, category, message_date)
 SELECT owner_user_id, box_id, peer_id, 10, message_date
 FROM message_boxes

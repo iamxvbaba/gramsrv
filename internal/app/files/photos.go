@@ -21,13 +21,14 @@ import (
 
 	"go.uber.org/zap"
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp" // 注册 webp Decode，用于 custom emoji / sticker 静态缩略图合成
+	_ "golang.org/x/image/webp" // registers the webp Decode, used for composing custom emoji / sticker static thumbnails
 )
 
-// 头像使用真实的 's'(≤150)/'a'(≤160)/'c'(原图) rendition；图片消息使用
-// 'm' 缩略与 'x' 大图。每个头像 location_key 的元数据尺寸必须与实际 blob 一致。
+// Avatars use the real 's'(<=150)/'a'(<=160)/'c'(original) renditions; photo messages use
+// the 'm' thumbnail and the 'x' large image. The metadata size of every avatar location_key must
+// match the actual blob.
 
-// UploadProfilePhoto 把已上传文件组装成头像 Photo，落 blob/photos/profile_photos，并设为当前头像。
+// UploadProfilePhoto assembles the uploaded file into an avatar Photo, writes it to blob/photos/profile_photos, and makes it the current avatar.
 func (s *Service) UploadProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID int64, file domain.UploadedFileRef, date int) (domain.Photo, error) {
 	return s.UploadProfilePhotoKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, file, date)
 }
@@ -47,7 +48,7 @@ func (s *Service) UploadProfilePhotoKind(ctx context.Context, ownerType domain.P
 	return photo, nil
 }
 
-// CreatePhotoFromUpload 把已上传文件组装成 Photo（不绑定 profile_photos），用于频道头像 / 图片消息。
+// CreatePhotoFromUpload assembles the uploaded file into a Photo (without binding to profile_photos), used for channel avatars / photo messages.
 func (s *Service) CreatePhotoFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error) {
 	intentHash, err := uploadedMediaIntentHash(domain.UploadedMediaPhoto, file, nil)
 	if err != nil {
@@ -93,7 +94,7 @@ func (s *Service) CreatePhotoFromBytes(ctx context.Context, data []byte) (domain
 	return s.createPhoto(ctx, data, photoSizeSpecsForMessage(data))
 }
 
-// GetPhoto 按 id 返回已存储照片。
+// GetPhoto returns the stored photo by id.
 func (s *Service) GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error) {
 	return s.media.GetPhoto(ctx, id)
 }
@@ -133,7 +134,7 @@ func (s *Service) GetPhotos(ctx context.Context, ids []int64) ([]domain.Photo, e
 	return out, nil
 }
 
-// GetDocument 按 id 返回已存储文档（贴纸 / 文件）。
+// GetDocument returns the stored document by id (sticker / file).
 func (s *Service) GetDocument(ctx context.Context, id int64) (domain.Document, bool, error) {
 	return s.media.GetDocument(ctx, id)
 }
@@ -172,8 +173,9 @@ func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, v
 	return s.createAvatarVideoFromUpload(ctx, ref, videoStartTs, nil)
 }
 
-// CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'s'/'a'/'c' 尺寸，'a'/'c' 匹配
-// InputPeerPhotoFileLocation big/small 与 channelFull 下载路径），不绑定 profile_photos。用于频道 editPhoto。
+// CreateAvatarFromUpload assembles the uploaded file into an avatar Photo ('s'/'a'/'c' sizes, with
+// 'a'/'c' matching the InputPeerPhotoFileLocation big/small and channelFull download paths), without
+// binding to profile_photos. Used for channel editPhoto.
 func (s *Service) CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error) {
 	data, err := s.assembleUpload(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
@@ -296,7 +298,7 @@ func validateAvatarMarkupSize(size domain.PhotoSize) error {
 	return nil
 }
 
-// CreateDocumentFromUpload 把已上传文件组装成 Document（文件/视频/音频/gif/贴纸消息），落 blob + documents。
+// CreateDocumentFromUpload assembles the uploaded file into a Document (file/video/audio/gif/sticker message), writing blob + documents.
 func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error) {
 	intentHash, err := uploadedMediaIntentHash(domain.UploadedMediaDocument, file, &spec)
 	if err != nil {
@@ -316,9 +318,10 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	if err != nil {
 		return domain.Document{}, err
 	}
-	// faststart：MP4 视频若 moov 在末尾，搬到文件头以支持流式播放。普通 Telegram 客户端
-	// 上传前会做这步；DrKLO 发 story 视频不转码导致 moov 在末尾，TDesktop 流式播放路径
-	// 无法解复用（av_read_frame Invalid data）。不转码、保留原编码（含 HEVC）。
+	// faststart: if an MP4 video has moov at the end, move it to the file head to support streaming
+	// playback. Ordinary Telegram clients do this before upload; DrKLO sends story videos without
+	// transcoding, leaving moov at the end, and TDesktop's streaming path cannot demux them
+	// (av_read_frame Invalid data). No transcoding; the original encoding (including HEVC) is preserved.
 	body = s.maybeFaststartVideoBlob(ctx, spec.MimeType, body)
 	spec = s.markSilentMP4Animated(ctx, body, spec)
 	spec = s.normalizeUploadedTGS(ctx, body, spec)
@@ -431,14 +434,16 @@ func canonicalGIFVideoAttributes(attrs []domain.DocumentAttribute, video GIFVide
 	return out
 }
 
-// maxSilenceProbeMoovBytes 限制为判断音轨而读入内存的 moov 大小；更大的 moov 按客户端分类落库。
+// maxSilenceProbeMoovBytes caps the moov size read into memory to determine the audio track; a larger moov is stored according to the client's classification.
 const maxSilenceProbeMoovBytes = 8 << 20
 
-// markSilentMP4Animated 让未声明 nosound_video 的无声 MP4 视频按 GIF（animated）落库，与官方
-// server 一致：TDesktop 只在要把无声视频保留为普通视频时设置 nosound_video（api_media.cpp
-// PrepareUploadedDocument: silent = !animated && (groupId || isSilentVideo())），反推出未设该标志
-// 的无声 MP4 会被 server 当作 GIF；TDLib 发送 MP4 动画只带 video 属性、不带 animated
-// （AnimationsManager::get_input_media），依赖这条规则才能被对端识别为动画。
+// markSilentMP4Animated stores a silent MP4 video that does not declare nosound_video as a GIF
+// (animated), consistent with the official server: TDesktop sets nosound_video only when it wants to
+// keep a silent video as an ordinary video (api_media.cpp PrepareUploadedDocument:
+// silent = !animated && (groupId || isSilentVideo())), so a silent MP4 without that flag is inferred
+// to be treated as a GIF by the server; TDLib sends an MP4 animation with only the video attribute
+// and no animated (AnimationsManager::get_input_media), and relies on this rule to be recognized as an
+// animation by the peer.
 func (s *Service) markSilentMP4Animated(ctx context.Context, body assembledUploadBlob, spec domain.DocumentSpec) domain.DocumentSpec {
 	if !silentMP4Candidate(spec) || body.Size <= 0 {
 		return spec
@@ -462,8 +467,9 @@ func (s *Service) markSilentMP4Animated(ctx context.Context, body assembledUploa
 	return silentMP4AnimatedSpec(spec, moov)
 }
 
-// silentMP4Candidate 只接纳可能被转为 GIF 的上传：普通 video/mp4 视频，未要求按文件或按
-// 无声视频发送，也不是圆形视频、贴纸、音频或已带 animated 的文档。
+// silentMP4Candidate accepts only uploads that may be converted to GIF: an ordinary video/mp4 video,
+// not requested as a file or as a silent video, and not a round video, sticker, audio, or a document
+// that already carries animated.
 func silentMP4Candidate(spec domain.DocumentSpec) bool {
 	if spec.ForceFile || spec.NosoundVideo || !strings.EqualFold(strings.TrimSpace(spec.MimeType), "video/mp4") {
 		return false
@@ -483,7 +489,7 @@ func silentMP4Candidate(spec domain.DocumentSpec) bool {
 	return video
 }
 
-// silentMP4AnimatedSpec 在 moov 确认有视频轨且没有音频轨时，加上 animated 并把视频属性标为无声。
+// silentMP4AnimatedSpec, when moov confirms a video track and no audio track, adds animated and marks the video attribute as silent.
 func silentMP4AnimatedSpec(spec domain.DocumentSpec, moov []byte) domain.DocumentSpec {
 	if !silentMP4Candidate(spec) {
 		return spec
@@ -504,25 +510,29 @@ func silentMP4AnimatedSpec(spec domain.DocumentSpec, moov []byte) domain.Documen
 	return spec
 }
 
-// maxFaststartBytes 限制 faststart 一次性载入内存的视频大小；超过则跳过（流式 faststart
-// 复杂度高，超大视频是边角）。与缩略图回退路径同样全量读 blob，内存模式无新增。
+// maxFaststartBytes caps the video size that faststart loads into memory at once; larger videos are
+// skipped (streaming faststart is complex and huge videos are an edge case). Like the thumbnail
+// fallback path it reads the whole blob, so the memory profile is unchanged.
 const maxFaststartBytes = 200 << 20
 
-// faststartVideoMimes 是会用 moov/mdat 结构、值得尝试 faststart 的容器 mime。
-// 其它 video/*（webm 等）结构不同，faststartMP4 也会自检后 no-op，故不在此列以免白读 blob。
+// faststartVideoMimes is the set of container mimes that use the moov/mdat structure and are worth a
+// faststart attempt. Other video/* (webm, etc.) have a different structure and faststartMP4 would
+// self-check and no-op anyway, so they are excluded to avoid reading the blob needlessly.
 var faststartVideoMimes = map[string]bool{
 	"video/mp4":       true,
 	"video/quicktime": true,
 	"video/x-m4v":     true,
 }
 
-// maybeFaststartVideoBlob 对 MP4/MOV 视频上传尝试 faststart。性能考量：
-//  1. 先只读顶层 box 头（廉价探测）判断是否需要——绝大多数客户端上传的视频本就已 faststart，
-//     此时只发生几次 16 字节读，不读整段媒体。
-//  2. 仅 moov 在末尾时才重写；且优先走流式（仅 ftyp+moov 进内存，mdat 大块分块流式拼接），
-//     不把整段视频 2× 驻留内存。moov 非末尾的罕见排布回退到全量重排。
+// maybeFaststartVideoBlob attempts faststart for MP4/MOV video uploads. Performance considerations:
+//  1. First read only the top-level box headers (a cheap probe) to decide whether it is needed -- the
+//     vast majority of client-uploaded videos are already faststart, in which case only a few 16-byte
+//     reads happen and the full media is not read.
+//  2. Only rewrite when moov is at the end, and prefer the streaming path (only ftyp+moov go into
+//     memory, with mdat streamed in large chunks) so the whole video is not resident twice in memory.
+//     The rare layout with moov not last falls back to a full reassembly.
 //
-// 任何不适用/失败都返回原 body，绝不让上传失败或损坏数据。
+// Anything inapplicable/failing returns the original body, never failing the upload or corrupting data.
 func (s *Service) maybeFaststartVideoBlob(ctx context.Context, mimeType string, body assembledUploadBlob) assembledUploadBlob {
 	if !faststartVideoMimes[strings.ToLower(strings.TrimSpace(mimeType))] {
 		return body
@@ -536,12 +546,12 @@ func (s *Service) maybeFaststartVideoBlob(ctx context.Context, mimeType string, 
 	}
 	layout, ok := inspectMP4Layout(body.Size, readAt)
 	if !ok || !layout.needsFaststart {
-		return body // 非 MP4 / 已 faststart —— 未读整段媒体
+		return body // non-MP4 / already faststart -- the full media was not read
 	}
 
 	var reader io.Reader
 	if layout.moovIsLast {
-		// 流式重写：只把 ftyp + moov 读进内存并 patch 偏移，mdat 区段分块流式。
+		// Streaming rewrite: only ftyp + moov are read into memory and their offsets patched; the mdat region is streamed in chunks.
 		ftyp, e1 := readAt(layout.ftypStart, layout.ftypEnd-layout.ftypStart)
 		moov, e2 := readAt(layout.moovStart, layout.moovEnd-layout.moovStart)
 		moovSize := layout.moovEnd - layout.moovStart
@@ -554,7 +564,7 @@ func (s *Service) maybeFaststartVideoBlob(ctx context.Context, mimeType string, 
 		mid := &blobRangeReader{ctx: ctx, blobs: s.blobs, key: body.ObjectKey, pos: layout.ftypEnd, end: layout.moovStart}
 		reader = io.MultiReader(bytes.NewReader(ftyp), bytes.NewReader(moov), mid)
 	} else {
-		// 罕见：moov 非末尾。回退到全量读 + 重排（已测函数）。
+		// Rare: moov not last. Fall back to a full read + reassembly (the tested function).
 		data, total, err := s.blobs.GetRange(ctx, body.ObjectKey, 0, body.Size)
 		if err != nil || total != body.Size || int64(len(data)) != body.Size {
 			return body
@@ -573,7 +583,7 @@ func (s *Service) maybeFaststartVideoBlob(ctx context.Context, mimeType string, 
 		return body
 	}
 	if size != body.Size {
-		// faststart 守恒大小；不等说明流式拼接出错，丢弃新 blob 用原 blob 兜底。
+		// faststart conserves size; a mismatch means the streaming concatenation went wrong, so discard the new blob and fall back to the original.
 		s.log.Warn("faststart size mismatch; keeping original blob",
 			zap.Int64("orig", body.Size), zap.Int64("got", size))
 		return body
@@ -583,8 +593,9 @@ func (s *Service) maybeFaststartVideoBlob(ctx context.Context, mimeType string, 
 	return assembledUploadBlob{ObjectKey: key, Size: size, SHA256: sum}
 }
 
-// blobRangeReader 把 blob 的 [pos, end) 区段按 io.Reader 调用方给的缓冲大小分块流式读出，
-// 用于 faststart 流式拼接 mdat，避免整段媒体驻留内存。
+// blobRangeReader streams the blob's [pos, end) region in chunks sized by the buffer the io.Reader
+// caller provides, used for faststart's streaming concatenation of mdat to avoid keeping the whole
+// media in memory.
 type blobRangeReader struct {
 	ctx   context.Context
 	blobs BlobBackend
@@ -606,7 +617,7 @@ func (r *blobRangeReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	if len(data) == 0 {
-		return 0, io.ErrUnexpectedEOF // 区段内不应读到空，避免静默截断
+		return 0, io.ErrUnexpectedEOF // must not read empty within the region; avoid silent truncation
 	}
 	n := copy(p, data)
 	r.pos += int64(n)
@@ -677,7 +688,7 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 	return doc, nil
 }
 
-// SetCurrentProfilePhoto 把已存在的 photo 设为当前头像（updateProfilePhoto 选历史头像）。
+// SetCurrentProfilePhoto makes an existing photo the current avatar (updateProfilePhoto selects from the history).
 func (s *Service) SetCurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int) (domain.Photo, bool, error) {
 	return s.SetCurrentProfilePhotoKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, photoID, date)
 }
@@ -697,7 +708,7 @@ func (s *Service) SetCurrentProfilePhotoKind(ctx context.Context, ownerType doma
 	return photo, true, nil
 }
 
-// CurrentProfilePhoto 返回某 owner 的当前头像 Photo。
+// CurrentProfilePhoto returns an owner's current avatar Photo.
 func (s *Service) CurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID int64) (domain.Photo, bool, error) {
 	return s.CurrentProfilePhotoKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile)
 }
@@ -711,7 +722,7 @@ func (s *Service) CurrentProfilePhotoKind(ctx context.Context, ownerType domain.
 	return s.media.GetPhoto(ctx, id)
 }
 
-// GetProfilePhotos 返回 owner 的头像历史（最新在前）。
+// GetProfilePhotos returns an owner's avatar history (newest first).
 func (s *Service) GetProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerID int64, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
 	return s.GetProfilePhotosKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, offset, limit, maxID)
 }
@@ -721,7 +732,7 @@ func (s *Service) GetProfilePhotosKind(ctx context.Context, ownerType domain.Pee
 	return s.media.ListProfilePhotoDetailsKind(ctx, ownerType, ownerID, kind, offset, limit, maxID)
 }
 
-// DeleteProfilePhotos 停用指定头像，返回成功停用数量。
+// DeleteProfilePhotos disables the given avatars and returns how many were successfully disabled.
 func (s *Service) DeleteProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerID int64, photoIDs []int64) (int, error) {
 	return s.DeleteProfilePhotosKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, photoIDs)
 }
@@ -735,7 +746,7 @@ func (s *Service) DeleteProfilePhotosKind(ctx context.Context, ownerType domain.
 	return len(deleted), nil
 }
 
-// createPhoto 把字节落 blob（每个尺寸一个 location_key，指向同一内容）并写 photos 表。
+// createPhoto writes the bytes to blob (one location_key per size, all pointing to the same content) and writes the photos table.
 func (s *Service) createPhoto(ctx context.Context, data []byte, specs []photoSizeSpec) (domain.Photo, error) {
 	photoID := randomID()
 	sizes, err := s.putPhotoStaticSizes(ctx, photoID, data, specs)
@@ -988,7 +999,7 @@ func photoSizeSpecsForAvatar(data []byte) []photoSizeSpec {
 	}
 }
 
-// photoSizeSpecsForMessage 给图片消息生成下载尺寸（'m' 缩略 + 'x'/'y' 大图）。
+// photoSizeSpecsForMessage generates the download sizes for a photo message ('m' thumbnail + 'x'/'y' large image).
 func photoSizeSpecsForMessage(data []byte) []photoSizeSpec {
 	w, h := imageDimensions(data, 1280, 1280)
 	thumbW, thumbH := scaleDown(w, h, 320)
@@ -1019,12 +1030,14 @@ func scaleDown(w, h, max int) (int, int) {
 const (
 	avatarStillSize            = 640
 	avatarMarkupScale          = 0.70
-	avatarMarkupMaxSourceBytes = 2 << 20 // emoji/sticker thumb 小对象保护线。
+	avatarMarkupMaxSourceBytes = 2 << 20 // guard threshold for small emoji/sticker thumb objects.
 )
 
-// avatarVideoStill 生成动画头像的静态尺寸字节。emoji/sticker markup 能解析到
-// 服务端缩略图时优先合成：DrKLO 生成的 MP4 第一帧可能只有背景渐变，直接抽第一帧
-// 会让静态头像永久缺少 emoji。普通视频或 markup 资源不可用时才回退 ffmpeg 首帧。
+// avatarVideoStill generates the static size bytes for an animated avatar. When the emoji/sticker
+// markup resolves to a server thumbnail it is composed preferentially: the first frame of a DrKLO-
+// generated MP4 may contain only a background gradient, and extracting it directly would permanently
+// strip the emoji from the static avatar. It falls back to the ffmpeg first frame only for ordinary
+// videos or when markup resources are unavailable.
 func (s *Service) avatarVideoStill(ctx context.Context, body assembledUploadBlob, extraSizes []domain.PhotoSize) []byte {
 	markup := avatarStillMarkup(extraSizes)
 	if still, ok := s.generatedAvatarMarkupStill(ctx, markup); ok {
@@ -1098,9 +1111,11 @@ func encodeAvatarPNG(img image.Image) []byte {
 	return buf.Bytes()
 }
 
-// avatarMarkupOverlay 加载 markup 引用文档的静态缩略图作为合成贴图。第二个返回值
-// 表示是否染白：仅 text_color 的 custom emoji（单色、由客户端按文字色适配渲染，
-// 头像背景上的约定呈现是白色剪影）需要染白，普通彩色 emoji / sticker 保留原色。
+// avatarMarkupOverlay loads the static thumbnail of the document referenced by the markup as the
+// composition overlay. The second return value reports whether it must be tinted white: only a
+// text_color custom emoji (monochrome, rendered by the client adapted to the text color, whose agreed
+// presentation on an avatar background is a white silhouette) needs tinting, while an ordinary colored
+// emoji / sticker keeps its original color.
 func (s *Service) avatarMarkupOverlay(ctx context.Context, markup domain.PhotoSize) (image.Image, bool, bool) {
 	if s == nil || s.media == nil {
 		return nil, false, false
@@ -1137,15 +1152,16 @@ func (s *Service) avatarMarkupOverlay(ctx context.Context, markup domain.PhotoSi
 			zap.Error(err))
 		return nil, false, false
 	}
-	// Seed 的 1x1 透明图只是“没有可用静态资源”的显式占位，不是可合成
-	// 内容。把它视为 unavailable，交给调用方回退到 ffmpeg 视频首帧。
+	// The Seed 1x1 transparent image is only an explicit placeholder meaning "no usable static
+	// resource", not composable content. Treat it as unavailable and let the caller fall back to the
+	// ffmpeg first video frame.
 	if img.Bounds().Dx() <= 1 || img.Bounds().Dy() <= 1 {
 		return nil, false, false
 	}
 	return img, documentIsTextColorEmoji(doc), true
 }
 
-// documentIsTextColorEmoji 判断文档是否为声明 text_color 的 custom emoji。
+// documentIsTextColorEmoji reports whether the document is a custom emoji that declares text_color.
 func documentIsTextColorEmoji(doc domain.Document) bool {
 	for _, attr := range doc.Attributes {
 		if attr.Kind == domain.DocAttrCustomEmoji {
@@ -1230,8 +1246,9 @@ func avatarThumbScore(size domain.PhotoSize) int {
 	return len(size.Bytes)
 }
 
-// drawAvatarMarkup 把贴图缩放后居中画到背景上。默认保留贴图原色（彩色 emoji /
-// sticker 头像），仅 tintWhite 时染成白色剪影。
+// drawAvatarMarkup scales the overlay and draws it centered on the background. By default it keeps the
+// overlay's original color (colored emoji / sticker avatars) and only tints it to a white silhouette
+// when tintWhite is set.
 func drawAvatarMarkup(dst *image.RGBA, src image.Image, tintWhite bool) {
 	srcBounds := src.Bounds()
 	sw, sh := srcBounds.Dx(), srcBounds.Dy()
@@ -1259,9 +1276,10 @@ func drawAvatarMarkup(dst *image.RGBA, src image.Image, tintWhite bool) {
 	stddraw.Draw(dst, rect, scaled, image.Point{}, stddraw.Over)
 }
 
-// tintWhitePremultiplied 把贴图就地染成白色剪影（保留 alpha 形状）。image.RGBA 是
-// alpha 预乘存储，分量必须满足 R,G,B ≤ A：若写入 R=G=B=255 而 A<255 的非法值，
-// draw.Over 合成会算术溢出回绕，凡 alpha 不恰为 255 的像素整片输出近黑色。
+// tintWhitePremultiplied tints the overlay in place to a white silhouette (preserving the alpha
+// shape). image.RGBA stores premultiplied alpha, so the components must satisfy R,G,B <= A: writing
+// the invalid value R=G=B=255 with A<255 makes the draw.Over composition wrap around on arithmetic
+// overflow, turning every pixel whose alpha is not exactly 255 nearly black.
 func tintWhitePremultiplied(img *image.RGBA) {
 	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
 		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {

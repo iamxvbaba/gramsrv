@@ -37,7 +37,7 @@ import (
 
 const passkeyTestOrigin = "android:apk-key-hash:e2e-test"
 
-// publicKeyOptions 提取 DataJSON(顶层 publicKey)里的 challenge / rpId / user.id。
+// publicKeyOptions extracts challenge / rpId / user.id from DataJSON (top-level publicKey).
 type publicKeyOptions struct {
 	PublicKey struct {
 		Challenge string `json:"challenge"`
@@ -71,9 +71,11 @@ func decodeB64URL(t *testing.T, s string) []byte {
 	return b
 }
 
-// TestPasskeyEndToEnd 端到端验证 passkey:设备 A(已登录)注册 passkey,设备 B(全新
-// auth key)经 initPasskeyLogin/finishPasskeyLogin 用软件 authenticator 的断言登录;再
-// getPasskeys/deletePasskey 往返。整条链路验签真实(软件 authenticator 用真私钥签名)。
+// TestPasskeyEndToEnd verifies passkey end to end: device A (logged in) registers
+// a passkey, device B (a brand-new auth key) logs in via
+// initPasskeyLogin/finishPasskeyLogin using a software authenticator assertion,
+// then getPasskeys/deletePasskey round-trips. The whole chain verifies a real
+// signature (the software authenticator signs with a real private key).
 func TestPasskeyEndToEnd(t *testing.T) {
 	const (
 		dc        = 2
@@ -142,7 +144,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 	}
 	var userHandle string
 
-	// 设备 A:注册 + 注册 passkey + getPasskeys。
+	// Device A: register + register passkey + getPasskeys.
 	deviceA := newClient()
 	if err := deviceA.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(deviceA)
@@ -158,7 +160,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 			return err
 		}
 
-		// 1) 注册选项 → 软件 authenticator 造 attestation。
+		// 1) Registration options → the software authenticator creates an attestation.
 		regOpts, err := raw.AccountInitPasskeyRegistration(ctx)
 		if err != nil {
 			return err
@@ -190,7 +192,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 			return fmt.Errorf("registered passkey id = %q, want %q", pk.ID, credB64)
 		}
 
-		// 2) getPasskeys 应含该 passkey。
+		// 2) getPasskeys should contain this passkey.
 		list, err := raw.AccountGetPasskeys(ctx)
 		if err != nil {
 			return err
@@ -203,7 +205,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 		t.Fatalf("device A: %v", err)
 	}
 
-	// 设备 B:全新 auth key,用 passkey 登录。
+	// Device B: a brand-new auth key, logging in with the passkey.
 	deviceB := newClient()
 	if err := deviceB.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(deviceB)
@@ -245,7 +247,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 			return fmt.Errorf("passkey login user = %+v, want self phone=%s", authz.User, wantPhone)
 		}
 
-		// 第二次断言(计数器递增)仍应通过。
+		// The second assertion (with an incremented counter) should still pass.
 		loginOpts2, err := raw.AuthInitPasskeyLogin(ctx, &tg.AuthInitPasskeyLoginRequest{APIID: 1, APIHash: "hash"})
 		if err != nil {
 			return err
@@ -270,7 +272,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 		t.Fatalf("device B: %v", err)
 	}
 
-	// 设备 A 再次连接:删除 passkey → getPasskeys 空。
+	// Device A connects again: delete the passkey → getPasskeys is empty.
 	deviceC := newClient()
 	if err := deviceC.Run(ctx, func(ctx context.Context) error {
 		raw := tg.NewClient(deviceC)

@@ -19,10 +19,10 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// 上传分片上限：与 Telegram 客户端约定一致（单片 ≤512KB；分片总数有上限防止 OOM）。
+// Upload part limits: consistent with the Telegram client convention (each part ≤512KB; a cap on the total part count prevents OOM).
 const (
 	MaxUploadPartBytes = 524288 // 512KB
-	MaxUploadParts     = 8000   // 512KB * 8000 ≈ 4GB 理论上限，足够主路径媒体
+	MaxUploadParts     = 8000   // 512KB * 8000 ≈ a theoretical 4GB limit, enough for main-path media
 )
 
 const (
@@ -34,19 +34,20 @@ const (
 	DefaultUploadInFlightMaxFiles = 64
 )
 
-// blobMetaCacheCapacity 是 location_key→FileBlob 元数据 LRU 容量（每项约百字节，约 13MB）。
+// blobMetaCacheCapacity is the LRU capacity for location_key→FileBlob metadata (about a hundred bytes each, roughly 13MB).
 const blobMetaCacheCapacity = 1 << 16
 
-// 小文件热缓存只覆盖 sticker/reaction/thumbnail 一类不可变小 blob；大媒体继续分段读。
+// The small-file hot cache covers only immutable small blobs like stickers/reactions/thumbnails; large media is still read in ranges.
 const (
 	blobBytesCacheMaxEntryBytes = 256 << 10 // 256KB
 	blobBytesCacheMaxBytes      = 64 << 20  // 64MB
-	// stickerSetNegativeCacheTTL 是未找到贴纸集的负缓存有效期：未 seed 的 short_name 会被客户端
-	// 反复 getStickerSet，这里短时缓存 not-found 短路掉 PG。短 TTL 保证运行时新增集合最多滞后这么久。
+	// stickerSetNegativeCacheTTL is the validity of the negative cache for sticker sets not found: a
+	// client repeatedly calls getStickerSet for an unseeded short_name, so the not-found result is
+	// cached briefly and short-circuits PG. The short TTL means a set added at runtime lags by at most this long.
 	stickerSetNegativeCacheTTL = 30 * time.Second
 )
 
-// Service 实现 upload 分片累积、blob 落盘、getFile 下载，并把上传文件组装成 Photo / Document。
+// Service implements upload part accumulation, blob persistence, getFile download, and assembling uploaded files into Photo / Document.
 type Service struct {
 	media       store.MediaStore
 	gifCatalog  store.GifCatalogStore
@@ -60,8 +61,9 @@ type Service struct {
 	gifsSet     bool
 	blobCache   *blobMetaCache
 	byteCache   *blobBytesCache
-	// blobMetaSF/blobBytesSF 合并对同一热 blob 的并发首次访问：否则每个并发 getFile 都各打
-	// 一发 PG GetFileBlob + backend GetRange(热门贴纸/reaction/头像被大量用户同时拉时尤甚)。
+	// blobMetaSF/blobBytesSF merge concurrent first access to the same hot blob: otherwise every
+	// concurrent getFile hits its own PG GetFileBlob + backend GetRange (especially when popular
+	// stickers/reactions/avatars are pulled by many users at once).
 	blobMetaSF         singleflight.Group
 	blobBytesSF        singleflight.Group
 	blobRangeSF        singleflight.Group
@@ -71,9 +73,10 @@ type Service struct {
 	mapTiles           *mapTileProxy
 	externalMedia      *externalMediaFetcher
 	webpage            *webpageFetcher
-	// effects 是消息发送特效目录(messages.getAvailableEffects)。全局静态,启动 seedEffects
-	// 一次写入后只读,故无锁——与各 read-model 缓存一样在服务就绪前完成填充。
-	// effectsHash 在 seed 时算一次,handler 直接比对返回 NotModified,无需每次 RPC 重算。
+	// effects is the message effect catalog (messages.getAvailableEffects). Globally static, written
+	// once by seedEffects at startup and then read-only, hence lock-free — like the read-model caches it
+	// is fully populated before the service is ready. effectsHash is computed once at seed time and the
+	// handler compares it directly to return NotModified, with no need to recompute per RPC.
 	effects     []domain.AvailableEffect
 	effectsHash int
 
@@ -85,10 +88,10 @@ type Service struct {
 	premiumPromoReady bool
 }
 
-// Option 配置 files 服务的可选能力。
+// Option configures the optional capabilities of the files service.
 type Option func(*Service)
 
-// WithLogger 注入日志器。未注入时使用 no-op logger。
+// WithLogger injects the logger. A no-op logger is used when not injected.
 func WithLogger(log *zap.Logger) Option {
 	return func(s *Service) {
 		if log != nil {
@@ -97,7 +100,7 @@ func WithLogger(log *zap.Logger) Option {
 	}
 }
 
-// WithVideoThumbnailer 覆盖视频缩略图生成器。传 nil 可显式关闭服务端抽帧 fallback。
+// WithVideoThumbnailer overrides the video thumbnail generator. Passing nil explicitly disables the server-side frame extraction fallback.
 func WithVideoThumbnailer(thumbnailer VideoThumbnailer) Option {
 	return func(s *Service) {
 		s.thumbs = thumbnailer
@@ -105,7 +108,7 @@ func WithVideoThumbnailer(thumbnailer VideoThumbnailer) Option {
 	}
 }
 
-// WithGIFTranscoder 覆盖真实 GIF→MP4 规范化器。传 nil 可用于测试不可用路径。
+// WithGIFTranscoder overrides the real GIF→MP4 normalizer. Passing nil can be used to test the unavailable path.
 func WithGIFTranscoder(transcoder GIFTranscoder) Option {
 	return func(s *Service) {
 		s.gifs = transcoder
@@ -119,7 +122,7 @@ func WithGifCatalog(catalog store.GifCatalogStore) Option {
 	return func(s *Service) { s.gifCatalog = catalog }
 }
 
-// WithUploadPartQuota 覆盖用户级 in-flight 上传分片配额；字段 <=0 表示该维度不限制。
+// WithUploadPartQuota overrides the per-user in-flight upload part quota; a field <=0 means that dimension is unlimited.
 func WithUploadPartQuota(quota domain.UploadPartQuota) Option {
 	return func(s *Service) {
 		s.uploadQuota = quota
@@ -135,7 +138,7 @@ func WithUploadPartBackend(backend UploadPartBackend) Option {
 	}
 }
 
-// NewService 创建 files 服务。dc 是本 server 的 DC id，写入新建 document/photo 的 dc_id。
+// NewService creates the files service. dc is this server's DC id, written as the dc_id of new documents/photos.
 func NewService(media store.MediaStore, blobs BlobBackend, dc int, opts ...Option) *Service {
 	s := &Service{
 		media:              media,
@@ -161,7 +164,7 @@ func NewService(media store.MediaStore, blobs BlobBackend, dc int, opts ...Optio
 		}
 	}
 	if s.mapTiles != nil {
-		// 选项应用顺序无关：logger 在全部 Option 跑完后统一注入。
+		// Option application order does not matter: the logger is injected uniformly after all Options run.
 		s.mapTiles.log = s.log
 	}
 	if !s.thumbsSet {
@@ -236,7 +239,7 @@ func (s *Service) SeedTx(ctx context.Context, fn func(ctx context.Context, tx bo
 	})
 }
 
-// SaveFilePart 累积一个 small file 分片。
+// SaveFilePart accumulates a small file part.
 func (s *Service) SaveFilePart(ctx context.Context, ownerUserID, fileID int64, part int, bytes []byte) (bool, error) {
 	if err := validatePart(part, len(bytes)); err != nil {
 		return false, err
@@ -340,7 +343,7 @@ func (s *Service) checkUploadPartQuota(ctx context.Context, part domain.UploadPa
 	return slot, nil
 }
 
-// DeleteExpiredUploadParts 清理超过保留期仍未组装的 transient 上传分片。
+// DeleteExpiredUploadParts cleans up transient upload parts not yet assembled after the retention period.
 func (s *Service) DeleteExpiredUploadParts(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
@@ -363,9 +366,10 @@ func (s *Service) DeleteExpiredUploadParts(ctx context.Context, before time.Time
 	return int64(len(keys)) + orphanDeleted, nil
 }
 
-// GetFile 按 location_key 取一段 blob 内容。found=false 表示该 location 无对应 blob。
-// 元数据走进程内 LRU（消除每 chunk 一次 PG 查）；小 blob 全量字节进 LRU，供 sticker /
-// reaction / thumbnail 热路径直接内存切片；大 blob 仍按 offset/limit 段读。
+// GetFile takes a range of blob content by location_key. found=false means no blob corresponds to
+// that location. Metadata goes through an in-process LRU (eliminating a PG lookup per chunk); small
+// blobs' full bytes enter the LRU so the sticker/reaction/thumbnail hot paths can slice directly from
+// memory; large blobs are still read by offset/limit range.
 type blobMetaResult struct {
 	blob        domain.FileBlob
 	found       bool
@@ -407,7 +411,7 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 	if ok {
 		cacheLog.metaCacheHit = true
 	} else {
-		// 同一 location_key 的并发首访合并成一次 PG GetFileBlob。
+		// Concurrent first access to the same location_key is merged into one PG GetFileBlob.
 		v, err, shared := s.blobMetaSF.Do(req.LocationKey, func() (any, error) {
 			if cached, ok := s.blobCache.get(req.LocationKey); ok {
 				return blobMetaResult{blob: cached, found: true, cacheHit: true}, nil
@@ -447,7 +451,7 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 			cacheLog.source = "byte_cache"
 			return immutableFileChunk(blob, viewBlobBytes(data, req.Offset, int64(req.Limit)), int64(len(data)), req.Offset), true, nil
 		}
-		// 同一 object_key 的小 blob 并发首访合并成一次 backend 全量读 + 一次 byteCache 填充。
+		// Concurrent first access to the same object_key's small blob is merged into one full backend read + one byteCache fill.
 		v, err, shared := s.blobBytesSF.Do(blob.ObjectKey, func() (any, error) {
 			if cached, ok := s.byteCache.get(blob.ObjectKey); ok {
 				return blobBytesResult{data: cached, total: int64(len(cached)), cacheable: true, cacheHit: true}, nil
@@ -466,7 +470,7 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 		if err != nil {
 			return domain.FileChunk{}, false, fmt.Errorf("read blob %q: %w", blob.LocationKey, err)
 		}
-		// byte cache entry 在发布后 immutable；caller 只借用请求 range 的只读 view。
+		// A byte cache entry is immutable after publication; the caller only borrows a read-only view of the requested range.
 		if res := v.(blobBytesResult); res.cacheable {
 			cacheLog.byteCacheHit = res.cacheHit
 			cacheLog.byteCacheFilled = res.cacheFilled
@@ -478,7 +482,7 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 			}
 			return immutableFileChunk(blob, viewBlobBytes(res.data, req.Offset, int64(req.Limit)), res.total, req.Offset), true, nil
 		}
-		// 大小不符/超限：落到下面的按需 range 读(与原行为一致)。
+		// Size mismatch/over limit: fall through to the on-demand range read below (same as the original behavior).
 		cacheLog.source = "backend_range_uncacheable"
 	}
 	cacheLog.backendRead = true
@@ -607,19 +611,19 @@ func viewBlobBytes(data []byte, offset, limit int64) []byte {
 	return data[offset:end:end]
 }
 
-// ---- 资源读取（reaction / sticker / document）----
+// ---- Resource reads (reaction / sticker / document) ----
 
-// ListAvailableReactions 返回可用 reaction 目录（带真实文档 id）。
+// ListAvailableReactions returns the available reaction catalog (with real document ids).
 func (s *Service) ListAvailableReactions(ctx context.Context) ([]domain.AvailableReaction, error) {
 	return s.media.ListAvailableReactions(ctx)
 }
 
-// GetDocuments 按 id 批量加载文档（自定义 emoji / 贴纸）。
+// GetDocuments batch-loads documents by id (custom emoji / stickers).
 func (s *Service) GetDocuments(ctx context.Context, ids []int64) ([]domain.Document, error) {
 	return s.media.GetDocuments(ctx, ids)
 }
 
-// ListStickerSets 列出某类贴纸集（用于 getAllStickers 等）。
+// ListStickerSets lists sticker sets of a kind (used by getAllStickers etc.).
 func (s *Service) ListStickerSets(ctx context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error) {
 	return s.media.ListStickerSets(ctx, kind)
 }
@@ -631,7 +635,7 @@ func (s *Service) ListStickerSets(ctx context.Context, kind domain.StickerSetKin
 // read racing a write, it is only left out of the cache.
 const stickerSetPublishAttempts = 3
 
-// ResolveStickerSet 按 ref 解析贴纸集，并按 DocumentIDs 顺序加载其文档。
+// ResolveStickerSet resolves a sticker set by ref and loads its documents in DocumentIDs order.
 func (s *Service) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -641,8 +645,9 @@ func (s *Service) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRe
 		if set, docs, ok := s.stickerSetCache.get(ref); ok {
 			return set, docs, true, nil
 		}
-		// 负缓存：已 seed 集由 WarmCaches 填充正缓存，能走到这里的 miss 多是「未 seed 的 short_name」
-		// 被客户端反复请求。TTL 内直接当 not-found 短路，避免每次都打 PG GetStickerSetByShortName。
+		// Negative cache: seeded sets are filled into the positive cache by WarmCaches, so a miss
+		// reaching here is mostly an "unseeded short_name" repeatedly requested by the client. Within
+		// the TTL it is treated as not-found and short-circuited, avoiding a PG GetStickerSetByShortName each time.
 		if s.stickerSetNegCache != nil && s.stickerSetNegCache.has(ref) {
 			return domain.StickerSet{}, nil, false, nil
 		}
@@ -675,11 +680,11 @@ func (s *Service) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRe
 		if s.stickerSetCache.putIfEpoch(set, ordered, epoch) || attempt >= stickerSetPublishAttempts {
 			return set, ordered, true, nil
 		}
-		// 与预热相同，旧查询不得覆盖并发修改；重试时优先使用写路径刚发布的缓存。
+		// As with warm-up, an old query must not overwrite a concurrent modification; on retry, prefer the cache just published by the write path.
 	}
 }
 
-// orderDocuments 把无序的文档按 ids 顺序重排（GetDocuments 用 ANY 查询不保证顺序）。
+// orderDocuments rearranges unordered documents into ids order (a GetDocuments ANY query does not guarantee order).
 func orderDocuments(docs []domain.Document, ids []int64) []domain.Document {
 	byID := make(map[int64]domain.Document, len(docs))
 	for _, d := range docs {
@@ -694,7 +699,7 @@ func orderDocuments(docs []domain.Document, ids []int64) []domain.Document {
 	return out
 }
 
-// assembleUpload 把已上传分片按 part 顺序拼成完整字节，并清理分片。
+// assembleUpload assembles uploaded parts into complete bytes in part order and cleans up the parts.
 // The final positive part count must match all contiguous stored parts.
 func (s *Service) assembleUpload(ctx context.Context, ownerUserID, fileID int64, expectedParts int) ([]byte, error) {
 	buf, err := s.readUploadBytes(ctx, ownerUserID, fileID, expectedParts)
@@ -738,8 +743,9 @@ type assembledUploadBlob struct {
 	SHA256    []byte
 }
 
-// assembleUploadBlob 把上传分片流式写入正式 blob。调用方应在 durable media 元数据
-// 成功提交后调用 cleanupUploadParts，避免 metadata 写失败时丢失可重试的上传分片。
+// assembleUploadBlob streams uploaded parts into a permanent blob. The caller should call
+// cleanupUploadParts only after the durable media metadata is successfully committed, so a metadata
+// write failure does not lose retryable upload parts.
 func (s *Service) assembleUploadBlob(ctx context.Context, ownerUserID, fileID int64, expectedParts int) (assembledUploadBlob, error) {
 	parts, _, err := s.loadAndValidateUploadParts(ctx, ownerUserID, fileID, expectedParts)
 	if err != nil {
@@ -782,7 +788,7 @@ func (s *Service) loadAndValidateUploadParts(ctx context.Context, ownerUserID, f
 	var total int64
 	for i, p := range parts {
 		if p.Part != i {
-			return nil, 0, domain.ErrFilePartsInvalid // 缺片或乱序
+			return nil, 0, domain.ErrFilePartsInvalid // missing or out-of-order part
 		}
 		if p.Size <= 0 || p.Size > MaxUploadPartBytes || p.ObjectKey == "" {
 			return nil, 0, domain.ErrFilePartsInvalid

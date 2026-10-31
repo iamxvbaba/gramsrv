@@ -31,14 +31,14 @@ const (
 	MaxChannelRealtimeFanout = 2000
 	// MaxSynchronousChannelDialogFanout bounds per-member channel_dialogs writes in the send transaction.
 	MaxSynchronousChannelDialogFanout = 1000
-	// MaxDialogUnreadCount 钳制对话未读消息 COUNT 的上界（设计 fan-out epic Phase 2 / P1-v）。
-	// 广播/大群走动态 COUNT(*)，积压巨大时既下发天文数字角标、又让 nudge 风暴下每个被 nudge
-	// 成员的 getChannelDifference/getPeerDialogs 触发 O(积压) 扫描打爆 PG。store 层一律把未读
-	// COUNT 用 LIMIT 子查询(PG)/提前 break(memory) 钳到本上界——既限定扫描工作量也限定下发数值。
-	// 只影响角标显示数，不影响 read 水位/pts 真值与 hasUnread(EXISTS) 判定。
-	// 取 99（角标显示上限“99+”惯例）：上界即扫描上界，越低单次未读 COUNT 扫描越浅——
-	// 相比旧值 1000，积压 >99 的成员每次未读 COUNT（大群读路径 + fan-out 写 + forum 话题）
-	// 扫描行数约降一个数量级。值可按客户端角标显示习惯调整。
+	// MaxDialogUnreadCount clamps the upper bound of a dialog's unread message COUNT (design: fan-out epic Phase 2 / P1-v).
+	// Broadcast/large groups use a dynamic COUNT(*); a huge backlog would both send astronomical badge numbers and, under a nudge
+	// storm, make every nudged member's getChannelDifference/getPeerDialogs trigger an O(backlog) scan that blows up PG. The store always clamps the unread
+	// COUNT to this bound with a LIMIT subquery (PG)/early break (memory) — bounding both the scan work and the sent value.
+	// It only affects the badge display number, not the read watermark/pts truth or the hasUnread(EXISTS) decision.
+	// The value is 99 (the "99+" badge display cap convention): the bound is the scan bound, and the lower it is the shallower each unread COUNT scan —
+	// compared with the old value 1000, a member with a backlog >99 has each unread COUNT (large-group read path + fan-out write + forum topics)
+	// scan about an order of magnitude fewer rows. The value can be adjusted to client badge display habits.
 	MaxDialogUnreadCount = 99
 	// MaxChannelTypingFanout caps transient typing fanout.
 	MaxChannelTypingFanout = MaxChannelRealtimeFanout
@@ -95,10 +95,10 @@ const (
 	// Longer vectors keep the newest entries: official clients are told to drop older
 	// reactions, so the tail of the vector wins.
 	MaxMessageReactionsPerUser = 1
-	// MaxMessageReactionsPerUserPremium 是会员档每用户上限，对齐 appConfig
-	// reactions_user_max_premium（官方值 3）。客户端按 self premium flag 选档，
-	// 服务端档位必须 ≥ 客户端宣告档位，否则 premium 用户的多 reaction 会被
-	// 静默裁剪、双端视图错乱。
+	// MaxMessageReactionsPerUserPremium is the Premium tier per-user limit, aligned with appConfig
+	// reactions_user_max_premium (official value 3). The client picks a tier by the self premium flag,
+	// and the server tier must be ≥ the client-declared tier, or a Premium user's multiple reactions would be
+	// silently trimmed and the two sides' views would diverge.
 	MaxMessageReactionsPerUserPremium = 3
 	// DefaultMessageReactionsUniqMax caps distinct reaction emojis on one message, matching the
 	// advertised appConfig reactions_uniq_max. ChannelReactionPolicy.Limit overrides it per chat.
@@ -149,8 +149,8 @@ const (
 	MaxChannelForumTopicTitleLength = 128
 	// DefaultForumTopicIconColor is Telegram Desktop's General-topic fallback blue.
 	DefaultForumTopicIconColor = 0x6FB9F0
-	// ForumGeneralTopicID 是 General 话题的固定 id（Telegram 协议；客户端 readDiscussion General 用 msg_id=1）。
-	// General 内消息 reply_to_top_id=1，开 forum 前的历史消息 reply_to_top_id=0，二者都归 General。
+	// ForumGeneralTopicID is the fixed id of the General topic (Telegram protocol; the client uses msg_id=1 for readDiscussion General).
+	// A message within General has reply_to_top_id=1, and a history message from before the forum was enabled has reply_to_top_id=0; both belong to General.
 	ForumGeneralTopicID = 1
 	// MaxChannelReadMentionsBatch limits one messages.readMentions clearing batch.
 	MaxChannelReadMentionsBatch = 1000
@@ -211,8 +211,8 @@ type ChannelAdminRights struct {
 	ManageRanks           bool
 	ManageLinkedPeers     bool
 	ManageWelcomeMessages bool
-	// ManageDirectMessages 对应 TL ChatAdminRights.manage_direct_messages(flags.17)。母广播频道的
-	// 管理员据此被客户端授予 monoforum(频道私信)容器的 MonoforumAdmin 身份;creator 走 amCreator 旁路。
+	// ManageDirectMessages corresponds to TL ChatAdminRights.manage_direct_messages (flags.17). The parent broadcast channel's
+	// admins are thereby granted the MonoforumAdmin identity for the monoforum (channel Direct Messages) container by the client; the creator goes through the amCreator bypass.
 	ManageDirectMessages bool
 }
 
@@ -359,7 +359,7 @@ func (p ChannelReactionPolicy) UniqueReactionsLimit() int {
 	return DefaultMessageReactionsUniqMax
 }
 
-// MessageReactionsUserMax 返回 viewer 的每用户 reaction 上限档位。
+// MessageReactionsUserMax returns the viewer's per-user reaction limit tier.
 func MessageReactionsUserMax(premium bool) int {
 	if premium {
 		return MaxMessageReactionsPerUserPremium
@@ -367,8 +367,8 @@ func MessageReactionsUserMax(premium bool) int {
 	return MaxMessageReactionsPerUser
 }
 
-// NormalizeReactionsPerUserMax 把请求携带的档位约束到合法区间：
-// <=0（旧调用方未填）回退默认档，上限封顶 premium 档。
+// NormalizeReactionsPerUserMax constrains the tier carried by a request to a legal range:
+// <=0 (unfilled by an old caller) falls back to the default tier, and the upper bound is capped at the Premium tier.
 func NormalizeReactionsPerUserMax(perUserMax int) int {
 	if perUserMax <= 0 {
 		return MaxMessageReactionsPerUser
@@ -381,7 +381,7 @@ func NormalizeReactionsPerUserMax(perUserMax int) int {
 
 // TrimMessageReactionsToUserMax enforces the per-user reaction cap by keeping the newest
 // entries (clients append new reactions at the end of the vector and drop older ones).
-// perUserMax 经 NormalizeReactionsPerUserMax 约束；premium viewer 传 premium 档。
+// perUserMax is constrained by NormalizeReactionsPerUserMax; a Premium viewer passes the Premium tier.
 func TrimMessageReactionsToUserMax(reactions []MessageReaction, perUserMax int) []MessageReaction {
 	perUserMax = NormalizeReactionsPerUserMax(perUserMax)
 	if len(reactions) <= perUserMax {
@@ -441,16 +441,16 @@ type Channel struct {
 	PreHistoryHidden         bool
 	ParticipantsHidden       bool
 	AntiSpam                 bool
-	// HasLink 表示频道/群存在未撤销的导出邀请链接。Android send-as 入口会用
-	// megagroup && (public || has_geo || has_link) 判定是否拉取候选列表。
+	// HasLink means the channel/group has an unrevoked exported invite link. The Android send-as entry uses
+	// megagroup && (public || has_geo || has_link) to decide whether to fetch the candidate list.
 	HasLink      bool
 	LinkedChatID int64
 	// LinkedCommunityID is the unique Community containing this group/channel.
 	// A channel can belong to at most one Community and Communities themselves
 	// are stored in a separate aggregate, never in channels.
 	LinkedCommunityID int64
-	// Monoforum 标记本频道是「频道私信(Direct Messages)」的 monoforum 虚拟频道。
-	// LinkedMonoforumID:母频道指向其 monoforum;monoforum 反向指向母频道(双向)。
+	// Monoforum marks this channel as the monoforum virtual channel of "channel Direct Messages".
+	// LinkedMonoforumID: the parent channel points to its monoforum, and the monoforum points back to the parent channel (bidirectional).
 	Monoforum           bool
 	LinkedMonoforumID   int64
 	SlowmodeSeconds     int
@@ -471,22 +471,22 @@ type Channel struct {
 	TTLPeriod           int
 	Date                int
 	Deleted             bool
-	// 活跃群通话关联（channel.call_active/call_not_empty flag 与 channelFull.call
-	// 的数据源；客户端拉 dialogs/getFullChannel 时凭它重建 banner）。
+	// Active group-call association (the data source for the channel.call_active/call_not_empty flag and channelFull.call;
+	// the client uses it to rebuild the banner when fetching dialogs/getFullChannel).
 	ActiveCallID         int64
 	ActiveCallAccessHash int64
 	ActiveCallNotEmpty   bool
-	// 当前头像（反范式存于 channels 表）。PhotoID==0 表示无头像。
+	// Current avatar (denormalized in the channels table). PhotoID==0 means no avatar.
 	PhotoID       int64
 	PhotoDCID     int
 	PhotoStripped []byte
 }
 
-// MembersListAdminOnly 表示该频道的成员/订阅者列表仅管理员可查看。广播频道（非
-// megagroup）的订阅者列表在官方语义里恒为管理员专属——普通订阅者看不到 Subscribers/
-// Administrators/Channel Settings 等行，也不能枚举订阅者；此外成员被隐藏
-// (ParticipantsHidden) 时对非管理员同样不可见。超级群（megagroup）默认成员可见。
-// 该判定只看频道本身，是否放行还需叠加 viewer 是否管理员。
+// MembersListAdminOnly means the channel's member/subscriber list is visible only to admins. A broadcast channel (non-
+// megagroup) subscriber list is in official semantics always admin-only — an ordinary subscriber cannot see the Subscribers/
+// Administrators/Channel Settings rows, nor enumerate subscribers; moreover when members are hidden
+// (ParticipantsHidden) they are equally invisible to non-admins. A supergroup (megagroup) has members visible by default.
+// This decision looks only at the channel itself; allowing access additionally requires checking whether the viewer is an admin.
 func (c Channel) MembersListAdminOnly() bool {
 	return c.ParticipantsHidden || (c.Broadcast && !c.Megagroup)
 }
@@ -602,37 +602,37 @@ const (
 	// channel_messages row and never produces channel PTS.
 	ChannelActionHistoryClear ChannelMessageActionType = "history_clear"
 	ChannelActionChatJoined   ChannelMessageActionType = "chat_joined"
-	// ChannelActionChatJoinedByLink 是经邀请链接加入的服务消息，
-	// 渲染为 "X joined the group via invite link"。
+	// ChannelActionChatJoinedByLink is the service message for joining via an invite link,
+	// rendered as "X joined the group via invite link".
 	ChannelActionChatJoinedByLink ChannelMessageActionType = "chat_joined_by_link"
 	ChannelActionEditTitle        ChannelMessageActionType = "chat_edit_title"
 	ChannelActionTopicCreate      ChannelMessageActionType = "topic_create"
 	ChannelActionTopicEdit        ChannelMessageActionType = "topic_edit"
-	// ChannelActionTodoCompletions / ChannelActionTodoAppendTasks 映射
-	// messageActionTodoCompletions / messageActionTodoAppendTasks：超级群
-	// checklist 协作生成的服务消息，经 reply_to 指向原 checklist 消息。
+	// ChannelActionTodoCompletions / ChannelActionTodoAppendTasks map
+	// messageActionTodoCompletions / messageActionTodoAppendTasks: the service messages generated by
+	// supergroup checklist collaboration, referencing the original checklist message via reply_to.
 	ChannelActionTodoCompletions ChannelMessageActionType = "todo_completions"
 	ChannelActionTodoAppendTasks ChannelMessageActionType = "todo_append_tasks"
-	// ChannelActionGroupCall 映射 messageActionGroupCall：started（CallDuration=0）
-	// 与 ended（CallDuration>0）共用同一构造器，官方语义即如此。
+	// ChannelActionGroupCall maps messageActionGroupCall: started (CallDuration=0)
+	// and ended (CallDuration>0) share the same constructor, as in the official semantics.
 	ChannelActionGroupCall ChannelMessageActionType = "group_call"
-	// ChannelActionGroupCallScheduled 映射 messageActionGroupCallScheduled：
-	// 定时通话创建的服务消息（"scheduled a video chat for ..."），ScheduleDate 必填。
+	// ChannelActionGroupCallScheduled maps messageActionGroupCallScheduled:
+	// the service message created by a scheduled call ("scheduled a video chat for ..."), ScheduleDate required.
 	ChannelActionGroupCallScheduled ChannelMessageActionType = "group_call_scheduled"
-	// ChannelActionInviteToGroupCall 映射 messageActionInviteToGroupCall（被邀请
-	// 者通过频道消息收到可点击的入会卡片，UserIDs 为受邀人）。
+	// ChannelActionInviteToGroupCall maps messageActionInviteToGroupCall (the invitee
+	// receives a clickable join card via a channel message, with UserIDs being the invitees).
 	ChannelActionInviteToGroupCall ChannelMessageActionType = "invite_to_group_call"
-	// ChannelActionBoostApply 映射 messageActionBoostApply。
+	// ChannelActionBoostApply maps messageActionBoostApply.
 	ChannelActionBoostApply ChannelMessageActionType = "boost_apply"
-	// ChannelActionPaidMessagesPrice 映射 messageActionPaidMessagesPrice：
-	// 广播频道 Direct Messages 开关/价格变更的服务消息。
+	// ChannelActionPaidMessagesPrice maps messageActionPaidMessagesPrice:
+	// the service message for a broadcast channel Direct Messages switch/price change.
 	ChannelActionPaidMessagesPrice ChannelMessageActionType = "paid_messages_price"
-	// ChannelActionStarGift 映射 messageActionStarGift：频道礼物的 admin-log 快照。
+	// ChannelActionStarGift maps messageActionStarGift: the admin-log snapshot of a channel gift.
 	ChannelActionStarGift ChannelMessageActionType = "star_gift"
-	// ChannelActionStarGiftUnique 映射 messageActionStarGiftUnique：collectible
-	// 升级、转赠等所有权变更只进入 Recent Actions，不伪造频道历史/pts。
+	// ChannelActionStarGiftUnique maps messageActionStarGiftUnique: collectible
+	// upgrade, transfer and other ownership changes enter Recent Actions only and do not fabricate channel history/pts.
 	ChannelActionStarGiftUnique ChannelMessageActionType = "star_gift_unique"
-	// ChannelActionSetChatWallpaper 映射 messageActionSetChatWallPaper：频道外观页设置 wallpaper。
+	// ChannelActionSetChatWallpaper maps messageActionSetChatWallPaper: sets a wallpaper from the channel appearance page.
 	ChannelActionSetChatWallpaper ChannelMessageActionType = "set_chat_wallpaper"
 	// ChannelActionChangeCommunity maps messageActionChangeCommunity. A non-zero
 	// CommunityID means linked; zero means unlinked.
@@ -654,29 +654,29 @@ type ChannelMessageAction struct {
 	Closed         *bool
 	Hidden         *bool
 	UserIDs        []int64
-	// InviterUserID 仅 chat_joined_by_link 使用（messageActionChatJoinedByLink.inviter_id）。
+	// InviterUserID is used only by chat_joined_by_link (messageActionChatJoinedByLink.inviter_id).
 	InviterUserID int64
-	// CallID/CallAccessHash/CallDuration 仅 group_call / invite_to_group_call 使用。
+	// CallID/CallAccessHash/CallDuration are used only by group_call / invite_to_group_call.
 	CallID         int64
 	CallAccessHash int64
 	CallDuration   int
-	// CallScheduleDate 仅 group_call_scheduled 使用（开播时间）。
+	// CallScheduleDate is used only by group_call_scheduled (start time).
 	CallScheduleDate int
-	// Boosts 仅 boost_apply 服务消息使用。
+	// Boosts is used only by the boost_apply service message.
 	Boosts int
-	// BroadcastMessagesAllowed/Stars 仅 paid_messages_price 服务消息使用。
+	// BroadcastMessagesAllowed/Stars are used only by the paid_messages_price service message.
 	BroadcastMessagesAllowed bool
 	Stars                    int64
-	// Completed/Incompleted/TodoItems 仅 todo_* 服务消息使用。
+	// Completed/Incompleted/TodoItems are used only by todo_* service messages.
 	Completed   []int
 	Incompleted []int
 	TodoItems   []MessageTodoItem
-	// StarGift 仅 star_gift 服务消息使用。
+	// StarGift is used only by the star_gift service message.
 	StarGift       *MessageStarGiftAction
 	StarGiftUnique *MessageStarGiftUniqueAction
-	// Wallpaper 仅 set_chat_wallpaper 服务消息使用。
+	// Wallpaper is used only by the set_chat_wallpaper service message.
 	Wallpaper *Wallpaper
-	// Photo 仅 chat_edit_photo 服务消息使用。
+	// Photo is used only by the chat_edit_photo service message.
 	Photo *Photo
 	// Suggested-post lifecycle actions share the immutable price snapshot.  The
 	// approval action additionally uses the reject/balance/schedule fields;
@@ -697,11 +697,11 @@ type ChannelMessage struct {
 	SenderUserID int64
 	From         Peer
 	SendAs       *Peer
-	// SavedPeer 是 monoforum 私信子会话分组键(按订阅者分组);普通频道消息为零值。
+	// SavedPeer is the monoforum direct-messages sub-chat grouping key (grouped by subscriber); an ordinary channel message is the zero value.
 	SavedPeer Peer
-	// SuggestedPost 是频道私信建议投稿的不可变发送快照；普通频道消息为 nil。
+	// SuggestedPost is the immutable send snapshot of a channel DM suggested post; an ordinary channel message is nil.
 	SuggestedPost *SuggestedPost
-	// PaidMessageStars 是本条频道私信实际扣除的 Stars；管理员免费回复及普通频道消息为 0。
+	// PaidMessageStars is the Stars actually deducted for this channel DM; an admin free reply and an ordinary channel message are 0.
 	PaidMessageStars int64
 	Date             int
 	EditDate         int
@@ -715,7 +715,7 @@ type ChannelMessage struct {
 	ReplyTo           *MessageReply
 	Forward           *MessageForward
 	ViaBotID          int64
-	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
+	// GroupedID is the album grouping id (the same sendMultiMedia group shares a non-zero value; non-album is always 0).
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
 	Discussion  *ChannelDiscussionRef
@@ -723,19 +723,19 @@ type ChannelMessage struct {
 	Reactions   *ChannelMessageReactions
 	Action      *ChannelMessageAction
 	Media       *MessageMedia
-	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage is the Layer 228 rich text message (richMessage) snapshot, optional; an ordinary message is always nil.
 	RichMessage *MessageRichMessage
-	// FactCheck 是 Layer 231 事实核查标签快照，可选；无标签的消息恒 nil。
+	// FactCheck is the Layer 231 fact-check tag snapshot, optional; a message without a tag is always nil.
 	FactCheck *FactCheck
-	// FromBoostsApplied 是发送时的 sender boost 数快照（message.from_boosts_applied）。
+	// FromBoostsApplied is the sender boost count snapshot at send time (message.from_boosts_applied).
 	FromBoostsApplied int
 	TTLPeriod         int
 	ExpiresAt         int
 	Pinned            bool
 	Mentioned         bool
 	MediaUnread       bool
-	// Views 是 broadcast post 的浏览数聚合；PostAuthor 是 signatures
-	// 开启时的作者展示名快照。
+	// Views is the broadcast post's view count aggregate; PostAuthor is the author display-name snapshot
+	// when signatures are enabled.
 	ViewsCount int
 	PostAuthor string
 	Pts        int
@@ -885,8 +885,8 @@ type ChannelMessageReactions struct {
 	AsTags  bool
 	Results []ChannelMessageReactionCount
 	Recent  []ChannelMessagePeerReaction
-	// Paid 是付费 reaction（Stars）聚合（nil = 无）；读路径从 channel_message_paid_reactions
-	// 填充、tg 转换注入 ReactionPaid 计数 + top reactors。与普通 reaction 分表存储。
+	// Paid is the paid reaction (Stars) aggregate (nil = none); the read path fills it from channel_message_paid_reactions
+	// and the tg conversion injects the ReactionPaid count + top reactors. Stored in a separate table from ordinary reactions.
 	Paid *ChannelMessagePaidReactions
 }
 
@@ -899,8 +899,8 @@ type SetChannelMessageReactionsRequest struct {
 	Big         bool
 	AddToRecent bool
 	Date        int
-	// ReactionsPerUserMax 是 viewer 的每用户上限档位（premium 双档）；
-	// 0 表示未填，store 侧按默认档裁剪。
+	// ReactionsPerUserMax is the viewer's per-user limit tier (Premium dual tier);
+	// 0 means unfilled, and the store trims to the default tier.
 	ReactionsPerUserMax int
 }
 
@@ -1050,9 +1050,9 @@ const (
 	ChannelUpdateDeleteMessages ChannelUpdateEventType = "delete_channel_messages"
 	ChannelUpdateParticipant    ChannelUpdateEventType = "channel_participant"
 	ChannelUpdatePinnedMessages ChannelUpdateEventType = "pinned_channel_messages"
-	// ChannelUpdateWebPage 映射 updateChannelWebPage：频道消息的 pending 链接预览异步解析后
-	// 就地替换为已解析卡片（按 webPage id 关联，不标记「已编辑」）。与 edit_channel_message
-	// 同构（携频道 pts + 消息快照），difference/fan-out 复用，仅 tg 投影构造器不同。
+	// ChannelUpdateWebPage maps updateChannelWebPage: after a channel message's pending link preview is asynchronously resolved it is
+	// replaced in place with the resolved card (correlated by webPage id, not marked "edited"). It is isomorphic to edit_channel_message
+	// (carrying channel pts + the message snapshot) and reuses difference/fan-out, differing only in the tg projection constructor.
 	ChannelUpdateWebPage ChannelUpdateEventType = "channel_web_page"
 	ChannelUpdateNoop    ChannelUpdateEventType = "noop"
 )
@@ -1209,12 +1209,12 @@ type ChannelView struct {
 	Dialog            ChannelDialog
 	SelfBoostsApplied int
 	ExportedInvite    *ChannelInvite
-	// Forbidden 表示当前 viewer 被踢/被禁止查看：查询响应必须呈现
-	// channelForbidden 形态而不是省略，客户端靠它感知自己已离开会话。
+	// Forbidden means the current viewer is kicked/banned from viewing: the query response must present the
+	// channelForbidden form rather than omit it, since the client relies on it to sense that it has left the chat.
 	Forbidden bool
-	// LinkedChatUsable 表示 Channel.LinkedChatID 指向一个真实存在、未删除且为
-	// megagroup 的讨论频道。为 false 时转换层不得下发 linked_chat_id:客户端拿到
-	// 悬空 id 会渲染"讨论"入口,点进去却是一个空频道。
+	// LinkedChatUsable means Channel.LinkedChatID points to a discussion channel that really exists, is not deleted and is a
+	// megagroup. When false the conversion layer must not send linked_chat_id: the client receiving a
+	// dangling id would render a "Discussion" entry that leads to an empty channel when tapped.
 	LinkedChatUsable bool
 }
 
@@ -1555,8 +1555,8 @@ type EditChannelBannedResult struct {
 	Event       ChannelUpdateEvent
 	Recipients  []int64
 	Date        int
-	// Message/ServiceEvent 是 megagroup 踢人产生的 "X removed Y" 服务
-	// 消息及其 channel pts 事件；纯禁言/解禁不生成。
+	// Message/ServiceEvent is the "X removed Y" service message produced by a megagroup kick
+	// and its channel pts event; a pure mute/unmute generates neither.
 	Message      ChannelMessage
 	ServiceEvent ChannelUpdateEvent
 }
@@ -1608,9 +1608,9 @@ type SetChannelPhotoResult struct {
 type DeleteChannelResult struct {
 	Channel    Channel
 	Recipients []int64
-	// LinkedMonoforum 是随母广播频道一并软删的关联 monoforum(频道私信容器)。删父频道必须连带删它,
-	// 否则会留下 monoforum=true 但 linked_monoforum_id 指向已删父频道的孤儿(客户端渲染会崩)。
-	// 仅删带 Direct Messages 的母频道时非 nil;普通频道为 nil。
+	// LinkedMonoforum is the associated monoforum (channel Direct Messages container) soft-deleted along with the parent broadcast channel.
+	// Deleting the parent channel must delete it too, or it leaves an orphan with monoforum=true whose linked_monoforum_id points to the deleted parent (client rendering would crash).
+	// Non-nil only when deleting a parent channel with Direct Messages; nil for an ordinary channel.
 	LinkedMonoforum *Channel
 }
 
@@ -1634,14 +1634,14 @@ type SendChannelMessageRequest struct {
 	// read model instead of forcing store.SendChannelMessage to synchronously
 	// return an active-member recipient list after commit.
 	SkipRecipientLookup bool
-	// PostAuthor 是 signatures 开启的 broadcast post 上快照的作者展示名。
+	// PostAuthor is the author display name snapshotted on a broadcast post when signatures are enabled.
 	PostAuthor string
 	Silent     bool
 	NoForwards bool
 	ReplyTo    *MessageReply
 	Forward    *MessageForward
 	ViaBotID   int64
-	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
+	// GroupedID is the album grouping id (the same sendMultiMedia group shares a non-zero value; non-album is always 0).
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
 	RichMessage *MessageRichMessage
@@ -1651,9 +1651,9 @@ type SendChannelMessageRequest struct {
 	TTLPeriod   int
 }
 
-// SendMonoforumMessageRequest 向频道私信(monoforum)发送一条消息。MonoforumID 是 monoforum
-// 虚拟频道 id;SavedPeer 是订阅者子会话分组键(订阅者发=自己,管理员回复=目标订阅者);
-// SenderUserID 是实际发件人。发件权限(订阅者身份/管理员)在 RPC 层校验,store 只校验 monoforum 存在。
+// SendMonoforumMessageRequest sends one message to channel Direct Messages (monoforum). MonoforumID is the monoforum
+// virtual channel id; SavedPeer is the subscriber sub-chat grouping key (a subscriber sending = self, an admin reply = the target subscriber);
+// SenderUserID is the actual sender. Send permission (subscriber identity/admin) is checked in the RPC layer; the store only checks that the monoforum exists.
 type SendMonoforumMessageRequest struct {
 	MonoforumID            int64
 	SenderUserID           int64
@@ -1669,7 +1669,7 @@ type SendMonoforumMessageRequest struct {
 	Silent                 bool
 	NoForwards             bool
 	SuggestedPost          *SuggestedPost
-	// AllowPaidStars 是客户端授权的最高可扣金额；实际扣款取频道当前价格，绝不按授权上限扣款。
+	// AllowPaidStars is the maximum amount the client authorizes; the actual debit is the channel's current price and never the authorized ceiling.
 	AllowPaidStars int64
 	ClearDraft     bool
 	Date           int
@@ -1756,7 +1756,7 @@ type ChannelSendReplayRequest struct {
 	IdempotencyFingerprint []byte
 }
 
-// MonoforumHistoryFilter 按订阅者子会话拉取 monoforum 私信历史。
+// MonoforumHistoryFilter fetches monoforum direct-messages history by subscriber sub-chat.
 type MonoforumHistoryFilter struct {
 	MonoforumID int64
 	SavedPeer   Peer
@@ -1764,8 +1764,8 @@ type MonoforumHistoryFilter struct {
 	OffsetID    int
 }
 
-// MonoforumDialog 是频道私信(monoforum)中一个订阅者子会话的摘要。读水位/未读由后续 P0
-// 切片补齐,当前置 0。
+// MonoforumDialog is the summary of one subscriber sub-chat in channel Direct Messages (monoforum). The read watermark/unread
+// is filled by a later P0 slice and is currently 0.
 type MonoforumDialog struct {
 	SavedPeer       Peer
 	TopMessageID    int
@@ -1775,7 +1775,7 @@ type MonoforumDialog struct {
 	ReadOutboxMaxID int
 }
 
-// MonoforumDialogList 是 monoforum 订阅者子会话列表(按各子会话 top 消息 id 倒序)。
+// MonoforumDialogList is the monoforum subscriber sub-chat list (ordered by each sub-chat's top message id descending).
 type MonoforumDialogList struct {
 	MonoforumID int64
 	Channel     Channel
@@ -1784,7 +1784,7 @@ type MonoforumDialogList struct {
 	Count       int
 }
 
-// MonoforumDialogsFilter 分页拉取 monoforum 订阅者子会话列表(按 top 消息 id 倒序 seek)。
+// MonoforumDialogsFilter pages the monoforum subscriber sub-chat list (seeking by top message id descending).
 type MonoforumDialogsFilter struct {
 	MonoforumID int64
 	Limit       int
@@ -1828,9 +1828,9 @@ type ReadChannelMessageContentsResult struct {
 	Channel                         Channel
 	Messages                        []ChannelMessage
 	ClearedUnreadReactionMessageIDs []int
-	// ClearedUnreadMentionMessageIDs 是本次内容已读翻转为已读的 mention
-	// 消息；客户端视口看到 @ 消息即发 readMessageContents，服务端必须
-	// 同步清除否则角标在下一次 getDialogs 复活。
+	// ClearedUnreadMentionMessageIDs are the mention messages flipped from unread to read by this content-read;
+	// the client sends readMessageContents as soon as an @ message enters the viewport, and the server must
+	// clear them in step or the badge resurrects on the next getDialogs.
 	ClearedUnreadMentionMessageIDs []int
 }
 
@@ -1862,19 +1862,19 @@ type SendChannelMessageResult struct {
 	Event      ChannelUpdateEvent
 	Recipients []int64
 	Duplicate  bool
-	// SenderStarsBalance 仅在实际发生 paid-message 借记时返回；RPC 只向发件人投影余额更新。
+	// SenderStarsBalance is returned only when a paid-message debit actually occurs; the RPC projects the balance update only to the sender.
 	SenderStarsBalance *StarsBalance
 	// ReplayDeleteEvent is the existing durable channel delete event paired
 	// with a deleted exact-random_id replay. It must be returned only to the
 	// caller echo and must never be fanned out as a fresh event.
 	ReplayDeleteEvent *ChannelUpdateEvent
 	Discussion        *SendChannelDiscussionResult
-	// MentionUserIDs 是本条消息解析出的被 @ 成员；在线 fanout 按它为
-	// 每个接收者投影 message.mentioned/media_unread。
+	// MentionUserIDs are the @-mentioned members parsed from this message; online fan-out uses it to project
+	// message.mentioned/media_unread for each recipient.
 	MentionUserIDs []int64
-	// SkipDeliveryUserIDs 是本条消息按 bot privacy 规则被排除投递的成员（隐私 bot 对
-	// 命令/@/回复以外的消息不可见）。Recipients 已扣除它们；在线 fanout 还须据此跳过这些
-	// 成员的直接推送，否则在线 bot 仍能实时收到群里全部消息（持久 history/difference 已隐藏）。
+	// SkipDeliveryUserIDs are the members excluded from delivery of this message by bot privacy rules (a privacy bot cannot see
+	// messages other than commands/@/replies). Recipients has already subtracted them; online fan-out must also skip these
+	// members' direct pushes, or an online bot would still receive every group message in real time (persistent history/difference is already hidden).
 	SkipDeliveryUserIDs []int64
 }
 
@@ -1884,8 +1884,8 @@ type SendChannelDiscussionResult struct {
 	Message    ChannelMessage
 	Event      ChannelUpdateEvent
 	Recipients []int64
-	// MentionUserIDs 透传 post 的 @ 目标：讨论组联动消息的实时推送也要
-	// 按接收者投影 mentioned/media_unread。
+	// MentionUserIDs passes through the post's @ targets: the real-time push of a discussion-group linked message must also
+	// project mentioned/media_unread per recipient.
 	MentionUserIDs []int64
 }
 
@@ -1974,7 +1974,7 @@ type DeleteChannelForumTopicHistoryRequest struct {
 }
 
 // EditChannelMessageRequest edits one text message in a channel/supergroup.
-// Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止）。
+// A non-nil Media replaces the message media snapshot wholesale (the only current caller is live location update/stop).
 type EditChannelMessageRequest struct {
 	UserID    int64
 	ChannelID int64
@@ -1982,27 +1982,27 @@ type EditChannelMessageRequest struct {
 	Message   string
 	Entities  []MessageEntity
 	Media     *MessageMedia
-	// SetReplyMarkup 置位时替换 reply_markup（ReplyMarkup 为 nil/空 = 清空键盘）。
+	// When SetReplyMarkup is set, replace reply_markup (a nil/empty ReplyMarkup = clear the keyboard).
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
-	// SetRichMessage 置位时替换 rich_message（RichMessage nil/空 = 清空富文本）。
+	// When SetRichMessage is set, replace rich_message (a nil/empty RichMessage = clear the rich text).
 	SetRichMessage bool
 	RichMessage    *MessageRichMessage
-	// ViaBotEditBotID 非零时要求目标消息 via_bot_id 匹配对应 bot。
+	// A non-zero ViaBotEditBotID requires the target message's via_bot_id to match the corresponding bot.
 	ViaBotEditBotID int64
-	// AllowTodoParticipantMutation 允许非作者普通成员在 checklist 的
-	// others_can_* 授权下仅替换 todo media 快照；不放开普通文本/媒体编辑。
+	// AllowTodoParticipantMutation lets a non-author ordinary member replace only the todo media snapshot
+	// under the checklist's others_can_* grant; it does not open up ordinary text/media editing.
 	AllowTodoParticipantMutation bool
-	// TodoServiceAction 非 nil 时，编辑同事务追加一条 reply 到原 checklist
-	// 的 todo 服务消息，并生成独立 channel pts。
+	// When TodoServiceAction is non-nil, the edit appends in the same transaction a todo service message
+	// as a reply to the original checklist and generates an independent channel pts.
 	TodoServiceAction *ChannelMessageAction
-	// MentionUserIDs 是编辑后文本解析出的 @ 目标：新增者补未读提及、
-	// 被移除者清除（reply 隐式提及不受影响）。
+	// MentionUserIDs are the @ targets parsed from the edited text: newly added ones get an unread mention and
+	// removed ones are cleared (an implicit reply mention is unaffected).
 	MentionUserIDs []int64
 	EditDate       int
-	// WebPageResolve 置位时为服务端内部「频道链接预览就地替换」：仅换 media（不碰 body/
-	// entities/edit_date），生成 ChannelUpdateWebPage 而非 edit_channel_message。幂等守卫：
-	// 仅当目标当前 media 仍是 ID==ExpectedWebPageID 的 pending 链接预览才替换。
+	// When WebPageResolve is set it is a server-internal "replace channel link preview in place": only the media is replaced (body/
+	// entities/edit_date untouched) and ChannelUpdateWebPage is generated rather than edit_channel_message. Idempotency guard:
+	// replace only when the target's current media is still a pending link preview with ID==ExpectedWebPageID.
 	WebPageResolve    bool
 	ExpectedWebPageID int64
 }
@@ -2031,12 +2031,12 @@ type DeleteChannelMessagesResult struct {
 	Event      ChannelUpdateEvent
 	DeletedIDs []int
 	Recipients []int64
-	// DiscussionDeletes 是被删 broadcast post 在 linked 讨论组里的转发根
-	// 级联删除（官方删 post 同时删除讨论根）。
+	// DiscussionDeletes is the cascade deletion of the forward root of a deleted broadcast post in the linked discussion group
+	// (officially deleting a post also deletes the discussion root).
 	DiscussionDeletes []ChannelCascadeDelete
 }
 
-// ChannelCascadeDelete 描述一次跨频道的级联删除（如讨论根随 post 删除）。
+// ChannelCascadeDelete describes one cross-channel cascade deletion (e.g. a discussion root deleted along with its post).
 type ChannelCascadeDelete struct {
 	Channel    Channel
 	Event      ChannelUpdateEvent
@@ -2084,12 +2084,12 @@ type UpdateChannelPinnedMessageRequest struct {
 }
 
 // UpdateChannelPinnedMessageResult describes one pinned-message update.
-// 多置顶模型：pin/unpin 互不影响其它置顶，Event.MessageIDs 仅含本次操作的
-// 消息（unpinAll 时为本批全部清除的 id）。
+// Multi-pin model: pin/unpin does not affect other pins, and Event.MessageIDs contains only this operation's
+// messages (for unpinAll, the ids cleared in this batch).
 type UpdateChannelPinnedMessageResult struct {
 	Channel Channel
 	Event   ChannelUpdateEvent
-	// UnpinEvent 携带单置顶替换时旧置顶的 unpin 事件（无则 Pts=0）。
+	// UnpinEvent carries the old pin's unpin event when a single pin is replaced (Pts=0 if none).
 	UnpinEvent ChannelUpdateEvent
 	Recipients []int64
 }
@@ -2449,15 +2449,15 @@ type ReadChannelHistoryResult struct {
 	// dialog, watermark, receipt or update state.
 	ReadOnly bool
 	Pts      int
-	// Forum 标记该频道是否为话题群。RPC 层据此在频道级 readHistory 后顺带推进
-	// General(topic 1) 的话题级已读水位（General 消息即频道根历史，被频道级已读覆盖）。
+	// Forum marks whether the channel is a forum. The RPC layer uses it to additionally advance
+	// the topic-level read watermark of General (topic 1) after a channel-level readHistory (General messages are the channel root history, covered by the channel-level read).
 	Forum         bool
 	Dialog        ChannelDialog
 	OutboxUpdates []ChannelReadOutboxUpdate
 }
 
-// ReadChannelTopicHistoryRequest 推进 forum 单个话题的 per-viewer 已读水位（messages.readDiscussion）。
-// TopicID = 话题根消息 id（General=1）。不碰频道级 channel_members.read_inbox_max_id。
+// ReadChannelTopicHistoryRequest advances the per-viewer read watermark of a single forum topic (messages.readDiscussion).
+// TopicID = the topic root message id (General=1). It does not touch the channel-level channel_members.read_inbox_max_id.
 type ReadChannelTopicHistoryRequest struct {
 	UserID    int64
 	ChannelID int64
@@ -2466,8 +2466,8 @@ type ReadChannelTopicHistoryRequest struct {
 	Date      int
 }
 
-// ReadChannelTopicHistoryResult 描述一次 per-topic 已读推进结果。OutboxUpdates 每条 UserID 是
-// 该话题内待收已读回执的发送者，MaxID 为其消息被读到的水位；话题 id 即 Result.TopicID。
+// ReadChannelTopicHistoryResult describes one per-topic read advance result. Each OutboxUpdates UserID is
+// a sender awaiting a read receipt within that topic, and MaxID is the watermark its message was read up to; the topic id is Result.TopicID.
 type ReadChannelTopicHistoryResult struct {
 	Channel       Channel
 	TopicID       int

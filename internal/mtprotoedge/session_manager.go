@@ -17,7 +17,7 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
-// ErrSessionNotFound 表示目标 session 当前无活跃连接。
+// ErrSessionNotFound means the target session currently has no active connection.
 var ErrSessionNotFound = errors.New("session not found")
 
 var (
@@ -27,34 +27,51 @@ var (
 
 const (
 	maxPendingPushesPerSession = 32
-	// maxFlushAttempts / flushRetryBackoff：排空暂存推送时 c.Send 失败（出站拥塞 5s 超时
-	// 或瞬时错误）后的退避重试上界。连接真死时 serveConn 会 Unregister 清理状态、提前止损；
-	// 这里只为「连接存活但出站暂时拥塞」做有限重试。用尽仍失败则置位激活并接受 getDifference
-	// 兜底——避免 idle 客户端（只发 ping、不触发置位重试）永久停在未激活态而静默断流。
+	// maxFlushAttempts / flushRetryBackoff: the bound on backoff retries after
+	// c.Send fails while draining staged pushes (outbound congestion 5s timeout or
+	// transient error). When the connection is truly dead serveConn Unregisters and
+	// cleans up state, cutting losses early; here only bounded retries are done for
+	// "connection alive but outbound temporarily congested". If retries are
+	// exhausted and it still fails, the flag is set active and getDifference
+	// fallback is accepted—avoiding an idle client (sending only pings, not
+	// triggering a flag-set retry) being stuck inactive forever and silently losing
+	// its stream.
 	maxFlushAttempts  = 5
 	flushRetryBackoff = 2 * time.Second
-	// pendingPushMaxAge：session 注册后迟迟不调 updates.getState（receivesUpdates 恒 false）时，
-	// 其暂存的主动推送最长保留时长。超过即丢整批并不再囤——正常 TDesktop 登录后秒级就会
-	// getState 建立同步基线；长期不 ready 多为异常/对抗连接。
+	// pendingPushMaxAge: when a session, after registration, takes too long to call
+	// updates.getState (receivesUpdates stays false), this is the longest its staged
+	// proactive pushes are retained. Beyond it the whole batch is dropped and no
+	// more is hoarded—a normal TDesktop establishes the sync baseline with getState
+	// within seconds after login; long-term not-ready is usually an aberrant/adversarial connection.
 	//
-	// 不变量：只有 durable update（写 user_update_events）才会进 pending。transient update
-	// （typing/presence，不写 durable log）经 PushToUserTransient* 在未就绪时直接跳过、不入队，
-	// 因此本队列被老化/溢出/重试耗尽丢弃时，丢的一定是 durable 条目——getDifference 以
-	// user_update_events 兜底补齐，丢弃不丢数据。
+	// Invariant: only durable updates (writing user_update_events) enter pending.
+	// Transient updates (typing/presence, not writing the durable log) go through
+	// PushToUserTransient* and are skipped directly when not ready, without
+	// enqueuing, so when this queue is dropped by aging/overflow/exhausted retries
+	// what is dropped is always durable entries—getDifference fills them in via
+	// user_update_events, so dropping loses no data.
 	pendingPushMaxAge          = 60 * time.Second
 	defaultPendingPushMaxBytes = int64(256 << 20)
-	// maxSessionsPerAuthKey：单个 raw auth_key 允许同时在线的 session 上限。telesrv 单 DC，
-	// 一个客户端的全部连接（主连接 + 并发下载/上传）共享同一 auth_key、各用独立 session_id，
-	// 故此上限须高于真实客户端单设备的并发连接峰值，否则会误杀活跃下载/主连接：
-	//   - TDesktop：kMaxMediaDcCount=0x10，单 DC 最多 16 路下载 + 16 路上传 + 1 主 ≈ 33；
-	//   - DrKLO：DOWNLOAD_CONNECTIONS_COUNT=2 + UPLOAD_CONNECTIONS_COUNT=4 + 主/push ≈ 10。
-	// 叠加重连 churn（旧 session 在 readTimeout 内滞留）峰值约 ~70，故设 256（~3.5x 余量）。
-	// 它只防「单 auth_key 累积海量连接」的病态（使 CloseSessionsForRawAuthKey/pushToUser 遍历
-	// 退化 O(N)），超限驱逐的也只是同一设备凭据自身的连接，不会误伤别的账号。
+	// maxSessionsPerAuthKey: the cap on sessions allowed online simultaneously for a
+	// single raw auth_key. telesrv is single-DC; all connections of one client (main
+	// connection + concurrent downloads/uploads) share the same auth_key and each
+	// uses an independent session_id, so this cap must exceed a real client's
+	// per-device concurrent connection peak, otherwise it would wrongly kill active
+	// downloads/the main connection:
+	//   - TDesktop: kMaxMediaDcCount=0x10, at most 16 downloads + 16 uploads + 1 main ≈ 33 per DC;
+	//   - DrKLO: DOWNLOAD_CONNECTIONS_COUNT=2 + UPLOAD_CONNECTIONS_COUNT=4 + main/push ≈ 10.
+	// Adding reconnect churn (old sessions lingering within readTimeout) the peak is
+	// about ~70, so 256 is set (~3.5x headroom). It only guards against the
+	// pathology of "a single auth_key accumulating a huge number of connections"
+	// (which would make CloseSessionsForRawAuthKey/pushToUser traversal degrade to
+	// O(N)); over-limit eviction only drops connections of that same device's
+	// credentials and does not harm other accounts.
 	maxSessionsPerAuthKey = 256
-	// maxChannelIndexPerSession：单 session 在 channel 路由索引（interest / membership）中
-	// 登记的 channel 数上限。membership 源于真实成员关系（大账号可能很多），interest 受客户端
-	// 直接控制；两者都设一个宽松上界防内存放大，超出即截断并记日志。
+	// maxChannelIndexPerSession: the cap on the number of channels a single session
+	// registers in the channel routing indexes (interest / membership). membership
+	// comes from real membership (a large account may have many) and interest is
+	// directly controlled by the client; a loose upper bound is set for both to
+	// prevent memory amplification, truncating and logging when exceeded.
 	maxChannelIndexPerSession = 8192
 	// Official clients short-poll at most ten opened channels per session. Keep the
 	// server-side passive subscription index at the same hard bound.
@@ -168,10 +185,12 @@ func notifySessionDestroyed(observer SessionLifecycleObserver, authKeyID [8]byte
 	}
 }
 
-// SessionManager 是活跃连接注册表，支持按 session / auth-key / user 查找并主动 push。
+// SessionManager is the active-connection registry, supporting lookup and
+// proactive push by session / auth-key / user.
 //
-// 它只管理进程内运行态，持有可发送的活跃连接；协议可恢复事实由 auth key、客户端重连
-// 和 durable updates/difference 链路承担。所有方法并发安全。
+// It only manages in-process runtime state, holding sendable active connections;
+// protocol-recoverable facts are carried by the auth key, client reconnection and
+// the durable updates/difference chain. All methods are concurrency-safe.
 type SessionManager struct {
 	mu        sync.RWMutex
 	bySession map[sessionKey]*Conn
@@ -187,15 +206,15 @@ type SessionManager struct {
 	byAuthKey              map[[8]byte]map[int64]*Conn // raw authKeyID → sessionID → Conn
 	byBusinessAuthKey      map[[8]byte]map[sessionKey]*Conn
 	byUser                 map[int64]map[sessionKey]*Conn
-	byChannel              map[int64]map[sessionKey]int64 // channelID → session → userID，用于频道 active-viewer 临时推送
+	byChannel              map[int64]map[sessionKey]int64 // channelID → session → userID, for temporary channel active-viewer pushes
 	bySessionChannels      map[sessionKey]map[int64]struct{}
 	bySubscribedChannel    map[int64]map[sessionKey]channelSubscription
 	bySessionSubscriptions map[sessionKey]map[int64]int64
-	byMemberChannel        map[int64]map[sessionKey]int64 // channelID → session → userID，用于已上线成员持久 update 推送
+	byMemberChannel        map[int64]map[sessionKey]int64 // channelID → session → userID, for durable update pushes to online members
 	bySessionMembers       map[sessionKey]map[int64]struct{}
-	pending                map[sessionKey][]queuedPush // updates-ready 前暂存的主动推送
-	flushing               map[sessionKey]bool         // 置位时暂存正在排空的 session；排空完成前推送继续进 pending 保序
-	pendingBudget          *outboundTrackedBudget      // 未就绪 session 暂存 encoded body 的进程级上限
+	pending                map[sessionKey][]queuedPush // proactive pushes staged before updates-ready
+	flushing               map[sessionKey]bool         // sessions whose staged pushes are draining on flag set; pushes keep entering pending until the drain completes, preserving order
+	pendingBudget          *outboundTrackedBudget      // process-level cap on encoded bodies staged for not-ready sessions
 	logicalSessionReleased func(sessionKey)
 	updatesActivationSeq   uint64
 	bootstrapProbeSeq      uint64
@@ -204,7 +223,7 @@ type SessionManager struct {
 	log       *zap.Logger
 }
 
-// NewSessionManager 创建空的连接注册表。
+// NewSessionManager creates an empty connection registry.
 func NewSessionManager(log *zap.Logger) *SessionManager {
 	if log == nil {
 		log = zap.NewNop()
@@ -661,9 +680,12 @@ func (m *SessionManager) AbortActivation(c *Conn) {
 	}
 }
 
-// Unregister 注销一个连接（仅当它仍是当前注册的同一对象，避免误删重连后的新连接）。
-// 观察者对未登录连接（userID=0）也回调：业务层据此清理按 session 维度的缓存条目，
-// 否则未登录连接的元数据只能等容量上限驱逐。
+// Unregister unregisters a connection (only if it is still the same object
+// registered currently, to avoid wrongly deleting a new connection after
+// reconnecting). The observer is also called back for logged-out connections
+// (userID=0): the business layer uses it to clean up per-session cache entries,
+// otherwise the metadata of a logged-out connection could only be evicted at the
+// capacity cap.
 func (m *SessionManager) Unregister(c *Conn) {
 	if c == nil {
 		return
@@ -703,7 +725,7 @@ func (m *SessionManager) Unregister(c *Conn) {
 	}
 }
 
-// DestroySessionForAuthKey 精确移除某个 raw auth_key_id 下的 session。
+// DestroySessionForAuthKey precisely removes a session under a raw auth_key_id.
 func (m *SessionManager) DestroySessionForAuthKey(authKeyID [8]byte, sessionID int64) bool {
 	m.mu.Lock()
 	observer := m.lifecycle
@@ -760,7 +782,7 @@ func (m *SessionManager) DestroySessionForAuthKey(authKeyID [8]byte, sessionID i
 	return true
 }
 
-// BindUserForAuthKey 缓存指定 raw auth_key_id + session_id 的授权用户。
+// BindUserForAuthKey caches the authorized user for the given raw auth_key_id + session_id.
 func (m *SessionManager) BindUserForAuthKey(authKeyID [8]byte, sessionID, userID int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -780,8 +802,10 @@ func (m *SessionManager) bindUserLocked(c *Conn, key sessionKey, userID int64) {
 			c.membershipsSynced.Store(false)
 			m.clearUpdatesActivationLocked(c)
 			m.clearBootstrapProbeLocked(c)
-			// 身份变化即丢弃暂存推送：它们属于前一个账号，flush 给新账号是跨账号泄露。
-			// 同时取消进行中的排空（runFlush 还另有 owner 校验做批内兜底）。
+			// An identity change discards staged pushes: they belong to the previous
+			// account, and flushing them to the new account would be a cross-account
+			// leak. It also cancels an in-progress drain (runFlush has an additional
+			// owner check as a per-batch fallback).
 			m.deletePendingLocked(key)
 			delete(m.flushing, key)
 		}
@@ -799,7 +823,7 @@ func (m *SessionManager) bindUserLocked(c *Conn, key sessionKey, userID int64) {
 	}
 }
 
-// UserIDResolvedForAuthKey 返回指定 raw auth_key_id + session_id 的 user_id 缓存状态。
+// UserIDResolvedForAuthKey returns the user_id cache state for the given raw auth_key_id + session_id.
 func (m *SessionManager) UserIDResolvedForAuthKey(authKeyID [8]byte, sessionID int64) (int64, bool) {
 	m.mu.RLock()
 	c, ok := m.bySession[sessionKey{authKeyID: authKeyID, sessionID: sessionID}]
@@ -810,7 +834,7 @@ func (m *SessionManager) UserIDResolvedForAuthKey(authKeyID [8]byte, sessionID i
 	return c.UserIDResolved()
 }
 
-// BindAuthKeyForSession 缓存指定 raw auth_key_id + session_id 的业务 auth_key_id。
+// BindAuthKeyForSession caches the business auth_key_id for the given raw auth_key_id + session_id.
 func (m *SessionManager) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -822,9 +846,10 @@ func (m *SessionManager) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID i
 	m.bindAuthKeyLocked(c, key, authKeyID)
 }
 
-// BindAuthKeyForRawAuthKey 把同一 raw temporary key 的全部活跃 session 绑定到
-// canonical permanent key。Android/TDesktop 会在一个 temp key 上并发创建多个
-// session；bind 只发生在其中一个 session，其他 session 不能继续把 raw temp 当业务 key。
+// BindAuthKeyForRawAuthKey binds all active sessions of the same raw temporary key
+// to the canonical permanent key. Android/TDesktop concurrently create multiple
+// sessions on one temp key; the bind happens on only one of them, and the other
+// sessions must not keep treating the raw temp as the business key.
 func (m *SessionManager) BindAuthKeyForRawAuthKey(rawAuthKeyID [8]byte, authKeyID [8]byte) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -868,7 +893,7 @@ func (m *SessionManager) bindAuthKeyLocked(c *Conn, key sessionKey, authKeyID [8
 	}
 }
 
-// AuthKeyIDForSession 返回指定 raw auth_key_id + session_id 缓存的业务 auth_key_id。
+// AuthKeyIDForSession returns the cached business auth_key_id for the given raw auth_key_id + session_id.
 func (m *SessionManager) AuthKeyIDForSession(rawAuthKeyID [8]byte, sessionID int64) ([8]byte, bool) {
 	m.mu.RLock()
 	c, ok := m.bySession[sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}]
@@ -879,7 +904,7 @@ func (m *SessionManager) AuthKeyIDForSession(rawAuthKeyID [8]byte, sessionID int
 	return c.BusinessAuthKeyID()
 }
 
-// AuthKeyExpiresAtForSession 返回 raw key 的握手协议失效时间；0 表示 permanent。
+// AuthKeyExpiresAtForSession returns the handshake protocol expiry of the raw key; 0 means permanent.
 func (m *SessionManager) AuthKeyExpiresAtForSession(rawAuthKeyID [8]byte, sessionID int64) (int, bool) {
 	m.mu.RLock()
 	c, ok := m.bySession[sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}]
@@ -890,11 +915,14 @@ func (m *SessionManager) AuthKeyExpiresAtForSession(rawAuthKeyID [8]byte, sessio
 	return c.AuthKeyExpiresAt(), true
 }
 
-// CloseSessionsForBusinessAuthKey 强制断开指定业务 auth_key 的全部活跃连接，
-// 供授权撤销（被踢设备）使用：出站推送用连接持有的密钥加密、不回查密钥库，
-// 不断开的话被撤销的设备会继续收到推送直至自然断线；perm-key 连接的授权
-// 缓存也只有断开重连才会重新回查授权表。这里必须关闭底层 transport，
-// 让 WebSocket/TCP 对端马上看到断线，而不是只从在线索引摘除。
+// CloseSessionsForBusinessAuthKey forcibly disconnects all active connections of
+// the given business auth_key, used for authorization revocation (a kicked
+// device): outbound pushes are encrypted with the key held by the connection and
+// do not recheck the key store, so without disconnecting, a revoked device would
+// keep receiving pushes until it disconnects naturally; also, a perm-key
+// connection's authorization cache is only rechecked on disconnect and reconnect.
+// Here the underlying transport must be closed so the WebSocket/TCP peer sees the
+// disconnect immediately, rather than only removing it from the online index.
 func (m *SessionManager) CloseSessionsForBusinessAuthKey(authKeyID [8]byte) int {
 	type offlineEvent struct {
 		key    sessionKey
@@ -953,9 +981,11 @@ func (m *SessionManager) CloseSessionsForBusinessAuthKey(authKeyID [8]byte) int 
 	return len(conns)
 }
 
-// CloseSessionsForRawAuthKeyExcept 强制断开指定 raw auth_key 的活跃连接，可按
-// session ID 排除一个 session。该接口供业务层授权撤销使用；wire-level
-// destroy_auth_key 必须改用精确 Conn 排除，避免同 session replacement 被误放过。
+// CloseSessionsForRawAuthKeyExcept forcibly disconnects the active connections of
+// the given raw auth_key, optionally excluding one session by session ID. This
+// interface is used by the business layer for authorization revocation; wire-level
+// destroy_auth_key must instead use exact Conn exclusion, to avoid a same-session
+// replacement being wrongly let through.
 func (m *SessionManager) CloseSessionsForRawAuthKeyExcept(authKeyID [8]byte, exceptSessionID int64) int {
 	return m.closeSessionsForRawAuthKey(authKeyID, func(sessionID int64, _ *Conn) bool {
 		return sessionID == exceptSessionID
@@ -1115,7 +1145,7 @@ func closeConnBatch(conns []*Conn, timeout time.Duration, waitInbound bool) bool
 	return true
 }
 
-// UnbindAuthKey 清理某业务 auth_key 下所有活跃连接的登录用户缓存。
+// UnbindAuthKey clears the logged-in user cache of all active connections under a business auth_key.
 func (m *SessionManager) UnbindAuthKey(authKeyID [8]byte) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1131,7 +1161,8 @@ func (m *SessionManager) UnbindAuthKey(authKeyID [8]byte) int {
 		c.membershipsSynced.Store(false)
 		m.clearUpdatesActivationLocked(c)
 		m.clearBootstrapProbeLocked(c)
-		// 授权解除后暂存推送属于已登出的账号，不能等下一个登录者置位时 flush 出去。
+		// After unbinding, staged pushes belong to the logged-out account and must not
+		// be flushed out when the next login sets the flag.
 		m.deletePendingLocked(key)
 		delete(m.flushing, key)
 		c.userIDResolved.Store(true)
@@ -1140,19 +1171,25 @@ func (m *SessionManager) UnbindAuthKey(authKeyID [8]byte) int {
 	return count
 }
 
-// setReceivesUpdatesLocked 是置位/复位的共同内核，调用方须持有 m.mu。
-// 置位且有暂存时不立即置 receivesUpdates：标记 flushing 并返回该批暂存所属的 userID，
-// 交由 runFlush 排空后原子置位，期间新到推送继续进 pending，保证暂存与实时推送的
-// 相对顺序（否则实时直发可能先于更早 pts 的暂存条目落线）。返回的 owner 让 runFlush
-// 能识别排空期间的身份切换（登出/换号），丢弃属于旧账号的剩余暂存而不发给新账号。
+// setReceivesUpdatesLocked is the common core of setting/resetting the flag; the
+// caller must hold m.mu.
+// When setting the flag and there is staged data, receivesUpdates is not set
+// immediately: instead flushing is marked and the userID owning that staged batch
+// is returned, to be drained by runFlush and set atomically afterwards. Meanwhile
+// newly arriving pushes keep entering pending, preserving the relative order of
+// staged and live pushes (otherwise a live direct send could land before staged
+// entries with earlier pts). The returned owner lets runFlush detect an identity
+// switch during the drain (logout/account switch) and discard the remaining staged
+// data of the old account without sending it to the new account.
 func (m *SessionManager) setReceivesUpdatesLocked(c *Conn, key sessionKey, receives bool) (int64, bool) {
 	if !receives {
 		c.receivesUpdates.Store(false)
 		m.clearSessionChannelIndexesLocked(c, key)
 		c.membershipsSynced.Store(false)
 		m.clearUpdatesActivationLocked(c)
-		// 取消进行中的排空激活：runFlush 在置位前会复查该标志，标志已删则放弃置位，
-		// 避免把刚置 false 的开关翻回 true。
+		// Cancel an in-progress drain activation: runFlush rechecks this flag before
+		// setting, and if the flag has been deleted it abandons the set, avoiding
+		// flipping a switch just set to false back to true.
 		delete(m.flushing, key)
 		return 0, false
 	}
@@ -1169,7 +1206,8 @@ func (m *SessionManager) setReceivesUpdatesLocked(c *Conn, key sessionKey, recei
 		return 0, false
 	}
 	if c.receivesUpdates.Load() || m.flushing[key] {
-		// 已就绪，或已有排空协程在跑（完成时会自行取走新增暂存并置位）。
+		// Already ready, or a drain goroutine is already running (it will take the
+		// newly staged pushes itself and set the flag when it completes).
 		if c.receivesUpdates.Load() {
 			m.clearUpdatesActivationLocked(c)
 		}
@@ -1183,23 +1221,26 @@ func (m *SessionManager) setReceivesUpdatesLocked(c *Conn, key sessionKey, recei
 	return c.userID.Load(), true
 }
 
-// runFlush 把暂存推送按序直发到连接，排空（含排空期间新增）后才置位 receivesUpdates。
-// 直发用 c.Send 绕过 ready 检查——此刻必然未就绪，走 PushToSessionForAuthKey 会被
-// 重新暂存形成死循环。三类终止：
-//   - 身份切换（登出/换号致 c.userID != owner）：丢弃剩余暂存与回排数据，不发给新账号；
-//   - 发送失败：回排剩余并退避重试，attempt 用尽则置位激活、靠 getDifference 兜底，
-//     避免 idle 客户端永久停在未激活态；
-//   - 排空完毕：原子置位 receivesUpdates。
+// runFlush sends the staged pushes directly to the connection in order, setting
+// receivesUpdates only after draining (including those added during the drain).
+// The direct send uses c.Send to bypass the ready check—at this point it is
+// necessarily not ready, and going through PushToSessionForAuthKey would stage it
+// again into an infinite loop. Three kinds of termination:
+//   - identity switch (logout/account switch causing c.userID != owner): discard the remaining staged and requeued data without sending to the new account;
+//   - send failure: requeue the remainder and back off and retry; if attempts are exhausted, set active and fall back to getDifference, so an idle client does not stay inactive forever;
+//   - drain complete: atomically set receivesUpdates.
 func (m *SessionManager) runFlush(c *Conn, key sessionKey, owner int64, attempt int) {
 	for {
 		m.mu.Lock()
 		if cur, ok := m.bySession[key]; !ok || cur != c || !m.flushing[key] {
-			// 连接已换代（removeLocked 已清 flushing）或激活被取消（SetReceivesUpdates(false)）。
+			// The connection has changed generation (removeLocked has already cleared
+			// flushing) or the activation was canceled (SetReceivesUpdates(false)).
 			m.mu.Unlock()
 			return
 		}
 		if c.userID.Load() != owner {
-			// 排空期间发生登出/换号：剩余暂存属于旧账号，丢弃且不得发给新账号。
+			// A logout/account switch happened during the drain: the remaining staged
+			// data belongs to the old account, must be discarded and must not be sent to the new account.
 			m.deletePendingLocked(key)
 			delete(m.flushing, key)
 			m.clearUpdatesActivationLocked(c)
@@ -1217,7 +1258,9 @@ func (m *SessionManager) runFlush(c *Conn, key sessionKey, owner int64, attempt 
 		m.mu.Unlock()
 
 		for i, item := range batch {
-			// 每条发送前复查身份：登出/换号后 batch 的剩余条目不能继续发到已易主的连接。
+			// Recheck identity before each send: after a logout/account switch the
+			// remaining entries of the batch must not keep being sent to a connection
+			// that has changed hands.
 			if c.userID.Load() != owner {
 				m.mu.Lock()
 				m.deletePendingLocked(key)
@@ -1265,7 +1308,8 @@ func (m *SessionManager) runFlush(c *Conn, key sessionKey, owner int64, attempt 
 			}
 			m.mu.Lock()
 			if cur, ok := m.bySession[key]; !ok || cur != c || !m.flushing[key] || c.userID.Load() != owner {
-				// 连接换代/取消/易主：剩余 batch 不属于当前连接当前账号，丢弃。
+				// Connection generation change/cancellation/hand-over: the remaining
+				// batch does not belong to the current connection's current account, discard it.
 				if c.userID.Load() != owner {
 					m.deletePendingLocked(key)
 					delete(m.flushing, key)
@@ -1277,16 +1321,19 @@ func (m *SessionManager) runFlush(c *Conn, key sessionKey, owner int64, attempt 
 			}
 			rest := append(append([]queuedPush(nil), batch[i:]...), m.pending[key]...)
 			if len(rest) > maxPendingPushesPerSession {
-				// 与 queueLocked 溢出策略一致：丢最旧留最新，让 pts 空洞集中在最前端，
-				// flush 首条即触发客户端 gap 检测，恢复路径最短。
+				// Consistent with queueLocked's overflow policy: drop the oldest and
+				// keep the newest, concentrating the pts gap at the very front, so the
+				// flush's first entry triggers the client's gap detection and the
+				// recovery path is shortest.
 				dropped := len(rest) - maxPendingPushesPerSession
 				releaseQueuedPushes(rest[:dropped])
 				rest = rest[dropped:]
 			}
 			m.pending[key] = rest
 			if attempt+1 >= maxFlushAttempts {
-				// 重试用尽：置位激活避免 idle 客户端永久断流；剩余暂存中的 durable 更新
-				// 由客户端后续 pts 空洞触发 getDifference 补齐。
+				// Retries exhausted: set active to avoid an idle client losing its stream
+				// forever; the durable updates among the remaining staged data are filled
+				// in by getDifference triggered by the client's later pts gap.
 				c.receivesUpdates.Store(true)
 				m.deletePendingLocked(key)
 				delete(m.flushing, key)
@@ -1312,14 +1359,17 @@ func (m *SessionManager) runFlush(c *Conn, key sessionKey, owner int64, attempt 
 			})
 			return
 		}
-		// 本批发完，循环回去 re-take 排空期间新增的暂存。
+		// This batch is done; loop back to re-take staged pushes added during the drain.
 	}
 }
 
-// ReceivesUpdatesForAuthKey 报告指定 raw auth_key_id + session_id 的连接是否已完全就绪：
-// 既接收主动 updates，channel membership 推送路由也已成功建立。无活跃连接时返回 false。
-// 返回 false 会让按 RPC 置位的短路放行，下一条 RPC 重试 membership 同步——
-// 否则同步失败的 session 会以「已置位但 byMemberChannel 缺失」的状态静默漏收超级群推送。
+// ReceivesUpdatesForAuthKey reports whether the connection for the given raw
+// auth_key_id + session_id is fully ready: it both receives proactive updates and
+// has successfully established the channel membership push route. Returns false
+// when there is no active connection. Returning false lets the RPC-driven flag set
+// short-circuit through and the next RPC retry the membership sync—otherwise a
+// session whose sync failed would silently miss supergroup pushes in the state of
+// "flagged ready but byMemberChannel missing".
 func (m *SessionManager) ReceivesUpdatesForAuthKey(authKeyID [8]byte, sessionID int64) bool {
 	m.mu.RLock()
 	c, ok := m.bySession[sessionKey{authKeyID: authKeyID, sessionID: sessionID}]
@@ -1444,7 +1494,7 @@ func (m *SessionManager) clearBootstrapProbeLocked(c *Conn) {
 	c.bootstrapProbed = false
 }
 
-// SetReceivesUpdatesForAuthKey 标记指定 raw auth_key_id + session_id 是否接收主动 updates。
+// SetReceivesUpdatesForAuthKey marks whether the given raw auth_key_id + session_id receives proactive updates.
 func (m *SessionManager) SetReceivesUpdatesForAuthKey(authKeyID [8]byte, sessionID int64, receives bool) {
 	m.mu.Lock()
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
@@ -1461,7 +1511,7 @@ func (m *SessionManager) SetReceivesUpdatesForAuthKey(authKeyID [8]byte, session
 	}
 }
 
-// PushToSessionForAuthKey 向指定 raw auth_key_id + session_id 推送一条消息。
+// PushToSessionForAuthKey pushes a message to the given raw auth_key_id + session_id.
 func (m *SessionManager) PushToSessionForAuthKey(ctx context.Context, authKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error {
 	m.mu.RLock()
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
@@ -1513,11 +1563,14 @@ func (m *SessionManager) queueOrSendPrepared(ctx context.Context, key sessionKey
 	return c.SendEncoded(ctx, t, encoded)
 }
 
-// PushToSessionForAuthKeyImmediate 向指定 raw auth_key_id + session_id 立即推送一条消息。
+// PushToSessionForAuthKeyImmediate immediately pushes a message to the given raw
+// auth_key_id + session_id.
 //
-// 它不等待该 session 进入 updates-ready，也不写 pending 队列。仅用于登录前的握手信号
-// （例如 updateLoginToken）：这类消息本身就是让客户端继续完成登录的触发器，若走普通
-// durable update 队列会卡在客户端尚未调用 updates.getState 的阶段。
+// It does not wait for the session to become updates-ready and does not write the
+// pending queue. It is only used for pre-login handshake signals (such as
+// updateLoginToken): such messages are themselves the trigger for the client to
+// continue completing login, and going through the ordinary durable update queue
+// would stall at the stage where the client has not yet called updates.getState.
 func (m *SessionManager) PushToSessionForAuthKeyImmediate(ctx context.Context, authKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error {
 	m.mu.RLock()
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
@@ -1537,23 +1590,26 @@ func (m *SessionManager) PushToSessionForAuthKeyImmediate(ctx context.Context, a
 	return c.SendBestEffortEncoded(ctx, t, encoded, 2*time.Second)
 }
 
-// PushToUserExceptAuthKeySession 向某 user 所有活跃连接推送，跳过指定 raw auth_key + session。
+// PushToUserExceptAuthKeySession pushes to all active connections of a user, skipping the given raw auth_key + session.
 func (m *SessionManager) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	return m.pushToUser(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
-// PushToUserAuthKey 把 msg 定向投递给【绑定到 businessAuthKeyID 这台具体设备】且属于
-// userID 的就绪连接（密聊设备级投递的锚点）。索引走 byBusinessAuthKey（经
-// businessAuthKeyCandidatesLocked，兼容 temp-key/PFS 连接），不是 byAuthKey（raw 索引会
-// 漏 temp-key 设备）。未就绪连接跳过、不进 pending——密聊消息 durable 在 qts 队列，
-// 离线设备靠 getDifference 补回（在线推送只是加速器）。c.userID 复查防跨账号泄露。
+// PushToUserAuthKey delivers msg specifically to the ready connection bound to the
+// concrete device businessAuthKeyID and belonging to userID (the anchor for
+// device-level secret-chat delivery). The index goes through byBusinessAuthKey
+// (via businessAuthKeyCandidatesLocked, compatible with temp-key/PFS connections),
+// not byAuthKey (the raw index would miss temp-key devices). Not-ready connections
+// are skipped and do not enter pending—secret-chat messages are durable in the qts
+// queue, and offline devices catch up via getDifference (online push is just an
+// accelerator). The c.userID recheck prevents cross-account leaks.
 func (m *SessionManager) PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	// Secret-chat qts is the durable source of truth, so online delivery is an accelerator just
 	// like account pts fan-out.  Do not synchronously wait for every PFS/raw connection's socket.
 	return m.pushToBusinessAuthKeyBestEffort(ctx, userID, businessAuthKeyID, 0, t, msg, 2*time.Second)
 }
 
-// PushToUserAuthKeyTransient 是 PushToUserAuthKey 的 transient（typing）best-effort 版本。
+// PushToUserAuthKeyTransient is the transient (typing) best-effort version of PushToUserAuthKey.
 func (m *SessionManager) PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	return m.pushToBusinessAuthKeyBestEffort(ctx, userID, businessAuthKeyID, 0, t, msg, timeout)
 }
@@ -1562,9 +1618,11 @@ func (m *SessionManager) PushToUserAuthKeyTransientCompatible(ctx context.Contex
 	return m.pushToBusinessAuthKeyBestEffort(ctx, userID, businessAuthKeyID, semantic, t, msg, timeout)
 }
 
-// PushToUserExceptBusinessAuthKey 把 update 投给账号其它设备，精确排除同一 permanent
-// business auth key 下的所有 raw/temp/PFS 连接。密聊 accept 用它让输掉竞态的设备收敛为
-// discarded，同时保证获胜设备的其它连接不会误删刚建立的密聊。
+// PushToUserExceptBusinessAuthKey delivers the update to the account's other
+// devices, precisely excluding all raw/temp/PFS connections under the same
+// permanent business auth key. The secret-chat accept uses it to make the device
+// that lost the race converge to discarded, while ensuring the winning device's
+// other connections do not wrongly delete the just-established secret chat.
 func (m *SessionManager) PushToUserExceptBusinessAuthKey(ctx context.Context, userID int64, excludeBusinessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	getUpdates := onceLayerUpdatesFanout(ctx, msg)
 	return m.pushToUserWithSender(ctx, userID, nil, 0, &excludeBusinessAuthKeyID, 0, t, getUpdates, false, func(c *Conn) error {
@@ -1638,7 +1696,8 @@ func (m *SessionManager) pushToBusinessAuthKey(ctx context.Context, userID int64
 			continue
 		}
 		if !c.receivesUpdates.Load() {
-			// 未就绪：密聊消息靠 getDifference 补，typing 直接丢——都不进 pending。
+			// Not ready: secret-chat messages are caught up via getDifference and typing
+			// is dropped directly—neither enters pending.
 			continue
 		}
 		if !sessionSupportsSemantic(c, semantic) {
@@ -1650,7 +1709,8 @@ func (m *SessionManager) pushToBusinessAuthKey(ctx context.Context, userID int64
 	var firstErr error
 	sent := 0
 	for _, c := range conns {
-		// 锁外发送前复查身份，防收集后并发换绑导致跨账号泄露。
+		// Recheck identity before sending outside the lock, preventing a cross-account
+		// leak from a concurrent rebind after collection.
 		if c.userID.Load() != userID {
 			continue
 		}
@@ -1704,11 +1764,15 @@ func (m *SessionManager) pushToUser(ctx context.Context, userID int64, excludeAu
 	})
 }
 
-// PushToUserTransientExceptAuthKeySession 推送 transient（短命、不写 durable log）update，
-// 如 typing / presence。与普通推送的关键区别：session 未就绪（receivesUpdates=false）时直接
-// 跳过该连接、不进 pending——transient 数据 getDifference 无法补，就绪后由 getState 快照 /
-// 下一次状态变化重建，囤积过期 transient 既无意义又会被 pending 的老化/溢出/重试耗尽误当
-// 「durable 兜底」丢弃。走 best-effort 发送，不阻塞调用方。
+// PushToUserTransientExceptAuthKeySession pushes transient (short-lived, not
+// writing the durable log) updates such as typing / presence. The key difference
+// from an ordinary push: when a session is not ready (receivesUpdates=false) that
+// connection is skipped directly and does not enter pending—transient data cannot
+// be caught up by getDifference, and once ready is rebuilt from the getState
+// snapshot / the next state change; hoarding stale transient data is both
+// meaningless and would be wrongly treated as a "durable fallback" discard by
+// pending's aging/overflow/exhausted retries. It uses a best-effort send and does
+// not block the caller.
 func (m *SessionManager) PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	getUpdates := onceLayerUpdatesFanout(ctx, msg)
 	return m.pushToUserWithSender(ctx, userID, &excludeAuthKeyID, excludeSessionID, nil, 0, t, getUpdates, false, func(c *Conn) error {
@@ -1757,9 +1821,10 @@ func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64,
 	if ctx != nil {
 		sendCtx = context.WithoutCancel(ctx)
 	}
-	// timeout 是整次 fan-out 的等待预算，不是每个 session 各自一份。健康连接始终先走
-	// SendBestEffortEncoded 的非阻塞快路径；预算耗尽后 remaining=0，仍会尝试快路径，
-	// 但不会再为后续慢连接串行等待。
+	// timeout is the wait budget for the whole fan-out, not one per session. Healthy
+	// connections always take SendBestEffortEncoded's non-blocking fast path first;
+	// after the budget is exhausted remaining=0, the fast path is still attempted,
+	// but no more serial waiting is done for subsequent slow connections.
 	var deadline time.Time
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
@@ -1823,12 +1888,16 @@ func onceLayerUpdatesFanout(ctx context.Context, msg tg.UpdatesClass) func() (*l
 }
 
 func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, excludeBusinessAuthKeyID *[8]byte, semantic tlprofile.SemanticID, t proto.MessageType, getUpdates func() (*layerUpdatesFanout, error), queueWhenNotReady bool, send func(*Conn) error) (int, error) {
-	// push fan-out 是连接层最热路径之一：debug 日志的字段构造（含 auth_key hex 格式化）
-	// 在关闭 debug 时也会求值，先查级别一次、按需记日志。
+	// push fan-out is one of the connection layer's hottest paths: debug log field
+	// construction (including auth_key hex formatting) is evaluated even when debug
+	// is off, so check the level once and log on demand.
 	debug := m.log.Core().Enabled(zapcore.DebugLevel)
-	// 快路径：稳态下目标连接全部就绪（或 transient 直接跳过未就绪者），收集连接
-	// 只读不写，全程共享读锁即可，避免每次 push 都拿独占写锁串行整个注册表。
-	// 仅当 durable 推送遇到未就绪连接（需写 pending）时才回落写锁重扫。
+	// Fast path: in steady state all target connections are ready (or transient
+	// directly skips the not-ready ones), and collecting connections is read-only
+	// and does not write, so a shared read lock suffices throughout, avoiding taking
+	// an exclusive write lock to serialize the whole registry on every push. Only
+	// when a durable push hits a not-ready connection (needing to write pending)
+	// does it fall back to a write lock and rescan.
 	m.mu.RLock()
 	total := len(m.byUser[userID])
 	conns := make([]*Conn, 0, total)
@@ -1848,8 +1917,10 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 		}
 		if !c.receivesUpdates.Load() {
 			if !queueWhenNotReady {
-				// transient（typing/presence）：未就绪即丢，不进 pending。这些 update 不写
-				// durable log，getDifference 无法补；就绪后由 getState 快照/下次状态变化重建。
+				// transient (typing/presence): dropped if not ready, not entering pending.
+				// These updates do not write the durable log and cannot be caught up by
+				// getDifference; once ready they are rebuilt from the getState
+				// snapshot/next state change.
 				skipped++
 				continue
 			}
@@ -1864,7 +1935,8 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 		// briefly block on the global encode gate. Do both before taking SessionManager.mu,
 		// then share the immutable body across every not-ready session found by the re-scan.
 		pendingUpdates, pendingReservation, pendingErr := m.preparePendingPush(getUpdates)
-		// 写锁下完整重扫（读锁释放到此之间状态可能变化，以重扫结果为准）。
+		// Full rescan under the write lock (state may change between releasing the read
+		// lock and here; the rescan result is authoritative).
 		conns = conns[:0]
 		queued, dropped, excluded, skipped = 0, 0, 0, 0
 		m.mu.Lock()
@@ -1921,9 +1993,12 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 	var firstErr error
 	sent := 0
 	for _, c := range conns {
-		// 锁外发送前复查身份：收集 conns 到此刻之间，连接可能被并发换绑（登出/换号，
-		// bindUserLocked 的 c.userID.Swap）。不复查会把本属于 userID 的 update 投递到
-		// 已易主的连接，构成跨账号泄露。与 AddUserChannelMembership 的同款防御一致。
+		// Recheck identity before sending outside the lock: between collecting conns
+		// and now, a connection may have been concurrently rebound (logout/account
+		// switch, bindUserLocked's c.userID.Swap). Without the recheck, an update
+		// belonging to userID would be delivered to a connection that has changed
+		// hands, constituting a cross-account leak. Consistent with the same defense
+		// in AddUserChannelMembership.
 		if c.userID.Load() != userID {
 			continue
 		}
@@ -1947,9 +2022,10 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 				dropped++
 				continue
 			}
-			// 对 durable/best-effort fan-out，队列满意味着该 socket 已成为慢消费者。
-			// 立即摘除并把它视为离线：不能让其错误把已经投递给健康 session 的 outbox
-			// 行整体重试。该 session 的 durable gap 由 getDifference 恢复。
+			// For durable/best-effort fan-out, a full queue means this socket has become
+			// a slow consumer. Remove it immediately and treat it as offline: its error
+			// must not cause a wholesale retry of outbox rows already delivered to
+			// healthy sessions. This session's durable gap is recovered by getDifference.
 			if errors.Is(err, ErrOutboundQueueFull) {
 				c.dropSlowConsumer()
 				if debug {
@@ -2004,9 +2080,11 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 	return sent + queued, firstErr
 }
 
-// ActiveRawAuthKeyIDs 返回当前物理连接实际使用的 raw auth_key_id 去重快照。
-// maintenance 用它保护“已建 key 但尚未登录”的长连接不被 orphan GC 删除；不能用
-// business/temp→perm key 替代，否则活跃 temp 连接仍可能误删。
+// ActiveRawAuthKeyIDs returns a deduplicated snapshot of the raw auth_key_ids
+// actually used by current physical connections. maintenance uses it to protect
+// long-lived connections that "have built a key but not yet logged in" from being
+// deleted by the orphan GC; business/temp→perm keys cannot substitute for this, or
+// active temp connections could still be wrongly deleted.
 func (m *SessionManager) ActiveRawAuthKeyIDs() [][8]byte {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -2200,9 +2278,11 @@ func (m *SessionManager) onlineChannelSubscriberUserIDsExcluding(channelID int64
 	return out
 }
 
-// ChannelMembershipGeneration 返回该 session 的 membership 索引修订号。
-// 全量同步方必须在读取持久成员列表【之前】采样，并经 SetSessionChannelMemberships
-// 带回比对；session 不在线时返回 0（后续 Set 也会因查不到连接而放弃）。
+// ChannelMembershipGeneration returns the membership index revision number of that
+// session. The full-sync party must sample it *before* reading the persistent
+// membership list and carry it back for comparison via
+// SetSessionChannelMemberships; when the session is offline it returns 0 (a later
+// Set also gives up because it cannot find the connection).
 func (m *SessionManager) ChannelMembershipGeneration(rawAuthKeyID [8]byte, sessionID int64) int64 {
 	m.mu.RLock()
 	c, ok := m.bySession[sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}]
@@ -2217,11 +2297,14 @@ func (m *SessionManager) ChannelMembershipGeneration(rawAuthKeyID [8]byte, sessi
 // updates-ready session. This index is broader than TrackChannelInterest and is
 // used for durable channel updates such as new/edit/delete message.
 //
-// expectedGen 是调用方在读取持久成员列表前经 ChannelMembershipGeneration 采样的
-// 修订号。若落地时修订号已变（读取窗口内发生了 join/leave/kick 的增量修订或整体
-// 清除），全量替换会覆盖掉窗口内的增量——此时改走并集合并（保留增量 Add；合并回的
-// stale 条目由 fan-out 前的 PG active 复核兜底），并保持 membershipsSynced=false，
-// 让下一条 RPC 重新走全量同步收敛。
+// expectedGen is the revision number the caller sampled via
+// ChannelMembershipGeneration before reading the persistent membership list. If the
+// revision has changed on commit (an incremental revision from join/leave/kick or a
+// wholesale clear happened inside the read window), a full replacement would
+// overwrite the in-window increment—in that case it switches to a union merge
+// (retaining incremental Adds; stale entries merged back are caught by the
+// pre-fan-out PG active recheck) and keeps membershipsSynced=false, so the next RPC
+// runs a fresh full sync to converge.
 func (m *SessionManager) SetSessionChannelMemberships(rawAuthKeyID [8]byte, sessionID, userID int64, channelIDs []int64, expectedGen int64) {
 	key := sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}
 	m.mu.Lock()
@@ -2290,13 +2373,18 @@ func (m *SessionManager) OnlineChannelMemberUserIDs(channelID int64, limit int) 
 	return m.onlineChannelUsers(m.byMemberChannel, channelID, limit)
 }
 
-// OnlineChannelMemberUserIDsExcluding 返回频道在线成员中不在 exclude 集合内的 user id，
-// 用于 >cap 在线成员的 UpdateChannelTooLong nudge（P0-8）：完整 payload 已投递给 exclude
-// 集合（cap 内成员），其余在线成员只发廉价 nudge 促其 getChannelDifference。单次 RLock 快照；
-// 由调用方用「已收完整 payload 的 recipients」构造 exclude，使同一 user 不会既收 payload 又收
-// nudge——天然规避两次独立 cap 调用的边界双投/漏投（设计 §8-D3/D32）。limit 防一次无界 nudge 风暴。
-// 不做 PG active 复核：byMemberChannel 已在 join/leave/kick 维护；nudge 廉价且幂等，对刚离开成员
-// 的多余 nudge 无害（其 getChannelDifference 自带访问校验）。
+// OnlineChannelMemberUserIDsExcluding returns the user ids of a channel's online
+// members that are not in the exclude set, used for the UpdateChannelTooLong nudge
+// when online members exceed the cap (P0-8): the full payload has already been
+// delivered to the exclude set (in-cap members), and the remaining online members
+// only get a cheap nudge prompting their getChannelDifference. A single RLock
+// snapshot; the caller builds exclude from "recipients that already got the full
+// payload", so the same user does not receive both the payload and the nudge—this
+// naturally avoids boundary double-send/missed-send between two independent cap
+// calls (design §8-D3/D32). limit prevents an unbounded nudge storm.
+// No PG active recheck is done: byMemberChannel is already maintained on
+// join/leave/kick; the nudge is cheap and idempotent, and extra nudges to members
+// who just left are harmless (their getChannelDifference has its own access check).
 func (m *SessionManager) OnlineChannelMemberUserIDsExcluding(channelID int64, exclude map[int64]struct{}, limit int) []int64 {
 	if channelID == 0 {
 		return nil
@@ -2576,8 +2664,9 @@ func (m *SessionManager) clearSessionChannelIndexesLocked(c *Conn, key sessionKe
 	m.clearChannelMembershipsLocked(c, key)
 }
 
-// clearChannelMembershipsLocked 整体清除某连接的 membership 索引并递增其修订号，
-// 使在飞的全量同步（SetSessionChannelMemberships）能检测到清除并放弃过期替换。
+// clearChannelMembershipsLocked wholesale clears a connection's membership index
+// and increments its revision number, so an in-flight full sync
+// (SetSessionChannelMemberships) can detect the clear and abandon a stale replacement.
 func (m *SessionManager) clearChannelMembershipsLocked(c *Conn, key sessionKey) {
 	c.membershipGen.Add(1)
 	m.clearChannelIndexLocked(m.byMemberChannel, m.bySessionMembers, key)
@@ -2595,8 +2684,9 @@ func (m *SessionManager) trackChannelIndexLocked(index map[int64]map[sessionKey]
 			continue
 		}
 		if _, exists := channels[channelID]; !exists && len(channels) >= maxChannelIndexPerSession {
-			// 达 per-session 上限：丢弃多出的 channel 登记（仅影响该 channel 的实时/成员
-			// 推送路由，durable update 仍由 getDifference/getChannelDifference 兜底）。
+			// Per-session cap reached: drop the excess channel registrations (this only
+			// affects that channel's live/member push routing; durable updates are still
+			// caught by getDifference/getChannelDifference).
 			truncated++
 			continue
 		}
@@ -2660,9 +2750,10 @@ func (m *SessionManager) takePendingLocked(key sessionKey, ready bool) []queuedP
 	}
 	q := m.pending[key]
 	delete(m.pending, key)
-	// 取出时过滤超龄条目：暂存只为弥合「注册到就绪」的窗口，迟迟未就绪期间
-	// 囤下的过时 update（含 transient 类）不应在多分钟后原样下发；durable 事件
-	// 由 user_update_events + getDifference 兜底，丢弃不丢数据。
+	// Filter out over-age entries on take: staging only bridges the "registered to
+	// ready" window, so outdated updates (including transient ones) hoarded during a
+	// long not-ready period should not be delivered as-is minutes later; durable
+	// events are caught by user_update_events + getDifference, so dropping loses no data.
 	now := time.Now()
 	pending := make([]queuedPush, 0, len(q))
 	dropped := 0
@@ -2711,12 +2802,15 @@ func (m *SessionManager) preparePendingPush(getUpdates func() (*layerUpdatesFano
 	return updates, reservation, nil
 }
 
-// queuePreparedLocked 暂存一条已冻结的主动推送，返回是否实际入队。
-// 调用方必须在锁外保持 reservation 的 producer ref，并在全部入队完成后 release。
+// queuePreparedLocked stages a frozen proactive push and returns whether it was
+// actually enqueued. The caller must hold the reservation's producer ref outside
+// the lock and release it after all enqueues complete.
 func (m *SessionManager) queuePreparedLocked(key sessionKey, t proto.MessageType, updates *layerUpdatesFanout, reservation *pendingPushReservation) bool {
 	q := m.pending[key]
-	// 过期保护：最早一条暂存已超过 pendingPushMaxAge（session 迟迟未 ready）时，丢整批并
-	// 不再囤这条，记 trace。避免「登录后从不 getState」的连接长期占用 pending 内存。
+	// Expiry protection: when the earliest staged entry has exceeded
+	// pendingPushMaxAge (the session has long been not ready), drop the whole batch
+	// and stop hoarding this one, logging a trace. This avoids a connection that
+	// "never calls getState after login" occupying pending memory long term.
 	if len(q) > 0 && time.Since(q[0].at) > pendingPushMaxAge {
 		m.log.Debug("Drop stale pending pushes (session not ready in time)",
 			zap.String("auth_key_id", sessionKeyLog(key.authKeyID)),
@@ -2747,10 +2841,13 @@ func (m *SessionManager) queuePreparedLocked(key sessionKey, t proto.MessageType
 	return true
 }
 
-// RunPendingSweeper 周期回收长期滞留的 pending 暂存：被动老化（queueLocked/takePendingLocked）
-// 只在「有新推送」或「就绪后取出」时触发，对「已注册但迟迟不调 getState、又恰好没有新推送、
-// 也不断连（持续 ping 保活）」的连接无法回收其超龄 pending。本 sweeper 给出一个主动兜底，
-// 与 pendingPushMaxAge 阈值一致，仅丢整批超龄、不触碰正在排空（flushing）的 session。
+// RunPendingSweeper periodically reclaims long-lingering pending staged data:
+// passive aging (queueLocked/takePendingLocked) only triggers on "a new push" or
+// "taken when ready", and cannot reclaim the over-age pending of a connection that
+// "has registered but never calls getState, happens to have no new push, and does
+// not disconnect either (kept alive by pings)". This sweeper provides an active
+// fallback, consistent with the pendingPushMaxAge threshold, dropping only
+// over-age whole batches and not touching a session that is draining (flushing).
 func (m *SessionManager) RunPendingSweeper(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Minute
@@ -2775,7 +2872,7 @@ func (m *SessionManager) sweepStalePending() {
 	dropped := 0
 	for key, q := range m.pending {
 		if m.flushing[key] {
-			// 排空协程拥有该批，回收交给 runFlush，避免与其竞态。
+			// The drain goroutine owns this batch; reclamation is left to runFlush to avoid racing with it.
 			continue
 		}
 		if len(q) == 0 || now.Sub(q[0].at) <= pendingPushMaxAge {

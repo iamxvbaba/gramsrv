@@ -778,13 +778,13 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "LIMIT_INVALID") {
 		t.Fatalf("messages.searchStickers huge limit err = %v, want LIMIT_INVALID", err)
 	}
-	// emoji 关键词已从官方 seed(catalog),返回真实词典而非空 stub。
+	// emoji keywords come from the official seed (catalog), returning a real dictionary rather than an empty stub.
 	keywords, err := r.onMessagesGetEmojiKeywords(ownerCtx, "en")
 	if err != nil || keywords.LangCode != "en" || keywords.Version == 0 || len(keywords.Keywords) == 0 {
 		t.Fatalf("messages.getEmojiKeywords lang=%q version=%d count=%d err=%v, want seeded en keywords",
 			keywords.LangCode, keywords.Version, len(keywords.Keywords), err)
 	}
-	// 客户端版本(7)落后于固化版本 → 下发全量,Version 推进到固化版本。
+	// The client version (7) is behind the pinned version -> send the full set, and Version advances to the pinned version.
 	keywordsDiff, err := r.onMessagesGetEmojiKeywordsDifference(ownerCtx, &tg.MessagesGetEmojiKeywordsDifferenceRequest{
 		LangCode:    "en",
 		FromVersion: 7,
@@ -918,7 +918,7 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 		t.Fatalf("messages.getDefaultTagReactions = %#v, want non-empty hashable catalog", tagReactions)
 	}
 	r.deps.Messages = nil
-	// poll 链路已是真实现：对非 poll 消息一律 MESSAGE_ID_INVALID（与官方一致）。
+	// The poll path is now a real implementation: for non-poll messages it is uniformly MESSAGE_ID_INVALID (matching the official API).
 	if _, err := r.onMessagesSendVote(ownerCtx, &tg.MessagesSendVoteRequest{
 		Peer:    inputPeerChannel(channel),
 		MsgID:   1,

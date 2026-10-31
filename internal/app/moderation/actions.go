@@ -443,7 +443,7 @@ func (w *ActionWorker) Run(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if err := w.runOnce(ctx); err != nil && ctx.Err() == nil {
-			w.log.Warn("审核处置任务执行失败", zap.Error(err))
+			w.log.Warn("moderation action task execution failed", zap.Error(err))
 		}
 		select {
 		case <-ctx.Done():
@@ -465,13 +465,13 @@ func (w *ActionWorker) runOnce(ctx context.Context) error {
 			if err := w.store.SupersedeModerationAction(
 				ctx, action.ID, action.Attempts, time.Now().UTC(),
 			); err != nil {
-				w.log.Warn("提交已被新案件取代的审核处置失败",
+				w.log.Warn("failed to submit moderation action superseded by a new case",
 					zap.Int64("case_id", action.CaseID),
 					zap.Int64("action_id", action.ID),
 					zap.String("kind", string(action.Kind)),
 					zap.Error(err))
 			} else {
-				w.log.Info("审核处置已被同目标的更新处置取代",
+				w.log.Info("moderation action was superseded by an updated action for the same target",
 					zap.Int64("case_id", action.CaseID),
 					zap.Int64("action_id", action.ID),
 					zap.String("kind", string(action.Kind)))
@@ -500,21 +500,21 @@ func (w *ActionWorker) runOnce(ctx context.Context) error {
 			ctx, action.ID, action.Attempts, execErr == nil,
 			errorText, retryAt, finishedAt,
 		); err != nil {
-			w.log.Warn("提交审核处置结果失败",
+			w.log.Warn("failed to submit moderation action result",
 				zap.Int64("action_id", action.ID),
 				zap.Int("attempts", action.Attempts),
 				zap.Error(err))
 			continue
 		}
 		if execErr != nil {
-			w.log.Warn("审核处置等待重试",
+			w.log.Warn("moderation action awaiting retry",
 				zap.Int64("case_id", action.CaseID),
 				zap.Int64("action_id", action.ID),
 				zap.String("kind", string(action.Kind)),
 				zap.Int("attempts", action.Attempts),
 				zap.Error(execErr))
 		} else {
-			w.log.Info("审核处置完成",
+			w.log.Info("moderation action completed",
 				zap.Int64("case_id", action.CaseID),
 				zap.Int64("action_id", action.ID),
 				zap.String("kind", string(action.Kind)))

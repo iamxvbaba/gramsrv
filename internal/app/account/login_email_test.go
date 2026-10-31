@@ -217,8 +217,8 @@ func TestLoginEmailUnknownOutcomeReturnsSuccessAndKeepsCode(t *testing.T) {
 	}
 }
 
-// TestSetLoginEmailPersistsAndMasks 设置登录邮箱后，GetPassword 下发掩码 pattern，原始
-// 地址只在 LoginEmail 读路径可见。
+// TestSetLoginEmailPersistsAndMasks: after setting a login email, GetPassword returns a masked pattern and
+// the raw address is only visible on the LoginEmail read path.
 func TestSetLoginEmailPersistsAndMasks(t *testing.T) {
 	ctx := context.Background()
 	svc, users := newLoginEmailService(t)
@@ -245,7 +245,7 @@ func TestSetLoginEmailPersistsAndMasks(t *testing.T) {
 	}
 }
 
-// TestLoginEmailByPhoneAndClear 验证 sendCode 可按手机号读取，但 reset 只按已锁定 userID 清除。
+// TestLoginEmailByPhoneAndClear verifies that sendCode can read by phone number, but reset only clears by the locked userID.
 func TestLoginEmailByPhoneAndClear(t *testing.T) {
 	ctx := context.Background()
 	svc, users := newLoginEmailService(t)
@@ -267,7 +267,7 @@ func TestLoginEmailByPhoneAndClear(t *testing.T) {
 	}
 }
 
-// TestSetLoginEmailRejectsInvalid 空/无 @ 的邮箱被拒。
+// TestSetLoginEmailRejectsInvalid rejects empty emails and emails without '@'.
 func TestSetLoginEmailRejectsInvalid(t *testing.T) {
 	ctx := context.Background()
 	svc, users := newLoginEmailService(t)
@@ -298,14 +298,14 @@ func TestSetLoginEmailRejectsDuplicateCaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestRecoveryEmailDoesNotLeakIntoLoginEmailPattern 是核心解耦回归：设置 2FA 恢复邮箱
-// 不得把恢复邮箱掩码写进 login_email_pattern（历史 bug）。
+// TestRecoveryEmailDoesNotLeakIntoLoginEmailPattern is the core decoupling regression: setting a 2FA recovery
+// email must not write the recovery email mask into login_email_pattern (a historical bug).
 func TestRecoveryEmailDoesNotLeakIntoLoginEmailPattern(t *testing.T) {
 	ctx := context.Background()
 	svc, users := newLoginEmailService(t)
 	u := createUser(t, users, "15550010004")
 
-	// 设置 2FA 恢复邮箱（email-only 路径即可触发历史 bug 的写入点）。
+	// Set a 2FA recovery email (the email-only path alone triggers the historical bug's write point).
 	if err := svc.UpdatePasswordSettings(ctx, u.ID, domain.PasswordCheck{Empty: true}, domain.PasswordInputSettings{
 		Email:    "recovery@secret.com",
 		HasEmail: true,

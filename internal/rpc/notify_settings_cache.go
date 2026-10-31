@@ -10,14 +10,15 @@ import (
 
 const (
 	notifySettingsCacheMaxEntries = 4096
-	// notifySettingsCacheTTL 兜底跨实例失效窗口；同实例 Save/Reset 即时失效。
-	// 通知设置改动后其它实例的 dialog 列表静音态最多滞后该时长（可接受）。
+	// notifySettingsCacheTTL is the fallback cross-instance invalidation window; Save/Reset on the
+	// same instance invalidates immediately. After a notification-settings change, another
+	// instance's dialog-list mute state lags by at most this duration (acceptable).
 	notifySettingsCacheTTL = 60 * time.Second
 )
 
-// notifySettingsCache 缓存 userID→该用户全部整-peer 通知设置 map，消除 getDialogs/
-// getPeerDialogs/getFullUser/getFullChannel 每次刷新都查 notify_settings 的热路径开销
-// （命中即 0 PG）。内建 TTL + singleflight + LRU。
+// notifySettingsCache caches userID -> the map of that user's whole-peer notification settings,
+// eliminating the hot-path cost of querying notify_settings on every getDialogs/getPeerDialogs/
+// getFullUser/getFullChannel refresh (a hit costs 0 PG). Built-in TTL + singleflight + LRU.
 type notifySettingsCache struct {
 	cache *readmodelcache.Cache[int64, map[domain.Peer]domain.PeerNotifySettings]
 }
@@ -32,7 +33,8 @@ func newNotifySettingsCache(now func() time.Time) *notifySettingsCache {
 	}
 }
 
-// getOrLoad 返回缓存的 map（只读，调用方查表后须 Clone 单条再持有）。
+// getOrLoad returns the cached map (read-only; callers must Clone a single entry before retaining
+// it after lookup).
 func (c *notifySettingsCache) getOrLoad(ctx context.Context, userID int64, load func() (map[domain.Peer]domain.PeerNotifySettings, error)) (map[domain.Peer]domain.PeerNotifySettings, error) {
 	if c == nil || userID == 0 {
 		return load()
@@ -54,7 +56,8 @@ func (c *notifySettingsCache) Flush() {
 	c.cache.Flush()
 }
 
-// userNotifySettings 取（缓存的）某用户全部整-peer 通知设置；服务未接通返回 nil。
+// userNotifySettings fetches (cached) all whole-peer notification settings for a user; returns nil
+// when the service is unavailable.
 func (r *Router) userNotifySettings(ctx context.Context, userID int64) map[domain.Peer]domain.PeerNotifySettings {
 	svc, ok := r.accountNotifySvc()
 	if !ok {

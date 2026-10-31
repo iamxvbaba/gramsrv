@@ -6,9 +6,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelFullCanViewParticipants 锁定:广播频道的订阅者列表仅管理员可见(官方语义),
-// 非管理员订阅者拿到 can_view_participants=false——否则 DrKLO Profile 会冒出
-// Subscribers/Administrators/Channel Settings 三行。超级群成员可见(隐藏成员时仅管理员)。
+// TestChannelFullCanViewParticipants locks in: a broadcast channel's subscriber list is visible
+// only to admins (official semantics), so a non-admin subscriber gets can_view_participants=false
+// -- otherwise DrKLO's Profile would show the Subscribers/Administrators/Channel Settings rows.
+// Supergroup members can see it (when members are hidden, only admins).
 func TestChannelFullCanViewParticipants(t *testing.T) {
 	broadcast := domain.Channel{ID: 1, Broadcast: true}
 	megagroup := domain.Channel{ID: 2, Megagroup: true}

@@ -15,8 +15,9 @@ import (
 	"telesrv/internal/rpcresult"
 )
 
-// Telegram 客户端按 chunk 调 upload.getFile；单次响应限制为 1MiB，
-// 防止异常客户端用超大/空 limit 触发整 blob 读回。
+// Telegram clients call upload.getFile chunk by chunk; a single response is limited to
+// 1MiB, preventing an abnormal client from using an oversized/empty limit to trigger a
+// full-blob read-back.
 const maxUploadGetFileChunkLimit = 1 << 20
 
 type immutableFileRangeReader interface {
@@ -53,7 +54,8 @@ func (s *immutableUploadFileSource) RetainedBytes() int {
 	return 384 + len(s.range_.ObjectKey) + len(s.range_.MimeType)
 }
 
-// registerUpload 注册 upload.* RPC handler（分片上传 + 文件下载 + 地图 webfile）。
+// registerUpload registers the upload.* RPC handlers (upload parts + file download +
+// map webfile).
 func (r *Router) registerUpload(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.UploadSaveFilePartRequest](d, tlprofile.SemanticMethodUploadSaveFilePart, func(ctx context.Context, layerRequest *tg.UploadSaveFilePartRequest) (any, error) {
 		return r.onUploadSaveFilePart(ctx, layerRequest)
@@ -116,8 +118,9 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 	if req.Offset < 0 || req.Limit <= 0 || req.Limit > maxUploadGetFileChunkLimit {
 		return nil, limitInvalidErr()
 	}
-	// RTMP 直播拉流：inputGroupCallStream 不落 file_blobs、不依赖 Files 服务，
-	// 直连 livestream 媒体面（须先于 Files nil 检查）。
+	// RTMP livestream pull: inputGroupCallStream does not hit file_blobs and does not
+	// depend on the Files service, connecting directly to the livestream media plane
+	// (must come before the Files nil check).
 	if loc, ok := req.Location.(*tg.InputGroupCallStream); ok {
 		return r.onUploadGetGroupCallStream(ctx, loc, req.Offset, req.Limit)
 	}
@@ -182,11 +185,14 @@ func (r *Router) authorizedFileLocationKey(ctx context.Context, location tg.Inpu
 	return fmt.Sprintf("enc:%d", loc.ID), true, nil
 }
 
-// onUploadGetGroupCallStream 处理 RTMP 直播观众拉流：按 time_ms/scale 取一段打包好的
-// tgcalls broadcast part，再按 offset/limit 切片返回。错误语义对齐 TDesktop 消费点
-// （calls_group_call.cpp broadcastPartStart）：
-//   - 段未就绪（时间轴还没走到）→ TIME_TOO_BIG（客户端 100ms 后原样重试）
-//   - 段已过期/无流/未加入 → GROUPCALL_JOIN_MISSING（触发客户端 rejoin 重新对时）
+// onUploadGetGroupCallStream handles RTMP livestream viewer pull: fetches a packaged
+// tgcalls broadcast part by time_ms/scale, then slices it by offset/limit. The error
+// semantics match TDesktop's consumption point (calls_group_call.cpp
+// broadcastPartStart):
+//   - part not ready (the timeline has not reached it) -> TIME_TOO_BIG (the client
+//     retries as-is after 100ms)
+//   - part expired / no stream / not joined -> GROUPCALL_JOIN_MISSING (triggers the
+//     client to rejoin and re-sync its clock)
 func (r *Router) onUploadGetGroupCallStream(ctx context.Context, loc *tg.InputGroupCallStream, offset int64, limit int) (tg.UploadFileClass, error) {
 	if r.deps.LiveStreams == nil {
 		return nil, notImplementedErr()
@@ -198,24 +204,28 @@ func (r *Router) onUploadGetGroupCallStream(ctx context.Context, loc *tg.InputGr
 	if !scope.call.RtmpStream || scope.channel.ID == 0 {
 		return nil, groupCallInvalidErr()
 	}
-	// RTMP 观众在 stream 模式不发 checkGroupCall 心跳、也无 SFU 媒体面活性，
-	// 拉流请求（~1/s/观众）就是它的保活信号——不刷会被 sweeper 置 left，
-	// 客户端每 ~50s 报 "Rejoin after got 'left' with my ssrc" 循环重进。
+	// An RTMP viewer in stream mode does not send a checkGroupCall heartbeat and has no
+	// SFU media-plane liveness, so its pull requests (~1/s/viewer) are its keepalive
+	// signal - without them the sweeper sets it to left, and the client loops back in
+	// every ~50s reporting "Rejoin after got 'left' with my ssrc".
 	if _, _, err := r.deps.GroupCalls.Touch(ctx, scope.call.ID, scope.userID, int(r.clock.Now().Unix())); err != nil {
 		r.log.Debug("live stream viewer touch", zap.Int64("call_id", scope.call.ID), zap.Error(err))
 	}
 	part, err := r.deps.LiveStreams.StreamPart(scope.channel.ID, loc.TimeMs, loc.Scale)
 	switch {
 	case errors.Is(err, domain.ErrLiveStreamPartNotReady):
-		// 时间轴尚未走到该段：客户端 100ms 后原样重试（Status::NotReady）。
+		// The timeline has not reached this part yet: the client retries as-is after
+		// 100ms (Status::NotReady).
 		return nil, tgerr400("TIME_TOO_BIG")
 	case errors.Is(err, domain.ErrLiveStreamPartExpired), errors.Is(err, domain.ErrLiveStreamNoStream):
-		// 段已淘汰/无流：客户端重新对时后 resync（Status::ResyncNeeded）。
+		// Part evicted / no stream: the client resyncs after re-alignment
+		// (Status::ResyncNeeded).
 		return nil, tgerr400("STREAM_TIMESTAMP_EXPIRED")
 	case err != nil:
 		return nil, internalErr()
 	}
-	// offset 越界返回空 bytes（客户端已读完该段即停止续读，limit=128KiB 单次到底）。
+	// An out-of-range offset returns empty bytes (the client stops reading once it has
+	// exhausted the part, reading to the end in one 128KiB request).
 	if offset >= int64(len(part)) {
 		return &tg.UploadFile{Type: &tg.StorageFileUnknown{}, Bytes: []byte{}}, nil
 	}
@@ -230,17 +240,19 @@ func (r *Router) onUploadGetGroupCallStream(ctx context.Context, loc *tg.InputGr
 	}, nil
 }
 
-// onUploadGetFileHashes 返回空 hash 列表：本阶段不做 CDN/分片完整性校验，客户端据空列表直接信任数据。
+// onUploadGetFileHashes returns an empty hash list: this stage does no CDN/part
+// integrity verification, and the client trusts the data directly based on the empty
+// list.
 func (r *Router) onUploadGetFileHashes(ctx context.Context, req *tg.UploadGetFileHashesRequest) ([]tg.FileHash, error) {
 	return []tg.FileHash{}, nil
 }
 
-// fileLocationKey 把 tg.InputFileLocation 推导为 file_blobs 的 location_key。
-// 约定：
+// fileLocationKey derives a file_blobs location_key from tg.InputFileLocation.
+// Convention:
 //
-//	doc:<id>            文档主体
-//	doc:<id>:<type>     文档缩略图
-//	photo:<id>:<type>   照片某尺寸（头像 big→c / small→a）
+//	doc:<id>            document body
+//	doc:<id>:<type>     document thumbnail
+//	photo:<id>:<type>   a photo size (avatar big->c / small->a)
 func fileLocationKey(location tg.InputFileLocationClass) (string, bool) {
 	switch loc := location.(type) {
 	case *tg.InputFileLocation:
@@ -294,7 +306,8 @@ func fileLocationKey(location tg.InputFileLocationClass) (string, bool) {
 		}
 		return fmt.Sprintf("photo:%d:%s", photoID, size), true
 	default:
-		// InputStickerSetThumb / secure / takeout 等本阶段不生成对应资源。
+		// InputStickerSetThumb / secure / takeout, etc. do not generate a resource at
+		// this stage.
 		return "", false
 	}
 }
@@ -336,7 +349,8 @@ func legacyDocumentThumbSizeType(localID int) (string, bool) {
 	return "", false
 }
 
-// storageFileType 映射 storage.FileType，优先信任字节魔数以兼容历史上写错 mime 的 seed blob。
+// storageFileType maps storage.FileType, trusting the byte magic first to accommodate
+// historically mis-typed-mime seed blobs.
 func storageFileType(mime string, data []byte) tg.StorageFileTypeClass {
 	switch sniffImageType(data) {
 	case "jpeg":
@@ -363,7 +377,7 @@ func storageFileType(mime string, data []byte) tg.StorageFileTypeClass {
 	return &tg.StorageFileUnknown{}
 }
 
-// sniffImageType 用魔数探测常见图片类型。
+// sniffImageType detects common image types by magic bytes.
 func sniffImageType(data []byte) string {
 	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
 		return "jpeg"
@@ -381,7 +395,7 @@ func sniffImageType(data []byte) string {
 	return ""
 }
 
-// fileSaveErr 把 files 服务的分片错误映射为 rpc_error。
+// fileSaveErr maps the files service's part errors to rpc_error.
 func fileSaveErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrFilePartInvalid):

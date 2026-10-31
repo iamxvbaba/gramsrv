@@ -7,32 +7,32 @@ import (
 	"strings"
 )
 
-// loginCodeTemplateCodePlaceholder 标记登录码消息模板中被替换为真实验证码的位置。
-// 模板正文不再是旧的硬编码 "Login code: %s"，因此验证码的 bold MessageEntity
-// 偏移/长度必须按占位符实际落点动态计算（见 OfficialLoginCodeMessage）。
-// 任何进入 OfficialLoginCodeMessage 的模板都必须恰好包含一次该占位符
-// （见 ValidateLoginCodeMessageTemplate）：零次会静默丢失验证码，两次及以上则
-// 无法判定哪一处才是「真正的验证码」。
+// loginCodeTemplateCodePlaceholder marks the position in a login-code message template that is replaced with the real verification code.
+// The template body is no longer the old hard-coded "Login code: %s", so the bold MessageEntity
+// offset/length of the code must be computed dynamically from the placeholder's actual position (see OfficialLoginCodeMessage).
+// Any template entering OfficialLoginCodeMessage must contain this placeholder exactly once
+// (see ValidateLoginCodeMessageTemplate): zero occurrences silently lose the code, and two or more
+// make it impossible to tell which one is the "real verification code".
 const loginCodeTemplateCodePlaceholder = "{{code}}"
 
-// DefaultLoginCodeMessageTemplate 是 777000 登录码投递消息的内置最终兜底文案。
-// 所有登录码（短信/邮箱）共用同一模板，不随投递渠道变化。支持 {{server_name}}
-// 占位符（见 RenderWelcomeMessageTemplate），且必须恰好包含一次 {{code}}
-// （见 ValidateLoginCodeMessageTemplate）。
+// DefaultLoginCodeMessageTemplate is the built-in final fallback text for the 777000 login-code delivery message.
+// All login codes (SMS/email) share the same template, which does not vary by delivery channel. It supports the {{server_name}}
+// placeholder (see RenderWelcomeMessageTemplate) and must contain {{code}} exactly once
+// (see ValidateLoginCodeMessageTemplate).
 const DefaultLoginCodeMessageTemplate = `Login code: {{code}}. Do not give this code to anyone, even if they say they are from {{server_name}}!
 
 This code can be used to log in to your {{server_name}} account. We never ask it for anything else.
 
 If you didn't request this code by trying to log in on another device, simply ignore this message.`
 
-// ErrLoginCodeMessageTemplateMissingCode 表示候选登录码模板未恰好包含一次
-// {{code}} 占位符。管理员 API 层必须直接拒绝这样的保存，而不是静默接受：
-// 零次出现意味着真实验证码永远不会投递给用户。
+// ErrLoginCodeMessageTemplateMissingCode means a candidate login-code template does not contain
+// the {{code}} placeholder exactly once. The admin API layer must reject such a save outright rather than accept it silently:
+// zero occurrences mean the real verification code would never be delivered to the user.
 var ErrLoginCodeMessageTemplateMissingCode = errors.New("login code message template must contain the {{code}} placeholder exactly once")
 
-// ValidateLoginCodeMessageTemplate 要求 {{code}} 占位符恰好出现一次。
-// 零次是功能性破坏（验证码本身永远不会到达用户），两次及以上是歧义
-// （哪一处被替换并加粗？）——两者都直接拒绝，绝不静默修补。
+// ValidateLoginCodeMessageTemplate requires the {{code}} placeholder to appear exactly once.
+// Zero is functionally broken (the code itself never reaches the user), and two or more is ambiguous
+// (which one is replaced and bolded?) — both are rejected outright, never silently patched.
 func ValidateLoginCodeMessageTemplate(template string) error {
 	if strings.Count(template, loginCodeTemplateCodePlaceholder) != 1 {
 		return ErrLoginCodeMessageTemplateMissingCode
@@ -40,17 +40,17 @@ func ValidateLoginCodeMessageTemplate(template string) error {
 	return nil
 }
 
-// ResolveLoginCodeMessageTemplate 按优先级挑选最终模板正文：显式管理面板覆盖
-// （panelOverride，identity.Info 中按原样存储，空表示未配置）→ 显式环境变量默认值
-// （envDefault，空表示未配置）→ 内置 DefaultLoginCodeMessageTemplate。纯函数，
-// 便于不对 identity store / config 做依赖地单测其优先级。调用方（internal/app/auth）
-// 每次投递前实时解析（绝不缓存），使管理面板的修改立即生效——与
-// ResolveWelcomeMessageTemplate 的语义保持一致。登录码模板不按渠道分支。
+// ResolveLoginCodeMessageTemplate picks the final template body by priority: an explicit admin-panel override
+// (panelOverride, stored verbatim in identity.Info, empty means unset) → an explicit environment-variable default
+// (envDefault, empty means unset) → the built-in DefaultLoginCodeMessageTemplate. A pure function,
+// for dependency-free testing of its priority without depending on the identity store / config. The caller (internal/app/auth)
+// resolves it live before each delivery (never cached), so admin-panel edits take effect immediately — consistent with
+// ResolveWelcomeMessageTemplate's semantics. The login-code template does not branch by channel.
 //
-// 本函数自身不校验 {{code}} 占位符——持久化覆盖值的调用方（管理 API）必须先
-// 调用 ValidateLoginCodeMessageTemplate 再保存。OfficialLoginCodeMessage 会对
-// 解析结果再次校验，作为对经由其他途径到达的非法值（手工编辑 identity.json、
-// 越界环境变量）的纵深防御。
+// This function itself does not validate the {{code}} placeholder — the caller that persists an override (the admin API) must
+// call ValidateLoginCodeMessageTemplate before saving. OfficialLoginCodeMessage validates the
+// resolved result again, as defense in depth against illegal values arriving by other routes (hand-edited identity.json,
+// out-of-range environment variables).
 func ResolveLoginCodeMessageTemplate(panelOverride, envDefault string) string {
 	if t := strings.TrimSpace(panelOverride); t != "" {
 		return panelOverride
@@ -93,10 +93,10 @@ type LoginCodeDeliveryResult struct {
 // Telegram's official notification account. Persistence assigns ID, UID and
 // Pts atomically.
 //
-// template 先渲染（{{server_name}} 替换，再把 {{code}} 替换为真实验证码），
-// 加粗 MessageEntity 按替换后 {{code}} 的实际落点动态定位——绝不假设固定前缀，
-// 因为模板可由管理员编辑（见 ValidateLoginCodeMessageTemplate）。模板为空或
-// 校验失败时回退到 DefaultLoginCodeMessageTemplate，绝不投递没有验证码的消息。
+// The template is rendered first ({{server_name}} replaced, then {{code}} replaced with the real code),
+// and the bold MessageEntity is located dynamically from the actual position of {{code}} after replacement — never assuming a fixed prefix,
+// because the template can be edited by an admin (see ValidateLoginCodeMessageTemplate). When the template is empty or
+// fails validation it falls back to DefaultLoginCodeMessageTemplate and never delivers a message with no code.
 func OfficialLoginCodeMessage(userID int64, template, code string, date int) (Message, error) {
 	return OfficialLoginCodeMessageWithTemplate(userID, template, code, date)
 }
@@ -125,9 +125,9 @@ func OfficialLoginCodeMessageWithTemplate(userID int64, template, code string, d
 	rendered := SnapshotLoginCodeMessageTemplate(template)
 	idx := strings.Index(rendered, loginCodeTemplateCodePlaceholder)
 	if idx < 0 {
-		// 实际不可达：模板刚被校验过（或是内置默认）保证占位符恰好一次，
-		// 而 {{server_name}} 替换不会移除或移动无关占位符。仍作防御，
-		// 绝不投递静默丢失验证码的消息。
+		// Actually unreachable: the template was just validated (or is the built-in default) guaranteeing the placeholder exactly once,
+		// and the {{server_name}} replacement never removes or moves an unrelated placeholder. Still defensive,
+		// never delivering a message that silently lost the code.
 		rendered = DefaultLoginCodeMessageTemplate
 		idx = strings.Index(rendered, loginCodeTemplateCodePlaceholder)
 	}

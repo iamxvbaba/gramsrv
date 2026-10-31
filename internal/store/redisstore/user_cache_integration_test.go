@@ -59,7 +59,7 @@ func TestUserCacheRoundTrip(t *testing.T) {
 	if u.Contact || u.PhotoID != 0 {
 		t.Fatalf("viewer overlay leaked into base cache: %+v", u)
 	}
-	// birthday / personal channel 必须随缓存往返（缓存命中路径丢失会让刚保存的值归零）。
+	// birthday / personal channel must round-trip through the cache (losing them on the cache-hit path makes a just-saved value revert to zero).
 	if u.Birthday != want.Birthday || u.PersonalChannelID != want.PersonalChannelID {
 		t.Fatalf("birthday/personal channel lost in base cache round-trip: got birthday=%+v personal=%d", u.Birthday, u.PersonalChannelID)
 	}

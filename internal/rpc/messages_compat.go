@@ -12,8 +12,10 @@ import (
 	"unicode/utf8"
 )
 
-// webpageRequestResolveBudget 是交互式读 RPC（getWebPagePreview/getWebPage）未命中缓存时
-// 同步抓取的短预算上界——远小于异步解析的 20s，避免慢/挂上游把 RPC worker 钉死。
+// webpageRequestResolveBudget is the short-budget upper bound for a synchronous
+// fetch when an interactive read RPC (getWebPagePreview/getWebPage) misses the
+// cache -- far below the async resolver's 20s, so a slow/hanging upstream cannot
+// pin an RPC worker.
 const webpageRequestResolveBudget = 6 * time.Second
 
 func (r *Router) onMessagesGetSavedHistory(ctx context.Context, req *tg.MessagesGetSavedHistoryRequest) (tg.MessagesMessagesClass, error) {
@@ -38,7 +40,7 @@ func (r *Router) onMessagesGetSavedHistory(ctx context.Context, req *tg.Messages
 			return nil, err
 		}
 		if !isMono {
-			// 普通频道(非 monoforum)传 parent_peer:保持旧的良性空响应。
+			// An ordinary channel (non-monoforum) passed as parent_peer: keep the old benign empty response.
 			if req.Hash != 0 {
 				return &tg.MessagesMessagesNotModified{Count: 0}, nil
 			}
@@ -50,7 +52,7 @@ func (r *Router) onMessagesGetSavedHistory(ctx context.Context, req *tg.Messages
 			r.applyPeerReadModelsToMessages(ctx, userID, result)
 			return result, nil
 		}
-		// parent_peer = monoforum:返回该订阅者(req.Peer)在频道私信内的历史。
+		// parent_peer = monoforum: return this subscriber's (req.Peer) history within the channel private messages.
 		return r.monoforumSavedHistory(ctx, userID, mono, savedPeer, req.Limit, req.OffsetID)
 	}
 	if r.deps.Messages == nil {
@@ -76,7 +78,7 @@ func (r *Router) onMessagesGetSavedHistory(ctx context.Context, req *tg.Messages
 		return &tg.MessagesMessagesNotModified{Count: list.Count}, nil
 	}
 	out := tgMessagesMessages(userID, r.enrichMessageList(ctx, userID, list))
-	// saved peer 是频道（频道转发子会话）时补 chat 上下文。
+	// When the saved peer is a channel (a channel-forward sub-dialog), add chat context.
 	if chats := r.savedHistoryChats(ctx, userID, false, domain.Peer{}, req.Peer); len(chats) > 0 {
 		switch m := out.(type) {
 		case *tg.MessagesMessages:
@@ -132,7 +134,7 @@ func (r *Router) onMessagesDeleteSavedHistory(ctx context.Context, req *tg.Messa
 		return nil, err
 	}
 	if hasParent || r.deps.Messages == nil {
-		// monoforum 子会话删除范围外：parent 校验后保持 no-op 语义。
+		// Deleting a monoforum sub-dialog is out of scope: after parent validation, keep no-op semantics.
 		return r.affectedHistory(ctx, authKeyID, userID, 0)
 	}
 	sessionID, _ := SessionIDFrom(ctx)
@@ -275,7 +277,7 @@ func (r *Router) onMessagesGetEmojiKeywordsDifference(ctx context.Context, req *
 	if req.FromVersion < 0 {
 		return nil, limitInvalidErr()
 	}
-	// 我们只固化了单一版本词典:客户端版本落后则下发全量(0..version),否则回显空增量。
+	// We only freeze a single-version dictionary: if the client version is behind, send the full set (0..version), otherwise echo an empty delta.
 	if set, ok := catalog.EmojiKeywords(req.LangCode); ok && req.FromVersion < set.Version {
 		return &tg.EmojiKeywordsDifference{
 			LangCode:    req.LangCode,
@@ -296,7 +298,7 @@ func (r *Router) onMessagesGetEmojiKeywordsDifference(ctx context.Context, req *
 	}, nil
 }
 
-// catalogEmojiKeywords 把 catalog 词典条目转成 TL emojiKeyword 向量。
+// catalogEmojiKeywords converts catalog dictionary entries into a TL emojiKeyword vector.
 func catalogEmojiKeywords(kws []catalog.EmojiKeyword) []tg.EmojiKeywordClass {
 	out := make([]tg.EmojiKeywordClass, 0, len(kws))
 	for _, k := range kws {
@@ -338,8 +340,10 @@ func (r *Router) onMessagesGetWebPagePreview(ctx context.Context, req *tg.Messag
 	}, nil
 }
 
-// onMessagesGetWebPage 返回某 URL 的已解析链接预览（instant view 入口；cached_page 不填充）。
-// hash 匹配则回 webPageNotModified 让客户端复用本地缓存；无预览/未启用/失败回 webPageEmpty。
+// onMessagesGetWebPage returns the resolved link preview for a URL (instant view
+// entry; cached_page is not filled). On a hash match it returns
+// webPageNotModified so the client reuses its local cache; on no preview/disabled/
+// failure it returns webPageEmpty.
 func (r *Router) onMessagesGetWebPage(ctx context.Context, req *tg.MessagesGetWebPageRequest) (*tg.MessagesWebPage, error) {
 	if _, _, err := r.currentUserID(ctx); err != nil {
 		return nil, internalErr()
@@ -347,8 +351,9 @@ func (r *Router) onMessagesGetWebPage(ctx context.Context, req *tg.MessagesGetWe
 	return r.webPageForURL(ctx, req.URL, req.Hash), nil
 }
 
-// webPageForURL 解析 URL 的链接预览供 getWebPage 返回。hash 匹配回 webPageNotModified；
-// 无预览/未启用/失败回 webPageEmpty（带 URL）。cached_page（instant view）不填充。
+// webPageForURL resolves a URL's link preview for getWebPage to return. On a hash
+// match it returns webPageNotModified; on no preview/disabled/failure it returns
+// webPageEmpty (with URL). cached_page (instant view) is not filled.
 func (r *Router) webPageForURL(ctx context.Context, url string, hash int) *tg.MessagesWebPage {
 	emptyResult := func() *tg.MessagesWebPage {
 		page := &tg.WebPageEmpty{}
@@ -367,9 +372,12 @@ func (r *Router) webPageForURL(ctx context.Context, url string, hash int) *tg.Me
 	return &tg.MessagesWebPage{Webpage: tgWebPage(page), Chats: []tg.ChatClass{}, Users: []tg.UserClass{}}
 }
 
-// webPagePreviewMedia 解析消息内首个链接，返回输入框预览用的 media。getWebPagePreview 是同步
-// 探针：只有已解析出 done 卡片才返回 messageMediaWebPage，其余一律 messageMediaEmpty（不返回
-// pending——客户端不会对 preview 轮询 pending）。抓取失败/未启用一律降级为空，绝不报错。
+// webPagePreviewMedia resolves the first link in a message and returns the media
+// for the input-box preview. getWebPagePreview is a synchronous probe: it returns
+// messageMediaWebPage only when a done card has already been resolved, and
+// messageMediaEmpty otherwise (it does not return pending -- clients do not poll
+// pending for a preview). A fetch failure/disabled resolver always degrades to
+// empty and never errors.
 func (r *Router) webPagePreviewMedia(ctx context.Context, message string, entities []tg.MessageEntityClass) tg.MessageMediaClass {
 	url, ok := firstPreviewableURL(message, entities)
 	if !ok {
@@ -382,10 +390,13 @@ func (r *Router) webPagePreviewMedia(ctx context.Context, message string, entiti
 	return tgWebPageMedia(page)
 }
 
-// resolveWebPageForRequest 为交互式读 RPC 解析链接预览：先查缓存（LookupWebPage，命中即返回，
-// 不抓取不阻塞）；未命中才同步抓取，但用受限短预算（webpageRequestResolveBudget）而非异步解析
-// 的 30s，避免慢/挂上游把 RPC worker 钉死。命中（含负缓存的 empty）返回 ok=true，调用方据 state
-// 决定；抓取失败返回 false。未启用返回 false。
+// resolveWebPageForRequest resolves a link preview for an interactive read RPC:
+// first check the cache (LookupWebPage; a hit returns immediately without
+// fetching or blocking); only on a miss does it fetch synchronously, using a
+// limited short budget (webpageRequestResolveBudget) rather than the async
+// resolver's 30s, so a slow/hanging upstream cannot pin an RPC worker. A hit
+// (including a negatively cached empty) returns ok=true and the caller decides
+// based on state; a fetch failure returns false. Disabled returns false.
 func (r *Router) resolveWebPageForRequest(ctx context.Context, url string) (domain.MessageWebPage, bool) {
 	if page, ok := r.resolveInternalWebPage(ctx, url); ok {
 		return page, true
@@ -406,8 +417,9 @@ func (r *Router) resolveWebPageForRequest(ctx context.Context, url string) (doma
 }
 
 func tgInputMessageEntities(entities []domain.MessageEntity) []tg.MessageEntityClass {
-	// 定时消息到点投递必须与即时发送等价：实体全类型回放（mentionName
-	// 在 domain 已解析为 user_id，直接走输出形态）。
+	// On-time delivery of a scheduled message must be equivalent to an immediate
+	// send: replay all entity types (mentionName is already resolved to user_id in
+	// domain and goes straight through in output form).
 	return tgMessageEntities(entities)
 }
 

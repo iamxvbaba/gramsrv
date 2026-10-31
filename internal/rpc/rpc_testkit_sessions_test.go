@@ -22,13 +22,14 @@ type captureSessions struct {
 	receivesCalls      int
 	messageType        proto.MessageType
 	message            bin.Encoder
-	userMessage        bin.Encoder // 最近一次 PushToUser* 的消息（与 message 区分：message 也被 PushToSession 覆盖）
+	userMessage        bin.Encoder // the most recent PushToUser* message (distinct from message: message is also overwritten by PushToSession)
 	pushUserIDs        []int64
 	onlineUserIDs      []int64
 	channelViewers     map[int64][]int64
 	channelMembers     map[int64][]int64
 	channelSubscribers map[int64][]int64
-	// channelViewersLimit 记录最近一次 OnlineChannelUserIDs 收到的 limit，验证 fan-out 封顶传参。
+	// channelViewersLimit records the limit received by the most recent
+	// OnlineChannelUserIDs, verifying the fan-out cap parameter.
 	channelViewersLimit int
 }
 
@@ -66,15 +67,17 @@ func (s *captureSessions) pushedUserIDs() []int64 {
 	return append([]int64(nil), s.pushUserIDs...)
 }
 
-// onlineChannelMemberIDs 返回当前登记的频道在线成员索引快照（测试断言用）。
+// onlineChannelMemberIDs returns a snapshot of the currently registered channel
+// online-member index (for test assertions).
 func (s *captureSessions) onlineChannelMemberIDs(channelID int64) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]int64(nil), s.channelMembers[channelID]...)
 }
 
-// lastUserPush 返回最近一次 PushToUser* 的消息，独立于 message（后者也会被
-// pushOnlinePeerStatusesToCurrentSession 经 PushToSession 覆盖成对端状态）。
+// lastUserPush returns the most recent PushToUser* message, independent of message
+// (the latter is also overwritten with peer status by
+// pushOnlinePeerStatusesToCurrentSession via PushToSession).
 func (s *captureSessions) lastUserPush() bin.Encoder {
 	s.mu.Lock()
 	defer s.mu.Unlock()

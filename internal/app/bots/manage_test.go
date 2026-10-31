@@ -10,7 +10,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// makeBot 创建一个 owned bot，返回其 user。
+// makeBot creates an owned bot and returns its user.
 func makeBot(t *testing.T, svc *Service, owner domain.User, name, username string) domain.User {
 	t.Helper()
 	u, _, err := svc.CreateBot(context.Background(), owner.ID, name, username)
@@ -45,15 +45,15 @@ func TestSetBotCommandsAndBump(t *testing.T) {
 		t.Fatalf("commands = %+v, want normalized [start,help]", got)
 	}
 
-	// 非法命令名 → ErrBotCommandInvalid。
+	// Invalid command name -> ErrBotCommandInvalid.
 	if _, err := svc.SetBotCommands(ctx, bot.ID, []domain.BotCommand{{Command: "bad name!", Description: "x"}}); err != domain.ErrBotCommandInvalid {
 		t.Fatalf("invalid command err = %v, want ErrBotCommandInvalid", err)
 	}
-	// 空描述 → 非法。
+	// Empty description -> invalid.
 	if _, err := svc.SetBotCommands(ctx, bot.ID, []domain.BotCommand{{Command: "ok", Description: ""}}); err != domain.ErrBotCommandInvalid {
 		t.Fatalf("empty desc err = %v, want ErrBotCommandInvalid", err)
 	}
-	// 清空。
+	// Clear.
 	if _, err := svc.SetBotCommands(ctx, bot.ID, nil); err != nil {
 		t.Fatalf("reset commands: %v", err)
 	}
@@ -82,16 +82,16 @@ func TestSetBotInfoFields(t *testing.T) {
 	if name != "Renamed Bot" || about != "about line" || description != "what this bot does" {
 		t.Fatalf("bot info = name=%q about=%q desc=%q", name, about, description)
 	}
-	// name 落到 users.first_name。
+	// name lands in users.first_name.
 	u, _, _ := users.ByID(ctx, bot.ID)
 	if u.FirstName != "Renamed Bot" || u.About != "about line" {
 		t.Fatalf("user row = first_name=%q about=%q, want name/about persisted", u.FirstName, u.About)
 	}
-	// 空 name 非法。
+	// Empty name is invalid.
 	if _, err := svc.SetBotInfo(ctx, bot.ID, domain.BotInfoUpdate{SetName: true, Name: "  "}); err != domain.ErrBotInfoInvalid {
 		t.Fatalf("empty name err = %v, want ErrBotInfoInvalid", err)
 	}
-	// 全空更新非法。
+	// An all-empty update is invalid.
 	if _, err := svc.SetBotInfo(ctx, bot.ID, domain.BotInfoUpdate{}); err != domain.ErrBotInfoInvalid {
 		t.Fatalf("noop update err = %v, want ErrBotInfoInvalid", err)
 	}
@@ -115,11 +115,11 @@ func TestSetBotMenuButton(t *testing.T) {
 	if btn.Type != domain.BotMenuButtonWebView || btn.Text != "Open" || btn.URL != "https://example.com/app" {
 		t.Fatalf("menu button = %+v", btn)
 	}
-	// webview 缺 text/url 非法。
+	// webview missing text/url is invalid.
 	if _, err := svc.SetBotMenuButton(ctx, bot.ID, domain.BotMenuButton{Type: domain.BotMenuButtonWebView, URL: "https://x"}); err != domain.ErrBotMenuButtonInvalid {
 		t.Fatalf("webview missing text err = %v, want ErrBotMenuButtonInvalid", err)
 	}
-	// commands 型清空 text/url。
+	// The commands type clears text/url.
 	if _, err := svc.SetBotMenuButton(ctx, bot.ID, domain.BotMenuButton{Type: domain.BotMenuButtonCommands, Text: "x", URL: "y"}); err != nil {
 		t.Fatalf("set commands menu: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestSetJoinGroupsAndPrivacy(t *testing.T) {
 	if p, _, _ := bots.GetBot(ctx, bot.ID); p.Nochats {
 		t.Fatalf("nochats = true, want false after enable join")
 	}
-	// privacy enable → chat_history=false（隐私开=只收命令）。
+	// privacy enable -> chat_history=false (privacy on = only receive commands).
 	if _, err := svc.SetPrivacy(ctx, bot.ID, true); err != nil {
 		t.Fatalf("set privacy: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestOwnsBot(t *testing.T) {
 	if owns, _ := svc.OwnsBot(ctx, other.ID, bot.ID); owns {
 		t.Fatalf("non-owner OwnsBot = true, want false")
 	}
-	// BotFather 自身不算任何人 owned。
+	// BotFather itself counts as owned by no one.
 	if owns, _ := svc.OwnsBot(ctx, domain.BotFatherUserID, domain.BotFatherUserID); owns {
 		t.Fatalf("BotFather self OwnsBot = true, want false")
 	}
@@ -245,7 +245,7 @@ func TestBotFatherSetCommandsFlow(t *testing.T) {
 	if len(got.Commands) != 2 || got.Commands[0].Command != "start" {
 		t.Fatalf("stored commands = %+v, want [start,help]", got.Commands)
 	}
-	// 非法格式（无 -）保留 state 提示重试。
+	// Invalid format (no -) keeps the state and prompts a retry.
 	sendToBotFather(t, svc, messages, owner, "/setcommands")
 	sendToBotFather(t, svc, messages, owner, "@flow_test_bot")
 	if reply := sendToBotFather(t, svc, messages, owner, "noseparator"); !strings.Contains(reply, "list of commands is invalid") {
@@ -292,7 +292,7 @@ func TestBotFatherSetJoinGroupsFlow(t *testing.T) {
 	if p, _, _ := bots.GetBot(ctx, bot.ID); !p.Nochats {
 		t.Fatalf("nochats = false, want true after disable")
 	}
-	// 非 enable/disable 输入保留 state 提示。
+	// Non enable/disable input keeps the state and prompts.
 	sendToBotFather(t, svc, messages, owner, "/setprivacy")
 	sendToBotFather(t, svc, messages, owner, "@join_test_bot")
 	if reply := sendToBotFather(t, svc, messages, owner, "maybe"); !strings.Contains(reply, "enable") {
@@ -328,7 +328,7 @@ func TestBotFatherSetInlineFlow(t *testing.T) {
 		t.Fatalf("inline placeholder after /empty = %q, want empty", p.InlinePlaceholder)
 	}
 
-	// /setinlinegeo 只列 inline mode 已开启的 bot。
+	// /setinlinegeo lists only bots with inline mode enabled.
 	if reply := sendToBotFather(t, svc, messages, owner, "/setinlinegeo"); !strings.Contains(reply, "inline mode enabled") {
 		t.Fatalf("/setinlinegeo without inline bots reply = %q", reply)
 	}
@@ -442,7 +442,7 @@ func TestBotFatherHelpTextIsSectioned(t *testing.T) {
 	owner := newOwner(t, users, "+2010")
 
 	reply := sendToBotFather(t, svc, messages, owner, "/help")
-	// 分区标题与官方一致；官方有而本服未实现的命令必须显式标注，不能假装支持。
+	// Section headings match the official ones; commands the official BotFather has but this server does not implement must be explicitly marked, not falsely claimed as supported.
 	for _, want := range []string{
 		"You can control me by sending these commands:",
 		"Edit Bots\n",
@@ -465,11 +465,11 @@ func TestBotFatherSetUserPicIsExplicitlyUnsupported(t *testing.T) {
 	if reply := sendToBotFather(t, svc, messages, owner, "/setuserpic"); !strings.Contains(reply, "not supported on this server yet") {
 		t.Fatalf("/setuserpic reply = %q, want explicit stub", reply)
 	}
-	// 不支持的命令不得留下悬空状态。
+	// An unsupported command must not leave dangling state.
 	if reply := sendToBotFather(t, svc, messages, owner, "Some Name"); !strings.Contains(reply, "/help") {
 		t.Fatalf("post-/setuserpic reply = %q, want fallback", reply)
 	}
-	// 也不得碰 bot 的任何设置。
+	// It must not touch any of the bot's settings either.
 	if _, found, err := svc.bots.GetBot(context.Background(), bot.ID); err != nil || !found {
 		t.Fatalf("bot profile missing: found=%v err=%v", found, err)
 	}
@@ -493,7 +493,7 @@ func TestBotFatherDeleteBotRequiresConfirmation(t *testing.T) {
 	if reply := sendToBotFather(t, svc, messages, owner, "@doomed_bot"); !strings.Contains(reply, "Are you sure") {
 		t.Fatalf("choose reply = %q, want confirmation prompt", reply)
 	}
-	// 任何非确认输入都不能删号。
+	// No non-confirmation input may delete the bot.
 	for _, noise := range []string{"", "no", "what?", "@doomed_bot"} {
 		if reply := sendToBotFather(t, svc, messages, owner, noise); !strings.Contains(reply, "Are you sure") {
 			t.Fatalf("input %q reply = %q, want confirmation prompt", noise, reply)
@@ -509,14 +509,14 @@ func TestBotFatherDeleteBotRequiresConfirmation(t *testing.T) {
 		t.Fatalf("bot disappeared before confirmation: found=%v err=%v", found, err)
 	}
 
-	// 显式确认才删号，并连带撤销已登录 session。
+	// Only explicit confirmation deletes the bot and revokes its logged-in sessions along with it.
 	if reply := sendToBotFather(t, svc, messages, owner, "confirm"); !strings.Contains(reply, "has been deleted") {
 		t.Fatalf("confirm reply = %q, want deletion notice", reply)
 	}
 	if botStore.deleteCalls != 1 || rev.botUserID != bot.ID {
 		t.Fatalf("deleteCalls=%d revoked=%d, want 1 and %d", botStore.deleteCalls, rev.botUserID, bot.ID)
 	}
-	// 状态已复位：后续文本不再走 confirm 分支。
+	// State has been reset: subsequent text no longer goes through the confirm branch.
 	if reply := sendToBotFather(t, svc, messages, owner, "hello"); !strings.Contains(reply, "/help") {
 		t.Fatalf("post-delete reply = %q, want fallback", reply)
 	}
@@ -536,7 +536,7 @@ func TestBotFatherDeleteBotReportsRevocationFailure(t *testing.T) {
 	sendToBotFather(t, svc, messages, owner, "/deletebot")
 	sendToBotFather(t, svc, messages, owner, "@stuck_bot")
 	reply := sendToBotFather(t, svc, messages, owner, "confirm")
-	// 没删掉就必须说没删掉，绝不谎称成功。
+	// If it was not deleted, say so; never falsely claim success.
 	if !strings.Contains(reply, "Nothing was deleted") {
 		t.Fatalf("confirm reply = %q, want honest failure", reply)
 	}
@@ -546,7 +546,7 @@ func TestBotFatherDeleteBotReportsRevocationFailure(t *testing.T) {
 	if _, found, err := botStore.GetBot(context.Background(), bot.ID); err != nil || !found {
 		t.Fatalf("bot deleted despite failed revocation: found=%v err=%v", found, err)
 	}
-	// 状态保留：重试即可继续（revoker 恢复后同一确认词生效）。
+	// State preserved: a retry can continue (the same confirmation word takes effect once the revoker recovers).
 	rev.err = nil
 	if reply := sendToBotFather(t, svc, messages, owner, "confirm"); !strings.Contains(reply, "has been deleted") {
 		t.Fatalf("retry reply = %q, want deletion notice", reply)
@@ -554,7 +554,7 @@ func TestBotFatherDeleteBotReportsRevocationFailure(t *testing.T) {
 }
 
 func TestBotFatherDeleteBotUnsupportedByStore(t *testing.T) {
-	svc, users, _, messages := newTestService(t) // 纯 memory store：无 DeleteBotAccount
+	svc, users, _, messages := newTestService(t) // pure memory store: no DeleteBotAccount
 	owner := newOwner(t, users, "+2014")
 	makeBot(t, svc, owner, "Sticky Bot", "sticky_bot")
 

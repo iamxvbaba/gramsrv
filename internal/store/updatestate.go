@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// UpdateStateStore 持久化 auth_key + user 维度的 pts/qts/seq 状态，避免同一设备换号串状态。
+// UpdateStateStore persists pts/qts/seq state at the auth_key + user dimension, preventing state bleed when the same device switches accounts.
 type UpdateStateStore interface {
 	Get(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error)
 	Save(ctx context.Context, authKeyID [8]byte, userID int64, state domain.UpdateState) error

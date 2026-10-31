@@ -8,12 +8,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RateLimiter 用 Redis INCR + TTL 实现固定窗口限流。
+// RateLimiter implements fixed-window rate limiting with Redis INCR + TTL.
 type RateLimiter struct {
 	c *redis.Client
 }
 
-// NewRateLimiter 创建 Redis-backed RateLimiter。
+// NewRateLimiter creates a Redis-backed RateLimiter.
 func NewRateLimiter(c *redis.Client) *RateLimiter {
 	return &RateLimiter{c: c}
 }

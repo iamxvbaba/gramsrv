@@ -7,12 +7,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// DispatchOutboxRetentionStore 清理彻底失败（已放弃重试）的 outbox 死任务。
+// DispatchOutboxRetentionStore cleans up outbox dead tasks that failed permanently (retries abandoned).
 type DispatchOutboxRetentionStore interface {
 	DeleteFailed(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 }
 
-// TempAuthKeyRetentionStore 回收过期的 PFS temp auth key（含未绑定 key）。
+// TempAuthKeyRetentionStore reclaims expired PFS temp auth keys (including unbound keys).
 type TempAuthKeyRetentionStore interface {
 	DeleteExpired(ctx context.Context, expiredBefore int64, limit int) (int, error)
 }
@@ -24,8 +24,9 @@ type AuthKeySessionLayerRetentionStore interface {
 	DeleteExpiredSessionLayers(ctx context.Context, limit int) (int, error)
 }
 
-// OrphanAuthKeyRetentionStore 回收从未形成授权/temp binding 的旧握手 key。
-// protected 是当前连接注册表实际使用的 raw auth_key_id 快照。
+// OrphanAuthKeyRetentionStore reclaims old handshake keys that never formed an
+// authorization/temp binding. protected is a snapshot of the raw auth_key_ids actually in use
+// by the current connection registry.
 type OrphanAuthKeyRetentionStore interface {
 	DeleteOrphaned(ctx context.Context, olderThan time.Duration, limit int, protected [][8]byte) (int, error)
 }
@@ -34,28 +35,33 @@ type ActiveRawAuthKeyProvider interface {
 	ActiveRawAuthKeyIDs() [][8]byte
 }
 
-// ActiveAuthKeyHeartbeatStore 把本实例仍在使用的 raw auth key 活性持久化。多实例下
-// orphan GC 不能只看当前进程的 active 快照；其它实例的 heartbeat 会推进数据库
-// last_used_at，使它们不会被误判为孤儿。
+// ActiveAuthKeyHeartbeatStore persists the liveness of raw auth keys still in use by this
+// instance. With multiple instances, orphan GC cannot rely only on the current process's
+// active snapshot; other instances' heartbeats advance last_used_at in the database so they
+// are not misjudged as orphans.
 type ActiveAuthKeyHeartbeatStore interface {
 	TouchActiveRawAuthKeys(ctx context.Context, ids [][8]byte) error
 }
 
-// BotAPIUpdateRetentionStore 回收 Bot API getUpdates 投递队列的死行（性能审计 H1）：
-// 已确认且超过宽限期的行 + 按消息 date 超过保留期的行（官方 Bot API updates 最多保留 24h）。
+// BotAPIUpdateRetentionStore reclaims dead rows of the Bot API getUpdates delivery queue
+// (performance audit H1): rows that are confirmed and past the grace period + rows past
+// retention by message date (official Bot API updates are kept at most 24h).
 type BotAPIUpdateRetentionStore interface {
 	DeleteDeliveredOrExpired(ctx context.Context, confirmedGrace, maxAge time.Duration, limit int) (int, error)
 }
 
-// UserUpdateEventRetentionStore 只回收所有当前授权设备都明确确认过的账号事件前缀。
-// 它不是普通 TTL：任一授权缺 state 时确认水位为 0，不得删除该设备可能仍需的事件。
+// UserUpdateEventRetentionStore reclaims only the prefix of account events explicitly
+// confirmed by all current authorizations. It is not an ordinary TTL: when any authorization
+// lacks state the confirmation watermark is 0, and events that device may still need must not
+// be deleted.
 type UserUpdateEventRetentionStore interface {
 	DeleteConfirmedPrefix(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 }
 
-// ChannelUpdateEventRetentionStore 回收超过保留期的 channel durable update 连续前缀。
-// 具体 store 必须在同一事务内删除事件并推进 retained floor，低于 floor 的客户端由
-// updates.getChannelDifference 走 channelDifferenceTooLong 快照恢复。
+// ChannelUpdateEventRetentionStore reclaims the consecutive prefix of channel durable
+// updates past retention. The concrete store must delete events and advance the retained
+// floor in the same transaction; clients below the floor recover via updates.getChannelDifference
+// using the channelDifferenceTooLong snapshot.
 type ChannelUpdateEventRetentionStore interface {
 	DeleteExpiredChannelUpdateEvents(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 }
@@ -80,35 +86,42 @@ type ModerationRetentionStore interface {
 	DeleteExpiredModerationAppealLinks(ctx context.Context, olderThan time.Time, limit int) (int, error)
 }
 
-// botAPIConfirmedGrace 是已确认 Bot API update 行的删除宽限：确认水位之下的行不会再被
-// getUpdates 读取（fromID 恒 > confirmed），宽限仅防御 offset 回拨调试；回收目标是清堆积。
+// botAPIConfirmedGrace is the deletion grace for confirmed Bot API update rows: rows below
+// the confirmation watermark are no longer read by getUpdates (fromID is always > confirmed);
+// the grace only defends against offset rollback debugging, and the reclamation goal is to
+// clear the backlog.
 const botAPIConfirmedGrace = 15 * time.Minute
 
-// tempAuthKeyExpiryGrace 只是一段数据库物理回收宽限。MTProto edge 在 expires_at
-// 到点即停止入站 RPC、主动推送和重发，并断开连接；ResolveAuthKey 不容忍过期 key。
-// 晚一天删除用于吸收客户端轮换/诊断窗口，不会延长协议有效期。
+// tempAuthKeyExpiryGrace is only a physical database reclamation grace. The MTProto edge
+// stops inbound RPC, active pushes, and retransmissions and disconnects at expires_at;
+// ResolveAuthKey does not tolerate expired keys. Deleting a day late absorbs client
+// rotation/diagnostics windows and does not extend the protocol validity.
 const tempAuthKeyExpiryGrace = 24 * time.Hour
 
 const (
-	// terminal failed outbox 只承担短期诊断隔离；它不是 durable update log。
-	// 删除该任务会由 head trigger 立即放行同账号下一 pts，而 user_update_events
-	// 继续保留，在线漏推由正常 difference 路径补偿。
+	// A terminal failed outbox only provides short-term diagnostic isolation; it is not a
+	// durable update log. Deleting the task immediately releases the same account's next pts
+	// through the head trigger, while user_update_events are retained and any missed online
+	// pushes are compensated by the normal difference path.
 	defaultOutboxPoisonRetention = time.Minute
 	defaultOutboxPoisonInterval  = 15 * time.Second
 )
 
-// RetentionWorker 周期性回收存储中的死数据。
+// RetentionWorker periodically reclaims dead data from storage.
 //
-// 注意：TDesktop 不支持账号级 updates.differenceTooLong（api_updates.cpp 收到该响应只
-// 记录日志且不清 requesting，会永久锁死 update 引擎），因此绝不能按普通 TTL 硬裁剪
-// user_update_events。本 worker 只允许 store 删除“所有当前授权设备都明确确认”的连续安全
-// 前缀；落后或缺 state 的任一设备都会把 floor 压回 0。客户端偶然带回已确认前的旧 pts 时，
-// updates 服务通过普通 differenceSlice checkpoint 推进，不发送 differenceTooLong。
+// Note: TDesktop does not support account-level updates.differenceTooLong (api_updates.cpp
+// only logs the response and does not clear requesting, permanently locking up the update
+// engine), so user_update_events must never be hard-trimmed by ordinary TTL. This worker only
+// allows the store to delete the consecutive safe prefix that "all current authorized devices
+// have explicitly confirmed"; any lagging device or one lacking state pushes the floor back
+// to 0. When a client happens to carry back an old pts from before confirmation, the updates
+// service advances via the normal differenceSlice checkpoint and does not send
+// differenceTooLong.
 type RetentionWorker struct {
 	outbox                      DispatchOutboxRetentionStore
-	tempKeys                    TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
+	tempKeys                    TempAuthKeyRetentionStore // may be nil (does not reclaim temp key bindings)
 	authKeySessionLayers        AuthKeySessionLayerRetentionStore
-	botAPIUpdates               BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
+	botAPIUpdates               BotAPIUpdateRetentionStore // may be nil (does not reclaim the Bot API queue)
 	userUpdates                 UserUpdateEventRetentionStore
 	channelUpdates              ChannelUpdateEventRetentionStore
 	loginCodeDeliveries         LoginCodeDeliveryRetentionStore
@@ -155,9 +168,10 @@ func NewRetentionWorker(outbox DispatchOutboxRetentionStore, tempKeys TempAuthKe
 	}
 }
 
-// WithDispatchOutboxPoisonPolicy 配置 terminal failed head 的独立短隔离与清理周期。
-// 该周期不能复用 durable update 的周级保留期，否则一条确定性构造错误会冻结该
-// 用户整条在线 pts lane。<=0 分别回退到 1m/15s 的安全默认值。
+// WithDispatchOutboxPoisonPolicy configures an independent short isolation and cleanup
+// period for a terminal failed head. This period cannot reuse the durable update's weekly
+// retention, otherwise one deterministic construction error would freeze that user's entire
+// online pts lane. Values <=0 fall back to the safe defaults of 1m/15s respectively.
 func (w *RetentionWorker) WithDispatchOutboxPoisonPolicy(retention, interval time.Duration) *RetentionWorker {
 	if retention <= 0 {
 		retention = defaultOutboxPoisonRetention
@@ -170,7 +184,7 @@ func (w *RetentionWorker) WithDispatchOutboxPoisonPolicy(retention, interval tim
 	return w
 }
 
-// WithBotAPIUpdateRetention 启用 bot_api_updates 队列回收；retention <=0 时用官方语义默认 24h。
+// WithBotAPIUpdateRetention enables bot_api_updates queue reclamation; when retention <=0 the official-semantics default of 24h is used.
 func (w *RetentionWorker) WithBotAPIUpdateRetention(store BotAPIUpdateRetentionStore, retention time.Duration) *RetentionWorker {
 	if retention <= 0 {
 		retention = 24 * time.Hour
@@ -180,15 +194,17 @@ func (w *RetentionWorker) WithBotAPIUpdateRetention(store BotAPIUpdateRetentionS
 	return w
 }
 
-// WithUserUpdateRetention 启用账号 update 的共同确认安全前缀回收。TDesktop 不支持
-// account differenceTooLong，具体 store 必须保证未确认前缀永不删除。
+// WithUserUpdateRetention enables common-confirmation safe-prefix reclamation for account
+// updates. TDesktop does not support account differenceTooLong, so the concrete store must
+// guarantee that the unconfirmed prefix is never deleted.
 func (w *RetentionWorker) WithUserUpdateRetention(store UserUpdateEventRetentionStore) *RetentionWorker {
 	w.userUpdates = store
 	return w
 }
 
-// WithChannelUpdateRetention 启用 channel durable update 的有界 TTL 回收；复用 worker 的
-// retention/interval/batch，并由 store 的 retained floor 保证旧 pts 不会读到静默空洞。
+// WithChannelUpdateRetention enables bounded TTL reclamation of channel durable updates;
+// it reuses the worker's retention/interval/batch, and the store's retained floor guarantees
+// that old pts do not read a silent hole.
 func (w *RetentionWorker) WithChannelUpdateRetention(store ChannelUpdateEventRetentionStore) *RetentionWorker {
 	w.channelUpdates = store
 	return w
@@ -232,8 +248,9 @@ func (w *RetentionWorker) WithModerationRetention(store ModerationRetentionStore
 	return w
 }
 
-// WithOrphanAuthKeyRetention 启用未授权握手 key 的有界回收。active 必须提供 raw key，
-// 不能提供 temp→perm business key；否则未登录或 PFS 连接会被误判为 orphan。
+// WithOrphanAuthKeyRetention enables bounded reclamation of unauthorized handshake keys.
+// active must provide raw keys, not temp→perm business keys; otherwise unauthenticated or
+// PFS connections would be misjudged as orphans.
 func (w *RetentionWorker) WithOrphanAuthKeyRetention(store OrphanAuthKeyRetentionStore, active ActiveRawAuthKeyProvider, retention time.Duration) *RetentionWorker {
 	w.orphanAuthKeys = store
 	w.activeAuthKeys = active
@@ -282,15 +299,16 @@ func (w *RetentionWorker) runOutboxPoisonOnce(ctx context.Context) {
 	}
 	outboxDeleted, err := w.outbox.DeleteFailed(ctx, w.outboxPoisonRetention, w.batch)
 	if err != nil {
-		w.logger.Error("清理 terminal failed dispatch_outbox 失败",
+		w.logger.Error("failed to clean up terminal failed dispatch_outbox",
 			zap.String("signal", "dispatch_outbox_poison_cleanup_failed"),
 			zap.Duration("quarantine", w.outboxPoisonRetention),
 			zap.Error(err),
 		)
 	} else if outboxDeleted > 0 {
-		// Error 级结构化信号刻意保留：发生 terminal failed 代表确定性编码、事件缺失
-		// 或其它不可自动重试故障。任务删除只解冻在线 lane，不会删除 durable event。
-		w.logger.Error("terminal failed dispatch_outbox 已结束隔离并释放用户 lane",
+		// The Error-level structured signal is deliberately kept: a terminal failure means a
+		// deterministic encoding, missing event, or other non-retryable fault. Deleting the task
+		// only unfreezes the online lane and does not delete the durable event.
+		w.logger.Error("terminal failed dispatch_outbox isolation ended and user lane released",
 			zap.String("signal", "dispatch_outbox_poison_released"),
 			zap.Int("deleted", outboxDeleted),
 			zap.Duration("quarantine", w.outboxPoisonRetention),
@@ -302,17 +320,17 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 	if w.authKeySessionLayers != nil {
 		deleted, err := w.authKeySessionLayers.DeleteExpiredSessionLayers(ctx, w.batch)
 		if err != nil {
-			w.logger.Warn("回收过期 auth-key session Layer 证据失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired auth-key session Layer evidence", zap.Error(err))
 		} else if deleted > 0 {
-			w.logger.Info("回收过期 auth-key session Layer 证据完成", zap.Int("deleted", deleted))
+			w.logger.Info("reclaimed expired auth-key session Layer evidence", zap.Int("deleted", deleted))
 		}
 	}
 	if w.loginCodeDeliveries != nil {
 		deleted, err := w.loginCodeDeliveries.DeleteExpiredLoginCodeDeliveries(ctx, time.Now(), w.batch)
 		if err != nil {
-			w.logger.Warn("回收过期 login-code delivery 回执失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired login-code delivery receipts", zap.Error(err))
 		} else if deleted > 0 {
-			w.logger.Info("回收过期 login-code delivery 回执完成", zap.Int("deleted", deleted))
+			w.logger.Info("reclaimed expired login-code delivery receipts", zap.Int("deleted", deleted))
 		}
 	}
 	if w.clientTelemetry != nil {
@@ -320,9 +338,9 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			ctx, time.Now().Add(-w.clientTelemetryRetention), w.batch,
 		)
 		if err != nil {
-			w.logger.Warn("回收过期客户端 telemetry 失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired client telemetry", zap.Error(err))
 		} else if deleted > 0 {
-			w.logger.Info("回收过期客户端 telemetry 完成", zap.Int("deleted", deleted))
+			w.logger.Info("reclaimed expired client telemetry", zap.Int("deleted", deleted))
 		}
 	}
 	if w.authDeliveryReports != nil {
@@ -330,9 +348,9 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			ctx, time.Now().Add(-w.authDeliveryReportRetention), w.batch,
 		)
 		if err != nil {
-			w.logger.Warn("回收过期验证码投递诊断失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired verification-code delivery diagnostics", zap.Error(err))
 		} else if deleted > 0 {
-			w.logger.Info("回收过期验证码投递诊断完成", zap.Int("deleted", deleted))
+			w.logger.Info("reclaimed expired verification-code delivery diagnostics", zap.Int("deleted", deleted))
 		}
 	}
 	if w.moderation != nil {
@@ -341,26 +359,26 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			ctx, now, w.batch,
 		)
 		if err != nil {
-			w.logger.Warn("回收过期 sponsored impression 失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired sponsored impressions", zap.Error(err))
 		} else if impressions > 0 {
-			w.logger.Info("回收过期 sponsored impression 完成", zap.Int("deleted", impressions))
+			w.logger.Info("reclaimed expired sponsored impressions", zap.Int("deleted", impressions))
 		}
 		links, err := w.moderation.DeleteExpiredModerationAppealLinks(
 			ctx, now, w.batch,
 		)
 		if err != nil {
-			w.logger.Warn("回收过期审核申诉链接失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired moderation appeal links", zap.Error(err))
 		} else if links > 0 {
-			w.logger.Info("回收过期审核申诉链接完成", zap.Int("deleted", links))
+			w.logger.Info("reclaimed expired moderation appeal links", zap.Int("deleted", links))
 		}
 	}
 	if w.tempKeys != nil {
 		expiredBefore := time.Now().Add(-tempAuthKeyExpiryGrace).Unix()
 		tempDeleted, err := w.tempKeys.DeleteExpired(ctx, expiredBefore, w.batch)
 		if err != nil {
-			w.logger.Warn("回收过期 temp auth key 绑定失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim expired temp auth key bindings", zap.Error(err))
 		} else if tempDeleted > 0 {
-			w.logger.Info("回收过期 temp auth key 绑定完成", zap.Int("deleted", tempDeleted))
+			w.logger.Info("reclaimed expired temp auth key bindings", zap.Int("deleted", tempDeleted))
 		}
 	}
 	if w.orphanAuthKeys != nil && w.orphanRetention > 0 {
@@ -375,39 +393,40 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 		} else {
 			orphanDeleted, err := w.orphanAuthKeys.DeleteOrphaned(ctx, w.orphanRetention, w.batch, protected)
 			if err != nil {
-				w.logger.Warn("回收未授权 orphan auth key 失败", zap.Error(err))
+				w.logger.Warn("failed to reclaim unauthorized orphan auth keys", zap.Error(err))
 			} else if orphanDeleted > 0 {
-				w.logger.Info("回收未授权 orphan auth key 完成", zap.Int("deleted", orphanDeleted))
+				w.logger.Info("reclaimed unauthorized orphan auth keys", zap.Int("deleted", orphanDeleted))
 			}
 		}
 	}
 	if w.botAPIUpdates != nil {
 		botAPIDeleted, err := w.botAPIUpdates.DeleteDeliveredOrExpired(ctx, botAPIConfirmedGrace, w.botAPIRetention, w.batch)
 		if err != nil {
-			w.logger.Warn("回收 bot_api_updates 队列失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim bot_api_updates queue", zap.Error(err))
 		} else if botAPIDeleted > 0 {
-			w.logger.Info("回收 bot_api_updates 队列完成", zap.Int("deleted", botAPIDeleted))
+			w.logger.Info("reclaimed bot_api_updates queue", zap.Int("deleted", botAPIDeleted))
 		}
 	}
 	if w.userUpdates != nil {
 		userDeleted, err := w.userUpdates.DeleteConfirmedPrefix(ctx, w.retention, w.batch)
 		if err != nil {
-			w.logger.Warn("回收已共同确认的 user_update_events 前缀失败", zap.Error(err))
+			w.logger.Warn("failed to reclaim commonly confirmed user_update_events prefix", zap.Error(err))
 		} else if userDeleted > 0 {
-			w.logger.Info("回收已共同确认的 user_update_events 前缀完成", zap.Int("deleted", userDeleted))
+			w.logger.Info("reclaimed commonly confirmed user_update_events prefix", zap.Int("deleted", userDeleted))
 		}
 	}
 	if w.channelUpdates != nil {
 		channelDeleted, err := w.channelUpdates.DeleteExpiredChannelUpdateEvents(ctx, w.retention, w.batch)
 		if err != nil {
-			// store 会逐频道隔离坏 gap 后继续本轮；deleted 可能非零，必须同时记录，
-			// 既不能把全局 pass 伪装成完全失败，也不能吞掉不变量错误。
-			w.logger.Warn("回收过期 channel_update_events 存在隔离频道",
+			// The store isolates bad gaps per channel and continues this round; deleted may be
+			// non-zero and must be logged at the same time — neither disguising a global pass as a
+			// total failure nor swallowing invariant errors.
+			w.logger.Warn("expired channel_update_events reclamation has isolated channels",
 				zap.Int("deleted", channelDeleted),
 				zap.Error(err),
 			)
 		} else if channelDeleted > 0 {
-			w.logger.Info("回收过期 channel_update_events 连续前缀完成", zap.Int("deleted", channelDeleted))
+			w.logger.Info("reclaimed expired channel_update_events consecutive prefix", zap.Int("deleted", channelDeleted))
 		}
 	}
 }
@@ -440,7 +459,7 @@ func (w *RetentionWorker) touchActiveAuthKeys(ctx context.Context, protected [][
 		return true
 	}
 	if err := w.activeAuthKeyHeartbeat.TouchActiveRawAuthKeys(ctx, protected); err != nil {
-		w.logger.Error("刷新 active raw auth key heartbeat 失败，本轮跳过 orphan GC",
+		w.logger.Error("failed to refresh active raw auth key heartbeat, skipping orphan GC this round",
 			zap.String("signal", "auth_key_heartbeat_failed"),
 			zap.Int("active_keys", len(protected)),
 			zap.Error(err),

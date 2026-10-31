@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// ContactStore 持久化用户通讯录。
+// ContactStore persists a user's contact list.
 type ContactStore interface {
 	ListByUser(ctx context.Context, userID int64) (domain.ContactList, error)
 	Get(ctx context.Context, userID, contactUserID int64) (domain.Contact, bool, error)

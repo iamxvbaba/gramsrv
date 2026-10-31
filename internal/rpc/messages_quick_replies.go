@@ -271,7 +271,7 @@ func (r *Router) onMessagesSaveQuickReplyText(ctx context.Context, req *tg.Messa
 		RandomID: req.RandomID,
 		Date:     int(r.clock.Now().Unix()),
 		Message:  req.Message,
-		// 快速回复模板与普通发送一致补服务端自动实体（url/@mention/#hashtag/bot command）。
+		// Quick-reply templates get server-side auto entities like ordinary sends (url/@mention/#hashtag/bot command).
 		Entities: domainMessageEntitiesForViewer(userID, r.augmentAutoEntities(req.Message, req.Entities)),
 	})
 	if err != nil {

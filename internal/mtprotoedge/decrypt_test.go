@@ -22,8 +22,10 @@ func newTestAuthKey(t *testing.T) crypto.AuthKey {
 	return key.WithID()
 }
 
-// encryptRawClientPlaintext 用 client side（x=0）把一段已含 32 字节头与 padding 的
-// 原始明文加密成完整入站帧，用于构造 gotd Cipher.Encrypt 不允许生成的畸形明文。
+// encryptRawClientPlaintext uses the client side (x=0) to encrypt raw plaintext
+// that already contains the 32-byte header and padding into a complete inbound
+// frame, used to construct malformed plaintext that gotd Cipher.Encrypt refuses
+// to generate.
 func encryptRawClientPlaintext(t *testing.T, key crypto.AuthKey, plaintext []byte) *bin.Buffer {
 	t.Helper()
 	if len(plaintext)%16 != 0 {
@@ -45,8 +47,9 @@ func encryptRawClientPlaintext(t *testing.T, key crypto.AuthKey, plaintext []byt
 	return &b
 }
 
-// buildRawPlaintext 构造 salt/session/msg_id/seq_no + dataLen 头与指定 data/padding 的明文。
-// dataLen 允许与真实 data 长度不一致，用于打边界。
+// buildRawPlaintext constructs plaintext with a salt/session/msg_id/seq_no +
+// dataLen header and the given data/padding. dataLen is allowed to disagree with
+// the real data length, to probe boundaries.
 func buildRawPlaintext(salt, sessionID, msgID int64, seqNo, dataLen int32, data, padding []byte) []byte {
 	out := make([]byte, 0, 32+len(data)+len(padding))
 	var hdr [32]byte
@@ -60,9 +63,11 @@ func buildRawPlaintext(salt, sessionID, msgID int64, seqNo, dataLen int32, data,
 	return append(out, padding...)
 }
 
-// TestDecryptClientFrameParityWithGotd 逐字节对照 telesrv 自建解密与 gotd server cipher：
-// 同一帧要么双方都接受且字段/数据一致，要么双方都拒绝。覆盖正常帧、畸形长度、
-// 超限 padding、篡改 msg_key/auth_key_id、截断帧。
+// TestDecryptClientFrameParityWithGotd byte-for-byte compares telesrv's own
+// decryption against the gotd server cipher: for the same frame either both
+// accept it with matching fields/data, or both reject it. It covers normal
+// frames, malformed lengths, oversized padding, tampered msg_key/auth_key_id and
+// truncated frames.
 func TestDecryptClientFrameParityWithGotd(t *testing.T) {
 	key := newTestAuthKey(t)
 	serverCipher := crypto.NewServerCipher(rand.Reader)
@@ -90,7 +95,7 @@ func TestDecryptClientFrameParityWithGotd(t *testing.T) {
 		{"plaintext_only_header_block", encryptRawClientPlaintext(t, key, pad(16))},
 	}
 
-	// 篡改 msg_key。
+	// Tampered msg_key.
 	tampered := encryptRawClientPlaintext(t, key, buildRawPlaintext(1, 2, 7014, 15, 16, data16, pad(16)))
 	tampered.Buf[8] ^= 0xff
 	cases = append(cases, struct {
@@ -98,7 +103,7 @@ func TestDecryptClientFrameParityWithGotd(t *testing.T) {
 		frame *bin.Buffer
 	}{"tampered_msg_key", tampered})
 
-	// 错误 auth_key_id。
+	// Wrong auth_key_id.
 	wrongKey := encryptRawClientPlaintext(t, key, buildRawPlaintext(1, 2, 7016, 17, 16, data16, pad(16)))
 	wrongKey.Buf[0] ^= 0xff
 	cases = append(cases, struct {
@@ -106,7 +111,7 @@ func TestDecryptClientFrameParityWithGotd(t *testing.T) {
 		frame *bin.Buffer
 	}{"wrong_auth_key_id", wrongKey})
 
-	// 截断帧。
+	// Truncated frames.
 	cases = append(cases,
 		struct {
 			name  string
@@ -142,8 +147,9 @@ func TestDecryptClientFrameParityWithGotd(t *testing.T) {
 	}
 }
 
-// TestDecryptClientFrameReusesPlainBuffer 验证同一 plain 缓冲跨帧复用：先大帧后小帧，
-// 解密结果仍正确且不受前一帧残留字节影响。
+// TestDecryptClientFrameReusesPlainBuffer verifies reuse of the same plain buffer
+// across frames: a big frame then a small one, and the decryption result is
+// still correct and unaffected by leftover bytes from the previous frame.
 func TestDecryptClientFrameReusesPlainBuffer(t *testing.T) {
 	key := newTestAuthKey(t)
 

@@ -14,9 +14,9 @@ import (
 
 const paidMessageChannelCommissionPermille int64 = 850
 
-// SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
-// 私信消息存进 channel_messages(复用 channel pts/事件/difference);store 在写边界再次强制：订阅者
-// 无需成员记录但只能写自己的 saved_peer，母频道管理员可以回复任意订阅者。
+// SendMonoforumMessage sends a message to a monoforum (channel Direct Messages) virtual channel, split into subscriber sub-dialogs by saved_peer.
+// Direct messages are stored in channel_messages (reusing channel pts/events/difference); the store enforces again at the write boundary: a subscriber
+// needs no member row but can only write their own saved_peer, while a parent-channel admin may reply to any subscriber.
 func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 ||
 		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil {
@@ -269,7 +269,7 @@ ORDER BY user_id`, parent.ID)
 	return domain.SendChannelMessageResult{Channel: channel, Message: msg, Event: event, Recipients: uniqueChannelUserIDs(recipients, 0), SenderStarsBalance: senderBalance}, nil
 }
 
-// ListMonoforumHistory 拉取某订阅者(saved_peer)在 monoforum 内的私信历史,id 倒序分页。
+// ListMonoforumHistory fetches a subscriber's (saved_peer) direct-message history within a monoforum, paginated by id descending.
 func (s *ChannelStore) ListMonoforumHistory(ctx context.Context, filter domain.MonoforumHistoryFilter) (domain.ChannelHistory, error) {
 	if filter.MonoforumID == 0 || filter.SavedPeer.ID == 0 {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
@@ -318,8 +318,8 @@ func (s *ChannelStore) ListMonoforumHistory(ctx context.Context, filter domain.M
 	return domain.ChannelHistory{Messages: msgs, Count: count, Channel: channel}, nil
 }
 
-// ResolveMonoforumSend 按 id 取 monoforum 频道(不要求调用者是 monoforum 成员),并返回调用者是否为
-// 其母广播频道 Direct Messages 管理者。非 monoforum/不存在 → ErrChannelInvalid。
+// ResolveMonoforumSend fetches a monoforum channel by id (without requiring the caller to be a monoforum member), and returns whether the caller is
+// the Direct Messages manager of its parent broadcast channel. Not a monoforum / missing → ErrChannelInvalid.
 func (s *ChannelStore) ResolveMonoforumSend(ctx context.Context, viewerUserID, monoforumID int64) (domain.Channel, bool, error) {
 	if viewerUserID == 0 || monoforumID == 0 {
 		return domain.Channel{}, false, domain.ErrChannelInvalid
@@ -343,8 +343,8 @@ func (s *ChannelStore) ResolveMonoforumSend(ctx context.Context, viewerUserID, m
 	return mono, isAdmin, nil
 }
 
-// ListMonoforumDialogs 列出 monoforum 的订阅者子会话(每个 saved_peer 一条,取其 top 消息),
-// 按 top 消息 id 倒序分页。走部分索引 channel_messages_monoforum_sublist_idx。
+// ListMonoforumDialogs lists a monoforum's subscriber sub-dialogs (one per saved_peer, taking its top message),
+// paginated by top message id descending. Uses the partial index channel_messages_monoforum_sublist_idx.
 func (s *ChannelStore) ListMonoforumDialogs(ctx context.Context, filter domain.MonoforumDialogsFilter) (domain.MonoforumDialogList, error) {
 	if filter.MonoforumID == 0 {
 		return domain.MonoforumDialogList{}, domain.ErrChannelInvalid
@@ -369,9 +369,9 @@ func (s *ChannelStore) ListMonoforumDialogs(ctx context.Context, filter domain.M
 		outerWhere = fmt.Sprintf(` WHERE top_id < $%d`, len(args)+1)
 		args = append(args, filter.OffsetID)
 	}
-	// 按 saved_peer_id DISTINCT ON 直接命中部分索引 channel_messages_monoforum_sublist_idx
-	// (channel_id, saved_peer_id, id DESC),避免对全频道私信做内存全排序;saved_peer_type 对 monoforum
-	// 恒为 'user'(发送时强校验),取每组 top 行的值即可,与按 (type,id) 分组结果一致。
+	// DISTINCT ON saved_peer_id hits the partial index channel_messages_monoforum_sublist_idx directly
+	// (channel_id, saved_peer_id, id DESC), avoiding an in-memory full sort of all channel direct messages; saved_peer_type is always
+	// 'user' for a monoforum (validated on send), so taking the top row per group matches grouping by (type,id).
 	q := `
 SELECT saved_peer_type, saved_peer_id, top_id FROM (
     SELECT DISTINCT ON (saved_peer_id) saved_peer_type, saved_peer_id, id AS top_id

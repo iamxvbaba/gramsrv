@@ -10,8 +10,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestThemeStoreRoundTripPostgres 回归迁移 0019:自定义云主题 + 每用户安装列表持久化,
-// 含 JSONB settings 往返、slug 唯一、update 不存在、安装排序——与内存实现行为对齐。
+// TestThemeStoreRoundTripPostgres regresses migration 0019: persistence of custom cloud themes and
+// per-user install lists, including a JSONB settings round-trip, slug uniqueness, update of a missing
+// theme, and install ordering -- aligned with the memory implementation's behavior.
 func TestThemeStoreRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -50,7 +51,7 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("create theme: %v", err)
 	}
 
-	// JSONB settings 往返。
+	// JSONB settings round-trip.
 	got, ok, err := store.GetThemeByID(ctx, a.ID)
 	if err != nil || !ok {
 		t.Fatalf("get by id = ok %v err %v", ok, err)
@@ -61,19 +62,19 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("settings round-trip mismatch: %+v", got.Settings)
 	}
 
-	// slug 唯一冲突 → ErrThemeSlugTaken。
+	// Slug uniqueness conflict -> ErrThemeSlugTaken.
 	dup := a
 	dup.ID = randomThemeID()
 	if err := store.CreateTheme(ctx, dup); !errors.Is(err, domain.ErrThemeSlugTaken) {
 		t.Fatalf("dup slug err = %v, want ErrThemeSlugTaken", err)
 	}
 
-	// get by slug。
+	// get by slug.
 	if bySlug, ok, _ := store.GetThemeBySlug(ctx, a.Slug); !ok || bySlug.ID != a.ID {
 		t.Fatalf("get by slug = ok %v id %d", ok, bySlug.ID)
 	}
 
-	// update 不存在 → ErrThemeNotFound。
+	// Update of a missing theme -> ErrThemeNotFound.
 	ghost := a
 	ghost.ID = randomThemeID()
 	ghost.Slug = "ghost-" + suffix
@@ -81,7 +82,7 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("update missing err = %v, want ErrThemeNotFound", err)
 	}
 
-	// increment installs。
+	// increment installs.
 	if err := store.IncrementInstalls(ctx, a.ID); err != nil {
 		t.Fatalf("increment: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("installs = %d, want 1", got.InstallsCount)
 	}
 
-	// 安装列表顺序。
+	// Install list order.
 	b := a
 	b.ID = randomThemeID()
 	b.Slug = "pg-beta-" + suffix
@@ -110,7 +111,7 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("install order = [%d,%d], want [%d,%d]", list[0].ID, list[1].ID, b.ID, a.ID)
 	}
 
-	// 移除。
+	// Remove.
 	if err := store.RemoveInstalled(ctx, creator.ID, b.ID); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -118,8 +119,8 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("after remove = %+v, want [a]", list)
 	}
 
-	// ListThemesForUser:创建 ∪ 安装。a、b 均由 creator 创建,故即便 b 已从安装列表移除,
-	// 仍应通过 creator 分支返回(getThemes 跨设备同步靠它)。
+	// ListThemesForUser: created ∪ installed. Both a and b were created by creator, so even though b
+	// was removed from the install list it should still be returned through the creator branch (cross-device getThemes sync relies on it).
 	forUser, err := store.ListThemesForUser(ctx, creator.ID)
 	if err != nil {
 		t.Fatalf("list themes for user: %v", err)
@@ -133,7 +134,7 @@ func TestThemeStoreRoundTripPostgres(t *testing.T) {
 	}
 }
 
-// randomThemeID 生成正 63 位 id(避免与静态目录保留区间碰撞)。
+// randomThemeID generates a positive 63-bit id (avoiding collision with the static catalog's reserved range).
 func randomThemeID() int64 {
 	var b [8]byte
 	_, _ = rand.Read(b[:])

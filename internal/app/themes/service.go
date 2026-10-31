@@ -1,6 +1,8 @@
-// Package themes 实现自定义云主题(account.createTheme/updateTheme/getTheme/
-// saveTheme/installTheme)的业务编排:分配 id/access_hash/slug、校验创建者、维护每用户
-// 已安装列表。文件上传(uploadTheme)由 rpc 层直接经 Files 服务完成,不经此服务。
+// Package themes implements the business orchestration of custom cloud themes
+// (account.createTheme/updateTheme/getTheme/saveTheme/installTheme): allocating
+// id/access_hash/slug, validating the creator, and maintaining each user's installed list.
+// File upload (uploadTheme) is done directly by the rpc layer via the Files service, not
+// through this service.
 package themes
 
 import (
@@ -14,24 +16,25 @@ import (
 	"telesrv/internal/store"
 )
 
-// 自定义主题 id/access_hash 用 crypto 随机 63 位,刻意区别于静态目录的保留区间
-// (静态 emoji 主题用 92e16/93e16),避免 install/get-by-id 串到静态目录。
+// Custom theme id/access_hash use crypto-random 63-bit values, deliberately distinct from
+// the static catalog's reserved range (static emoji themes use 92e16/93e16), so install/
+// get-by-id cannot stray into the static catalog.
 const defaultSlugPrefix = "t-"
 
-// slug 字母表:小写 + 数字,URL 安全。
+// slug alphabet: lowercase + digits, URL-safe.
 const slugAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-// Service 提供自定义云主题业务。
+// Service provides custom cloud theme business logic.
 type Service struct {
 	store      store.ThemeStore
 	now        func() time.Time
 	slugPrefix string
 }
 
-// Option 调整主题服务可选项。
+// Option adjusts the theme service's options.
 type Option func(*Service)
 
-// WithClock 注入时钟(测试用)。
+// WithClock injects the clock (for tests).
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) {
 		if now != nil {
@@ -40,12 +43,12 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-// WithSlugPrefix 覆盖自动分配 slug 的前缀。
+// WithSlugPrefix overrides the prefix of automatically allocated slugs.
 func WithSlugPrefix(prefix string) Option {
 	return func(s *Service) { s.slugPrefix = prefix }
 }
 
-// NewService 创建主题服务。
+// NewService creates the theme service.
 func NewService(st store.ThemeStore, opts ...Option) *Service {
 	s := &Service{store: st, now: time.Now, slugPrefix: defaultSlugPrefix}
 	for _, opt := range opts {
@@ -56,7 +59,7 @@ func NewService(st store.ThemeStore, opts ...Option) *Service {
 
 func (s *Service) ready() bool { return s != nil && s.store != nil }
 
-// Create 创建一份新主题。spec.Slug 为空时自动分配;slug 冲突自动重试。
+// Create creates a new theme. When spec.Slug is empty it is allocated automatically; a slug conflict is retried automatically.
 func (s *Service) Create(ctx context.Context, spec domain.ThemeSpec) (domain.Theme, error) {
 	if !s.ready() {
 		return domain.Theme{}, domain.ErrThemeInvalid
@@ -65,7 +68,7 @@ func (s *Service) Create(ctx context.Context, spec domain.ThemeSpec) (domain.The
 		return domain.Theme{}, domain.ErrThemeInvalid
 	}
 	userSlug := strings.TrimSpace(spec.Slug)
-	// 最多重试若干次(自动 slug/极小概率 id 冲突)。
+	// Retry a bounded number of times (automatic slug / extremely unlikely id collision).
 	for attempt := 0; attempt < 8; attempt++ {
 		t := domain.Theme{
 			ID:            randInt63(),
@@ -89,10 +92,10 @@ func (s *Service) Create(ctx context.Context, spec domain.ThemeSpec) (domain.The
 		case err == nil:
 			return t.Clone(), nil
 		case err == domain.ErrThemeSlugTaken && userSlug != "":
-			// 用户指定的 slug 已被占用:不重试,直接报错。
+			// The user-specified slug is already taken: do not retry, error out directly.
 			return domain.Theme{}, domain.ErrThemeSlugTaken
 		case err == domain.ErrThemeSlugTaken:
-			continue // 自动 slug/id 冲突:换一组重试
+			continue // automatic slug/id collision: try another set
 		default:
 			return domain.Theme{}, err
 		}
@@ -117,7 +120,7 @@ func (s *Service) resolve(ctx context.Context, ref domain.ThemeRef) (domain.Them
 	return domain.Theme{}, false, nil
 }
 
-// Get 按 id 或 slug 解析一份主题。
+// Get resolves a theme by id or slug.
 func (s *Service) Get(ctx context.Context, ref domain.ThemeRef) (domain.Theme, bool, error) {
 	if !s.ready() {
 		return domain.Theme{}, false, domain.ErrThemeInvalid
@@ -125,7 +128,7 @@ func (s *Service) Get(ctx context.Context, ref domain.ThemeRef) (domain.Theme, b
 	return s.resolve(ctx, ref)
 }
 
-// Update 更新一份主题(仅创建者可改);部分字段。
+// Update updates a theme (only the creator may edit); partial fields.
 func (s *Service) Update(ctx context.Context, userID int64, ref domain.ThemeRef, upd domain.ThemeUpdate) (domain.Theme, error) {
 	if !s.ready() {
 		return domain.Theme{}, domain.ErrThemeInvalid
@@ -158,12 +161,12 @@ func (s *Service) Update(ctx context.Context, userID int64, ref domain.ThemeRef,
 	return t.Clone(), nil
 }
 
-// Save 把主题加入用户已存列表(saveTheme,unsave=false)。
+// Save adds a theme to the user's saved list (saveTheme, unsave=false).
 func (s *Service) Save(ctx context.Context, userID int64, ref domain.ThemeRef) error {
 	return s.membership(ctx, userID, ref, false, false)
 }
 
-// Unsave 从用户列表移除(saveTheme,unsave=true)。
+// Unsave removes a theme from the user's list (saveTheme, unsave=true).
 func (s *Service) Unsave(ctx context.Context, userID int64, ref domain.ThemeRef) error {
 	if !s.ready() {
 		return domain.ErrThemeInvalid
@@ -178,7 +181,7 @@ func (s *Service) Unsave(ctx context.Context, userID int64, ref domain.ThemeRef)
 	return s.store.RemoveInstalled(ctx, userID, t.ID)
 }
 
-// Install 应用主题:计数 +1 并加入用户已安装列表。
+// Install applies a theme: increments the count by 1 and adds it to the user's installed list.
 func (s *Service) Install(ctx context.Context, userID int64, ref domain.ThemeRef, dark bool) error {
 	return s.membership(ctx, userID, ref, true, dark)
 }
@@ -202,7 +205,7 @@ func (s *Service) membership(ctx context.Context, userID int64, ref domain.Theme
 	return s.store.SetInstalled(ctx, userID, t.ID, dark)
 }
 
-// ListInstalled 返回用户已安装/已存主题。
+// ListInstalled returns the user's installed/saved themes.
 func (s *Service) ListInstalled(ctx context.Context, userID int64) ([]domain.Theme, error) {
 	if !s.ready() {
 		return nil, domain.ErrThemeInvalid
@@ -210,7 +213,7 @@ func (s *Service) ListInstalled(ctx context.Context, userID int64) ([]domain.The
 	return s.store.ListInstalledByUser(ctx, userID)
 }
 
-// ListForUser 返回用户「创建 ∪ 安装」的主题,供 getThemes 跨设备同步。
+// ListForUser returns the user's "created ∪ installed" themes, for getThemes cross-device sync.
 func (s *Service) ListForUser(ctx context.Context, userID int64) ([]domain.Theme, error) {
 	if !s.ready() {
 		return nil, domain.ErrThemeInvalid
@@ -218,14 +221,14 @@ func (s *Service) ListForUser(ctx context.Context, userID int64) ([]domain.Theme
 	return s.store.ListThemesForUser(ctx, userID)
 }
 
-// randInt63 返回一个 crypto 随机的正 63 位整数。
+// randInt63 returns a crypto-random positive 63-bit integer.
 func randInt63() int64 {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return int64(binary.BigEndian.Uint64(b[:]) & 0x7fffffffffffffff)
 }
 
-// randSlug 返回 n 个字符的随机 slug 片段。
+// randSlug returns a random slug fragment of n characters.
 func randSlug(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)

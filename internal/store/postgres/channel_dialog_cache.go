@@ -21,12 +21,12 @@ type channelDialogCacheEntry struct {
 	topUnreadProjected bool
 }
 
-// ChannelDialogCache 缓存 viewer 作用域的频道 dialog 投影,由统一缓存原语
-// readmodelcache.Cache 承载(LRU 单条驱逐 / epoch 守卫 / singleflight 内建)。
+// ChannelDialogCache caches the viewer-scoped channel dialog projection, backed by the common cache
+// primitive readmodelcache.Cache (single-entry LRU eviction / epoch guard / built-in singleflight).
 //
-// 仅在连接池(非事务)读路径使用。缓存值依赖 channel_base、channel_member(viewer,channel)、
-// dialog_light(viewer,channel) 三个 read model;ReadModelChangeListener 在写侧 NOTIFY 时
-// 失效对应键,重连时 flush。warm-from-list 经 put 回填(含 DefaultSendAs)。
+// Used only on pool (non-transactional) read paths. The cached value depends on three read models:
+// channel_base, channel_member(viewer,channel), and dialog_light(viewer,channel); ReadModelChangeListener
+// invalidates the corresponding keys on write-side NOTIFY and flushes on reconnect. warm-from-list backfills via put (including DefaultSendAs).
 type ChannelDialogCache struct {
 	cache *readmodelcache.Cache[channelDialogCacheKey, channelDialogCacheEntry]
 
@@ -83,8 +83,8 @@ func (c *ChannelDialogCache) put(dialog domain.ChannelDialog) {
 	c.cache.Store(channelDialogCacheKey{userID: dialog.UserID, channelID: dialog.ChannelID}, channelDialogCacheEntry{dialog: dialog})
 }
 
-// cacheEpoch 在「列表暖写回」前快照 epoch；配合 putIfEpoch 堵住 warm-vs-invalidation
-// 竞态:DB 查询返回后到写回之间若收到失效(epoch 自增),陈旧投影写回被拒。
+// cacheEpoch snapshots the epoch before a "list warm write-back"; together with putIfEpoch it closes the
+// warm-vs-invalidation race: if an invalidation arrives (epoch increments) between the DB query returning and the write-back, the stale projection write-back is rejected.
 func (c *ChannelDialogCache) cacheEpoch() uint64 {
 	if c == nil {
 		return 0

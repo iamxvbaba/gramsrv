@@ -12,12 +12,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// todo 清单：发送/渲染/转发全链路真实现；appendTodoList / toggleTodoCompleted
-// 在私聊和超级群均支持 others_can_* 协作。超级群成功协作会同时更新原
-// checklist media 快照，并生成 reply 到原消息的 todo 服务消息，二者各占
-// 一个 channel pts。premium 创建入口依赖 premium 业务模型，记矩阵 todo。
+// todo lists: the send/render/forward chain is fully implemented; appendTodoList /
+// toggleTodoCompleted support others_can_* collaboration in both private chats and supergroups.
+// A successful supergroup collaboration updates the original checklist media snapshot and
+// generates a todo service message replying to the original message, each taking one channel pts.
+// The Premium creation entry point depends on the Premium business model; noted as a matrix todo.
 
-// domainTodoFromInput 校验 InputMediaTodo 的清单定义并转为 domain 快照。
+// domainTodoFromInput validates the InputMediaTodo list definition and converts it into a domain
+// snapshot.
 func domainTodoFromInput(in tg.TodoList) (*domain.MessageTodo, error) {
 	title := in.Title.Text
 	if strings.TrimSpace(title) == "" {
@@ -51,7 +53,7 @@ func domainTodoFromInput(in tg.TodoList) (*domain.MessageTodo, error) {
 	return out, nil
 }
 
-// tgTodoMedia 把 domain 快照转回 tg.MessageMediaToDo。
+// tgTodoMedia converts the domain snapshot back into tg.MessageMediaToDo.
 func tgTodoMedia(todo domain.MessageTodo) *tg.MessageMediaToDo {
 	list := tg.TodoList{
 		OthersCanAppend:   todo.OthersCanAppend,
@@ -193,7 +195,8 @@ func (r *Router) onMessagesToggleTodoCompleted(ctx context.Context, req *tg.Mess
 	})
 }
 
-// mutateTodoMedia 加载目标 todo 消息、应用变更并经 editMessage 媒体替换链路落库推送。
+// mutateTodoMedia loads the target todo message, applies the change, and persists/pushes it
+// through the editMessage media-replacement chain.
 func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClass, msgID int, participantAllowed func(todo *domain.MessageTodo) bool, mutate func(userID int64, todo *domain.MessageTodo, now int) (*domain.ChannelMessageAction, error)) (tg.UpdatesClass, error) {
 	userID, peer, err := r.reactionPeer(ctx, inputPeer, nil)
 	if err != nil {

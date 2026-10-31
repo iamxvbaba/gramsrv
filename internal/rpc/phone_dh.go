@@ -8,12 +8,13 @@ import (
 	appphone "telesrv/internal/app/phone"
 )
 
-// onMessagesGetDhConfig 下发私聊通话（及未来 secret chat）的 DH 参数。
+// onMessagesGetDhConfig hands out the DH parameters for private calls (and future secret chats).
 //
-// 契约（TDesktop calls_instance.cpp updateDhConfig）：
-//   - p/g 必须过 MTP::IsPrimeAndGood——用官方 2048-bit prime + g=3 走白名单快速路径；
-//   - random 字节数必须与请求的 random_length 一致；
-//   - 客户端缓存命中（version 相同）时返回 dhConfigNotModified，只补新随机数。
+// Contract (TDesktop calls_instance.cpp updateDhConfig):
+//   - p/g must pass MTP::IsPrimeAndGood — use the official 2048-bit prime + g=3 to take the
+//     whitelist fast path;
+//   - the number of random bytes must match the requested random_length;
+//   - on a client cache hit (same version) return dhConfigNotModified with only fresh random bytes.
 func (r *Router) onMessagesGetDhConfig(ctx context.Context, req *tg.MessagesGetDhConfigRequest) (tg.MessagesDhConfigClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()

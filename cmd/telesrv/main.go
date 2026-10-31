@@ -1,4 +1,4 @@
-// Command telesrv 是基于 gotd/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
+// Command telesrv is a Telegram-like server based on gotd/td (first compatibility target: Telegram Desktop).
 package main
 
 import (
@@ -111,19 +111,24 @@ func main() {
 	defer func() { _ = logger.Sync() }()
 
 	if err := run(logger); err != nil {
-		logger.Error("telesrv 退出", zap.Error(err))
-		_ = logger.Sync() // os.Exit 跳过 defer；缓冲写需显式 flush 错误日志
+		logger.Error("telesrv exiting", zap.Error(err))
+		_ = logger.Sync() // os.Exit skips defers; buffered writes need an explicit flush of the error log
 		os.Exit(1)
 	}
 }
 
-// newLogger 构建运行日志器。两项关键改造（相对旧的 zap.NewDevelopment）：
-//   - 级别可配（TELESRV_LOG_LEVEL，默认 info）：旧版固定 Debug，热路径 65 处 Debug（含
-//     mtprotoedge 每帧一条）在连接洪峰会刷爆日志。生产/压测用 info 即可，需要时设 debug。
-//   - 缓冲异步写（BufferedWriteSyncer）：旧版每条日志一次 stderr 同步写 + 全局锁，高并发下
-//     在日志锁上串行累积——实测连接时 12 个并发 RPC 的 client_info 阶段被拖成 ~1s 惊群
-//     （mutex profile 91% 竞争在 zap 写）。缓冲后写入批量化，锁持有时间从「每条一次系统调用」
-//     降到「攒一批刷一次」。FlushInterval 控制日志可见延迟上界。
+// newLogger builds the runtime logger. Two key changes (versus the old zap.NewDevelopment):
+//   - Configurable level (TELESRV_LOG_LEVEL, default info): the old version was fixed at
+//     Debug, and 65 Debug calls on hot paths (including one per frame in mtprotoedge) would
+//     flood the log during connection bursts. info is enough for production/load testing;
+//     set debug when needed.
+//   - Buffered async writes (BufferedWriteSyncer): the old version did one synchronous
+//     stderr write + global lock per log line, which under high concurrency accumulated
+//     serially on the log lock -- measured during connection, the client_info phase of 12
+//     concurrent RPCs was dragged into a ~1s thundering herd (91% of mutex profile
+//     contention in zap writes). Buffering batches writes, cutting lock hold time from
+//     "one system call per line" to "flush once per batch". FlushInterval controls the upper
+//     bound on log visibility latency.
 func newLogger() (*zap.Logger, error) {
 	level := zapcore.InfoLevel
 	if v := strings.TrimSpace(os.Getenv("TELESRV_LOG_LEVEL")); v != "" {
@@ -183,7 +188,7 @@ func newBusinessAutomationOptions(cfg config.Config, online messageapp.BusinessA
 		opts = append(opts, messageapp.WithBusinessAutomationReplyProvider(messageapp.NewAIBusinessAutomationProvider(generator)))
 		logger.Info("Business automation reply provider", zap.String("provider", "ai"))
 	default:
-		logger.Warn("未知 Business automation AI provider，回退 quick reply 模板", zap.String("provider", cfg.BusinessAIProvider))
+		logger.Warn("unknown Business automation AI provider, falling back to the quick reply template", zap.String("provider", cfg.BusinessAIProvider))
 	}
 	return opts
 }
@@ -212,11 +217,11 @@ func newAIComposeOptions(cfg config.Config, limiter aiapp.RateLimiter, premium a
 			Thinking:        pc.Thinking,
 		})
 		if err != nil {
-			logger.Warn("AI compose provider 已跳过", zap.String("provider", pc.Name), zap.String("kind", pc.Kind), zap.Error(err))
+			logger.Warn("AI compose provider skipped", zap.String("provider", pc.Name), zap.String("kind", pc.Kind), zap.Error(err))
 			continue
 		}
 		providers = append(providers, provider)
-		logger.Info("AI compose provider 已启用", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
+		logger.Info("AI compose provider enabled", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
 	}
 	if len(providers) > 0 {
 		opts = append(opts, aiapp.WithProviders(providers...))
@@ -272,39 +277,40 @@ func newTranslationOptions(cfg config.Config, limiter translationapp.RateLimiter
 			OmitTemperature: pc.OmitTemperature, Thinking: pc.Thinking,
 		})
 		if err != nil {
-			logger.Warn("translation provider 已跳过", zap.String("provider", pc.Name), zap.Error(err))
+			logger.Warn("translation provider skipped", zap.String("provider", pc.Name), zap.Error(err))
 			continue
 		}
 		providers = append(providers, translationapp.NewAIProvider(provider))
-		logger.Info("translation provider 已启用", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
+		logger.Info("translation provider enabled", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
 	}
 	if len(providers) > 0 {
 		opts = append(opts, translationapp.WithProviders(providers...))
 	} else if cfg.TranslationEnabled {
-		logger.Warn("translation 已启用但没有远程 provider；messages.translateText 将返回 TRANSLATIONS_DISABLED")
+		logger.Warn("translation enabled but no remote provider; messages.translateText will return TRANSLATIONS_DISABLED")
 	}
 	return opts
 }
 
-// startDebugServer 在 addr 上挂起 net/http/pprof 调试端点（addr 为空则关闭）。
-// 用独立 mux（不污染 http.DefaultServeMux），仅注册 pprof 路由：
-//   - /debug/pprof/profile  CPU 剖析（?seconds=30）
-//   - /debug/pprof/heap     堆内存快照
-//   - /debug/pprof/goroutine goroutine 栈（排查泄漏/阻塞）
-//   - /debug/pprof/mutex    锁竞争（需 SetMutexProfileFraction）
-//   - /debug/pprof/block    阻塞剖析（需 SetBlockProfileRate）
-//   - /debug/pprof/allocs   累计分配（带宽/序列化热点常与之相关）
+// startDebugServer mounts the net/http/pprof debug endpoints on addr (disabled when addr is empty).
+// It uses its own mux (so it does not pollute http.DefaultServeMux) and registers only pprof routes:
+//   - /debug/pprof/profile  CPU profile (?seconds=30)
+//   - /debug/pprof/heap     heap memory snapshot
+//   - /debug/pprof/goroutine goroutine stacks (tracking leaks/blocks)
+//   - /debug/pprof/mutex    lock contention (requires SetMutexProfileFraction)
+//   - /debug/pprof/block    block profile (requires SetBlockProfileRate)
+//   - /debug/pprof/allocs   cumulative allocations (bandwidth/serialization hotspots often correlate)
 //
-// mutex/block 采样在低流量测试环境开销可忽略；高流量生产如担心扰动，置空 DebugAddr 关闭整端点。
+// mutex/block sampling overhead is negligible in a low-traffic test environment; in
+// high-traffic production, if worried about perturbation, set DebugAddr empty to close the whole endpoint.
 func startDebugServer(ctx context.Context, addr string, metricsHandler http.Handler, logger *zap.Logger) {
 	if addr == "" {
 		return
 	}
-	runtime.SetMutexProfileFraction(5) // 采样 1/5 的锁竞争事件
-	runtime.SetBlockProfileRate(10000) // 每阻塞约 10µs 采一次样
+	runtime.SetMutexProfileFraction(5) // sample 1/5 of lock contention events
+	runtime.SetBlockProfileRate(10000) // sample once per ~10µs of blocking
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/pprof/", pprof.Index) // 含 heap/goroutine/mutex/block/allocs 等命名 profile
+	mux.HandleFunc("/debug/pprof/", pprof.Index) // includes named profiles such as heap/goroutine/mutex/block/allocs
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
@@ -315,10 +321,10 @@ func startDebugServer(ctx context.Context, addr string, metricsHandler http.Hand
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
-		logger.Info("pprof 调试端点已启用", zap.String("addr", addr),
+		logger.Info("pprof debug endpoint enabled", zap.String("addr", addr),
 			zap.String("hint", "go tool pprof http://"+addr+"/debug/pprof/profile?seconds=30"))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Warn("pprof 端点退出", zap.Error(err))
+			logger.Warn("pprof endpoint exiting", zap.Error(err))
 		}
 	}()
 	go func() {
@@ -412,9 +418,11 @@ func mtprotoRuntimeGaugeSamples(snapshot mtprotoedge.RuntimeSnapshot) []obsmetri
 	}
 }
 
-// externalMediaOption 按配置启用外链媒体抓取；禁用时返回 nil（NewService 跳过 nil option）。
-// liveStreamDep 把可能为 nil 的 *livestream.Service 转成 rpc.LiveStreamsService，
-// 避免 typed-nil interface（nil 具体指针装进接口后 != nil 的坑）。
+// externalMediaOption enables external media fetching per config; when disabled it
+// returns nil (NewService skips a nil option).
+// liveStreamDep converts a possibly-nil *livestream.Service into an
+// rpc.LiveStreamsService, avoiding the typed-nil interface trap (a nil concrete
+// pointer stored in an interface compares != nil).
 func liveStreamDep(s *livestream.Service) rpc.LiveStreamsService {
 	if s == nil {
 		return nil
@@ -600,7 +608,7 @@ func externalMediaOption(cfg config.Config) filesapp.Option {
 	return filesapp.WithExternalMedia(cfg.ExternalMediaMaxBytes, cfg.ExternalMediaRatePerMin)
 }
 
-// webPagePreviewOption 按配置启用链接预览抓取；禁用时返回 nil（NewService 跳过 nil option）。
+// webPagePreviewOption enables link-preview fetching per config; when disabled it returns nil (NewService skips a nil option).
 func webPagePreviewOption(cfg config.Config) filesapp.Option {
 	if !cfg.WebPagePreviewEnable {
 		return nil
@@ -608,31 +616,37 @@ func webPagePreviewOption(cfg config.Config) filesapp.Option {
 	return filesapp.WithWebPagePreview(cfg.WebPagePreviewMaxBytes, cfg.WebPagePreviewRatePerMin)
 }
 
-// logConfigDrift 在启动时比对 .env 与 .env.example，只报告、不改写：
+// logConfigDrift compares .env against .env.example at startup, reporting only,
+// never rewriting:
 //
-//   - INFO「模板里声明、但本机没设」——多半是刻意走默认值，但「新版本加了配置、
-//     .env 还是旧的」这类遗漏也在这里，所以给个可核对的清单；
-//   - WARN「.env 里有、模板没收录」——几乎必然是键名笔误或模板滞后：readEnvFile
-//     接受任意 TELESRV_* 键名，而 Load 只查询认识的键，笔误值会被静默忽略。
+//   - INFO "declared in the template but not set on this machine" -- usually a
+//     deliberate default, but omissions like "a new version added config while
+//     .env is still old" also show up here, so it gives a checklist to verify;
+//   - WARN "present in .env but not listed in the template" -- almost certainly a
+//     key-name typo or a lagging template: readEnvFile accepts any TELESRV_* key
+//     name, while Load only queries keys it knows, so a typo's value is silently
+//     ignored.
 //
-// 模板缺失（生产镜像不带 .env.example）时 DetectEnvDrift 返回零值，静默跳过。
-// 刻意不自动补写 .env：容器是 read-only rootfs，且静默改运维的配置文件比漏报更糟。
+// When the template is missing (production images do not ship .env.example),
+// DetectEnvDrift returns a zero value and this silently skips.
+// It deliberately does not auto-write .env: the container is a read-only rootfs,
+// and silently editing the operator's config file is worse than under-reporting.
 func logConfigDrift(logger *zap.Logger) {
 	drift, err := config.DetectEnvDrift()
 	if err != nil {
-		logger.Warn("配置漂移比对失败（不影响启动）", zap.Error(err))
+		logger.Warn("config drift comparison failed (does not affect startup)", zap.Error(err))
 		return
 	}
 	if len(drift.Missing) == 0 && len(drift.Unknown) == 0 {
 		return
 	}
 	if len(drift.Missing) > 0 {
-		logger.Info(".env.example 声明但本机未设置，正使用代码默认值",
+		logger.Info("declared in .env.example but not set on this machine; using code defaults",
 			zap.Int("count", len(drift.Missing)),
 			zap.Strings("keys", drift.Missing))
 	}
 	if len(drift.Unknown) > 0 {
-		logger.Warn(".env 中的键未被 .env.example 收录：可能是键名笔误或模板滞后，笔误值会被静默忽略",
+		logger.Warn("keys in .env are not listed in .env.example: possibly a key-name typo or a lagging template; a typo's value is silently ignored",
 			zap.Int("count", len(drift.Unknown)),
 			zap.Strings("keys", drift.Unknown))
 	}
@@ -653,24 +667,27 @@ func run(logger *zap.Logger) error {
 	if !domain.ConfigurePremiumBotUsername(cfg.PremiumBotUsername) {
 		return fmt.Errorf("configure Premium bot username %q", cfg.PremiumBotUsername)
 	}
-	// 手机号格式策略必须在 store / RPC service 构造前安装：login identity 的
-	// 规范化结果会落进 users.phone，策略切换不能留下半规范化数据。
+	// The phone format policy must be installed before store / RPC services are
+	// constructed: a login identity's normalized result lands in users.phone, and
+	// switching the policy must not leave half-normalized data behind.
 	domain.ConfigurePhoneFormatCheck(cfg.CheckNumberFormat)
-	logger.Info("手机号格式策略",
+	logger.Info("phone format policy",
 		zap.Bool("check_number_format", cfg.CheckNumberFormat),
 		zap.Bool("strict", domain.PhoneFormatCheckEnabled()))
-	// SCAM/FAKE 警告文案（空白 → domain 内置英文默认值）：启动时写入一次，
-	// getFullUser / channels.getFullChannel / 邀请预览的 About 投影都会读取。
+	// SCAM/FAKE warning text (blank -> domain's built-in English default): written
+	// once at startup and read by getFullUser / channels.getFullChannel / the About
+	// projection of invite previews.
 	domain.SetModerationProfileWarning(cfg.ScamProfileWarning, cfg.FakeProfileWarning)
-	// 服务器身份由管理面板（Server Settings → Server identity）在
-	// cfg.IdentityDir 下维护；这里启动时读取一次自定义服务器名，用作 777000 官方
-	// 系统账号的展示名与登录通知 {{server_name}} 占位符（见
-	// domain.SetOfficialSystemUserDisplayName）。登录通知模板在 internal/app/auth
-	// 内部每次发送时实时读取；名称与图标随后由 systemidentity.Watcher 在运行期
-	// 持续跟随面板改动，无需重启。
+	// The server identity is maintained by the admin panel (Server Settings ->
+	// Server identity) under cfg.IdentityDir; here it reads the custom server name
+	// once at startup, used as the display name of the official 777000 system
+	// account and the login-notification {{server_name}} placeholder (see
+	// domain.SetOfficialSystemUserDisplayName). The login notification template is
+	// read live on every send inside internal/app/auth; the name and icon then keep
+	// following panel changes at runtime via systemidentity.Watcher, with no restart.
 	identityStore := identity.NewStore(cfg.IdentityDir)
 	if info, err := identityStore.Get(); err != nil {
-		logger.Warn("读取服务器身份失败，沿用品牌默认名", zap.Error(err))
+		logger.Warn("failed to read server identity, falling back to the branding default name", zap.Error(err))
 	} else {
 		domain.SetOfficialSystemUserDisplayName(info.Name)
 	}
@@ -691,9 +708,9 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("parse listen port %q: %w", portStr, err)
 	}
 
-	// tg.Layer 由当前导入的 canonical schema 生成；纳入未来 Layer 后无需
-	// 在 telesrv 另维护一份常量。
-	logger.Info("telesrv 启动",
+	// tg.Layer is generated from the currently imported canonical schema; after
+	// adopting a future Layer there is no need to maintain a separate constant in telesrv.
+	logger.Info("telesrv starting",
 		zap.String("listen", cfg.ListenAddr),
 		zap.Int("dc", cfg.DC),
 		zap.String("default_country_code", cfg.DefaultCountryCode),
@@ -713,18 +730,22 @@ func run(logger *zap.Logger) error {
 	metricRegistry := obsmetrics.New()
 	metricRegistry.AddGaugeProvider(goRuntimeGaugeSamples)
 
-	// pprof 调试端点：telesrv 是宿主进程（不在 docker 内，docker stats 看不到它），CPU/内存/
-	// goroutine/锁竞争的定位全靠此端点。早于重负载初始化启动，连 seed/预热阶段也可剖析。
+	// pprof debug endpoint: telesrv is a host process (not inside docker, so
+	// docker stats cannot see it), and diagnosing CPU/memory/goroutine/lock
+	// contention all relies on this endpoint. It is started before heavy
+	// initialization, so even the seed/warm-up phases can be profiled.
 	startDebugServer(ctx, cfg.DebugAddr, metricRegistry, logger)
 
-	// 持久化依赖：先迁移 schema，再建立连接。auth key 与业务事实落 PostgreSQL，
-	// Redis 只承载可重建的短 TTL 状态、缓存、计数器和限流。
-	// 依赖由 deploy/docker-compose.yml 启动；连不上则启动失败（开发期须先 docker compose up）。
+	// Persistence dependencies: migrate the schema first, then establish
+	// connections. Auth keys and business facts land in PostgreSQL, while Redis
+	// carries only rebuildable short-TTL state, caches, counters and rate limits.
+	// Dependencies are started by deploy/docker-compose.yml; failing to connect
+	// fails startup (during development you must docker compose up first).
 	migrationStatus, err := postgres.MigrateAndStatus(cfg.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("postgres migrate: %w", err)
 	}
-	logger.Info("PostgreSQL schema 已迁移",
+	logger.Info("PostgreSQL schema migrated",
 		zap.Uint("schema_version", migrationStatus.Version),
 		zap.Bool("schema_dirty", migrationStatus.Dirty),
 		zap.Bool("schema_empty", migrationStatus.Empty),
@@ -813,7 +834,7 @@ func run(logger *zap.Logger) error {
 			{Name: "telesrv_redis_pool_wait_seconds", Value: time.Duration(stat.WaitDurationNs).Seconds()},
 		}
 	})
-	logger.Info("持久化依赖就绪", zap.String("redis", cfg.RedisAddr))
+	logger.Info("persistence dependencies ready", zap.String("redis", cfg.RedisAddr))
 	if cfg.TelegramLoginEnabled {
 		telegramLoginHTTPHandler, err = telegramloginhttp.NewHandler(telegramloginhttp.Config{
 			Service: telegramLoginService, Tokens: telegramLoginIDTokens,
@@ -936,8 +957,9 @@ func run(logger *zap.Logger) error {
 		postgres.WithMessageLogger(logger.Named("store").Named("messages")))
 	broadcastStore := postgres.NewBroadcastStore(pool)
 	broadcastService := broadcastapp.NewService(broadcastStore, messageStore, logger.Named("app").Named("broadcast"))
-	// 共享频道行/成员缓存 + 统一 read-model LISTEN/NOTIFY 实时失效：消除高频「逐 RPC
-	// 解析频道/成员」在客户端重连同步突发里重复读同一行的放大。
+	// Shared channel row/member caches + unified read-model LISTEN/NOTIFY realtime
+	// invalidation: eliminate the amplification of high-frequency "resolve
+	// channel/member per RPC" re-reading the same row during a client reconnect sync burst.
 	channelRowCache := postgres.NewChannelRowCache(cfg.ChannelRowCacheMaxEntries)
 	channelTopMessageCache := postgres.NewChannelTopMessageCache(cfg.ChannelTopMessageCacheMaxEntries)
 	channelMemberCache := postgres.NewChannelMemberCache(cfg.ChannelMemberCacheMaxEntries)
@@ -987,8 +1009,10 @@ func run(logger *zap.Logger) error {
 	pollStore := postgres.NewPollStore(pool)
 	mediaStore := postgres.NewMediaStore(pool)
 	gifCatalogStore := postgres.NewGifCatalogStore(pool)
-	// 头像投影缓存：所有 projector 共用 owner→头像正/负 LRU。profile_photo NOTIFY
-	// 精确失效负责正常新鲜度，长 TTL 只覆盖漏通知，避免登录 ramp 周期性重查稳定负值。
+	// Avatar projection cache: all projectors share an owner->avatar positive/negative
+	// LRU. profile_photo NOTIFY precise invalidation handles normal freshness, while
+	// the long TTL only covers missed notifications, avoiding a login ramp periodically
+	// re-querying stable negative values.
 	cachedPhotos := userprojection.NewCachedPhotoProviderWithMaxEntries(
 		mediaStore,
 		cfg.ProfilePhotoCacheTTL,
@@ -1013,14 +1037,14 @@ func run(logger *zap.Logger) error {
 	blobBackend := filesapp.BlobBackend(filesapp.NewGuardedBlobBackend(blobStorage.permanent, capacity.permanentWrite))
 	uploadPartBackend := filesapp.UploadPartBackend(filesapp.NewGuardedUploadPartBackend(blobStorage.uploadPart, capacity.stagingWrite))
 	if cfg.BlobBackendKind == string(domain.MediaBackendS3) {
-		logger.Info("blob backend 就绪",
+		logger.Info("blob backend ready",
 			zap.String("backend", blobBackend.Name()),
 			zap.String("endpoint", cfg.S3Endpoint),
 			zap.String("bucket", cfg.S3Bucket),
 			zap.String("upload_staging_dir", cfg.BlobStagingDir),
 		)
 	} else {
-		logger.Info("blob backend 就绪",
+		logger.Info("blob backend ready",
 			zap.String("backend", blobBackend.Name()),
 			zap.String("dir", cfg.BlobDir),
 		)
@@ -1039,18 +1063,18 @@ func run(logger *zap.Logger) error {
 		webPagePreviewOption(cfg),
 	)
 	if cfg.MapboxToken != "" {
-		logger.Info("地图缩略图代理已启用", zap.String("provider", "mapbox"), zap.String("cache_dir", cfg.MapTileCacheDir))
+		logger.Info("map thumbnail proxy enabled", zap.String("provider", "mapbox"), zap.String("cache_dir", cfg.MapTileCacheDir))
 	}
 	if cfg.ExternalMediaEnable {
-		logger.Info("外链媒体抓取已启用", zap.Int64("max_bytes", cfg.ExternalMediaMaxBytes), zap.Int("rate_per_min", cfg.ExternalMediaRatePerMin))
+		logger.Info("external media fetching enabled", zap.Int64("max_bytes", cfg.ExternalMediaMaxBytes), zap.Int("rate_per_min", cfg.ExternalMediaRatePerMin))
 	}
 	if cfg.WebPagePreviewEnable {
-		logger.Info("链接预览抓取已启用", zap.Int64("max_bytes", cfg.WebPagePreviewMaxBytes), zap.Int("rate_per_min", cfg.WebPagePreviewRatePerMin))
+		logger.Info("link preview fetching enabled", zap.Int64("max_bytes", cfg.WebPagePreviewMaxBytes), zap.Int("rate_per_min", cfg.WebPagePreviewRatePerMin))
 	}
 	if stats, err := filesService.SeedMedia(ctx, cfg.StickerSeedDir, cfg.StickerSeedMaxSets); err != nil {
 		return fmt.Errorf("seed media: %w", err)
 	} else if !stats.Skipped {
-		logger.Info("媒体种子导入完成",
+		logger.Info("media seed import complete",
 			zap.String("dir", cfg.StickerSeedDir),
 			zap.Int("reactions", stats.Reactions),
 			zap.Int("sticker_sets", stats.StickerSets),
@@ -1072,7 +1096,7 @@ func run(logger *zap.Logger) error {
 	if stats, err := filesService.SeedPremiumPromo(ctx, cfg.PremiumPromoSeedDir); err != nil {
 		return fmt.Errorf("seed premium promo: %w", err)
 	} else if !stats.Skipped {
-		logger.Info("Premium promo 视频种子导入完成",
+		logger.Info("Premium promo video seed import complete",
 			zap.String("dir", cfg.PremiumPromoSeedDir),
 			zap.Int("videos", stats.Videos),
 			zap.Int("blobs", stats.Blobs),
@@ -1081,7 +1105,7 @@ func run(logger *zap.Logger) error {
 	if stats, err := filesService.SeedAppearance(ctx); err != nil {
 		return fmt.Errorf("seed appearance: %w", err)
 	} else if !stats.Skipped {
-		logger.Info("外观种子导入完成",
+		logger.Info("appearance seed import complete",
 			zap.String("source", "default-seed"),
 			zap.Int("wallpapers", stats.Wallpapers),
 			zap.Int("documents", stats.Documents),
@@ -1091,17 +1115,18 @@ func run(logger *zap.Logger) error {
 	if stats, err := filesService.SeedFreezeEmoji(ctx); err != nil {
 		return fmt.Errorf("seed freeze emoji: %w", err)
 	} else if stats.Imported {
-		logger.Info("内置 freeze 表情种子导入完成",
+		logger.Info("built-in freeze emoji seed import complete",
 			zap.Int64("document_id", freezeseed.DocumentID),
 			zap.Int64("set_id", freezeseed.SetID),
 		)
 	}
-	// 默认 emoji status 系统集：从 animated_emoji 精选合成（幂等，已 seed 的存量
-	// 库重启后自动补上）；缺失时 premium 用户的 status 选择器会是空的。
+	// Default emoji status system set: synthesized from curated animated_emoji
+	// (idempotent, automatically filled in after a restart of an already-seeded
+	// database); when missing, Premium users' status picker would be empty.
 	if count, created, err := filesService.EnsureDefaultEmojiStatusSet(ctx); err != nil {
-		logger.Warn("默认 emoji status 系统集合成失败", zap.Error(err))
+		logger.Warn("failed to synthesize the default emoji status system set", zap.Error(err))
 	} else if created {
-		logger.Info("默认 emoji status 系统集已合成", zap.Int("documents", count))
+		logger.Info("default emoji status system set synthesized", zap.Int("documents", count))
 	}
 	langPackStore := postgres.NewLangPackStore(pool)
 	passwordStore := postgres.NewPasswordStore(pool)
@@ -1157,22 +1182,26 @@ func run(logger *zap.Logger) error {
 	if seeded, err := langPackService.SeedDirectory(ctx, cfg.LangPackSeedDir); err != nil {
 		return fmt.Errorf("seed langpack: %w", err)
 	} else if seeded > 0 {
-		logger.Info("语言包种子导入完成", zap.String("dir", cfg.LangPackSeedDir), zap.Int("strings", seeded))
+		logger.Info("language pack seed import complete", zap.String("dir", cfg.LangPackSeedDir), zap.Int("strings", seeded))
 	}
-	// 国家区号目录:把 catalog 固化的官方全量(~235 国)幂等 upsert 进 PG,覆盖迁移里仅
-	// seed 的 2 国(US/CN)默认值。否则 countries 表非空,ListCountries 返回那 2 行就会
-	// 绕过 catalog,登录页/号码格式只显示 2 国。upsert 失败仅告警不阻断启动(回退旧 2 行)。
+	// Country dialing code catalog: idempotently upsert the full official set
+	// (~235 countries) fixed in the catalog into PG, overwriting the migration's
+	// 2-country (US/CN) default seed. Otherwise the non-empty countries table makes
+	// ListCountries return those 2 rows and bypass the catalog, so the login page /
+	// number format shows only 2 countries. An upsert failure only warns and does not
+	// block startup (falling back to the old 2 rows).
 	if cs := catalog.Countries().Countries; len(cs) > 0 {
 		if err := helpStore.UpsertCountries(ctx, cs); err != nil {
-			logger.Warn("国家区号种子导入失败", zap.Error(err))
+			logger.Warn("country dialing code seed import failed", zap.Error(err))
 		} else {
-			logger.Info("国家区号种子导入完成", zap.Int("countries", len(cs)))
+			logger.Info("country dialing code seed import complete", zap.Int("countries", len(cs)))
 		}
 	}
 
 	botStore := postgres.NewBotStore(pool)
-	// userCache 与 users 服务共享同一实例：bot 元数据写入（version bump）后必须
-	// 失效缓存，否则 TTL 内 getUsers 回旧 first_name/旧 bot_info_version。
+	// userCache is shared with the users service: after a bot metadata write
+	// (version bump) the cache must be invalidated, or getUsers returns a stale
+	// first_name/bot_info_version within the TTL.
 	userCache := redisstore.NewUserCache(rdb, redisstore.DefaultUserCacheTTL)
 	accountLifecycleStore := postgres.NewAccountLifecycleStore(pool)
 	accountOptions := []account.ServiceOption{
@@ -1202,7 +1231,7 @@ func run(logger *zap.Logger) error {
 			return fmt.Errorf("configure OTP webhook: %w", err)
 		}
 		webhookSender = configured
-		logger.Info("OTP Webhook 投递已启用",
+		logger.Info("OTP Webhook delivery enabled",
 			zap.Bool("phone", cfg.PhoneCodeDeliveryProvider == "webhook"),
 			zap.Bool("email", cfg.LoginEmailEnable && cfg.EmailCodeDeliveryProvider == "webhook"))
 	}
@@ -1274,8 +1303,10 @@ func run(logger *zap.Logger) error {
 	}
 	groupCallStore := postgres.NewGroupCallStore(pool)
 	groupCallsService := groupcallsapp.NewService(groupCallStore, groupcallsapp.WithPublicBaseURL(cfg.PublicBaseURL))
-	// 群通话媒体面：内嵌 pion SFU（M1+）。SFU 的 liveness reporter 把媒体面存活
-	// 回报给信令侧保活水位（sweeper 双过期判据的实现）；未启用则退化为纯信令（M0）。
+	// Group call media plane: embedded pion SFU (M1+). The SFU's liveness reporter
+	// reports media-plane liveness to the signaling-side keepalive watermark (the
+	// implementation of the sweeper's dual expiry criteria); when disabled it
+	// degrades to signaling only (M0).
 	sfuService := sfu.Service(sfu.Disabled())
 	if cfg.SFUEnable {
 		sfuAdvertise := cfg.SFUAdvertiseIP
@@ -1297,8 +1328,9 @@ func run(logger *zap.Logger) error {
 		}
 		sfuService = pionSFU
 	}
-	// 频道 RTMP 直播媒体面（Live Stream）：内嵌 RTMP ingest（OBS 推流）+ ffmpeg
-	// 切段。未启用时信令仍可用，观众停留在"等待推流"占位。
+	// Channel RTMP live media plane (Live Stream): embedded RTMP ingest (OBS
+	// streaming) + ffmpeg segmentation. When disabled, signaling still works and
+	// viewers stay on the "waiting for stream" placeholder.
 	var liveStreamService *livestream.Service
 	if cfg.LiveStreamEnable {
 		liveStreamService = livestream.NewService(livestream.Config{
@@ -1312,8 +1344,9 @@ func run(logger *zap.Logger) error {
 		}
 		defer liveStreamService.Close()
 	}
-	// 私聊通话中继（P3）：内嵌 TURN/STUN，phoneCall.connections 经 phoneConnectionWebrtc
-	// 下发。未启用时退回 P1 的纯信令 LAN 直连。
+	// Private call relay (P3): embedded TURN/STUN, with phoneCall.connections
+	// delivered via phoneConnectionWebrtc. When disabled it falls back to P1's
+	// signaling-only LAN direct connection.
 	turnService := turnsrv.Service(turnsrv.Disabled())
 	if cfg.TURNEnable {
 		turnAdvertise := cfg.TURNAdvertiseIP
@@ -1338,12 +1371,13 @@ func run(logger *zap.Logger) error {
 		defer t.Close()
 		turnService = t
 	}
-	// 服务端重启恢复：SFU 状态全失，把全部活跃通话的参与者批量置 left（version++），
-	// 客户端经 checkGroupCall 发现自己 ssrc 消失后自动 rejoin。
+	// Server restart recovery: all SFU state is lost, so batch-set every active
+	// call's participants to left (version++); clients notice their ssrc disappeared
+	// via checkGroupCall and rejoin automatically.
 	if calls, err := groupCallsService.ResetAllParticipants(ctx, int(time.Now().Unix())); err != nil {
-		logger.Warn("重启清理群通话参与者失败", zap.Error(err))
+		logger.Warn("failed to clean up group call participants on restart", zap.Error(err))
 	} else if len(calls) > 0 {
-		logger.Info("重启清理群通话参与者", zap.Int("calls", len(calls)))
+		logger.Info("cleaned up group call participants on restart", zap.Int("calls", len(calls)))
 	}
 	phoneService := phoneapp.NewService(phoneapp.Config{
 		RingTimeout:            cfg.CallRingTimeout,
@@ -1352,7 +1386,7 @@ func run(logger *zap.Logger) error {
 		MaxRegistryEntries:     cfg.CallRegistryMaxEntries,
 		SignalingRatePerSecond: cfg.CallSignalingRate,
 	})
-	// 私聊端对端加密（Secret Chat）握手状态机 + qts 投递队列（盲中继）。
+	// Private end-to-end encryption (Secret Chat) handshake state machine + qts delivery queue (blind relay).
 	secretChatStore := postgres.NewSecretChatStore(pool)
 	encryptedQueueStore := postgres.NewEncryptedQueueStore(pool)
 	secretChatService := secretchatapp.NewService(secretChatStore, encryptedQueueStore)
@@ -1480,7 +1514,7 @@ func run(logger *zap.Logger) error {
 		}); err != nil {
 			menuErr := fmt.Errorf("configure %s Mini App: %w", cfg.BotHandle, err)
 			if !cfg.MenuButtonRequired {
-				logger.Warn("claim 测试实例跳过菜单按钮设置", zap.Error(menuErr))
+				logger.Warn("claim test instance skips menu button setup", zap.Error(menuErr))
 			} else {
 				return nil, menuErr
 			}
@@ -1587,13 +1621,14 @@ func run(logger *zap.Logger) error {
 	} else {
 		logger.Info("crypto donations disabled; set TELESRV_DONATIONS_ENABLED=true and enable a chain to turn it on")
 	}
-	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
-	// 同属进程内一次性凭据,不跨实例)。
+	// Passkey: credentials are persisted in postgres; one-time challenges live in
+	// in-process memory (short TTL, the same kind of in-process one-time credential
+	// as the QR login token, not shared across instances).
 	passkeyStore := postgres.NewPasskeyStore(pool)
 	passkeyChallengeStore := memory.NewPasskeyChallengeStore()
 	passkeyService := passkeyapp.NewService(passkeyStore, passkeyChallengeStore, cfg.PasskeyRPID, cfg.DC,
 		passkeyapp.WithAllowedOrigins(cfg.PasskeyAllowedOrigins))
-	// 自定义云主题(Create a New Theme):主题目录与每用户已安装列表均持久化到 postgres。
+	// Custom cloud themes (Create a New Theme): both the theme catalog and each user's installed list are persisted in postgres.
 	themeService := themesapp.NewService(postgres.NewThemeStore(pool))
 	usersService := users.NewService(userStore,
 		users.WithBaseUserCache(userCache),
@@ -1628,8 +1663,10 @@ func run(logger *zap.Logger) error {
 		),
 		dialogs.WithSharedDialogListSnapshotCache(dialogListSnapshotCache),
 	)
-	// 编译期保证 *users.Service 满足 channel fan-out 跨 viewer 投影预热的可选能力；签名漂移会在
-	// 这里立刻断编译，而非在运行时静默退化回 O(viewer) 逐 viewer 投影。
+	// Compile-time guarantee that *users.Service satisfies the optional capability
+	// for channel fan-out cross-viewer projection warm-up; a signature drift breaks
+	// the build right here rather than silently degrading at runtime to O(viewer)
+	// per-viewer projection.
 	var _ rpc.BatchViewerUsersResolver = usersService
 	channelsService := channelapp.NewService(channelStore,
 		channelapp.WithBotProfileResolver(botsService),
@@ -1687,7 +1724,7 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("migrate legacy ephemeral reports: %w", err)
 	}
 	if legacyReportsMigrated > 0 {
-		logger.Info("旧 ephemeral 举报已迁移到统一审核管线",
+		logger.Info("legacy ephemeral reports migrated to the unified moderation pipeline",
 			zap.Int("reports", legacyReportsMigrated))
 	}
 	translationService := translationapp.NewService(
@@ -1715,7 +1752,7 @@ func run(logger *zap.Logger) error {
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
 		auth.WithOTPDeliveryFailureObserver(func(_ context.Context, request otpdelivery.Request, err error) {
-			logger.Named("otp").Warn("附加 OTP provider 投递失败，777000 App-code 保持有效",
+			logger.Named("otp").Warn("additional OTP provider delivery failed; the 777000 App-code remains valid",
 				zap.String("delivery_id", request.DeliveryID),
 				zap.String("purpose", string(request.Purpose)),
 				zap.String("channel", string(request.Channel)),
@@ -1809,9 +1846,11 @@ func run(logger *zap.Logger) error {
 		}
 		appUpdateResolver = client
 	}
-	// 会话地理归属(account.getAuthorizations 的 country/region)。协议层没有
-	// help.requestIpAddress 的对等实现,不配 endpoint 时 resolver 为 nil,列表继续回传
-	// "Unknown" 占位文案——这是未启用时的预期路径,不该让服务起不来。
+	// Session geolocation (country/region for account.getAuthorizations). The
+	// protocol layer has no peer implementation of help.requestIpAddress, so when no
+	// endpoint is configured the resolver is nil and the list keeps returning the
+	// "Unknown" placeholder -- that is the expected path when disabled and must not
+	// prevent the service from starting.
 	geoIPResolver, err := geoip.New(geoip.Config{
 		Endpoints:          cfg.GeoIPEndpoints,
 		Timeout:            cfg.GeoIPTimeout,
@@ -1829,16 +1868,18 @@ func run(logger *zap.Logger) error {
 	}
 	if geoIPResolver != nil {
 		defer func() { _ = geoIPResolver.Close() }()
-		// failover 链是有序的,启动时打出来,排查"为什么这条会话显示 Unknown"时能直接
-		// 看出当时主力是哪个。
-		logger.Info("会话地理归属已启用",
+		// The failover chain is ordered and printed at startup, so when diagnosing
+		// "why does this session show Unknown" you can see directly which backend was
+		// primary at the time.
+		logger.Info("session geolocation enabled",
 			zap.Strings("backends", geoip.EndpointNames(cfg.GeoIPEndpoints)))
 	} else {
-		logger.Info("会话地理归属未启用：account.getAuthorizations 继续回传 Unknown 占位文案")
+		logger.Info("session geolocation disabled: account.getAuthorizations keeps returning the Unknown placeholder")
 	}
-	// Layer 230 应用内 TON 钱包。显式配置启用:挑战/绑定状态只在本地 data/wallet,
-	// 余额来自 telesrv 自己的 TON 账本。provider(toncenter)默认不配置,因此
-	// toncenter.* 与余额查询都不会联系任何外部 TON 节点。
+	// Layer 230 in-app TON wallet. Enabled only by explicit config: challenge/binding
+	// state lives only in local data/wallet, and the balance comes from telesrv's own
+	// TON ledger. The provider (toncenter) is unconfigured by default, so neither
+	// toncenter.* nor balance queries contact any external TON node.
 	var walletService rpc.WalletService
 	if cfg.WalletStateDir != "" {
 		walletStore, err := walletapp.NewFileStore(cfg.WalletStateDir)
@@ -1850,8 +1891,9 @@ func run(logger *zap.Logger) error {
 		if cfg.WalletToncenterAPIKey != "" {
 			walletProvider = walletapp.NewToncenter(cfg.WalletToncenterAPIKey)
 		}
-		// 主密钥缺失时自动生成 0600 文件；没有它 telesrv 就无法保管自己生成的
-		// 钱包，inputWalletNew 会被明确拒绝而不是落一份明文私钥。
+		// When the master key is missing, a 0600 file is generated automatically;
+		// without it telesrv cannot custody wallets it generates itself, and
+		// inputWalletNew is explicitly rejected rather than writing a plaintext key.
 		walletKeys, err := walletapp.LoadOrCreateKeyCipher(cfg.WalletKeyFile)
 		if err != nil {
 			return fmt.Errorf("load wallet master key: %w", err)
@@ -1864,11 +1906,11 @@ func run(logger *zap.Logger) error {
 			walletapp.WithTransactionSource(walletapp.TONLedgerTransactionSource(starGiftLifecycleStore.TonTransactions)),
 			walletapp.WithKeyCipher(walletKeys),
 			walletapp.WithInternalTransfers(cfg.WalletInternalTransfers, postgres.NewWalletTransferStore(pool, messageStore, cfg.StarGiftTONStartingGrant)))
-		logger.Info("应用内 TON 钱包已启用",
+		logger.Info("in-app TON wallet enabled",
 			zap.String("state_dir", cfg.WalletStateDir),
 			zap.Bool("ton_provider", walletProvider != nil))
 	} else {
-		logger.Info("应用内 TON 钱包未启用：wallet.* 回 WALLET_UNAVAILABLE")
+		logger.Info("in-app TON wallet disabled: wallet.* returns WALLET_UNAVAILABLE")
 	}
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,
@@ -1899,8 +1941,10 @@ func run(logger *zap.Logger) error {
 		PublicAppScheme:          cfg.PublicAppScheme,
 		PublicAppLinkBase:        cfg.PublicAppLinkBase,
 		AllowDevPayments:         cfg.AllowDevPayments,
-		// PFS temp→perm 解析缓存：显式撤销会清缓存并断开连接，re-bind 即时失效；
-		// 配置 TTL 只承担跨进程/异常失效兜底，避免大连接数周期性打满 PG。
+		// PFS temp→perm resolution cache: an explicit revocation clears the cache and
+		// drops the connection, so a re-bind invalidates immediately; the configured
+		// TTL only serves as a fallback for cross-process/abnormal invalidation,
+		// avoiding a large connection count periodically saturating PG.
 		TempKeyResolveCacheTTL:         cfg.TempKeyResolveCacheTTL,
 		TempKeyResolveCacheMaxEntries:  cfg.TempKeyResolveCacheMaxEntries,
 		PeerIdentityCacheMaxEntries:    cfg.PeerIdentityCacheMaxEntries,
@@ -2132,8 +2176,9 @@ func run(logger *zap.Logger) error {
 		moderationActionExecutor,
 		logger.Named("moderation").Named("actions"),
 	).Run(ctx)
-	// bot session 撤销、在线通知与 @ChatBot 流式草稿推送经 router 实现（需 tg.* 边界），
-	// router 创建后注入。
+	// Bot session revocation, online notifications and @ChatBot streaming draft
+	// pushes are implemented via the router (they need the tg.* boundary), injected
+	// after the router is created.
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
@@ -2318,7 +2363,7 @@ func run(logger *zap.Logger) error {
 		OutboundCriticalGlobalMaxBytes: cfg.MTProtoOutboundCriticalGlobalMaxBytes,
 		OutboundWriteGlobalMaxBytes:    cfg.MTProtoOutboundWriteGlobalMaxBytes,
 		OnServing: func(_ net.Addr) {
-			logger.Info("telesrv 服务就绪",
+			logger.Info("telesrv server ready",
 				zap.String("listen", cfg.ListenAddr),
 				zap.String("advertise", net.JoinHostPort(cfg.AdvertiseIP, portStr)),
 				zap.Int("pid", os.Getpid()),
@@ -2326,14 +2371,16 @@ func run(logger *zap.Logger) error {
 				zap.Uint("schema_version", migrationStatus.Version),
 				zap.String("blob_backend", "localfs"),
 			)
-			// 缓存预热是纯优化，且要读几千个 blob。放在监听就绪之后，避免和 seed/langpack
-			// 的磁盘读取抢 I/O 而拖慢启动；epoch 校验保证旧预热快照不会覆盖并发 RPC 修改。
+			// Cache warm-up is a pure optimization and reads thousands of blobs. It
+			// runs after the listener is ready to avoid competing for I/O with the
+			// seed/langpack disk reads and slowing startup; epoch validation ensures a
+			// stale warm-up snapshot cannot overwrite concurrent RPC mutations.
 			go func() {
 				stats, err := filesService.WarmCaches(ctx)
 				if err != nil {
-					logger.Warn("媒体资源缓存预热失败", zap.Error(err))
+					logger.Warn("media resource cache warm-up failed", zap.Error(err))
 				} else if stats.StickerSets > 0 || stats.Documents > 0 || stats.Blobs > 0 {
-					logger.Info("媒体资源缓存预热完成",
+					logger.Info("media resource cache warm-up complete",
 						zap.Int("sticker_sets", stats.StickerSets),
 						zap.Int("documents", stats.Documents),
 						zap.Int("blobs", stats.Blobs),

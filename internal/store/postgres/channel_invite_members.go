@@ -90,8 +90,8 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		if err := upsertChannelMembersBatchTx(ctx, tx, channel, members); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		// 批量拉人同样可能包含"重新入群"的成员:逐个归还纯 prehistory 来源的读边界
-		// (upsert 是 GREATEST,不会下调),否则他们永久看到空频道。
+		// Bulk invites may likewise include members "re-joining": return the purely prehistory-sourced read boundary for each
+		// (the upsert is GREATEST and will not lower it), otherwise they permanently see an empty channel.
 		if !channel.PreHistoryHidden {
 			for _, m := range members {
 				if err := resetPrehistoryBoundaryTx(ctx, tx, channel, m.UserID); err != nil {
@@ -124,7 +124,7 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 	if err := upsertChannelDialogsBatchTx(ctx, tx, channel, msg, members); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 被重新拉入群也是重进:按新 available_min_id 集合重算未读 reaction 计数清幽灵角标。
+	// Being re-invited into the group is also a re-entry: recompute the unread reaction count by the new available_min_id set to clear the ghost badge.
 	if err := refreshChannelUnreadReactionsCountsBatchTx(ctx, tx, channel.ID, invitedIDs); err != nil {
 		return domain.CreateChannelResult{}, err
 	}

@@ -573,8 +573,8 @@ WHERE target_user_id=$1 AND pts=$2 AND event_type='user_emoji_status'`, resaleBu
 	// the server swaps that input to a crafted model. TDesktop applies the same
 	// first-slot guard before sending the RPC; keep the store authoritative for
 	// older clients and direct callers.
-	// 上链必须同时把 saved 聚合标为 exported：unique_star_gift_owner_guard
-	// 约束触发器要求 unique 行与聚合行一致，两次写在同一个显式事务里提交。
+	// Going on-chain must also mark the saved aggregate as exported: the unique_star_gift_owner_guard
+	// constraint trigger requires the unique row and the aggregate row to agree, so both writes commit in one explicit transaction.
 	addressed := "EQCraftBaseMustStayImmutable"
 	markAddressedTx, err := pool.Begin(ctx)
 	if err != nil {

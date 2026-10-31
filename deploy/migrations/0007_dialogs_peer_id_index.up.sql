@@ -1,9 +1,13 @@
--- dialogs 按 peer_id 的反向索引。
--- dialog_light 失效扇出函数 telesrv_bump_private_dialog_light_for_user 按
--- peer_id 过滤 dialogs（"哪些用户与该 user 有私聊会话"），但 dialogs 上所有
--- 既有索引都以 user_id 前导（主键 + dialogs_user_folder_top_message_idx +
--- dialogs_user_pinned_order_idx），该按 peer_id 的查询此前只能 Seq Scan。
--- dialogs 有 CHECK (peer_type = 'user')，故单列 (peer_id) 即精确命中、无需
--- peer_type 前缀，与 contacts.contacts_contact_user_id_idx 对称。资料变更 /
--- premium 到期触发扇出时，从全表扫降为索引扫（随表规模增长收益放大）。
+-- Reverse index on dialogs by peer_id.
+-- The dialog_light invalidation fan-out function
+-- telesrv_bump_private_dialog_light_for_user filters dialogs by peer_id ("which
+-- users have a private-chat conversation with this user"), but every existing
+-- index on dialogs leads with user_id (the primary key +
+-- dialogs_user_folder_top_message_idx + dialogs_user_pinned_order_idx), so that
+-- peer_id query could previously only Seq Scan.
+-- dialogs has CHECK (peer_type = 'user'), so a single-column (peer_id) index hits
+-- exactly and needs no peer_type prefix, symmetric with
+-- contacts.contacts_contact_user_id_idx. On profile changes / Premium expiry that
+-- trigger the fan-out, this turns a full-table scan into an index scan (the
+-- benefit grows with table size).
 CREATE INDEX dialogs_peer_id_idx ON public.dialogs USING btree (peer_id);

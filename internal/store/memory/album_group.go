@@ -19,8 +19,8 @@ type albumGroupRecord struct {
 	intentHash [32]byte
 }
 
-// ReserveAlbumGroup 在 MessageStore 的同一把互斥锁下完成读旧组、选胜者与补齐绑定，
-// 因而并发重叠批次不会产生拆组。
+// ReserveAlbumGroup reads existing groups, picks the winner and fills in bindings
+// under MessageStore's single mutex, so concurrent overlapping batches cannot split a group.
 func (s *MessageStore) ReserveAlbumGroup(_ context.Context, req domain.AlbumGroupReservationRequest) (int64, error) {
 	if err := req.Validate(); err != nil {
 		return 0, err

@@ -16,7 +16,7 @@ var tdesktopStringRE = regexp.MustCompile(`(?s)"((?:\\.|[^"\\])*)"\s*=\s*"((?:\\
 var langPackNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 var langCodeRE = regexp.MustCompile(`^[a-z0-9]{1,16}(?:-[a-z0-9]{1,16})*$`)
 
-// ParseTDesktopFile 解析客户端 .strings 文件为 domain 语言包。
+// ParseTDesktopFile parses a client .strings file into a domain langpack.
 func ParseTDesktopFile(path string) (domain.LangPack, error) {
 	pack, err := packFromFilename(path)
 	if err != nil {

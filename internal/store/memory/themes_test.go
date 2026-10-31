@@ -30,7 +30,7 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 	ctx := context.Background()
 	s := NewThemeStore()
 
-	// 未命中读 → (zero,false,nil)。
+	// Miss read → (zero,false,nil).
 	if _, ok, err := s.GetThemeByID(ctx, 1); ok || err != nil {
 		t.Fatalf("get missing = ok %v err %v", ok, err)
 	}
@@ -39,7 +39,7 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 	if err := s.CreateTheme(ctx, a); err != nil {
 		t.Fatalf("create a: %v", err)
 	}
-	// slug 冲突。
+	// slug conflict.
 	if err := s.CreateTheme(ctx, sampleTheme(102, 7, "alpha")); !errors.Is(err, domain.ErrThemeSlugTaken) {
 		t.Fatalf("dup slug err = %v, want ErrThemeSlugTaken", err)
 	}
@@ -51,7 +51,7 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 	if got.Slug != "alpha" || len(got.Settings) != 1 || got.Settings[0].BaseTheme != domain.ThemeBaseDay {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
-	// Clone 隔离:改返回值不污染内部。
+	// Clone isolation: mutating the returned value does not pollute the internal state.
 	got.Settings[0].MessageColors[0] = 0xffff
 	if again, _, _ := s.GetThemeByID(ctx, 101); again.Settings[0].MessageColors[0] != 0xaa {
 		t.Fatalf("clone leak: internal mutated to %#x", again.Settings[0].MessageColors[0])
@@ -61,12 +61,12 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 		t.Fatalf("get by slug = ok %v id %d", ok, bySlug.ID)
 	}
 
-	// update 不存在 → ErrThemeNotFound。
+	// Updating a missing theme → ErrThemeNotFound.
 	if err := s.UpdateTheme(ctx, sampleTheme(999, 7, "ghost")); !errors.Is(err, domain.ErrThemeNotFound) {
 		t.Fatalf("update missing err = %v, want ErrThemeNotFound", err)
 	}
 
-	// IncrementInstalls。
+	// IncrementInstalls.
 	if err := s.IncrementInstalls(ctx, 101); err != nil {
 		t.Fatalf("increment: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 		t.Fatalf("installs = %d, want 1", got.InstallsCount)
 	}
 
-	// 安装列表顺序按安装先后。
+	// The install list is ordered by install time.
 	b := sampleTheme(103, 7, "beta")
 	if err := s.CreateTheme(ctx, b); err != nil {
 		t.Fatalf("create b: %v", err)
@@ -94,7 +94,7 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 		t.Fatalf("install order = [%d,%d], want [103,101]", list[0].ID, list[1].ID)
 	}
 
-	// 移除。
+	// Remove.
 	if err := s.RemoveInstalled(ctx, user, 103); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestMemoryThemeStoreContract(t *testing.T) {
 		t.Fatalf("after remove = %+v, want [101]", list)
 	}
 
-	// 安装不存在的主题 → ErrThemeNotFound。
+	// Installing a missing theme → ErrThemeNotFound.
 	if err := s.SetInstalled(ctx, user, 88888, false); !errors.Is(err, domain.ErrThemeNotFound) {
 		t.Fatalf("install missing theme err = %v, want ErrThemeNotFound", err)
 	}

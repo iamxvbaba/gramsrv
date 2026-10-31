@@ -11,7 +11,8 @@ import (
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 )
 
-// newDTLSCertificate 生成进程级自签证书（DTLS 身份不靠 CA，靠信令面下发的指纹）。
+// newDTLSCertificate generates a process-wide self-signed certificate (DTLS identity
+// relies not on a CA but on the fingerprint delivered by the signaling plane).
 func newDTLSCertificate() (tls.Certificate, string, error) {
 	cert, err := selfsign.GenerateSelfSigned()
 	if err != nil {
@@ -24,7 +25,7 @@ func newDTLSCertificate() (tls.Certificate, string, error) {
 	return cert, fp, nil
 }
 
-// certificateFingerprint 计算 RFC 4572 风格 sha-256 指纹（"AA:BB:..."）。
+// certificateFingerprint computes an RFC 4572 style sha-256 fingerprint ("AA:BB:...").
 func certificateFingerprint(der []byte) (string, error) {
 	if _, err := x509.ParseCertificate(der); err != nil {
 		return "", fmt.Errorf("sfu: parse cert: %w", err)
@@ -37,7 +38,7 @@ func certificateFingerprint(der []byte) (string, error) {
 	return strings.Join(parts, ":"), nil
 }
 
-// normalizeFingerprint 去除大小写/分隔差异后比较用。
+// normalizeFingerprint strips case/separator differences for comparison.
 func normalizeFingerprint(fp string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(fp), ":", ""))
 }

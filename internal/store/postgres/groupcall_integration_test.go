@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/store/storetest"
 )
 
-// TestGroupCallStoreContractPostgres 与 memory 实现共跑同一契约（TELESRV_TEST_POSTGRES_DSN 门控）。
+// TestGroupCallStoreContractPostgres runs the same contract as the memory implementation (gated on TELESRV_TEST_POSTGRES_DSN).
 func TestGroupCallStoreContractPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -38,7 +38,7 @@ WHERE channel_id = $1
 	})
 }
 
-// TestGroupCallStoreM2ContractPostgres 跑 overrides/raise-hand 契约（DSN 门控）。
+// TestGroupCallStoreM2ContractPostgres runs the overrides/raise-hand contract (DSN-gated).
 func TestGroupCallStoreM2ContractPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -53,7 +53,7 @@ func TestGroupCallStoreM2ContractPostgres(t *testing.T) {
 	})
 }
 
-// TestGroupCallStoreConcurrentJoinVersions 验证行锁串行化下 version 无跳号。
+// TestGroupCallStoreConcurrentJoinVersions verifies that version has no skips under row-lock serialization.
 func TestGroupCallStoreConcurrentJoinVersions(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -62,8 +62,9 @@ func TestGroupCallStoreConcurrentJoinVersions(t *testing.T) {
 		_, _ = pool.Exec(ctx, "DELETE FROM group_calls WHERE channel_id = $1", channelID)
 	})
 	st := NewGroupCallStore(pool)
-	// 时间基准取运行时刻：测试库可能与运行中的开发服务器共库，远古
-	// last_check_date 会被线上 sweeper 当幽灵清掉，污染 version/count 断言。
+	// Use the run time as the time basis: the test database may be shared with a running dev
+	// server, where an ancient last_check_date would be swept away as a ghost by the online
+	// sweeper and pollute the version/count assertions.
 	now := int(time.Now().Unix())
 	call, err := st.CreateGroupCall(ctx, domain.GroupCall{ID: 910_900_100, AccessHash: 5, ChannelID: channelID, CreatorUserID: 1, CreatedAt: now})
 	if err != nil {

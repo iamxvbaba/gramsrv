@@ -8,8 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestStarsLedgerPostgres 回归迁移 0009：Stars 本地账本对真实 PG 的原子语义
-// （首读授予幂等 / 贷记 / 借记原子 / 余额不足拦截且不动账 / keyset 分页末页无游标）。
+// TestStarsLedgerPostgres regresses migration 0009: the atomic semantics of the local Stars ledger
+// against a real PG (idempotent first-read grant / credit / atomic debit / insufficient balance blocked without touching the ledger / keyset pagination with no cursor on the last page).
 func TestStarsLedgerPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -27,30 +27,30 @@ func TestStarsLedgerPostgres(t *testing.T) {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
 	})
 
-	// 空账号：余额 0、未授予。
+	// Empty account: balance 0, not granted.
 	if bal, err := st.GetBalance(ctx, u.ID); err != nil || bal.Balance != 0 || bal.Granted {
 		t.Fatalf("empty balance = %+v err %v, want 0 not granted", bal, err)
 	}
 
-	// 首读授予一次。
+	// The first read grants once.
 	bal, applied, err := st.EnsureGrant(ctx, u.ID, 1000, 1700000000)
 	if err != nil || !applied || bal.Balance != 1000 || !bal.Granted {
 		t.Fatalf("first grant = %+v applied %v err %v, want 1000 granted applied", bal, applied, err)
 	}
-	// 再次授予幂等：不重复。
+	// Granting again is idempotent: no duplication.
 	bal, applied, err = st.EnsureGrant(ctx, u.ID, 1000, 1700000001)
 	if err != nil || applied || bal.Balance != 1000 {
 		t.Fatalf("second grant = %+v applied %v err %v, want 1000 not applied", bal, applied, err)
 	}
 
-	// 借记原子扣减 + 写负流水。
+	// Atomic debit deduction + writing a negative ledger entry.
 	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: 4242}
 	bal, err = st.Debit(ctx, u.ID, 300, domain.StarsReasonReaction, peer, 1700000002, "paid reaction", "")
 	if err != nil || bal.Balance != 700 {
 		t.Fatalf("debit = %+v err %v, want 700", bal, err)
 	}
 
-	// 余额不足：拦截且不动账（CHECK + FOR UPDATE 双保险）。
+	// Insufficient balance: blocked without touching the ledger (CHECK + FOR UPDATE, double safeguard).
 	if _, err := st.Debit(ctx, u.ID, 100000, domain.StarsReasonReaction, peer, 1700000003, "", ""); !errors.Is(err, domain.ErrStarsInsufficient) {
 		t.Fatalf("over-debit err = %v, want ErrStarsInsufficient", err)
 	}
@@ -58,13 +58,13 @@ func TestStarsLedgerPostgres(t *testing.T) {
 		t.Fatalf("balance after failed debit = %+v err %v, want 700 unchanged", bal, err)
 	}
 
-	// 贷记。
+	// Credit.
 	bal, err = st.Credit(ctx, u.ID, 50, domain.StarsReasonGift, domain.Peer{Type: domain.PeerTypeUser, ID: 9}, 1700000004, "gift", "")
 	if err != nil || bal.Balance != 750 {
 		t.Fatalf("credit = %+v err %v, want 750", bal, err)
 	}
 
-	// 流水：grant(+1000) / debit(-300) / credit(+50) 共 3 条，倒序最新在前。
+	// Ledger: grant(+1000) / debit(-300) / credit(+50), 3 entries total, descending with the newest first.
 	page, err := st.ListTransactions(ctx, u.ID, domain.StarsTransactionQuery{Limit: 2})
 	if err != nil {
 		t.Fatalf("list page1: %v", err)
@@ -127,9 +127,9 @@ func TestStarsLedgerPostgres(t *testing.T) {
 	}
 }
 
-// TestStarsAirdropPostgres 回归批量贷记（admin 的「发给所有人」）：只命中真实用户
-// （is_bot=false、排除系统账号），余额与流水原子写入，新账号建行即 granted=true
-// （吸收起始授予、避免重复发放）。
+// TestStarsAirdropPostgres regresses bulk credit (the admin's "send to everyone"): it hits only real
+// users (is_bot=false, excluding system accounts), the balance and ledger are written atomically, and a
+// new account's row is created with granted=true (absorbing the starting grant, avoiding a duplicate payout).
 func TestStarsAirdropPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

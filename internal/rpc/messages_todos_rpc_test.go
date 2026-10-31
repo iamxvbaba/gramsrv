@@ -114,7 +114,7 @@ func TestToggleTodoCompletedAndAppend(t *testing.T) {
 
 	msg := sendTestTodo(t, r, owner.ID, ownerPeer, 7002)
 
-	// 勾选 1 项。
+	// Check 1 item.
 	updates, err := r.onMessagesToggleTodoCompleted(ownerCtx, &tg.MessagesToggleTodoCompletedRequest{
 		Peer:      ownerPeer,
 		MsgID:     msg.ID,
@@ -133,7 +133,7 @@ func TestToggleTodoCompletedAndAppend(t *testing.T) {
 		t.Fatalf("completed_by = %#v, want owner", completions[0].CompletedBy)
 	}
 
-	// 取消勾选。
+	// Uncheck.
 	updates, err = r.onMessagesToggleTodoCompleted(ownerCtx, &tg.MessagesToggleTodoCompletedRequest{
 		Peer:        ownerPeer,
 		MsgID:       msg.ID,
@@ -148,7 +148,7 @@ func TestToggleTodoCompletedAndAppend(t *testing.T) {
 		t.Fatalf("completions after untoggle = %+v, want empty", completions)
 	}
 
-	// 空变更 → TODO_NOT_MODIFIED。
+	// Empty change -> TODO_NOT_MODIFIED.
 	if _, err := r.onMessagesToggleTodoCompleted(ownerCtx, &tg.MessagesToggleTodoCompletedRequest{
 		Peer:        ownerPeer,
 		MsgID:       msg.ID,
@@ -156,7 +156,7 @@ func TestToggleTodoCompletedAndAppend(t *testing.T) {
 	}); err == nil || !tgerr.Is(err, "TODO_NOT_MODIFIED") {
 		t.Fatalf("no-op toggle err = %v, want TODO_NOT_MODIFIED", err)
 	}
-	// 不存在的项。
+	// Non-existent item.
 	if _, err := r.onMessagesToggleTodoCompleted(ownerCtx, &tg.MessagesToggleTodoCompletedRequest{
 		Peer:      ownerPeer,
 		MsgID:     msg.ID,
@@ -165,7 +165,7 @@ func TestToggleTodoCompletedAndAppend(t *testing.T) {
 		t.Fatalf("unknown item toggle err = %v, want MESSAGE_ID_INVALID", err)
 	}
 
-	// 追加两项。
+	// Append two items.
 	updates, err = r.onMessagesAppendTodoList(ownerCtx, &tg.MessagesAppendTodoListRequest{
 		Peer:  ownerPeer,
 		MsgID: msg.ID,
@@ -182,7 +182,7 @@ func TestToggleTodoCompletedAndAppend(t *testing.T) {
 	if len(todo.Todo.List) != 4 {
 		t.Fatalf("items after append = %d, want 4", len(todo.Todo.List))
 	}
-	// 重复 id 追加被拒。
+	// Appending a duplicate id is rejected.
 	if _, err := r.onMessagesAppendTodoList(ownerCtx, &tg.MessagesAppendTodoListRequest{
 		Peer:  ownerPeer,
 		MsgID: msg.ID,

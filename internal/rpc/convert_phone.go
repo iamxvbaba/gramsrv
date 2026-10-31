@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// tgPhoneCallProtocol 把协商参数转回 TL。
+// tgPhoneCallProtocol converts the negotiated parameters back to TL.
 func tgPhoneCallProtocol(p domain.PhoneCallProtocol) tg.PhoneCallProtocol {
 	return tg.PhoneCallProtocol{
 		UDPP2P:          p.UDPP2P,
@@ -27,9 +27,10 @@ func phoneCallProtocolFromTL(p tg.PhoneCallProtocol) domain.PhoneCallProtocol {
 	}
 }
 
-// tgPhoneCallForViewer 按观察者视角把服务端状态映射为 TL phoneCall* 构造器。
-// 这是客户端硬契约：access_hash / admin_id / participant_id 全生命周期一致；
-// Confirmed 态主叫看到的 g_a_or_b 是对方的 g_b、被叫看到的是 g_a。
+// tgPhoneCallForViewer maps server state to TL phoneCall* constructors from the
+// observer's viewpoint. This is a hard client contract: access_hash / admin_id /
+// participant_id stay consistent for the whole lifetime; in the Confirmed state the
+// caller sees the peer's g_b as g_a_or_b, and the callee sees g_a.
 func tgPhoneCallForViewer(call domain.PhoneCall, viewerID int64) tg.PhoneCallClass {
 	switch call.State {
 	case domain.PhoneCallStateRequested, domain.PhoneCallStateRinging:
@@ -61,9 +62,9 @@ func tgPhoneCallForViewer(call domain.PhoneCall, viewerID int64) tg.PhoneCallCla
 		}
 		return phoneCallWaitingView(call)
 	case domain.PhoneCallStateConfirmed:
-		gaOrB := call.GA // 被叫视角：拿主叫揭示的 g_a 验承诺、算 AuthKey
+		gaOrB := call.GA // Callee viewpoint: use the caller's revealed g_a to verify the commitment and compute AuthKey
 		if viewerID == call.AdminID {
-			gaOrB = call.GB // 主叫视角：拿被叫的 g_b
+			gaOrB = call.GB // Caller viewpoint: use the callee's g_b
 		}
 		out := &tg.PhoneCall{
 			P2PAllowed:          call.P2PAllowed,
@@ -88,10 +89,11 @@ func tgPhoneCallForViewer(call domain.PhoneCall, viewerID int64) tg.PhoneCallCla
 	}
 }
 
-// tgPhoneConnections 把签发的 STUN/TURN 条目转为 TL phoneConnectionWebrtc。
-// 永远返回非 nil（gotd 对 nil vector 编码与空 vector 相同，但保持显式）。
-// 不下发 legacy phoneConnection（Telegram 自有 reflector 协议）：现代 tgcalls
-// 走 WebRTC ICE，只消费 webrtc 条目。
+// tgPhoneConnections converts the issued STUN/TURN entries into TL
+// phoneConnectionWebrtc. It always returns non-nil (gotd encodes a nil vector the
+// same as an empty one, but we keep it explicit). It never emits legacy
+// phoneConnection (Telegram's own reflector protocol): modern tgcalls use WebRTC
+// ICE and only consume webrtc entries.
 func tgPhoneConnections(conns []domain.PhoneCallConnection) []tg.PhoneConnectionClass {
 	out := make([]tg.PhoneConnectionClass, 0, len(conns))
 	for _, c := range conns {
@@ -120,14 +122,15 @@ func phoneCallWaitingView(call domain.PhoneCall) *tg.PhoneCallWaiting {
 		Protocol:      tgPhoneCallProtocol(call.Protocol),
 	}
 	if call.ReceiveDate > 0 {
-		// 主叫据 receive_date != 0 从「等待」切「对方振铃中」并换用 90s ring 定时器。
+		// The caller uses receive_date != 0 to switch from "waiting" to "peer ringing" and switch to a 90s ring timer.
 		out.SetReceiveDate(call.ReceiveDate)
 	}
 	return out
 }
 
-// tgPhoneCallDiscarded 构造终态视图。need_rating/need_debug 恒不置位：
-// 客户端便不弹评分框、不上传 tgcalls debug 数据。
+// tgPhoneCallDiscarded builds the terminal view. need_rating/need_debug are always
+// left unset: that way the client neither shows the rating dialog nor uploads
+// tgcalls debug data.
 func tgPhoneCallDiscarded(call domain.PhoneCall) *tg.PhoneCallDiscarded {
 	out := &tg.PhoneCallDiscarded{
 		Video: call.Video,
@@ -142,12 +145,15 @@ func tgPhoneCallDiscarded(call domain.PhoneCall) *tg.PhoneCallDiscarded {
 	return out
 }
 
-// tgPhoneCallStopRinging 构造「被叫其它设备停振铃」的合成终态。
+// tgPhoneCallStopRinging builds the synthetic terminal state for "the callee's
+// other device stopped ringing".
 //
-// 硬契约（勿改回推 phoneCallAccepted）：TDesktop incoming 侧收到 phoneCallAccepted
-// 会 finish(Failed) 并回发 discardCall、DrKLO 会按主叫流程发 confirmCall——任一都会
-// 杀死刚建立的通话。无 busy/migrate reason 的 phoneCallDiscarded 才会让两端走
-// EndedByOtherDevice / 停止前台服务且不回发 RPC。本构造不改服务端状态、不进 tombstone。
+// Hard contract (do not change back to pushing phoneCallAccepted): on the incoming
+// side, TDesktop calls finish(Failed) on phoneCallAccepted and sends discardCall
+// back, while DrKLO sends confirmCall per the caller flow -- either would kill the
+// just-established call. Only a phoneCallDiscarded with no busy/migrate reason lets
+// both ends take EndedByOtherDevice / stop the foreground service without sending an
+// RPC back. This constructor does not change server state or enter a tombstone.
 func tgPhoneCallStopRinging(call domain.PhoneCall) *tg.PhoneCallDiscarded {
 	return &tg.PhoneCallDiscarded{
 		Video: call.Video,
@@ -189,7 +195,7 @@ func phoneCallDiscardReasonFromTL(r tg.PhoneCallDiscardReasonClass) domain.Phone
 	case *tg.PhoneCallDiscardReasonHangup:
 		return domain.PhoneCallDiscardReasonHangup
 	default:
-		// 含 nil（客户端未带 reason）：按 hangup 处理。
+		// Includes nil (the client sent no reason): treat as hangup.
 		return domain.PhoneCallDiscardReasonHangup
 	}
 }

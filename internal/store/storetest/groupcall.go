@@ -1,6 +1,7 @@
-// Package storetest 提供跨实现（memory/postgres）共享的 store 行为契约用例。
-// 群通话语义（version 单调、rejoin upsert、ssrc 唯一、join_muted 策略）属双 store
-// 漂移高发区：凡动语义必须两实现同跑本契约 + PG 集成（TELESRV_TEST_POSTGRES_DSN）。
+// Package storetest provides store behavior contract cases shared across implementations
+// (memory/postgres). Group call semantics (monotonic version, rejoin upsert, ssrc uniqueness,
+// join_muted policy) are a drift-prone area between the two stores: any semantics change must
+// run this contract against both implementations plus the PG integration (TELESRV_TEST_POSTGRES_DSN).
 package storetest
 
 import (
@@ -17,9 +18,9 @@ import (
 	"telesrv/internal/store"
 )
 
-// baseNow 是用例时间基准。必须取运行时刻：集成测试可能与运行中的开发服务器
-// 共用同一库，远古 last_check_date 会被线上 sweeper（45s TTL）当幽灵参与者
-// 清掉（version++/count--），污染断言。
+// baseNow is the test time base. It must use the current instant: integration tests may share
+// the same database with a running dev server, and an ancient last_check_date would be swept by
+// the live sweeper (45s TTL) as a ghost participant (version++/count--), polluting assertions.
 func baseNow() int {
 	return int(time.Now().Unix())
 }
@@ -35,10 +36,10 @@ func contractInviteMessageID(namespace int64, suffix int) int {
 	return int(namespace%1_000_000)*1000 + suffix
 }
 
-// GroupCallStoreFactory 为每个用例提供干净的 store 与不冲突的 channel id。
+// GroupCallStoreFactory provides a clean store and a non-colliding channel id for each case.
 type GroupCallStoreFactory func(t *testing.T) (st store.GroupCallStore, channelID int64)
 
-// RunGroupCallStoreContract 跑全部群通话 store 契约用例。
+// RunGroupCallStoreContract runs all group call store contract cases.
 func RunGroupCallStoreContract(t *testing.T, factory GroupCallStoreFactory) {
 	t.Helper()
 	t.Run("CreateAndActiveUniq", func(t *testing.T) { contractCreateActiveUniq(t, factory) })
@@ -120,11 +121,11 @@ func contractCreateActiveUniq(t *testing.T, factory GroupCallStoreFactory) {
 	if call.Version != 1 || !call.Active() {
 		t.Fatalf("created call = %+v", call)
 	}
-	// 同频道二次建会：唯一活跃约束。
+	// Second call creation in the same channel: the unique-active constraint.
 	if _, err := st.CreateGroupCall(ctx, domain.GroupCall{ID: channelID*100 + 2, AccessHash: 9, ChannelID: channelID, CreatorUserID: 1, CreatedAt: baseNow()}); !errors.Is(err, domain.ErrGroupCallAlreadyStarted) {
 		t.Fatalf("second active call err = %v, want ErrGroupCallAlreadyStarted", err)
 	}
-	// discard 后可重新建会。
+	// A new call can be created after discard.
 	if _, _, err := st.DiscardGroupCall(ctx, call.ID, baseNow()+500); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
@@ -136,7 +137,7 @@ func contractCreateActiveUniq(t *testing.T, factory GroupCallStoreFactory) {
 func contractJoinVersion(t *testing.T, factory GroupCallStoreFactory) {
 	st, channelID := factory(t)
 	call := newContractCall(t, st, channelID, channelID*100+1)
-	// 每次参与者变更 version 严格 +1。
+	// Each participant change increments version by exactly 1.
 	v := call.Version
 	for i := int64(1); i <= 3; i++ {
 		mut := join(t, st, call.ID, 100+i, 9000+i, baseNow()+int(i))
@@ -151,7 +152,7 @@ func contractJoinVersion(t *testing.T, factory GroupCallStoreFactory) {
 	if err != nil || mut.Call.Version != v+4 || mut.Call.ParticipantsCount != 2 || !mut.Participant.Left {
 		t.Fatalf("leave = %+v err=%v", mut, err)
 	}
-	// 重复 leave。
+	// Duplicate leave.
 	if _, err := st.LeaveGroupCall(context.Background(), call.ID, 101, baseNow()+101); !errors.Is(err, domain.ErrGroupCallNotJoined) {
 		t.Fatalf("double leave err = %v, want ErrGroupCallNotJoined", err)
 	}
@@ -163,16 +164,16 @@ func contractSSRC(t *testing.T, factory GroupCallStoreFactory) {
 	call := newContractCall(t, st, channelID, channelID*100+1)
 	now := baseNow()
 	join(t, st, call.ID, 101, 7001, now)
-	// 他人撞 ssrc。
+	// Another user collides on ssrc.
 	if _, err := st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{CallID: call.ID, UserID: 102, SSRC: 7001, Now: now + 1}); !errors.Is(err, domain.ErrGroupCallSSRCDuplicate) {
 		t.Fatalf("ssrc duplicate err = %v, want ErrGroupCallSSRCDuplicate", err)
 	}
-	// 本人 rejoin 换 ssrc：保留 join_date、count 不变。
+	// Self rejoin with a new ssrc: join_date is preserved and count stays the same.
 	mut := join(t, st, call.ID, 101, 7002, now+500)
 	if mut.Participant.SSRC != 7002 || mut.Participant.JoinDate != now || mut.Call.ParticipantsCount != 1 {
 		t.Fatalf("rejoin = %+v", mut)
 	}
-	// 离开后 rejoin：join_date 重置、count 恢复。
+	// Rejoin after leaving: join_date is reset and count is restored.
 	if _, err := st.LeaveGroupCall(ctx, call.ID, 101, now+600); err != nil {
 		t.Fatalf("leave: %v", err)
 	}
@@ -180,14 +181,15 @@ func contractSSRC(t *testing.T, factory GroupCallStoreFactory) {
 	if mut.Participant.JoinDate != now+700 || mut.Call.ParticipantsCount != 1 || mut.Participant.Left {
 		t.Fatalf("rejoin after leave = %+v", mut)
 	}
-	// 旧 ssrc 释放后他人可用。
+	// The old ssrc is available to others after release.
 	if _, err := st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{CallID: call.ID, UserID: 102, SSRC: 7001, Now: now + 800}); err != nil {
 		t.Fatalf("reuse released ssrc: %v", err)
 	}
 }
 
-// contractJoinVideoState：join 携带 VideoJSON 整体替换、rejoin 清空 presentation
-// （主连接 rejoin 后客户端会重发 joinGroupCallPresentation，旧屏幕登记必须作废）。
+// contractJoinVideoState: join replaces VideoJSON wholesale, and rejoin clears presentation
+// (after the main connection rejoins the client resends joinGroupCallPresentation, so the old
+// screen registration must be invalidated).
 func contractJoinVideoState(t *testing.T, factory GroupCallStoreFactory) {
 	st, channelID := factory(t)
 	ctx := context.Background()
@@ -200,14 +202,14 @@ func contractJoinVideoState(t *testing.T, factory GroupCallStoreFactory) {
 	if err != nil || string(mut.Participant.VideoJSON) != string(video1) {
 		t.Fatalf("join video_json = %s err=%v", mut.Participant.VideoJSON, err)
 	}
-	// 共享中：presentation_json 落库。
+	// During sharing: presentation_json is persisted.
 	pres := []byte(`{"endpoint":"presentation-9100","active":true,"audio_source":9100}`)
 	if _, changed, err := st.UpdateParticipant(ctx, call.ID, 101, domain.GroupCallParticipantUpdate{
 		PresentationJSON: &pres, Now: now + 1,
 	}); err != nil || !changed {
 		t.Fatalf("set presentation changed=%v err=%v", changed, err)
 	}
-	// rejoin：video_json 整体替换、presentation_json 必须清空。
+	// rejoin: video_json is replaced wholesale and presentation_json must be cleared.
 	video2 := []byte(`{"endpoint":"audio-9002","active":true}`)
 	mut, err = st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{
 		CallID: call.ID, UserID: 101, SSRC: 9002, VideoJSON: video2, Now: now + 2,
@@ -221,7 +223,7 @@ func contractJoinVideoState(t *testing.T, factory GroupCallStoreFactory) {
 	if len(mut.Participant.PresentationJSON) != 0 {
 		t.Fatalf("rejoin presentation_json = %s, want cleared", mut.Participant.PresentationJSON)
 	}
-	// 清空 presentation 的字段级更新（leaveGroupCallPresentation 路径）。
+	// Field-level update that clears presentation (the leaveGroupCallPresentation path).
 	if _, changed, err := st.UpdateParticipant(ctx, call.ID, 101, domain.GroupCallParticipantUpdate{
 		PresentationJSON: &pres, Now: now + 3,
 	}); err != nil || !changed {
@@ -243,12 +245,12 @@ func contractJoinMuted(t *testing.T, factory GroupCallStoreFactory) {
 	if _, _, err := st.SetGroupCallJoinMuted(ctx, call.ID, true); err != nil {
 		t.Fatalf("set join muted: %v", err)
 	}
-	// ⚠ P1-4：join_muted 时普通成员 muted=true 且 muted_by_admin=true（不可自行开麦）。
+	// WARNING P1-4: under join_muted, an ordinary member has muted=true and muted_by_admin=true (cannot unmute themselves).
 	mut, err := st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{CallID: call.ID, UserID: 201, SSRC: 8001, Now: baseNow()})
 	if err != nil || !mut.Participant.Muted || !mut.Participant.MutedByAdmin {
 		t.Fatalf("plain member under join_muted = %+v err=%v", mut.Participant, err)
 	}
-	// 管理员不受 join_muted 影响。
+	// Admins are unaffected by join_muted.
 	mut, err = st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{CallID: call.ID, UserID: 202, SSRC: 8002, IsAdmin: true, Now: baseNow()})
 	if err != nil || mut.Participant.Muted || mut.Participant.MutedByAdmin {
 		t.Fatalf("admin under join_muted = %+v err=%v", mut.Participant, err)
@@ -268,9 +270,9 @@ func contractTouchSweep(t *testing.T, factory GroupCallStoreFactory) {
 		t.Fatalf("touch = %v joined=%v err=%v", ssrcs, joined, err)
 	}
 	if _, joined, err := st.TouchParticipant(ctx, call.ID, 999, now+40); err != nil || joined {
-		t.Fatalf("touch non-member joined=%v err=%v, want false（客户端据空集 rejoin）", joined, err)
+		t.Fatalf("touch non-member joined=%v err=%v, want false (client rejoins based on the empty set)", joined, err)
 	}
-	// 101 在 now+40 刷过水位、102 停在 now：cutoff=now+20 只清 102。
+	// 101 refreshed its watermark at now+40 while 102 stayed at now: cutoff=now+20 clears only 102.
 	muts, err := st.SweepStaleParticipants(ctx, now+20, now+50, 10)
 	if err != nil || len(muts) != 1 || muts[0].Participant.UserID != 102 || !muts[0].Participant.Left {
 		t.Fatalf("sweep = %+v err=%v", muts, err)
@@ -278,7 +280,7 @@ func contractTouchSweep(t *testing.T, factory GroupCallStoreFactory) {
 	if muts[0].Call.ParticipantsCount != 1 {
 		t.Fatalf("sweep count = %d, want 1", muts[0].Call.ParticipantsCount)
 	}
-	// 幂等。
+	// Idempotent.
 	if muts, err := st.SweepStaleParticipants(ctx, now+20, now+51, 10); err != nil || len(muts) != 0 {
 		t.Fatalf("second sweep = %+v err=%v", muts, err)
 	}
@@ -301,7 +303,7 @@ func contractDiscard(t *testing.T, factory GroupCallStoreFactory) {
 	if _, _, err := st.DiscardGroupCall(ctx, call.ID, call.CreatedAt+501); !errors.Is(err, domain.ErrGroupCallDiscarded) {
 		t.Fatalf("double discard err = %v, want ErrGroupCallDiscarded", err)
 	}
-	// 终态拒绝 join。
+	// A terminal call rejects join.
 	if _, err := st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{CallID: call.ID, UserID: 103, SSRC: 7003, Now: now + 502}); !errors.Is(err, domain.ErrGroupCallDiscarded) {
 		t.Fatalf("join discarded err = %v, want ErrGroupCallDiscarded", err)
 	}
@@ -320,7 +322,7 @@ func contractListPagination(t *testing.T, factory GroupCallStoreFactory) {
 		t.Fatalf("page1 = %+v err=%v", page, err)
 	}
 	if page.Version == 0 {
-		t.Fatalf("page must carry current version（客户端跳号 reload 依赖）")
+		t.Fatalf("page must carry current version (client full reload on skipped number depends on it)")
 	}
 	seen := map[int64]bool{}
 	for _, p := range page.Participants {
@@ -349,12 +351,12 @@ func contractUpdateParticipant(t *testing.T, factory GroupCallStoreFactory) {
 	if err != nil || !changed || !out.Participant.Muted || out.Call.Version != v+1 {
 		t.Fatalf("update = %+v changed=%v err=%v", out, changed, err)
 	}
-	// 无变化不动 version。
+	// No change leaves version untouched.
 	out, changed, err = st.UpdateParticipant(ctx, call.ID, 101, domain.GroupCallParticipantUpdate{Muted: &muted, Now: now + 101})
 	if err != nil || changed || out.Call.Version != v+1 {
 		t.Fatalf("noop update = %+v changed=%v err=%v", out, changed, err)
 	}
-	// 未在会成员。
+	// A member not in the call.
 	if _, _, err := st.UpdateParticipant(ctx, call.ID, 999, domain.GroupCallParticipantUpdate{Muted: &muted}); !errors.Is(err, domain.ErrGroupCallNotJoined) {
 		t.Fatalf("update non-member err = %v, want ErrGroupCallNotJoined", err)
 	}
@@ -375,7 +377,7 @@ func contractReset(t *testing.T, factory GroupCallStoreFactory) {
 	if calls[0].ParticipantsCount != 0 || calls[0].Version != v+1 {
 		t.Fatalf("reset call = %+v, want count=0 version=%d", calls[0], v+1)
 	}
-	// 重启清理后客户端 touch 返回未在会 → 触发 rejoin。
+	// After a restart cleanup, a client touch returns not-in-call -> triggering rejoin.
 	if _, joined, err := st.TouchParticipant(ctx, call.ID, 101, now+101); err != nil || joined {
 		t.Fatalf("touch after reset joined=%v err=%v, want false", joined, err)
 	}
@@ -534,10 +536,11 @@ func contractConferenceEmptyDiscards(t *testing.T, factory GroupCallStoreFactory
 	}
 }
 
-// 以下为 M2 契约：per-viewer overrides 与举手序号（追加进 RunGroupCallStoreContract
-// 之外单独可调，避免改既有签名——两实现测试各自调用 RunGroupCallStoreM2Contract）。
+// The following are the M2 contracts: per-viewer overrides and the raise-hand sequence number
+// (callable separately from RunGroupCallStoreContract to avoid changing the existing signature --
+// the two implementations' tests each call RunGroupCallStoreM2Contract).
 
-// RunGroupCallStoreM2Contract 跑 overrides 与 raise-hand 契约。
+// RunGroupCallStoreM2Contract runs the overrides and raise-hand contracts.
 func RunGroupCallStoreM2Contract(t *testing.T, factory GroupCallStoreFactory) {
 	t.Helper()
 	t.Run("ParticipantOverrides", func(t *testing.T) { contractOverrides(t, factory) })
@@ -552,7 +555,7 @@ func contractOverrides(t *testing.T, factory GroupCallStoreFactory) {
 	join(t, st, call.ID, 101, 7001, now)
 	join(t, st, call.ID, 102, 7002, now+1)
 
-	// 写覆盖：仅 setter 视图，不动 call version。
+	// Write an override: setter view only, does not touch the call version.
 	before, _, err := st.GetGroupCall(ctx, call.ID)
 	if err != nil {
 		t.Fatalf("get call: %v", err)
@@ -568,11 +571,11 @@ func contractOverrides(t *testing.T, factory GroupCallStoreFactory) {
 	if err != nil || !found || !ov.MutedByYou || ov.Volume != 5000 {
 		t.Fatalf("override = %+v found=%v err=%v", ov, found, err)
 	}
-	// 方向性：setter↔target 不可互换。
+	// Directionality: setter<->target are not interchangeable.
 	if _, found, _ := st.GetParticipantOverride(ctx, call.ID, 102, 101); found {
 		t.Fatalf("override must be directional")
 	}
-	// 清除。
+	// Clear.
 	if err := st.SetParticipantOverride(ctx, call.ID, 101, 102, domain.GroupCallParticipantOverride{}, true); err != nil {
 		t.Fatalf("clear override: %v", err)
 	}
@@ -592,7 +595,7 @@ func contractRaiseHand(t *testing.T, factory GroupCallStoreFactory) {
 			t.Fatalf("next rating: %v", err)
 		}
 		if rating <= prev {
-			t.Fatalf("rating %d not monotonic after %d（举手排序依赖单调）", rating, prev)
+			t.Fatalf("rating %d not monotonic after %d (raise-hand ordering depends on monotonicity)", rating, prev)
 		}
 		prev = rating
 	}

@@ -6,22 +6,22 @@ import (
 	"telesrv/internal/domain"
 )
 
-// BotStore 持久化 bot 账号元数据（bots 表）与内置 bot 对话状态（bot_chat_states 表）。
+// BotStore persists bot account metadata (bots table) and built-in bot chat state (bot_chat_states table).
 //
-// CreateBotAccount 必须原子地创建 users 行（is_bot=true, bot_info_version=1, phone 空）
-// 与 bots 行；username 冲突返回 domain.ErrUsernameOccupied。
+// CreateBotAccount must atomically create the users row (is_bot=true, bot_info_version=1, phone empty)
+// and the bots row; a username conflict returns domain.ErrUsernameOccupied.
 type BotStore interface {
 	CreateBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile) (domain.User, domain.BotProfile, error)
 	GetBot(ctx context.Context, botUserID int64) (domain.BotProfile, bool, error)
 	ListBotsByOwner(ctx context.Context, ownerUserID int64) ([]domain.BotProfile, error)
 	CountBotsByOwner(ctx context.Context, ownerUserID int64) (int, error)
-	// UpdateBotTokenSecret 写入新 token 随机段；旧 token 立即失效（无缓存层）。
+	// UpdateBotTokenSecret writes a new random token segment; the old token is invalidated immediately (no cache layer).
 	UpdateBotTokenSecret(ctx context.Context, botUserID int64, secret string) error
 
-	// 以下 P2 元数据写入：每个都在单事务内同时 bump 该 bot 对应 users 行的
-	// bot_info_version（客户端据此感知变更并重拉 getFullUser），返回 bump 后的新
-	// version。UpdateBotInfo 跨 users（first_name/about）与 bots（description）两表，
-	// 因此放在同一原子方法里。
+	// The following P2 metadata writes: each one bumps the bot's corresponding users row
+	// bot_info_version within a single transaction (clients notice the change this way and
+	// re-fetch getFullUser) and returns the new bumped version. UpdateBotInfo spans both the
+	// users (first_name/about) and bots (description) tables, so it lives in one atomic method.
 	UpdateBotCommands(ctx context.Context, botUserID int64, commands []domain.BotCommand) (newVersion int, err error)
 	UpdateBotInfo(ctx context.Context, botUserID int64, upd domain.BotInfoUpdate) (newVersion int, err error)
 	UpdateBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (newVersion int, err error)

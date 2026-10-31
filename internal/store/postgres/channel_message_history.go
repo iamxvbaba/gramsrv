@@ -20,7 +20,7 @@ func (s *ChannelStore) ListChannelHistory(ctx context.Context, viewerUserID int6
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	// 公共过滤条件（不含 offset 锚点的方向条件，供 add_offset 各模式复用）
+	// Common filter condition (without the offset anchor's direction condition, reused by all add_offset modes)
 	baseArgs := []any{filter.ChannelID}
 	base := "channel_id = $1 AND NOT deleted"
 	extraChannels := []domain.Channel(nil)
@@ -120,16 +120,16 @@ AND EXISTS (
 		}
 		return list, rows.Err()
 	}
-	// add_offset 决定加载方向（对齐私聊 ListMessagesByUser）：
-	//   >= 0           backward：锚点更旧方向，先跳过 add_offset 条
-	//   < 0 且 +limit>0 around：以锚点为中心，向更新取 -add_offset 条 + 向更旧取 limit+add_offset 条
-	//   否则           forward：仅锚点更新方向（拉未读消息）
-	// store 层二次钳制 add_offset 到 [-100,100]（与私聊 ListMessagesByUser 对齐）：
-	// 即便某个 caller 漏在 RPC 层钳制，也不会把客户端巨大值变成大 SQL OFFSET 跳扫。
+	// add_offset determines the load direction (matching private-chat ListMessagesByUser):
+	//   >= 0           backward: toward older than the anchor, first skipping add_offset rows
+	//   < 0 and +limit>0 around: centered on the anchor, take -add_offset rows newer + limit+add_offset rows older
+	//   otherwise      forward: only newer than the anchor (fetch unread messages)
+	// The store layer clamps add_offset again to [-100,100] (matching private-chat ListMessagesByUser):
+	// even if some caller misses clamping at the RPC layer, a huge client value will not become a large SQL OFFSET skip-scan.
 	addOffset := domain.ClampMessageHistoryAddOffset(filter.AddOffset)
 	hasMoreOlder := false
-	// 锚点条件：offset_date 优先按日期、否则按消息 id（对齐私聊）；
-	// 二者皆空时向更新方向退化为空、向更旧方向退化为全部（取最新）。
+	// Anchor condition: offset_date prefers date, otherwise message id (matching private chat);
+	// when both are empty, the newer direction degrades to empty and the older direction degrades to everything (taking the newest).
 	forwardCond := func(args *[]any) string {
 		if filter.OffsetDate > 0 {
 			*args = append(*args, filter.OffsetDate)
@@ -190,7 +190,7 @@ AND EXISTS (
 	}
 	switch {
 	case addOffset < 0 && addOffset+limit > 0:
-		// around：以锚点为中心，向更新取 -add_offset 条 + 向更旧（含锚点）取 limit+add_offset 条
+		// around: centered on the anchor, take -add_offset rows newer + limit+add_offset rows older (including the anchor)
 		fwdLimit := minInt(-addOffset, limit)
 		bwdLimit := maxInt(limit+addOffset, 0)
 		fwdArgs := append([]any{}, baseArgs...)
@@ -225,7 +225,7 @@ AND EXISTS (
 		}
 		out.Messages = append(out.Messages, older...)
 	case addOffset < 0:
-		// forward：仅锚点更新方向（拉未读/更新消息）
+		// forward: only newer than the anchor (fetch unread/update messages)
 		fwdArgs := append([]any{}, baseArgs...)
 		fwdWhere := forwardCond(&fwdArgs)
 		fwdArgs = append(fwdArgs, limit+1)
@@ -243,7 +243,7 @@ AND EXISTS (
 			out.Messages = append(out.Messages, newer[i])
 		}
 	default:
-		// backward：锚点更旧方向（不含锚点），先跳过 add_offset 条
+		// backward: toward older than the anchor (excluding the anchor), first skipping add_offset rows
 		where := base
 		args := append([]any{}, baseArgs...)
 		if filter.OffsetDate > 0 {
@@ -480,9 +480,9 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 }
 
 func (s *ChannelStore) GetChannelMessages(ctx context.Context, viewerUserID, channelID int64, ids []int) (domain.ChannelHistory, error) {
-	// viewer 口径(非严格 member)：公开频道的非成员可预览读取消息(与 ListChannelHistory 一致)。
-	// 否则查看他人资料里设置的公开「个人频道」时，DrKLO 经 channels.getMessages 拉最新一帖会被拒，
-	// 资料页个人频道整块不显示。私有频道非成员仍返回 ErrChannelPrivate。
+	// viewer semantics (not strict member): a non-member of a public channel can preview-read messages (consistent with ListChannelHistory).
+	// Otherwise, when viewing a public "personal channel" configured in someone's profile, DrKLO's channels.getMessages fetch of the latest post would be rejected and
+	// the profile page's personal channel would not show at all. A non-member of a private channel still gets ErrChannelPrivate.
 	channel, member, _, err := s.getChannelForViewer(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelHistory{}, err
@@ -501,12 +501,12 @@ func (s *ChannelStore) getChannelMessagesForMember(ctx context.Context, viewerUs
 	if err != nil {
 		return domain.ChannelHistory{}, err
 	}
-	// AvailableMinID 用固定哨兵($3<=0 表示无下限)而非条件追加,使 by-id 补拉恒为
-	// 单一 query-shape(2→1),计划可复用。这里安全无副作用:索引由 id=ANY($2) 驱动
-	// (Index Cond),哨兵仅作残余 Filter——EXPLAIN 实测仍走 channel_messages_history_idx、
-	// 执行不变。注意:这种"OR 哨兵"只对【非排序锚点】的残余过滤安全;ListChannelHistory
-	// 的方向/anchor 条件若同样哨兵化会让规划器无法用索引顺序做 LIMIT、退化为全表扫+排序
-	// (实测 0.06ms→23ms),故那里【刻意保留】动态 SQL。
+	// AvailableMinID uses a fixed sentinel ($3<=0 means no lower bound) instead of conditional appending, keeping the by-id
+	// backfill at a single query shape (2→1) so the plan can be reused. This is safe with no side effects: the index is driven by id=ANY($2)
+	// (Index Cond) and the sentinel is only a residual filter—EXPLAIN confirms it still uses channel_messages_history_idx with
+	// unchanged execution. Note: this kind of "OR sentinel" is only safe for residual filtering of a non-sorting anchor; if ListChannelHistory's
+	// direction/anchor conditions were sentinelized the same way, the planner could not use the index order for LIMIT and would degrade to a full scan+sort
+	// (measured 0.06ms→23ms), so dynamic SQL is deliberately kept there.
 	anchorID := 0
 	if member.HistoryClearAnchorID > 0 && member.HistoryClearAnchorID == member.AvailableMinID {
 		anchorID = member.HistoryClearAnchorID
@@ -596,8 +596,8 @@ func (s *ChannelStore) ListStoryMessageForwards(ctx context.Context, req domain.
 	where := `
 NOT deleted
 AND media->>'kind' = 'story'
--- domain.Peer 无 json tag → 序列化为大写 Type/ID（与 repost 查询 ->>'Type'/'ID' 同口径）；
--- 用小写 type/id 会永远匹配不到 → story message forward 计数恒 0（postgres-only，memory 读 struct 不受影响）。
+-- domain.Peer has no json tag → it serializes as uppercase Type/ID (same convention as the repost query's ->>'Type'/'ID');
+-- using lowercase type/id would never match → story message forward count would always be 0 (postgres-only; memory reads the struct and is unaffected).
 AND media #>> '{story,peer,Type}' = $1
 AND media #>> '{story,peer,ID}' = $2
 AND media #>> '{story,id}' = $3
@@ -964,12 +964,12 @@ func (s *ChannelStore) readChannelHistoryOnce(ctx context.Context, req domain.Re
 	changed := maxID > previous
 	var outboxUpdates []domain.ChannelReadOutboxUpdate
 	if changed {
-		// 先碰 channels 行再碰 channel_members：send 路径的顺序是
-		// channels→members，read 路径必须同序，否则并发 send+read 形成
-		// AB-BA 死锁（PG 1s 检测击杀后整个事务回滚）。
-		// channel 级公共已读水位：top1/top2 是任一成员推进过的最高两个
-		// read_inbox。sender 的 read_outbox 由它派生（top1 持有者本人取
-		// top2），即使下面的实时 fanout 被截断，回执真值也不会停滞。
+		// Touch the channels row before channel_members: the send path's order is
+		// channels→members, and the read path must use the same order, otherwise concurrent send+read forms
+		// an AB-BA deadlock (killed by PG's 1s detector, rolling back the whole transaction).
+		// Channel-level public read watermark: top1/top2 are the two highest
+		// read_inbox values any member has advanced. The sender's read_outbox is derived from it (the top1 holder takes
+		// top2), so even if the live fanout below is truncated, the receipt truth does not stall.
 		if _, err := tx.Exec(ctx, `
 UPDATE channels
 SET read_inbox_top2 = CASE

@@ -22,22 +22,22 @@ var (
 	ErrInvalid            = errors.New("gift claim request is invalid")
 	ErrNotOwner           = errors.New("connected wallet is not the current NFT owner")
 	ErrExpired            = errors.New("gift claim challenge expired")
-	ErrGiftUnavailable    = errors.New("\u043f\u043e\u0434\u0430\u0440\u043e\u043a \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d: \u0432\u0432\u0435\u0434\u0438\u0442\u0435 slug, \u0430\u0434\u0440\u0435\u0441 NFT \u0438\u043b\u0438 \u0437\u0430\u043f\u0440\u043e\u0441 \u043d\u0430 \u0432\u044b\u0432\u043e\u0434")
-	ErrWithdrawalRequired = errors.New("\u043f\u043e\u0434\u0430\u0440\u043e\u043a \u0435\u0449\u0451 \u043d\u0435 \u0432\u044b\u0432\u0435\u0434\u0435\u043d \u0432 TON: \u0437\u0430\u043f\u0440\u043e\u0441\u0438\u0442\u0435 \u0432\u044b\u0432\u043e\u0434 \u0438\u0437 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f \u043e \u043f\u043e\u0434\u0430\u0440\u043a\u0435 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435")
-	ErrMintUnavailable    = errors.New("\u0432\u044b\u0432\u043e\u0434 \u043f\u043e\u0434\u0430\u0440\u043a\u0430 \u0432 TON \u0432\u0440\u0435\u043c\u0435\u043d\u043d\u043e \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d")
+	ErrGiftUnavailable    = errors.New("gift not found: enter a slug, an NFT address, or a withdrawal request")
+	ErrWithdrawalRequired = errors.New("gift has not been withdrawn to TON yet: request a withdrawal from the gift message and retry")
+	ErrMintUnavailable    = errors.New("gift withdrawal to TON is temporarily unavailable")
 	ErrMintNotFinalized   = errors.New("gift NFT is not finalized on TON mainnet")
-	ErrAdminUnavailable   = errors.New("\u044d\u043a\u0441\u043f\u043e\u0440\u0442 \u043f\u043e\u0434\u0430\u0440\u043a\u0430 \u0432 \u043a\u043e\u0448\u0435\u043b\u0451\u043a \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d")
-	ErrAdminRequired      = errors.New("\u0440\u0435\u0436\u0438\u043c \u043e\u043f\u0435\u0440\u0430\u0442\u043e\u0440\u0430 \u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u0442\u043e\u043b\u044c\u043a\u043e \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0430\u043c \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u043a\u0438")
-	ErrAlreadyExported    = errors.New("\u043f\u043e\u0434\u0430\u0440\u043e\u043a \u0443\u0436\u0435 \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u043d\u0430 \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u0435")
+	ErrAdminUnavailable   = errors.New("gift export to wallet is not configured")
+	ErrAdminRequired      = errors.New("operator mode is only available to support staff")
+	ErrAlreadyExported    = errors.New("gift is already on a wallet")
 )
 
 var (
-	ErrGiftOnChain       = errors.New("подарок уже выпущен в TON: отправка на кошелёк недоступна")
-	ErrWalletUnavailable = errors.New("операция с кошелёком временно недоступна")
-	ErrProfileOwnerOnly  = errors.New("подарок закреплён за другим профилем")
-	ErrExportUnavailable = errors.New("этот подарок пока нельзя вывести в TON")
-	ErrPasswordInvalid   = errors.New("неверный пароль для подтверждения вывода")
-	ErrPasswordMissing   = errors.New("для вывода включите двухэтапную аутентификацию")
+	ErrGiftOnChain       = errors.New("gift has already been minted on TON: sending to a wallet is unavailable")
+	ErrWalletUnavailable = errors.New("wallet operation is temporarily unavailable")
+	ErrProfileOwnerOnly  = errors.New("gift is attached to another profile")
+	ErrExportUnavailable = errors.New("this gift cannot be withdrawn to TON yet")
+	ErrPasswordInvalid   = errors.New("invalid password for withdrawal confirmation")
+	ErrPasswordMissing   = errors.New("enable two-step verification to withdraw")
 )
 
 // withdrawalPasswordFreshness matches the MTProto revenueWithdrawalFreshness
@@ -52,7 +52,7 @@ type PasswordTooFreshError struct {
 
 func (e *PasswordTooFreshError) Error() string {
 	minutes := (e.RetryAfter + 59) / 60
-	return fmt.Sprintf("пароль изменён недавно: вывод станет доступен через %d ч %02d мин", minutes/60, minutes%60)
+	return fmt.Sprintf("password was changed recently: withdrawal becomes available in %d h %02d min", minutes/60, minutes%60)
 }
 
 type Store interface {

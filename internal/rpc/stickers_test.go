@@ -142,7 +142,7 @@ func TestAccountGetDefaultEmojiStatusesServesSynthesizedSet(t *testing.T) {
 		t.Fatalf("second getDefaultEmojiStatuses = %T, want notModified", second)
 	}
 
-	// getStickerSet(inputStickerSetEmojiDefaultStatuses) 走同一系统集。
+	// getStickerSet(inputStickerSetEmojiDefaultStatuses) uses the same system set.
 	resolved, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
 		Stickerset: &tg.InputStickerSetEmojiDefaultStatuses{},
 	})
@@ -228,8 +228,9 @@ func TestMessagesGetStickerSetAndroidPlaceholderUsesSeededSet(t *testing.T) {
 		t.Fatalf("source set mutated by projection: id=%d docs=%d", got.ID, len(got.DocumentIDs))
 	}
 
-	// 投影有独立 identity：客户端后续按返回的 id/access_hash 请求仍能解析，不会
-	// 与真正的 AnimatedEmoji set id/hash 缓存互相覆盖。
+	// The projection has a distinct identity: a subsequent client request by the
+	// returned id/access_hash still resolves, without overwriting the real AnimatedEmoji
+	// set id/hash cache.
 	byID, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
 		Stickerset: &tg.InputStickerSetID{ID: full.Set.ID, AccessHash: full.Set.AccessHash},
 	})
@@ -283,7 +284,8 @@ func TestMessagesGetStickerSetHonorsNonZeroHash(t *testing.T) {
 		t.Fatalf("getStickerSet matching hash = %T, want *tg.MessagesStickerSetNotModified", res)
 	}
 
-	// hash=0 是强制完整响应，不能因为任何默认值或兼容 stub 返回 NotModified。
+	// hash=0 forces a full response and must not return NotModified because of any
+	// default value or compatibility stub.
 	fullResult, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
 		Stickerset: &tg.InputStickerSetID{ID: 10, AccessHash: 100},
 		Hash:       0,
@@ -427,7 +429,7 @@ func TestMessagesGetFeaturedStickersSurfacesSeededSets(t *testing.T) {
 		t.Fatalf("second getFeaturedStickers = %T, want NotModified", second)
 	}
 
-	// emoji featured 走 emoji 集。
+	// Emoji featured uses the emoji sets.
 	emoji, err := r.onMessagesGetFeaturedEmojiStickers(ctx, 0)
 	if err != nil {
 		t.Fatalf("getFeaturedEmojiStickers: %v", err)
@@ -518,7 +520,8 @@ func TestMessagesGetEmojiStickerGroupsUsesSeededEmojiCatalog(t *testing.T) {
 	}
 }
 
-// countingStickerFiles 包 *fakeFiles 计数 ListStickerSets，验证目录缓存短路。
+// countingStickerFiles wraps *fakeFiles to count ListStickerSets, verifying the
+// catalog-cache short-circuit.
 type countingStickerFiles struct {
 	*fakeFiles
 	listCalls int
@@ -529,8 +532,9 @@ func (f *countingStickerFiles) ListStickerSets(ctx context.Context, kind domain.
 	return f.fakeFiles.ListStickerSets(ctx, kind)
 }
 
-// TestStickerCatalogCacheShortCircuitsListStickerSets 回归 P2-5：getAllStickers/
-// getFeaturedStickers 经目录缓存——同 kind 重复请求只 ListStickerSets 一次（TTL 内 0 PG）。
+// TestStickerCatalogCacheShortCircuitsListStickerSets regression P2-5: getAllStickers/
+// getFeaturedStickers go through the catalog cache - repeated requests for the same
+// kind call ListStickerSets only once (0 PG within the TTL).
 func TestStickerCatalogCacheShortCircuitsListStickerSets(t *testing.T) {
 	ctx := context.Background()
 	files := &countingStickerFiles{fakeFiles: &fakeFiles{
@@ -550,7 +554,7 @@ func TestStickerCatalogCacheShortCircuitsListStickerSets(t *testing.T) {
 		t.Fatalf("getFeaturedStickers: %v", err)
 	}
 	if files.listCalls != 1 {
-		t.Fatalf("ListStickerSets(stickers) calls = %d, want 1 (目录缓存应短路)", files.listCalls)
+		t.Fatalf("ListStickerSets(stickers) calls = %d, want 1 (catalog cache should short-circuit)", files.listCalls)
 	}
 }
 

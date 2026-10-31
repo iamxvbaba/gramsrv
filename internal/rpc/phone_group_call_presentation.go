@@ -12,14 +12,18 @@ import (
 	"telesrv/internal/sfu"
 )
 
-// 屏幕共享（presentation）：同一参与者的第二条媒体连接（独立 ICE/DTLS/ssrc 集），
-// TL 层落在同一 participant 行的 presentation 字段。硬契约（读客户端源码定）：
-//   - 响应 Updates 里的 updateGroupCallConnection 必须置 presentation flag
-//     （bit0），否则被主实例误食；DrKLO 只在响应里就地找它，不能只走推送；
-//   - presentation 字段必须带 audio_source：DrKLO 用它做屏幕 mySource 并塞进
-//     checkGroupCall，缺失会退化取首个视频 ssrc 致 4s 循环重建；
-//   - 主连接 rejoin / 整体离会从不补发 leaveGroupCallPresentation：join 整体
-//     替换 video_json 时清 presentation_json，SFU 侧主 endpoint 拆除联动拆屏幕。
+// Screen sharing (presentation): the same participant's second media connection (a separate
+// ICE/DTLS/ssrc set), landing on the presentation field of the same participant row at the TL
+// layer. Hard contracts (determined by reading client sources):
+//   - the updateGroupCallConnection in the response Updates must set the presentation flag (bit0),
+//     otherwise the main instance consumes it by mistake; DrKLO looks for it in-place in the
+//     response, so a push alone is not enough;
+//   - the presentation field must carry audio_source: DrKLO uses it as the screen mySource and puts
+//     it into checkGroupCall; without it, it falls back to the first video ssrc, causing a 4s loop
+//     rebuild;
+//   - a main-connection rejoin / full leave never re-sends leaveGroupCallPresentation: a join that
+//     wholesale replaces video_json clears presentation_json, and tearing down the main SFU endpoint
+//     tears down the screen with it.
 
 func (r *Router) onPhoneJoinGroupCallPresentation(ctx context.Context, req *tg.PhoneJoinGroupCallPresentationRequest) (tg.UpdatesClass, error) {
 	if req == nil {
@@ -32,7 +36,8 @@ func (r *Router) onPhoneJoinGroupCallPresentation(ctx context.Context, req *tg.P
 	if !scope.call.Active() {
 		return nil, groupCallAlreadyDiscardedErr()
 	}
-	// 前置：必须已通过主 join 在会（客户端也只在主 join ack 后才发本 RPC）。
+	// Precondition: must already be in the call via the main join (the client also only sends this
+	// RPC after the main join ack).
 	self, found, err := r.deps.GroupCalls.Participant(ctx, scope.call.ID, scope.userID)
 	if err != nil {
 		return nil, internalErr()
@@ -49,11 +54,11 @@ func (r *Router) onPhoneJoinGroupCallPresentation(ctx context.Context, req *tg.P
 	state := participantVideoState{
 		Endpoint:     endpoint,
 		SourceGroups: groupCallSsrcGroupsFromOffer(offer),
-		Active:       true, // joinGroupCallPresentation 即开始共享（无 video_stopped 概念）
+		Active:       true, // joinGroupCallPresentation starts sharing immediately (no video_stopped concept)
 		AudioSource:  ssrc,
 	}
-	// 媒体面先行：独立第二 endpoint（重复 join 替换式幂等——rejoinPresentation
-	// 会带同一套 ufrag/ssrc 重发）。
+	// Media plane first: a separate second endpoint (a duplicate join is replace-style idempotent —
+	// rejoinPresentation re-sends the same ufrag/ssrc set).
 	sfuService := r.deps.SFU
 	if sfuService == nil {
 		sfuService = sfu.Disabled()
@@ -79,7 +84,8 @@ func (r *Router) onPhoneJoinGroupCallPresentation(ctx context.Context, req *tg.P
 	if changed {
 		channel = r.groupCallMutationFanout(ctx, scope.channel, mut)
 	} else {
-		// 同参数重放（幂等 rejoin）：无状态变化也要返回完整连接参数。
+		// Same-parameter replay (idempotent rejoin): return full connection params even with no state
+		// change.
 		channel = scope.channel
 		mut = domain.GroupCallMutation{Call: scope.call, Participant: self}
 	}
@@ -103,7 +109,8 @@ func (r *Router) onPhoneLeaveGroupCallPresentation(ctx context.Context, call tg.
 	if r.deps.SFU != nil {
 		_ = r.deps.SFU.Leave(ctx, scope.call.ID, scope.userID, sfu.EndpointPresentation)
 	}
-	// 幂等快照：未在共享/已清理时返回当前态而非报错（屏幕共享既已下架即达成目的）。
+	// Idempotent snapshot: when not sharing / already cleaned up, return the current state rather
+	// than erroring (the screen share is already down, so the goal is met).
 	idempotentSnapshot := func() (tg.UpdatesClass, error) {
 		return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel,
 			groupCallUpdateFor(scope.channel, scope.call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL), nil), nil
@@ -119,10 +126,12 @@ func (r *Router) onPhoneLeaveGroupCallPresentation(ctx context.Context, call tg.
 	mut, changed, err := r.deps.GroupCalls.UpdateParticipant(ctx, scope.call.ID, scope.userID,
 		domain.GroupCallParticipantUpdate{PresentationJSON: &empty, Now: int(r.clock.Now().Unix())})
 	if err != nil {
-		// 与并发的 leaveGroupCall/discard 撞车：presentation 随主连接离会被级联清掉后，
-		// 本显式 leave 在写时发现 participant 已 Left（ErrGroupCallNotJoined）或 call 已
-		// discarded。屏幕共享既已下架，按幂等成功返回快照而非 GROUPCALL_JOIN_MISSING 400
-		// （客户端此刻正同时离会，会忽略该 400，但报错污染日志且非正确语义）。
+		// Colliding with a concurrent leaveGroupCall/discard: after presentation is cascade-cleared
+		// with the main connection's departure, this explicit leave finds on write that the
+		// participant is already Left (ErrGroupCallNotJoined) or the call is already discarded. Since
+		// the screen share is already down, return a snapshot as an idempotent success rather than
+		// GROUPCALL_JOIN_MISSING 400 (the client is leaving at the same moment and would ignore the
+		// 400, but the error pollutes logs and is not the correct semantics).
 		if errors.Is(err, domain.ErrGroupCallNotJoined) || errors.Is(err, domain.ErrGroupCallDiscarded) {
 			return idempotentSnapshot()
 		}
@@ -135,7 +144,7 @@ func (r *Router) onPhoneLeaveGroupCallPresentation(ctx context.Context, call tg.
 	if changed {
 		channel = r.groupCallMutationFanout(ctx, scope.channel, mut)
 	}
-	// 其他端靠本行 presentation 字段消失把屏幕画面下架。
+	// Other endpoints take the screen down when this row's presentation field disappears.
 	return r.groupCallUpdateContainer(ctx, scope.userID, channel,
 		&tg.UpdateGroupCallParticipants{
 			Call:         &tg.InputGroupCall{ID: mut.Call.ID, AccessHash: mut.Call.AccessHash},

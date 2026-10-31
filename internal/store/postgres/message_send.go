@@ -215,12 +215,12 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		if err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
-		// reply_markup（bot reply/inline keyboard）随消息一并入双盒。
+		// reply_markup (bot reply/inline keyboard) enters both boxes along with the message.
 		replyMarkupJSON, err = encodeReplyMarkup(req.ReplyMarkup)
 		if err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
-		// rich_message（Layer 227 富文本）随消息一并入双盒。
+		// rich_message (Layer 227 rich text) enters both boxes along with the message.
 		richMessageJSON, err = encodeRichMessage(req.RichMessage)
 		if err != nil {
 			return domain.SendPrivateTextResult{}, err
@@ -230,9 +230,10 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	// 常见的 lost-response 重放在开事务和拿双方 advisory lock 之前直接返回；
-	// 并发首次请求仍由事务内 unique conflict + qtx 兜底，不能只依赖本次预查。
-	// RPC/app 已完成同一只读查询时可跳过这次重复 round-trip。
+	// A common lost-response replay returns directly before opening the transaction and taking the
+	// two-sided advisory locks; a concurrent first request is still covered by the in-transaction
+	// unique conflict + qtx, so this must not rely on the pre-check alone. When RPC/app has already
+	// performed the same read-only query, this duplicate round trip can be skipped.
 	if !req.IdempotencyPreflighted {
 		if duplicate, found, err := s.duplicateSendResult(ctx, s.q, req, requestFingerprint); err != nil {
 			return domain.SendPrivateTextResult{}, err
@@ -288,8 +289,9 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		_ = tx.Rollback(ctx)
 	}()
 
-	// 事务级 advisory lock 串行化涉及收发双方的并发写，在任何行锁之前获取，消除 watermark/dialog
-	// 行锁的 AB-BA 死锁（A↔B 反向并发 send/read/edit）。
+	// The transaction-level advisory lock serializes concurrent writes involving both sides of the
+	// exchange and is acquired before any row lock, eliminating the AB-BA deadlock on
+	// watermark/dialog row locks (concurrent reverse A↔B send/read/edit).
 	if err := lockUsersForUpdate(ctx, tx, req.SenderUserID, req.RecipientUserID); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send users: %w", err)
 	}
@@ -424,8 +426,9 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	pm, err := qtx.CreatePrivateMessage(ctx, privateArg)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// 预查与 INSERT 之间另一请求可能已提交。必须在当前 qtx 读取，
-			// 不能持事务连接/advisory lock 再从 s.q 申请第二条池连接。
+			// Another request may have committed between the pre-check and the INSERT. It must be
+			// read on the current qtx; do not hold the transaction connection/advisory lock and
+			// then request a second pool connection from s.q.
 			dup, found, dupErr := s.duplicateSendResult(ctx, qtx, req, requestFingerprint)
 			if dupErr != nil {
 				return domain.SendPrivateTextResult{}, dupErr
@@ -518,8 +521,9 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 		GroupedID:        req.GroupedID,
 		Effect:           req.Effect,
 		PaidMessageStars: req.PaidStars,
-		// voice/round 在发送者自己的副本上也保持"未听"，直到对端
-		// readMessageContents 触发 sender 侧清除；发给自己无人可听，恒已读。
+		// voice/round stays "unlistened" on the sender's own copy too, until the peer's
+		// readMessageContents triggers the sender-side clear; a self-message has no one to listen,
+		// so it is always read.
 		MediaUnread:    media.Sender.HasUnreadPayload() && !selfMessage,
 		ReactionUnread: false,
 	}
@@ -533,7 +537,7 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 		return domain.SendPrivateTextResult{}, err
 	}
 	sender.RandomID = req.RandomID
-	// 共享媒体索引(0118):发送者侧 box 按媒体类别建索引(peer=收件人)。
+	// Shared media index (0118): the sender-side box is indexed by media category (peer=recipient).
 	if err := insertMessageBoxMediaIndexTx(ctx, tx, req.SenderUserID, req.RecipientUserID, int(senderBoxID), req.Date, media.Sender, req.Entities); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
@@ -608,7 +612,7 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 			return domain.SendPrivateTextResult{}, err
 		}
 		recipient.RandomID = req.RandomID
-		// 共享媒体索引(0118):收件人侧 box 按媒体类别建索引(peer=发送者)。
+		// Shared media index (0118): the recipient-side box is indexed by media category (peer=sender).
 		if err := insertMessageBoxMediaIndexTx(ctx, tx, req.RecipientUserID, req.SenderUserID, int(recipientBoxID), req.Date, media.Recipient, req.Entities); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
@@ -843,7 +847,8 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, db sqlcgen.D
 		return nil, nil, domain.ErrReplyMessageIDInvalid
 	}
 	if req.ReplyTo.StoryID > 0 {
-		// story 回复（评论）：无源消息可查；story 作者就是会话对端（recipient），双盒同持。
+		// Story reply (comment): there is no source message to look up; the story author is the
+		// conversation peer (recipient), and both boxes hold it together.
 		if req.ReplyTo.StoryID > domain.MaxStoryID {
 			return nil, nil, domain.ErrReplyMessageIDInvalid
 		}
@@ -968,13 +973,18 @@ func appendNewMessageEvent(ctx context.Context, q *sqlcgen.Queries, msg domain.M
 	return nil
 }
 
-// lockUsersForUpdate 在事务开始处用事务级 advisory lock 串行化所有涉及指定用户的并发写事务。
-// advisory lock 与行锁处于独立锁空间，且按 user_id 升序获取，因此：① 不会与后续 dialog /
-// watermark / box 行锁交叉成跨类型死锁；② 任意两个共享某用户的写事务（send/read/edit/delete 对
-// 收发双方的并发操作）被完全串行化，从根上消除它们在 watermark 与 dialog 行上因加锁顺序相反
-// 导致的 AB-BA 死锁——既包含本次 watermark 优化新引入的（user_update_watermarks FOR UPDATE），
-// 也包含 dialog upsert 既有的反向行锁。advisory xact lock 在事务结束自动释放；同对用户本就竞争
-// 这些行（天然串行），不额外降并发，不同用户集合的事务仍并行。**必须在任何行锁之前调用。**
+// lockUsersForUpdate serializes all concurrent write transactions involving the specified users
+// with a transaction-level advisory lock at the start of the transaction. The advisory lock lives
+// in a separate lock space from row locks and is acquired in ascending user_id order, so: (1) it
+// does not cross with later dialog / watermark / box row locks into a cross-type deadlock; and
+// (2) any two write transactions sharing a user (send/read/edit/delete concurrent operations on
+// both sides of the exchange) are fully serialized, eliminating at the root the AB-BA deadlock
+// they could otherwise cause on watermark and dialog rows due to opposite lock ordering — covering
+// both the one newly introduced by this watermark optimization (user_update_watermarks FOR UPDATE)
+// and the pre-existing reverse row locks of dialog upsert. The advisory xact lock is released
+// automatically at transaction end; transactions for the same pair of users already contend on
+// these rows (naturally serial) without further reducing concurrency, and transactions for
+// different user sets still run in parallel. **Must be called before any row lock.**
 func lockUsersForUpdate(ctx context.Context, tx pgx.Tx, userIDs ...int64) error {
 	if len(userIDs) == 0 {
 		return nil

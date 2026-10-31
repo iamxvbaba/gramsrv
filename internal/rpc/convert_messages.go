@@ -91,8 +91,9 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if fwd := tgMessageFwdHeader(m.Forward); fwd != nil {
 		msg.SetFwdFrom(*fwd)
 	}
-	// self-chat 消息恒带 saved_peer_id（收藏夹子会话分组键）：TDesktop 不做
-	// 本地 fwd 推导，缺失会把转发消息错归 My Notes。
+	// A self-chat message always carries saved_peer_id (the favorites sub-session
+	// grouping key): TDesktop does not derive fwd locally, and a missing value would
+	// mis-file a forwarded message under My Notes.
 	if m.SavedPeer.ID != 0 {
 		if saved := tgPeer(m.SavedPeer); saved != nil {
 			msg.SetSavedPeerID(saved)
@@ -107,18 +108,18 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if m.GroupedID != 0 {
 		msg.SetGroupedID(m.GroupedID)
 	}
-	// 消息特效（私聊专属）：非零则下发，客户端据此播放一次动画。
+	// Message effect (private-chat only): sent when nonzero, the client plays the animation once from it.
 	if m.Effect != 0 {
 		msg.SetEffect(m.Effect)
 	}
 	if !m.Media.IsZero() {
 		msg.SetMedia(tgMessageMedia(m.Media))
-		// invert_media 是 message 级标志，但存于媒体快照（免消息表列）：仅当有媒体时投影。
+		// invert_media is a message-level flag but is stored in the media snapshot (avoiding a message-table column): project it only when there is media.
 		if m.Media.InvertMedia {
 			msg.SetInvertMedia(true)
 		}
 	}
-	// reply_markup（bot reply/inline keyboard）：仅普通 tg.Message 携带（service 消息不带）。
+	// reply_markup (bot reply/inline keyboard): carried only by a normal tg.Message (service messages do not carry it).
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
@@ -490,7 +491,7 @@ func tgMessageReplyHeader(m domain.Message) tg.MessageReplyHeaderClass {
 	if m.ReplyTo == nil {
 		return nil
 	}
-	// story 回复（评论）投影为独立的 messageReplyStoryHeader（peer=story 作者 + story_id）。
+	// A story reply (comment) is projected as a separate messageReplyStoryHeader (peer=story author + story_id).
 	if m.ReplyTo.StoryID > 0 {
 		peer := tgPeer(m.ReplyTo.Peer)
 		if peer == nil {
@@ -603,8 +604,10 @@ func tgMessageReactions(viewerUserID int64, in *domain.ChannelMessageReactions) 
 			out.SetRecentReactions(recent)
 		}
 	}
-	// 付费 reaction：注入 ReactionPaid 计数 + top reactors（My/chosen 由 in.Paid 的视角数据驱动，
-	// 调用方对他人视角已抹除 My/MyStars）。统一在此注入，覆盖所有频道消息读路径。
+	// Paid reaction: inject a ReactionPaid count + top reactors (My/chosen is driven
+	// by the in.Paid viewpoint data; the caller has already erased My/MyStars for
+	// other viewpoints). Injected uniformly here, covering all channel message read
+	// paths.
 	if in.Paid != nil {
 		injectPaidReaction(out, *in.Paid)
 	}
@@ -725,9 +728,10 @@ func domainMessageEntities(entities []tg.MessageEntityClass) []domain.MessageEnt
 	return domainMessageEntitiesForViewer(0, entities)
 }
 
-// domainMessageEntitiesForViewer 把客户端实体转成 domain 形态并原样保留语义
-// 字段；inputMessageEntityMentionName 携带 InputUser，inputUserSelf 解析为
-// viewerUserID（viewer 未知时该实体丢弃而不是落成 user_id=0）。
+// domainMessageEntitiesForViewer converts client entities into the domain shape,
+// preserving semantic fields verbatim; inputMessageEntityMentionName carries an
+// InputUser, and inputUserSelf resolves to viewerUserID (when the viewer is unknown,
+// the entity is dropped rather than stored as user_id=0).
 func domainMessageEntitiesForViewer(viewerUserID int64, entities []tg.MessageEntityClass) []domain.MessageEntity {
 	if len(entities) == 0 {
 		return nil

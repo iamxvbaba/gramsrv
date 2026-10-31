@@ -13,8 +13,8 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// 频道/超级群消息 poll 投票/关闭：成员资格与消息可见性沿用 reaction 同款校验，
-// poll 级语义委托 poll.go 的共享 SQL。
+// Channel/supergroup message poll voting/closing: membership and message visibility reuse the same validation as reactions,
+// and poll-level semantics are delegated to poll.go's shared SQL.
 
 func (s *ChannelStore) VoteChannelMessagePoll(ctx context.Context, req domain.VoteChannelMessagePollRequest) (domain.ChannelMessagePollResult, error) {
 	return s.mutateChannelMessagePoll(ctx, req.UserID, req.ChannelID, req.MessageID, req.Date, func(ctx context.Context, tx pgx.Tx, def domain.PollDefinition, date int) error {
@@ -96,11 +96,11 @@ func (s *ChannelStore) mutateChannelMessagePoll(
 	}, nil
 }
 
-// ChannelPollFanoutViews 批量加载一条 poll 消息对一组 viewer 的 per-viewer enrich（消除 fan-out
-// 逐 viewer GetChannelMessages 的 N+1）：viewer-invariant 聚合（counts/total/recent）经
-// pollViewerAggregates(viewer=0) 只算一次 + 批量 viewerOptions + 批量成员可见性，每 viewer 用与逐
-// viewer 路径完全相同的 domain.ResolvePollResults 合成，故字节同源。成员/AvailableMinID 可见性在此
-// 复刻 GetChannelMessages（active member && msgID>available_min_id）；bot 历史过滤由 app 层叠加。
+// ChannelPollFanoutViews batch-loads the per-viewer enrich of one poll message over a set of viewers (removing the fan-out
+// N+1 of per-viewer GetChannelMessages): viewer-invariant aggregates (counts/total/recent) are computed once via
+// pollViewerAggregates(viewer=0) + batch viewerOptions + batch member visibility, and each viewer is composed with the exact same
+// domain.ResolvePollResults as the per-viewer path, so it is byte-identical. Member/AvailableMinID visibility replicates
+// GetChannelMessages here (active member && msgID>available_min_id); the bot history filter is layered on by the app layer.
 func (s *ChannelStore) ChannelPollFanoutViews(ctx context.Context, channelID int64, msgID int, viewers []int64, now int) (domain.ChannelPollFanoutViews, error) {
 	out := domain.ChannelPollFanoutViews{Polls: map[int64]*domain.MessagePoll{}}
 	if channelID == 0 || msgID <= 0 || len(viewers) == 0 {
@@ -127,7 +127,7 @@ func (s *ChannelStore) ChannelPollFanoutViews(ctx context.Context, channelID int
 	}
 	out.Found = true
 	out.Message = msg
-	// viewer-invariant 模板：viewerUserID=0 → pollViewerAggregates 跳过 ViewerOptions 块，只出 counts/total/recent。
+	// viewer-invariant template: viewerUserID=0 → pollViewerAggregates skips the ViewerOptions block and emits only counts/total/recent.
 	tmplAggs, err := pollViewerAggregates(ctx, s.db, 0, []int64{pollID})
 	if err != nil {
 		return domain.ChannelPollFanoutViews{}, err
@@ -147,10 +147,10 @@ func (s *ChannelStore) ChannelPollFanoutViews(ctx context.Context, channelID int
 		}
 		availMinID, isMember := members[viewer]
 		if !isMember || (availMinID > 0 && msgID <= availMinID) {
-			out.Polls[viewer] = nil // 已评估但不可见（非活跃成员 / pre-history 隐藏）
+			out.Polls[viewer] = nil // evaluated but not visible (not an active member / pre-history hidden)
 			continue
 		}
-		// agg.Counts/RecentVoters 与 tmpl 共享（ResolvePollResults 只读、RecentVoters 内部再 copy），安全。
+		// agg.Counts/RecentVoters are shared with tmpl (ResolvePollResults is read-only and RecentVoters is copied internally), so it is safe.
 		agg := domain.PollAggregates{
 			Counts:       tmpl.Counts,
 			TotalVoters:  tmpl.TotalVoters,
@@ -158,14 +158,14 @@ func (s *ChannelStore) ChannelPollFanoutViews(ctx context.Context, channelID int
 			ViewerOptions: viewerOpts[viewer],
 		}
 		results := domain.ResolvePollResults(def, agg, viewer, now)
-		pollCopy := *msg.Media.Poll // 浅拷：ApplyPollState 仅写 Closed + 新 Results 指针，不动共享 def 切片
+		pollCopy := *msg.Media.Poll // shallow copy: ApplyPollState only writes Closed + a new Results pointer and does not touch the shared def slice
 		domain.ApplyPollState(&pollCopy, def, results, now)
 		out.Polls[viewer] = &pollCopy
 	}
 	return out, nil
 }
 
-// batchPollViewerOptions 一次取一组 viewer 在某 poll 的投票选项（替代逐 viewer 单查）。
+// batchPollViewerOptions fetches a set of viewers' vote options in one poll at once (replacing per-viewer single queries).
 func (s *ChannelStore) batchPollViewerOptions(ctx context.Context, pollID int64, viewers []int64) (map[int64][][]byte, error) {
 	out := make(map[int64][][]byte, len(viewers))
 	if pollID == 0 || len(viewers) == 0 {
@@ -194,9 +194,9 @@ func (s *ChannelStore) batchPollViewerOptions(ctx context.Context, pollID int64,
 	return out, nil
 }
 
-// batchChannelMemberAvailableMinID 一次取一组 viewer 的可见成员资格 + available_min_id；map 中存在
-// = 对该频道消息可见（active 成员 && 未被 ViewMessages 限制，复刻 validateChannelMemberVisible），
-// 值为其 available_min_id；缺失 = 不可见（非 active / 离开 / 被封 / ViewMessages 受限）。
+// batchChannelMemberAvailableMinID fetches a set of viewers' visible membership + available_min_id at once; presence in the map
+// = visible for that channel's messages (active member && not restricted by ViewMessages, replicating validateChannelMemberVisible),
+// the value being their available_min_id; absence = not visible (not active / left / banned / ViewMessages-restricted).
 func (s *ChannelStore) batchChannelMemberAvailableMinID(ctx context.Context, channelID int64, viewers []int64) (map[int64]int, error) {
 	out := make(map[int64]int, len(viewers))
 	if channelID == 0 || len(viewers) == 0 {
@@ -217,7 +217,7 @@ func (s *ChannelStore) batchChannelMemberAvailableMinID(ctx context.Context, cha
 		var rights domain.ChannelBannedRights
 		_ = json.Unmarshal([]byte(bannedRights), &rights)
 		if rights.ViewMessages {
-			continue // active 但被禁止查看消息 → 不可见（与 validateChannelMemberVisible 一致）
+			continue // active but restricted from viewing messages → not visible (consistent with validateChannelMemberVisible)
 		}
 		out[userID] = availableMinID
 	}
@@ -227,8 +227,8 @@ func (s *ChannelStore) batchChannelMemberAvailableMinID(ctx context.Context, cha
 	return out, nil
 }
 
-// populateChannelMessagesPolls 把页内全部 poll media 按请求 viewer 视角 enrich；
-// 由 populateChannelMessagesReactions 统一挂载（所有频道消息读路径共用一个 choke point）。
+// populateChannelMessagesPolls enriches all poll media in the page from the requesting viewer's perspective;
+// it is uniformly mounted by populateChannelMessagesReactions (all channel message read paths share one choke point).
 func (s *ChannelStore) populateChannelMessagesPolls(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, messages []domain.ChannelMessage) error {
 	refs := make([]pollMediaRef, 0, 2)
 	for i := range messages {

@@ -1495,15 +1495,15 @@ func TestStarGiftCollectionsCRUDFilterOrderAndPin(t *testing.T) {
 	}
 }
 
-// 完整 star gift saga：catalog → getPaymentForm(paymentFormStarGift) → sendStarsForm(扣费+服务消息
-// +paymentResult) → 收礼人 getSavedStarGifts → save/convert。
+// Full star gift saga: catalog -> getPaymentForm(paymentFormStarGift) -> sendStarsForm(charge +
+// service message + paymentResult) -> recipient getSavedStarGifts -> save/convert.
 func TestStarGiftSaga(t *testing.T) {
 	r, sender, recipient, gift := starGiftTestRouter(t)
 	ctx := context.Background()
 	senderCtx := WithUserID(ctx, sender.ID)
 	recipientCtx := WithUserID(ctx, recipient.ID)
 
-	// 1. 目录。
+	// 1. Catalog.
 	catRes, err := r.onPaymentsGetStarGifts(senderCtx, 0)
 	if err != nil {
 		t.Fatalf("getStarGifts: %v", err)
@@ -1515,12 +1515,13 @@ func TestStarGiftSaga(t *testing.T) {
 	if g, ok := cat.Gifts[0].(*tg.StarGift); !ok || g.ID != gift.ID || g.Stars != 50 {
 		t.Fatalf("catalog gift = %#v, want id %d stars 50", cat.Gifts[0], gift.ID)
 	}
-	// 即便 hash 命中也始终回完整目录（DrKLO force-stop 后保留 hash 但丢礼物缓存，
-	// 返 NotModified 会让送礼选择器永远空）。
+	// Even on a hash match the full catalog is always returned (after a DrKLO force-stop the hash is
+	// kept but the gift cache is lost, so returning NotModified would leave the gift picker empty
+	// forever).
 	if again, err := r.onPaymentsGetStarGifts(senderCtx, cat.Hash); err != nil {
 		t.Fatalf("getStarGifts hash: %v", err)
 	} else if full, ok := again.(*tg.PaymentsStarGifts); !ok || len(full.Gifts) != 1 {
-		t.Fatalf("hash match = %T, want full catalog (不返 NotModified)", again)
+		t.Fatalf("hash match = %T, want full catalog (does not return NotModified)", again)
 	}
 
 	inv := &tg.InputInvoiceStarGift{
@@ -1529,27 +1530,27 @@ func TestStarGiftSaga(t *testing.T) {
 		GiftID:   gift.ID,
 	}
 
-	// 2. getPaymentForm → paymentFormStarGift（XTR + 非空 prices）。
+	// 2. getPaymentForm -> paymentFormStarGift (XTR + non-empty prices).
 	formRes, err := r.onPaymentsGetPaymentForm(senderCtx, &tg.PaymentsGetPaymentFormRequest{Invoice: inv})
 	if err != nil {
 		t.Fatalf("getPaymentForm: %v", err)
 	}
 	form, ok := formRes.(*tg.PaymentsPaymentFormStarGift)
 	if !ok {
-		t.Fatalf("form = %T, want *tg.PaymentsPaymentFormStarGift (TDesktop 单分支 match)", formRes)
+		t.Fatalf("form = %T, want *tg.PaymentsPaymentFormStarGift (TDesktop single-branch match)", formRes)
 	}
 	if form.Invoice.Currency != "XTR" || len(form.Invoice.Prices) != 1 || form.Invoice.Prices[0].Amount != 50 {
 		t.Fatalf("form invoice = %+v, want XTR + 1 price 50", form.Invoice)
 	}
 
-	// 3. sendStarsForm → paymentResult（扣费 + 服务消息 + updateStarsBalance）。
+	// 3. sendStarsForm -> paymentResult (charge + service message + updateStarsBalance).
 	payRes, err := r.onPaymentsSendStarsForm(senderCtx, &tg.PaymentsSendStarsFormRequest{FormID: form.FormID, Invoice: inv})
 	if err != nil {
 		t.Fatalf("sendStarsForm: %v", err)
 	}
 	pay, ok := payRes.(*tg.PaymentsPaymentResult)
 	if !ok {
-		t.Fatalf("pay result = %T, want *tg.PaymentsPaymentResult (DrKLO 强转)", payRes)
+		t.Fatalf("pay result = %T, want *tg.PaymentsPaymentResult (DrKLO hard-cast)", payRes)
 	}
 	updates, ok := pay.Updates.(*tg.Updates)
 	if !ok {
@@ -1572,14 +1573,14 @@ func TestStarGiftSaga(t *testing.T) {
 		}
 	}
 	if !hasBalance || !hasGiftMsg {
-		t.Fatalf("pay updates: balance=%v giftMsg=%v, want both (崩溃约束:必返合法 Updates)", hasBalance, hasGiftMsg)
+		t.Fatalf("pay updates: balance=%v giftMsg=%v, want both (crash constraint: must return valid Updates)", hasBalance, hasGiftMsg)
 	}
-	// 送礼人余额扣 50。
+	// The sender's balance is debited by 50.
 	if bal, _ := r.deps.Stars.GetBalance(ctx, sender.ID); bal.Balance != 950 {
 		t.Fatalf("sender balance = %d, want 950", bal.Balance)
 	}
 
-	// 4. 收礼人 getSavedStarGifts。
+	// 4. Recipient getSavedStarGifts.
 	savedRes, err := r.onPaymentsGetSavedStarGifts(recipientCtx, &tg.PaymentsGetSavedStarGiftsRequest{Peer: &tg.InputPeerSelf{}})
 	if err != nil {
 		t.Fatalf("getSavedStarGifts: %v", err)
@@ -1612,23 +1613,24 @@ func TestStarGiftSaga(t *testing.T) {
 		t.Fatalf("saved gift users = %+v, want anonymous sender %d for receiver", savedRes.Users, sender.ID)
 	}
 
-	// 4b. 收礼人 userFull 必须带 stargifts_count（否则客户端资料页 Gifts 区段不出现）。
+	// 4b. The recipient's userFull must carry stargifts_count (otherwise the Gifts section does not
+	// appear on the client profile page).
 	fullRes, err := r.onUsersGetFullUser(senderCtx, &tg.InputUser{UserID: recipient.ID, AccessHash: recipient.AccessHash})
 	if err != nil {
 		t.Fatalf("getFullUser: %v", err)
 	}
 	if cnt, ok := fullRes.FullUser.GetStargiftsCount(); !ok || cnt != 1 {
-		t.Fatalf("recipient userFull stargifts_count = %d ok %v, want 1 (资料页 Gifts 门控)", cnt, ok)
+		t.Fatalf("recipient userFull stargifts_count = %d ok %v, want 1 (profile Gifts gating)", cnt, ok)
 	}
 
-	// 5. saveStarGift（隐藏）。
+	// 5. saveStarGift (hide).
 	if ok, err := r.onPaymentsSaveStarGift(recipientCtx, &tg.PaymentsSaveStarGiftRequest{
 		Unsave: true, Stargift: &tg.InputSavedStarGiftUser{MsgID: msgID},
 	}); err != nil || !ok {
 		t.Fatalf("saveStarGift hide = %v err %v", ok, err)
 	}
 
-	// 6. convertStarGift（转回 Stars，收礼人 +50）。
+	// 6. convertStarGift (back to Stars, recipient +50).
 	recipBefore, _ := r.deps.Stars.GetBalance(ctx, recipient.ID)
 	if ok, err := r.onPaymentsConvertStarGift(recipientCtx, &tg.InputSavedStarGiftUser{MsgID: msgID}); err != nil || !ok {
 		t.Fatalf("convertStarGift = %v err %v", ok, err)
@@ -1637,12 +1639,12 @@ func TestStarGiftSaga(t *testing.T) {
 	if recipAfter.Balance != recipBefore.Balance+50 {
 		t.Fatalf("recipient balance %d -> %d, want +50", recipBefore.Balance, recipAfter.Balance)
 	}
-	// 转换后从列表消失。
+	// After conversion it disappears from the list.
 	afterRes, _ := r.onPaymentsGetSavedStarGifts(recipientCtx, &tg.PaymentsGetSavedStarGiftsRequest{Peer: &tg.InputPeerSelf{}})
 	if afterRes.Count != 0 {
 		t.Fatalf("saved gifts after convert = %d, want 0", afterRes.Count)
 	}
-	// 重复转换被拒。
+	// A duplicate conversion is rejected.
 	if _, err := r.onPaymentsConvertStarGift(recipientCtx, &tg.InputSavedStarGiftUser{MsgID: msgID}); err == nil {
 		t.Fatalf("double convert should error")
 	}
@@ -1714,8 +1716,9 @@ func TestStarGiftAutoSavePrivacyCreatesPendingGiftUntilRecipientApproves(t *test
 	}
 }
 
-// 频道 star gift saga：channel peer 能付款发送，但不生成频道历史消息；
-// saved gift 用 inputSavedStarGiftChat.saved_id 定位，Recent Actions 用 admin log 快照承载。
+// Channel star gift saga: a channel peer can pay and send, but no channel history message is
+// produced; the saved gift is located by inputSavedStarGiftChat.saved_id, and Recent Actions is
+// carried by an admin log snapshot.
 func TestStarGiftChannelSaga(t *testing.T) {
 	r, sender, owner, gift := starGiftTestRouter(t)
 	ctx := context.Background()
@@ -1942,7 +1945,7 @@ func TestStarGiftChannelSaga(t *testing.T) {
 	}
 }
 
-// 余额不足 → sendStarsForm 返回 BALANCE_TOO_LOW（不发礼、不扣费）。
+// Insufficient balance -> sendStarsForm returns BALANCE_TOO_LOW (no gift sent, no charge).
 func TestStarGiftInsufficientBalance(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
@@ -1970,7 +1973,7 @@ func TestStarGiftInsufficientBalance(t *testing.T) {
 	if _, err := r.onPaymentsSendStarsForm(senderCtx, &tg.PaymentsSendStarsFormRequest{FormID: form.FormID, Invoice: inv}); !tgerr.Is(err, "BALANCE_TOO_LOW") {
 		t.Fatalf("over-budget gift should error BALANCE_TOO_LOW")
 	}
-	// 余额未变。
+	// Balance unchanged.
 	if bal, _ := r.deps.Stars.GetBalance(ctx, sender.ID); bal.Balance != 1000 {
 		t.Fatalf("sender balance = %d, want 1000 unchanged", bal.Balance)
 	}

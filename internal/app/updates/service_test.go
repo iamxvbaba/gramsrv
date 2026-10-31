@@ -536,7 +536,7 @@ func TestCurrentStateCommitsAuditedBaselineOnlyAfterDelivery(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	// 设备确认水位停在 pts=1 后账号又推进两格。
+	// The device's confirmed watermark stops at pts=1 while the account advances two more slots.
 	if err := states.Save(ctx, authKeyID, userID, domain.UpdateState{Pts: 1, Date: 1700000001}); err != nil {
 		t.Fatalf("seed confirmed state: %v", err)
 	}
@@ -595,8 +595,8 @@ func TestGetDifferenceRetainsOnlyClientObservedInputCursor(t *testing.T) {
 		}
 	}
 
-	// 服务端把 pts=1..2 放进 response，并不证明客户端收到了 response；observed 只能
-	// 保持在本次 request 实际携带的 pts=0。
+	// The server putting pts=1..2 into the response does not prove the client received the
+	// response; observed must stay at the pts=0 actually carried by this request.
 	from, err := svc.ObserveDifferenceRequest(ctx, authKeyID, userID, domain.UpdateState{Pts: 0, Date: 1700000100})
 	if err != nil {
 		t.Fatalf("observe first request: %v", err)
@@ -626,7 +626,7 @@ func TestGetDifferenceRetainsOnlyClientObservedInputCursor(t *testing.T) {
 		t.Fatalf("delivered difference advanced observed to %d, want 0", observed.Pts)
 	}
 
-	// 客户端下一次明确带回 pts=2 后，才允许 retention 把共同安全水位推进到 2。
+	// Only after the client explicitly carries pts=2 back on its next call may retention advance the common safe watermark to 2.
 	if _, err := svc.ObserveDifferenceRequest(ctx, authKeyID, userID, domain.UpdateState{Pts: 2, Date: 1700000102}); err != nil {
 		t.Fatalf("observing next request: %v", err)
 	}

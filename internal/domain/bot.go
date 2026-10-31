@@ -9,117 +9,117 @@ import (
 )
 
 const (
-	// MaxBotsPerOwner 是每个用户可创建的 bot 上限（对齐官方 appConfig bots_create_limit_default）。
+	// MaxBotsPerOwner is the per-user bot creation limit (aligned with the official appConfig bots_create_limit_default).
 	MaxBotsPerOwner = 20
-	// BotTokenSecretLength 是 bot token 随机段长度（官方格式 <bot_id>:<35 位>）。
+	// BotTokenSecretLength is the random-part length of a bot token (official format <bot_id>:<35 digits>).
 	BotTokenSecretLength = 35
-	// BotUsernameSuffix 是 bot username 的强制后缀（大小写不敏感）。
+	// BotUsernameSuffix is the mandatory suffix of a bot username (case-insensitive).
 	BotUsernameSuffix = "bot"
-	// MaxBotNameLength 是 bot 显示名（first_name）上限。
+	// MaxBotNameLength is the bot display name (first_name) limit.
 	MaxBotNameLength = 64
-	// MaxBotInlinePlaceholderLen 是 inline mode placeholder 上限（bots.inline_placeholder）。
+	// MaxBotInlinePlaceholderLen is the inline mode placeholder limit (bots.inline_placeholder).
 	MaxBotInlinePlaceholderLen = 128
-	// MaxBotAppShortNameLen 是 bot app short_name 上限。
+	// MaxBotAppShortNameLen is the bot app short_name limit.
 	MaxBotAppShortNameLen = 64
-	// MaxBotAppTitleLen 是 bot app title 上限。
+	// MaxBotAppTitleLen is the bot app title limit.
 	MaxBotAppTitleLen = 128
-	// MaxBotAppDescriptionLen 是 bot app description 上限。
+	// MaxBotAppDescriptionLen is the bot app description limit.
 	MaxBotAppDescriptionLen = 512
-	// MaxBotAppURLLen 是 bot app / attach menu webview URL 上限。
+	// MaxBotAppURLLen is the bot app / attach menu webview URL limit.
 	MaxBotAppURLLen = 512
-	// MaxBotAttachMenuPeerTypes 限制 attach menu peer_types 数量，避免无界响应。
+	// MaxBotAttachMenuPeerTypes limits the attach menu peer_types count to avoid an unbounded response.
 	MaxBotAttachMenuPeerTypes = 8
-	// MaxBotAttachMenuIcons 限制 attach menu icon 变体数量。
+	// MaxBotAttachMenuIcons limits the attach menu icon variant count.
 	MaxBotAttachMenuIcons = 8
-	// MaxBotPreviewMedia 是单 bot main mini app preview media 上限。
+	// MaxBotPreviewMedia is the per-bot main mini app preview media limit.
 	MaxBotPreviewMedia = 20
-	// MaxBotRequestedPeerQuantity 限制 request peer 一次选择数量。
+	// MaxBotRequestedPeerQuantity limits how many peers a single request-peer selection may include.
 	MaxBotRequestedPeerQuantity = 10
-	// MaxBotCustomMethodLen 限制 WebView custom method 名称长度。
+	// MaxBotCustomMethodLen limits the WebView custom method name length.
 	MaxBotCustomMethodLen = 128
-	// MaxBotCustomMethodPayloadLen 限制 WebView custom method JSON 载荷长度。
+	// MaxBotCustomMethodPayloadLen limits the WebView custom method JSON payload length.
 	MaxBotCustomMethodPayloadLen = 4096
 )
 
-// bot 业务错误。
+// Bot business errors.
 var (
 	ErrBotTokenInvalid    = errors.New("bot token invalid")
 	ErrBotsTooMany        = errors.New("bot create limit exceeded")
 	ErrBotNameInvalid     = errors.New("bot name invalid")
 	ErrBotUsernameInvalid = errors.New("bot username invalid")
 	ErrBotNotFound        = errors.New("bot not found")
-	// ErrBotCommandInvalid 表示命令名/描述非法（bots.setBotCommands）。
+	// ErrBotCommandInvalid means the command name/description is invalid (bots.setBotCommands).
 	ErrBotCommandInvalid = errors.New("bot command invalid")
-	// ErrBotInfoInvalid 表示 setBotInfo 的 name/about/description 越界。
+	// ErrBotInfoInvalid means setBotInfo's name/about/description is out of bounds.
 	ErrBotInfoInvalid = errors.New("bot info invalid")
-	// ErrBotMenuButtonInvalid 表示 menu button 文本/URL 非法。
+	// ErrBotMenuButtonInvalid means the menu button text/URL is invalid.
 	ErrBotMenuButtonInvalid = errors.New("bot menu button invalid")
-	// ErrBotInlinePlaceholderInvalid 表示 inline placeholder 为空以外的文本越界。
+	// ErrBotInlinePlaceholderInvalid means the inline placeholder text is out of bounds for anything other than empty.
 	ErrBotInlinePlaceholderInvalid = errors.New("bot inline placeholder invalid")
-	// ErrBotAppInvalid 表示 bot app 元数据、URL 或 access hash 非法。
+	// ErrBotAppInvalid means the bot app metadata, URL or access hash is invalid.
 	ErrBotAppInvalid = errors.New("bot app invalid")
-	// ErrBotAppShortNameInvalid 表示 bot app short_name 非法。
+	// ErrBotAppShortNameInvalid means the bot app short_name is invalid.
 	ErrBotAppShortNameInvalid = errors.New("bot app short name invalid")
-	// ErrBotAttachMenuInvalid 表示 attach menu catalog 或用户状态非法。
+	// ErrBotAttachMenuInvalid means the attach menu catalog or user state is invalid.
 	ErrBotAttachMenuInvalid = errors.New("bot attach menu invalid")
-	// ErrBotRequestedButtonInvalid 表示 request-peer button 上下文非法或已过期。
+	// ErrBotRequestedButtonInvalid means the request-peer button context is invalid or expired.
 	ErrBotRequestedButtonInvalid = errors.New("bot requested button invalid")
-	// ErrBotDownloadParamsInvalid 表示 mini app download 参数未通过安全策略。
+	// ErrBotDownloadParamsInvalid means the mini app download parameters failed the security policy.
 	ErrBotDownloadParamsInvalid = errors.New("bot download params invalid")
-	// ErrBotCustomMethodUnavailable 表示没有可完成 WebView custom method 的 bot 侧回答。
+	// ErrBotCustomMethodUnavailable means there is no bot-side answer that can complete the WebView custom method.
 	ErrBotCustomMethodUnavailable = errors.New("bot custom method unavailable")
-	// ErrBotSessionsNotRevoked 表示 token 已轮换但撤销已登录 session 失败
-	//（token 不可回滚，调用方须告知用户重试以确保旧 session 终止）。
+	// ErrBotSessionsNotRevoked means the token was rotated but revoking the logged-in sessions failed
+	// (the token cannot be rolled back, so the caller must tell the user to retry to ensure the old sessions are terminated).
 	ErrBotSessionsNotRevoked = errors.New("bot sessions not revoked")
-	// ErrBotDeletionUnsupported 表示当前 store 未实现删号（只有 Postgres 实现），
-	// 调用方须如实告知用户本服不支持，而不是谎称已删除。
+	// ErrBotDeletionUnsupported means the current store does not implement account deletion (only Postgres does),
+	// so the caller must honestly tell the user this server does not support it, rather than claim it was deleted.
 	ErrBotDeletionUnsupported = errors.New("bot deletion unsupported")
 )
 
 const (
-	// MaxBotCommands 是单个 bot 的命令上限（default scope）。
+	// MaxBotCommands is the per-bot command limit (default scope).
 	MaxBotCommands = 100
-	// MaxBotCommandLen 是命令名长度上限（不含前导 /）。
+	// MaxBotCommandLen is the command name length limit (excluding the leading /).
 	MaxBotCommandLen = 32
-	// MaxBotCommandDescriptionLen 是命令描述长度上限。
+	// MaxBotCommandDescriptionLen is the command description length limit.
 	MaxBotCommandDescriptionLen = 256
-	// MaxBotAboutLen 是 bot about（users.about）长度上限。
+	// MaxBotAboutLen is the bot about (users.about) length limit.
 	MaxBotAboutLen = 120
-	// MaxBotDescriptionLen 是 bot description（"What can this bot do?"）长度上限。
+	// MaxBotDescriptionLen is the bot description ("What can this bot do?") length limit.
 	MaxBotDescriptionLen = 512
-	// MaxBotMenuButtonTextLen / MaxBotMenuButtonURLLen 是菜单按钮文本/URL 上限。
+	// MaxBotMenuButtonTextLen / MaxBotMenuButtonURLLen are the menu button text/URL limits.
 	MaxBotMenuButtonTextLen = 64
 	MaxBotMenuButtonURLLen  = 512
 )
 
-// BotCommand 是 bot 的一条命令（botInfo.commands 元素）。
+// BotCommand is one command of a bot (a botInfo.commands element).
 type BotCommand struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
 	Ephemeral   bool   `json:"ephemeral,omitempty"`
 }
 
-// BotMenuButtonType 标识菜单按钮类型。
+// BotMenuButtonType identifies the menu button type.
 type BotMenuButtonType int
 
 const (
-	// BotMenuButtonDefault 是默认（不显示特殊按钮，客户端按 commands 是否非空决定 '/' 圆钮）。
+	// BotMenuButtonDefault is the default (no special button shown; the client decides the '/' round button by whether commands is non-empty).
 	BotMenuButtonDefault BotMenuButtonType = 0
-	// BotMenuButtonCommands 显式让客户端展示命令菜单按钮。
+	// BotMenuButtonCommands explicitly makes the client show the command menu button.
 	BotMenuButtonCommands BotMenuButtonType = 1
-	// BotMenuButtonWebView 是带文本+URL 的 web view 按钮。
+	// BotMenuButtonWebView is a web view button with text + URL.
 	BotMenuButtonWebView BotMenuButtonType = 2
 )
 
-// BotMenuButton 是 bot 的菜单按钮（per-bot 全局；per-user 维度 P2 不做）。
+// BotMenuButton is a bot's menu button (global per bot; the per-user dimension is P2 and not done).
 type BotMenuButton struct {
 	Type BotMenuButtonType
 	Text string
 	URL  string
 }
 
-// BotInfoUpdate 是 bots.setBotInfo 的部分更新（name→users.first_name、
-// about→users.about、description→bots.description）。各 SetXxx 为 false 时不动该字段。
+// BotInfoUpdate is a partial update of bots.setBotInfo (name→users.first_name,
+// about→users.about, description→bots.description). When a SetXxx is false the field is left untouched.
 type BotInfoUpdate struct {
 	SetName        bool
 	Name           string
@@ -129,8 +129,8 @@ type BotInfoUpdate struct {
 	Description    string
 }
 
-// BotApp 是 mini app catalog 的一项。一个 bot 可拥有多个 app，ID/access_hash
-// 在创建后稳定，short_name 在同一 bot 下唯一。
+// BotApp is one item of the mini app catalog. A bot can own multiple apps; ID/access_hash
+// are stable after creation, and short_name is unique within the same bot.
 type BotApp struct {
 	ID                 int64
 	BotUserID          int64
@@ -148,7 +148,7 @@ type BotApp struct {
 	Main               bool
 }
 
-// BotAppSettings 是 BotInfo.app_settings 的协议中立表示。
+// BotAppSettings is the protocol-neutral representation of BotInfo.app_settings.
 type BotAppSettings struct {
 	PlaceholderPath     []byte
 	BackgroundColor     int
@@ -161,7 +161,7 @@ type BotAppSettings struct {
 	HasHeaderDarkColor  bool
 }
 
-// BotAppPreviewMedia 是 main mini app preview media 的持久快照。
+// BotAppPreviewMedia is the persisted snapshot of main mini app preview media.
 type BotAppPreviewMedia struct {
 	ID         int64
 	BotUserID  int64
@@ -171,20 +171,20 @@ type BotAppPreviewMedia struct {
 	DocumentID int64
 }
 
-// BotAttachMenuIconColor 描述 attach menu icon 的主题色覆盖。
+// BotAttachMenuIconColor describes a theme-color override for an attach menu icon.
 type BotAttachMenuIconColor struct {
 	Name  string
 	Color int
 }
 
-// BotAttachMenuIcon 描述 attach menu 的平台 icon 文档引用。
+// BotAttachMenuIcon describes a platform icon document reference for the attach menu.
 type BotAttachMenuIcon struct {
 	Name       string
 	DocumentID int64
 	Colors     []BotAttachMenuIconColor
 }
 
-// BotAttachMenuBot 是全局 attach/side menu catalog 的一项。
+// BotAttachMenuBot is one item of the global attach/side menu catalog.
 type BotAttachMenuBot struct {
 	BotUserID                int64
 	AppID                    int64
@@ -199,7 +199,7 @@ type BotAttachMenuBot struct {
 	Icons                    []BotAttachMenuIcon
 }
 
-// BotAttachMenuState 是用户对某个 attach menu bot 的启用与写权限状态。
+// BotAttachMenuState is a user's enable and write-permission state for an attach menu bot.
 type BotAttachMenuState struct {
 	UserID       int64
 	BotUserID    int64
@@ -207,7 +207,7 @@ type BotAttachMenuState struct {
 	WriteAllowed bool
 }
 
-// BotRequestedWebViewButton 是 bots.requestWebViewButton 创建的 request-peer 上下文。
+// BotRequestedWebViewButton is the request-peer context created by bots.requestWebViewButton.
 type BotRequestedWebViewButton struct {
 	WebAppReqID       string
 	BotUserID         int64
@@ -224,8 +224,8 @@ type BotRequestedWebViewButton struct {
 	ExpiresAt         time.Time
 }
 
-// BotWebViewCustomMethodQuery 是 custom method 的 pending 记录。没有 bot 侧回答
-// registry 时只记录查询并显式返回 blocked 错误，避免假成功。
+// BotWebViewCustomMethodQuery is the pending record of a custom method. When there is no bot-side answer
+// registry it only records the query and explicitly returns a blocked error, avoiding a false success.
 type BotWebViewCustomMethodQuery struct {
 	ID           string
 	BotUserID    int64
@@ -236,7 +236,7 @@ type BotWebViewCustomMethodQuery struct {
 	ExpiresAt    time.Time
 }
 
-// ValidBotCommandName 校验命令名：1-32 位小写字母/数字/下划线（不含前导 /）。
+// ValidBotCommandName validates a command name: 1-32 lowercase letters/digits/underscores (excluding the leading /).
 func ValidBotCommandName(cmd string) bool {
 	if len(cmd) == 0 || len(cmd) > MaxBotCommandLen {
 		return false
@@ -251,8 +251,8 @@ func ValidBotCommandName(cmd string) bool {
 	return true
 }
 
-// BotProfile 是 bots 表一行：bot 账号的元数据与 token。
-// 显示名/username/about 复用 users 行，不在此重复。
+// BotProfile is one bots table row: the bot account's metadata and token.
+// The display name/username/about reuse the users row and are not duplicated here.
 // BotInvoice is one XTR invoice a bot sent as a chat message.
 //
 // payments.sendPaymentForm carries no purpose in this layer, so the price is
@@ -349,8 +349,8 @@ type BotProfile struct {
 	TokenSecret       string
 	Description       string
 	Commands          []BotCommand
-	ChatHistory       bool // privacy mode 关闭 = true（bot_chat_history flag）
-	Nochats           bool // true = 不允许加群（bot_nochats flag）
+	ChatHistory       bool // privacy mode off = true (bot_chat_history flag)
+	Nochats           bool // true = groups not allowed (bot_nochats flag)
 	InlineGeo         bool
 	InlinePlaceholder string
 	MenuButton        BotMenuButton
@@ -360,25 +360,25 @@ type BotProfile struct {
 	AppSettings       *BotAppSettings
 }
 
-// BotChatState 是内置 bot（当前仅 BotFather）与某用户的对话状态机持久态。
+// BotChatState is the persisted state machine of a built-in bot's (currently only BotFather's) chat with a user.
 type BotChatState struct {
 	BotUserID int64
 	UserID    int64
-	// Command 是进行中的主命令（newbot/token/revoke）。
+	// Command is the in-progress main command (newbot/token/revoke).
 	Command string `json:"command"`
-	// Step 是主命令内的当前步骤（name/username/choose）。
+	// Step is the current step within the main command (name/username/choose).
 	Step string `json:"step"`
-	// Draft 暂存跨步骤的中间输入（如 newbot 已收的 name）。
+	// Draft buffers intermediate input across steps (e.g. the name already collected by newbot).
 	Draft map[string]string `json:"draft,omitempty"`
 }
 
-// FormatBotToken 拼装完整 bot token（<bot_user_id>:<secret>）。
+// FormatBotToken assembles the full bot token (<bot_user_id>:<secret>).
 func FormatBotToken(botUserID int64, secret string) string {
 	return strconv.FormatInt(botUserID, 10) + ":" + secret
 }
 
-// ParseBotToken 拆解完整 bot token。格式非法时 ok=false（不区分具体原因，
-// 调用方统一回 ACCESS_TOKEN_INVALID，避免泄漏存在性）。
+// ParseBotToken parses the full bot token. ok=false on an illegal format (without distinguishing the cause;
+// the caller uniformly returns ACCESS_TOKEN_INVALID to avoid leaking existence).
 func ParseBotToken(token string) (botUserID int64, secret string, ok bool) {
 	idPart, secret, found := strings.Cut(token, ":")
 	if !found || idPart == "" || secret == "" {
@@ -391,8 +391,8 @@ func ParseBotToken(token string) (botUserID int64, secret string, ok bool) {
 	return id, secret, true
 }
 
-// ValidBotUsername 校验 bot username：5-32 位、字母开头、[A-Za-z0-9_]、
-// 以 bot 结尾（大小写不敏感）。BotFather 等种子账号不经此校验。
+// ValidBotUsername validates a bot username: 5-32 chars, starting with a letter, [A-Za-z0-9_],
+// ending in bot (case-insensitive). Seed accounts such as BotFather do not go through this validation.
 func ValidBotUsername(username string) bool {
 	if len(username) < 5 || len(username) > 32 {
 		return false

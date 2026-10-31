@@ -91,7 +91,7 @@ func (f *encryptedFixture) participantOtherCtx() context.Context {
 	return WithAuthKeyID(WithSessionID(WithUserID(f.ctx, f.participant.ID), encPartOtherSession), encPartOtherAuthKey)
 }
 
-// encChatPayload 从捕获的推送里取出 updateEncryption 载荷。
+// encChatPayload extracts the updateEncryption payload from a captured push.
 func encChatPayload(t *testing.T, rec phonePushRecord) tg.EncryptedChatClass {
 	t.Helper()
 	updates, ok := rec.msg.(*tg.Updates)
@@ -225,7 +225,7 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	ga := dhParam(0x55)
 	gb := dhParam(0x66)
 
-	// --- requestEncryption（发起方） ---
+	// --- requestEncryption (initiator) ---
 	res, err := f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
 		UserID:   &tg.InputUser{UserID: f.participant.ID, AccessHash: f.participant.AccessHash},
 		RandomID: 777,
@@ -241,7 +241,7 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	if waiting.ID != 777 {
 		t.Fatalf("waiting id = %d, want request random_id 777", waiting.ID)
 	}
-	// 推送给接受方的 encryptedChatRequested（携 g_a）。
+	// The encryptedChatRequested (carries g_a) pushed to the acceptor.
 	recs := f.sessions.records()
 	if len(recs) != 1 || recs[0].userID != f.participant.ID {
 		t.Fatalf("request push = %+v, want single push to participant %d", recs, f.participant.ID)
@@ -262,7 +262,7 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 		t.Fatal("chat not persisted")
 	}
 
-	// --- acceptEncryption（接受方） ---
+	// --- acceptEncryption (acceptor) ---
 	f.sessions.reset()
 	const fp = int64(0x0123456789abcdef)
 	accRes, err := f.router.onMessagesAcceptEncryption(f.participantCtx(), &tg.MessagesAcceptEncryptionRequest{
@@ -273,7 +273,7 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acceptEncryption: %v", err)
 	}
-	// 接受方同步响应：encryptedChat，GAOrB = g_a。
+	// Acceptor's synchronous response: encryptedChat, GAOrB = g_a.
 	partView, ok := accRes.(*tg.EncryptedChat)
 	if !ok {
 		t.Fatalf("accept response = %T, want *tg.EncryptedChat", accRes)
@@ -284,7 +284,7 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	if partView.KeyFingerprint != fp {
 		t.Fatalf("key fingerprint = %x, want %x", partView.KeyFingerprint, fp)
 	}
-	// 定向推送给发起设备 encryptedChat，并让 participant 其它设备收敛为 discarded。
+	// Target-push encryptedChat to the initiating device and converge the participant's other devices to discarded.
 	recs = f.sessions.records()
 	if len(recs) != 2 {
 		t.Fatalf("accept pushes = %+v, want admin accepted + participant loser discarded", recs)
@@ -318,7 +318,7 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 		t.Fatalf("loser payload = %+v, want history-deleting EncryptedChatDiscarded", encChatPayload(t, *loserRec))
 	}
 
-	// --- discardEncryption（发起方） ---
+	// --- discardEncryption (initiator) ---
 	f.sessions.reset()
 	okRes, err := f.router.onMessagesDiscardEncryption(f.adminCtx(), &tg.MessagesDiscardEncryptionRequest{
 		ChatID:        chat.ID,
@@ -337,15 +337,18 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	}
 }
 
-// TestDiscardSecretChatsForAuthKeyOnLogout 回归 P1：设备登出/授权撤销销毁其 perm auth_key 后，
-// 必须级联 discard 该设备绑定的活跃密聊并向对端推送 encryptedChatDiscarded。修复前 onAuthLogOut
-// 不处理密聊，对端继续往死 auth_key 投递成静默死链（消息 acked=f / qts 永久积压）。
+// TestDiscardSecretChatsForAuthKeyOnLogout regresses P1: after a device logout /
+// authorization revocation destroys its perm auth_key, it must cascade-discard the
+// active secret chats bound to that device and push encryptedChatDiscarded to the
+// peer. Before the fix, onAuthLogOut did not handle secret chats, and the peer kept
+// delivering to the dead auth_key, becoming a silent dead link (messages acked=f /
+// qts backlogging forever).
 func TestDiscardSecretChatsForAuthKeyOnLogout(t *testing.T) {
 	f := newEncryptedFixture(t)
 	ga := dhParam(0x55)
 	gb := dhParam(0x66)
 
-	// 建链到 normal：admin 发起 + participant 接受。
+	// Establish the link to normal: admin initiates + participant accepts.
 	res, err := f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
 		UserID:   &tg.InputUser{UserID: f.participant.ID, AccessHash: f.participant.AccessHash},
 		RandomID: 11,
@@ -367,16 +370,16 @@ func TestDiscardSecretChatsForAuthKeyOnLogout(t *testing.T) {
 		t.Fatalf("pre-logout state=%s, want normal", chat.State)
 	}
 
-	// 模拟 participant 设备登出：级联 discard 其 perm auth_key 绑定的密聊。
+	// Simulate the participant device logging out: cascade-discard the secret chats bound to its perm auth_key.
 	f.sessions.reset()
 	bobAuthKey := businessAuthKeyInt64(encPartAuthKey)
 	f.router.discardSecretChatsForAuthKey(f.ctx, bobAuthKey, f.participant.ID)
 
-	// [1] 密聊已迁移到 discarded（不再是 normal 死链）。
+	// [1] The secret chat has migrated to discarded (no longer a normal dead link).
 	if chat, _, _ := f.store.GetSecretChat(f.ctx, chatID); chat.State != domain.SecretChatStateDiscarded {
 		t.Fatalf("post-logout state=%s, want discarded", chat.State)
 	}
-	// [2] 对端 admin 收到单条 encryptedChatDiscarded 在线推送。
+	// [2] The peer admin receives a single online encryptedChatDiscarded push.
 	recs := f.sessions.records()
 	if len(recs) != 1 || recs[0].userID != f.admin.ID {
 		t.Fatalf("discard push = %+v, want single push to admin %d", recs, f.admin.ID)
@@ -384,12 +387,12 @@ func TestDiscardSecretChatsForAuthKeyOnLogout(t *testing.T) {
 	if _, ok := encChatPayload(t, recs[0]).(*tg.EncryptedChatDiscarded); !ok {
 		t.Fatalf("peer payload = %T, want EncryptedChatDiscarded", encChatPayload(t, recs[0]))
 	}
-	// [3] durable 离线补偿事件写给对端设备（getDifference 兜底）。
+	// [3] The durable offline compensation event is written for the peer device (getDifference fallback).
 	if events, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.admin.ID, businessAuthKeyInt64(encAdminAuthKey), 10); err != nil || len(events) == 0 {
 		t.Fatalf("durable discard event for admin = %d (err=%v), want >=1", len(events), err)
 	}
 
-	// [4] 幂等：再次对同 auth_key 登出不再 discard、不再推送（已是终态）。
+	// [4] Idempotent: logging out the same auth_key again discards and pushes nothing more (already terminal).
 	f.sessions.reset()
 	f.router.discardSecretChatsForAuthKey(f.ctx, bobAuthKey, f.participant.ID)
 	if recs := f.sessions.records(); len(recs) != 0 {
@@ -446,7 +449,7 @@ func TestRequestEncryptionRandomIDContractRPC(t *testing.T) {
 		assertPhoneRPCErr(t, err, "RANDOM_ID_DUPLICATE")
 	}
 
-	// 同一全局 chat_id 改变握手意图不能被幂等吞掉。
+	// Changing the handshake intent for the same global chat_id must not be silently swallowed by idempotency.
 	changed := &tg.MessagesRequestEncryptionRequest{
 		UserID:   &tg.InputUser{UserID: f.participant.ID, AccessHash: f.participant.AccessHash},
 		RandomID: -808,

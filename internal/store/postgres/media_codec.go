@@ -8,9 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 媒体相关 JSON 编解码：domain 值对象 ↔ JSONB 列。domain.* 带 json tag，可直接 marshal。
+// Media-related JSON encoding/decoding: domain value objects ↔ JSONB columns. domain.* carries json tags and can be marshaled directly.
 
-// jsonArrayOrEmpty 把切片序列化为 JSONB；nil 序列化为 "[]"（列为 NOT NULL DEFAULT '[]'）。
+// jsonArrayOrEmpty serializes a slice to JSONB; nil serializes to "[]" (the column is NOT NULL DEFAULT '[]').
 func jsonArrayOrEmpty(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -22,7 +22,7 @@ func jsonArrayOrEmpty(v any) ([]byte, error) {
 	return b, nil
 }
 
-// encodeMessageMedia 把消息媒体快照序列化为 JSONB；无媒体序列化为 "{}"。
+// encodeMessageMedia serializes a message media snapshot to JSONB; no media serializes to "{}".
 func encodeMessageMedia(m *domain.MessageMedia) ([]byte, error) {
 	if m.IsZero() {
 		return []byte("{}"), nil
@@ -30,7 +30,7 @@ func encodeMessageMedia(m *domain.MessageMedia) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// decodeMessageMedia 把消息行的 media JSONB 文本还原为 *MessageMedia；空载荷返回 nil。
+// decodeMessageMedia restores the media JSONB text of a message row to *MessageMedia; an empty payload returns nil.
 func decodeMessageMedia(s string) (*domain.MessageMedia, error) {
 	if s == "" || s == "{}" || s == "null" {
 		return nil, nil
@@ -45,8 +45,8 @@ func decodeMessageMedia(s string) (*domain.MessageMedia, error) {
 	return &m, nil
 }
 
-// encodeReplyMarkup 把 reply/inline keyboard 快照序列化为 JSONB；空 markup 序列化为 "{}"。
-// callback data 是 []byte，json.Marshal 自动 base64（保证经 JSONB 字节级 round-trip）。
+// encodeReplyMarkup serializes a reply/inline keyboard snapshot to JSONB; an empty markup serializes to "{}".
+// callback data is []byte and json.Marshal base64-encodes it automatically (guaranteeing a byte-level round-trip through JSONB).
 func encodeReplyMarkup(m *domain.MessageReplyMarkup) ([]byte, error) {
 	if err := domain.ValidateReplyMarkup(m); err != nil {
 		return nil, fmt.Errorf("encode reply markup: %w", err)
@@ -57,8 +57,8 @@ func encodeReplyMarkup(m *domain.MessageReplyMarkup) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// decodeReplyMarkup 把消息行的 reply_markup JSONB 文本还原为 *MessageReplyMarkup；
-// 空载荷返回 nil。
+// decodeReplyMarkup restores the reply_markup JSONB text of a message row to
+// *MessageReplyMarkup; an empty payload returns nil.
 func decodeReplyMarkup(s string) (*domain.MessageReplyMarkup, error) {
 	if s == "" || s == "{}" || s == "null" {
 		return nil, nil
@@ -76,8 +76,8 @@ func decodeReplyMarkup(s string) (*domain.MessageReplyMarkup, error) {
 	return &m, nil
 }
 
-// encodeRichMessage 把富文本消息快照序列化为 JSONB；空载荷序列化为 "{}"。
-// Blocks 是 []byte（不透明 TL），json.Marshal 自动 base64，保证 JSONB 字节级 round-trip。
+// encodeRichMessage serializes a rich text message snapshot to JSONB; an empty payload serializes to "{}".
+// Blocks is []byte (opaque TL) and json.Marshal base64-encodes it automatically, guaranteeing a byte-level round-trip through JSONB.
 func encodeRichMessage(m *domain.MessageRichMessage) ([]byte, error) {
 	if m.IsZero() {
 		return []byte("{}"), nil
@@ -85,8 +85,8 @@ func encodeRichMessage(m *domain.MessageRichMessage) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// decodeRichMessage 把消息行的 rich_message JSONB 文本还原为 *MessageRichMessage；
-// 空载荷返回 nil。
+// decodeRichMessage restores the rich_message JSONB text of a message row to
+// *MessageRichMessage; an empty payload returns nil.
 func decodeRichMessage(s string) (*domain.MessageRichMessage, error) {
 	if s == "" || s == "{}" || s == "null" {
 		return nil, nil

@@ -51,8 +51,10 @@ func tgChannelHistoryMessages(viewerUserID int64, list domain.ChannelHistory) tg
 		item.SetShort(true)
 		topics = append(topics, item)
 	}
-	// viewer 自己发过言时会出现在 history.Users 里；必须经 viewer 分支打 self 标志，
-	// 否则 DrKLO putUsers 会用 self=false 覆盖账号缓存，Saved Messages 退化为普通自聊。
+	// The viewer appears in history.Users when they have posted; it must go through
+	// the viewer branch to get the self flag, otherwise DrKLO putUsers would overwrite
+	// the account cache with self=false and degrade Saved Messages into an ordinary
+	// self-chat.
 	users := tgUsersForViewer(viewerUserID, list.Users)
 	chats := tgChannelChatsWithPrimarySelf(viewerUserID, list.Channel, list.Channels, list.Self)
 	if list.Channel.ID != 0 {
@@ -94,9 +96,12 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		from = &tg.PeerUser{UserID: m.SenderUserID}
 	}
 	if m.Action != nil && m.Action.Type == domain.ChannelActionCreate {
-		// messageActionChannelCreate 是频道级「创建」事件,不带发送者(对齐官方)。否则在 monoforum
-		// 管理视图里,这条 from=管理员 的创建消息会被客户端按发送者归成一个虚假的「管理员」子会话,
-		// 点开 monoforum 就进了那个人的个人资料而非私信管理视图。out 仍保留(管理员触发,= viewer)。
+		// messageActionChannelCreate is the channel-level "create" event and carries no
+		// sender (matching official). Otherwise, in the monoforum admin view, this
+		// creation message with from=admin would be grouped by the client into a fake
+		// "admin" sub-session by sender, and opening the monoforum would land in that
+		// person's profile instead of the direct-messages admin view. out is still kept
+		// (triggered by the admin, = viewer).
 		from = nil
 	}
 	if m.Action != nil {
@@ -139,7 +144,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		Entities:    tgMessageEntities(m.Entities),
 	}
 	if m.SavedPeer.ID != 0 {
-		// 频道私信(monoforum):saved_peer_id 让客户端把消息归入对应订阅者子会话。
+		// Channel direct messages (monoforum): saved_peer_id lets the client file the message under the corresponding subscriber sub-session.
 		msg.SetSavedPeerID(tgPeer(m.SavedPeer))
 	}
 	if suggested, ok := tgSuggestedPost(m.SuggestedPost); ok {
@@ -159,8 +164,9 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	if m.PaidMessageStars > 0 {
 		msg.SetPaidMessageStars(m.PaidMessageStars)
 	}
-	// Layer 231 事实核查标签随消息下发；need_check 置位时只带 hash，
-	// 客户端滚动到该消息时用 messages.getFactCheck 懒加载结论文本。
+	// The Layer 231 fact-check label is sent with the message; when need_check is set
+	// it carries only the hash, and the client lazily loads the conclusion text via
+	// messages.getFactCheck when scrolling to the message.
 	if factCheck := tgFactCheck(m.FactCheck); factCheck != nil {
 		msg.SetFactcheck(*factCheck)
 	}
@@ -210,7 +216,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		msg.SetFromBoostsApplied(m.FromBoostsApplied)
 	}
 	if m.Post {
-		// 官方频道 post 自带 views 计数器（初始 1）；signatures 开启时附作者签名。
+		// An official channel post carries a views counter (initial 1); when signatures are enabled, the author signature is attached.
 		views := m.ViewsCount
 		if views < 1 {
 			views = 1
@@ -284,7 +290,7 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			List: tgTodoItems(action.TodoItems),
 		}
 	case domain.ChannelActionGroupCall:
-		// started（无 duration）与 ended（带 duration）共用 messageActionGroupCall。
+		// started (no duration) and ended (with duration) share messageActionGroupCall.
 		out := &tg.MessageActionGroupCall{
 			Call: &tg.InputGroupCall{ID: action.CallID, AccessHash: action.CallAccessHash},
 		}
@@ -420,9 +426,10 @@ func tgChannelChat(viewerUserID int64, ch domain.Channel, self *domain.ChannelMe
 	return tgChannel(viewerUserID, ch, self)
 }
 
-// tgChannelChatMin 是消息类 update/伴随 chats 的 min channel 形态：
-// 客户端对 min 对象不应用 admin/banned rights 与 left/creator，避免不带
-// 接收者 member 投影的推送把本地权限状态清掉。
+// tgChannelChatMin is the min channel shape for message-class update/accompanying
+// chats: the client does not apply admin/banned rights or left/creator to a min
+// object, avoiding a push with no recipient member projection wiping local
+// permission state.
 func tgChannelChatMin(viewerUserID int64, ch domain.Channel) tg.ChatClass {
 	if ch.Deleted {
 		return tgChannelForbidden(ch)
@@ -433,8 +440,9 @@ func tgChannelChatMin(viewerUserID int64, ch domain.Channel) tg.ChatClass {
 	return out
 }
 
-// tgChannelChatForView 把按 viewer 投影后的 ChannelView 转成查询响应 chat：
-// 被踢/被禁止查看的 viewer 收到 channelForbidden，借此感知自己已离开会话。
+// tgChannelChatForView converts a viewer-projected ChannelView into a query response
+// chat: a kicked/view-banned viewer receives channelForbidden, learning they have
+// left the conversation.
 func tgChannelChatForView(viewerUserID int64, view domain.ChannelView) tg.ChatClass {
 	if view.Forbidden {
 		return tgChannelForbidden(view.Channel)
@@ -476,8 +484,10 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	out.SetJoinToSend(ch.JoinToSend)
 	out.SetJoinRequest(ch.JoinRequest)
 	out.SetAutotranslation(ch.Autotranslation)
-	// broadcast_messages_allowed 只属于广播母频道。monoforum 内部用同名字段镜像 DM 启用状态(见下),
-	// 但它是 megagroup,绝不能把该 flag 投影出去(官方 monoforum 对象也不带它)。
+	// broadcast_messages_allowed belongs only to the parent broadcast channel. A
+	// monoforum mirrors the DM enabled state internally via a same-named field (see
+	// below), but it is a megagroup, so that flag must never be projected (the
+	// official monoforum object does not carry it either).
 	if ch.Broadcast {
 		out.SetBroadcastMessagesAllowed(ch.BroadcastMessagesAllowed)
 	}
@@ -490,11 +500,15 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	if ch.Monoforum {
 		out.SetMonoforum(true)
 	}
-	// linked_monoforum_id 仅在 DM 启用时下发(母频道与 monoforum 都用 BroadcastMessagesAllowed 表示
-	// DM 启用状态,monoforum 由 SetPaidMessagesPrice 镜像母频道)。关闭 Direct Messages 时**双方都**隐藏
-	// 该 id:母频道隐藏触发 monoforum 的 MonoforumDisabled;monoforum 也必须隐藏,否则打开 monoforum
-	// 重新拉取时 mono 仍带 link → setMonoforumLink(parent) 会把 MonoforumDisabled 清掉、停用页脚消失。
-	// 内部关联行仍保留以便重新开启复用。
+	// linked_monoforum_id is sent only when DM is enabled (both the parent channel and
+	// the monoforum represent DM-enabled state via BroadcastMessagesAllowed, and the
+	// monoforum mirrors the parent channel via SetPaidMessagesPrice). When Direct
+	// Messages is disabled, **both sides** hide the id: hiding it on the parent
+	// triggers the monoforum's MonoforumDisabled; the monoforum must hide it too,
+	// otherwise opening the monoforum re-fetches the mono still carrying the link →
+	// setMonoforumLink(parent) clears MonoforumDisabled and the disabled footer
+	// disappears. The internal association row is still kept so it can be reused when
+	// re-enabled.
 	if ch.LinkedMonoforumID != 0 && ch.BroadcastMessagesAllowed {
 		out.SetLinkedMonoforumID(ch.LinkedMonoforumID)
 	}
@@ -520,17 +534,22 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 		out.SetParticipantsCount(ch.ParticipantsCount)
 	}
 	out.SetDefaultBannedRights(tgDefaultChatBannedRights(ch.DefaultBannedRights))
-	// 群通话 banner 数据源：call_active/call_not_empty flag（Android 对 flag 依赖
-	// 更重，call_not_empty 翻转时还会经 pushChannelStateToMembers 补推）。
+	// Group call banner data source: the call_active/call_not_empty flags (Android
+	// depends more heavily on the flags, and when call_not_empty flips it also
+	// re-pushes via pushChannelStateToMembers).
 	out.CallActive = ch.ActiveCallID != 0
 	out.CallNotEmpty = ch.ActiveCallNotEmpty
 	if ch.Monoforum {
-		// Monoforum(频道私信容器)绝不能在自身对象上带 Creator/admin_rights。TDesktop 的
-		// NeedAboutGroup 对 megagroup 看 amCreator() 决定是否画 "You created a group" 群聊空状态,
-		// 且订阅数/Leave/Channel 等 chrome 也 key off amCreator/asMegagroup —— 一旦 mono 自身
-		// Creator=true 就会被渲染成普通群。Direct-Messages 容器身份(本地 MonoforumAdmin 标志)由
-		// 客户端从母频道 canAccessMonoforum(amCreator 或 manage_direct_messages)派生,与 mono 自身
-		// 的 Creator/admin 无关。服务端的私信发送鉴权走母频道 membership,不依赖此 flag。
+		// A Monoforum (channel direct-messages container) must never carry
+		// Creator/admin_rights on its own object. TDesktop's NeedAboutGroup checks
+		// amCreator() for a megagroup to decide whether to paint the "You created a
+		// group" group empty state, and subscriber-count/Leave/Channel chrome also keys
+		// off amCreator/asMegagroup -- once the mono itself has Creator=true it would be
+		// rendered as a normal group. The Direct-Messages container identity (the local
+		// MonoforumAdmin flag) is derived client-side from the parent channel's
+		// canAccessMonoforum (amCreator or manage_direct_messages), independent of the
+		// mono's own Creator/admin. Server-side DM send authorization goes through the
+		// parent channel membership and does not depend on this flag.
 		out.Creator = false
 	} else if self != nil {
 		if self.Status == domain.ChannelMemberLeft || self.Guest {
@@ -559,9 +578,11 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		about = domain.ModerationProfileWarning(ch.Scam, ch.Fake, about)
 	}
 	full := &tg.ChannelFull{
-		// 广播频道的订阅者列表仅管理员可见（官方语义）：非管理员订阅者拿到
-		// can_view_participants=false，Profile 的 Subscribers/Administrators/Channel Settings
-		// 三行随之隐藏。megagroup 成员可见（隐藏成员时仅管理员）。
+		// A broadcast channel's subscriber list is visible only to admins (official
+		// semantics): a non-admin subscriber gets can_view_participants=false, and the
+		// Profile rows Subscribers/Administrators/Channel Settings are hidden
+		// accordingly. Visible to megagroup members (only admins when members are
+		// hidden).
 		CanViewParticipants: channelMemberIsAdmin(view.Self) || !ch.MembersListAdminOnly(),
 		CanSetUsername:      view.Self.Role == domain.ChannelRoleCreator,
 		CanDeleteChannel:    view.Self.Role == domain.ChannelRoleCreator,
@@ -590,11 +611,11 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		full.SetParticipantsCount(ch.ParticipantsCount)
 	}
 	if ch.ActiveCallID != 0 {
-		// 入会面板/banner 点击的入口：客户端拿它调 phone.getGroupCall。
+		// The entry point for the join panel/banner click: the client uses it to call phone.getGroupCall.
 		full.SetCall(&tg.InputGroupCall{ID: ch.ActiveCallID, AccessHash: ch.ActiveCallAccessHash})
 	}
 	if view.Self.AvailableMinID > 0 {
-		// 客户端用它裁剪本地缓存的入群前/已清空历史（clearUpTill）。
+		// The client uses it to trim locally cached pre-join/cleared history (clearUpTill).
 		full.SetAvailableMinID(view.Self.AvailableMinID)
 	}
 	if view.ExportedInvite != nil && !view.ExportedInvite.Revoked {
@@ -641,8 +662,10 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 	if view.Dialog.ViewForumAsMessages {
 		full.SetViewForumAsMessages(true)
 	}
-	// linked_chat_id 只在讨论频道真实可用(存在、未删除、为 megagroup)时下发。悬空 id 会让
-	// 客户端渲染"讨论"入口,点进去却是一个空频道;校验结果由 store 在 ChannelView 上给出。
+	// linked_chat_id is sent only when the discussion channel is actually usable
+	// (exists, not deleted, is a megagroup). A dangling id would make the client
+	// render a "Discussion" entry that opens an empty channel; the validation result
+	// is given by the store on ChannelView.
 	if ch.LinkedChatID != 0 && view.LinkedChatUsable {
 		full.SetLinkedChatID(ch.LinkedChatID)
 	}
@@ -926,8 +949,9 @@ func tgChatAdminRights(rights domain.ChannelAdminRights) tg.ChatAdminRights {
 		ManageRanks:           rights.ManageRanks,
 		ManageLinkedPeers:     rights.ManageLinkedPeers,
 		ManageWelcomeMessages: rights.ManageWelcomeMessages,
-		// manage_direct_messages(flags.17):客户端据此在母频道上判定 canAccessMonoforum,
-		// 从而为关联 monoforum 派生 MonoforumAdmin(Direct-Messages 容器渲染所需)。
+		// manage_direct_messages(flags.17): the client uses this on the parent channel
+		// to decide canAccessMonoforum, thereby deriving MonoforumAdmin for the linked
+		// monoforum (needed for Direct-Messages container rendering).
 		ManageDirectMessages: rights.ManageDirectMessages,
 	}
 }

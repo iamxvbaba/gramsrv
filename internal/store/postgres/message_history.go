@@ -105,11 +105,13 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 		savedPeerID = filter.SavedPeer.ID
 	}
 	savedReactionKeys := postgresSavedReactionKeys(filter.SavedReactions)
-	// add_offset>=0 是 backward 热路径(初始加载/上滑翻页,占 getHistory 绝大多数)。
-	// 走扁平静态查询 ListMessagesBackward:规划仅单 index scan + 2 LEFT JOIN,避免
-	// ListMessagesByUser 大 CTE 把 4 个分支全树规划(6.7ms→~1ms)。与 CTE
-	// 的 backward 分支逐位等价。around/forward(add_offset<0,锚点跳转,较罕见)仍走
-	// CTE。total 始终由 CountMessagesByUser 独立提供，不依附消息行（空页仍有总数）。
+	// add_offset>=0 is the backward hot path (initial load / upward scroll paging, the vast
+	// majority of getHistory). It uses the flat static query ListMessagesBackward: the plan is only
+	// a single index scan + 2 LEFT JOINs, avoiding the big ListMessagesByUser CTE planning all four
+	// branches over the whole tree (6.7ms→~1ms). It is bit-for-bit equivalent to the CTE's backward
+	// branch. around/forward (add_offset<0, anchor jump, rarer) still use the CTE. total is always
+	// provided independently by CountMessagesByUser and does not depend on message rows (an empty
+	// page still has a total).
 	var rows []sqlcgen.ListMessagesByUserRow
 	if addOffset >= 0 {
 		bw, err := s.q.ListMessagesBackward(ctx, sqlcgen.ListMessagesBackwardParams{
@@ -328,7 +330,7 @@ func (s *MessageStore) readHistoryOnce(ctx context.Context, req domain.ReadHisto
 		_ = tx.Rollback(ctx)
 	}()
 
-	// advisory lock 串行化与会话对端的并发写（peer 即私聊另一方 / 回执 sender），须在行锁前获取。
+	// The advisory lock serializes concurrent writes with the conversation peer (peer being the other side of the private chat / the receipt sender) and must be acquired before row locks.
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID, req.Peer.ID); err != nil {
 		return res, fmt.Errorf("lock read history users: %w", err)
 	}
@@ -523,7 +525,7 @@ func (s *MessageStore) DeleteHistory(ctx context.Context, req domain.DeleteHisto
 		_ = tx.Rollback(ctx)
 	}()
 
-	// advisory lock 串行化与会话对端的并发写，须在行锁前获取，消除 AB-BA 死锁。
+	// The advisory lock serializes concurrent writes with the conversation peer and must be acquired before row locks, eliminating the AB-BA deadlock.
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID, req.Peer.ID); err != nil {
 		return res, fmt.Errorf("lock delete history users: %w", err)
 	}
@@ -532,9 +534,9 @@ func (s *MessageStore) DeleteHistory(ctx context.Context, req domain.DeleteHisto
 	minDate := pgInt32NonNegative(req.MinDate)
 	maxDate := pgInt32NonNegative(req.MaxDate)
 	var anchors map[int64]historyClearAnchor
-	// TDesktop 的完整 Clear history 形态固定为 just_clear + max_id=0 且
-	// 不带日期范围；按日期删除只销毁选中区间，不在本地生成 history-clear
-	// 服务消息。只有完整清空才跨批保留 top 锚点。
+	// TDesktop's full Clear history form is fixed as just_clear + max_id=0 with no date range;
+	// a deletion by date only destroys the selected interval and does not generate a history-clear
+	// service message locally. Only a full clear keeps the top anchor across batches.
 	fullJustClear := req.JustClear && req.MaxID <= 0 && req.MinDate <= 0 && req.MaxDate <= 0
 	if fullJustClear {
 		anchors = make(map[int64]historyClearAnchor, 2)
@@ -571,9 +573,9 @@ func (s *MessageStore) DeleteHistory(ctx context.Context, req domain.DeleteHisto
 	}
 	deleted := deletedRowsFromPeerBatchRows(rows)
 	if req.Revoke {
-		// max_id>0 是 owner-local box 边界，只能通过逻辑 private-message
-		// 映射删除对端副本。max_id=0 则双方按同一日期范围各扫一批，避免
-		// linked delete 与双方保留锚点互相删除。
+		// max_id>0 is the owner-local box boundary, so the peer copies can only be deleted through
+		// the logical private-message mapping. With max_id=0 both sides each scan a batch over the
+		// same date range, avoiding linked delete and the two sides' kept anchors deleting each other.
 		if req.MaxID > 0 && len(deleted) > 0 {
 			peerRows, err := qtx.DeleteMessageBoxesByPrivateMessages(ctx, privateMessageDeleteParams(deleted))
 			if err != nil {
@@ -581,11 +583,13 @@ func (s *MessageStore) DeleteHistory(ctx context.Context, req domain.DeleteHisto
 			}
 			deleted = append(deleted, deletedRowsFromPrivateRows(peerRows)...)
 		}
-		// 反查只覆盖"本批从我方实删的行"：我方此前已单向删除/清空过的
-		// 消息不在本批，对端会永久残留。全量清史（max_id 不限）与按日期
-		// 清史的 revoke 直接对对端 box 再扫一批；date 是共享属性、对端
-		// 适用同一区间，box_id 上限则是 owner 私有序无法映射，部分
-		// max_id 清史保持反查模型（官方 UI 无此入口）。
+		// The reverse lookup covers only "the rows actually deleted on our side in this batch":
+		// messages we had already one-sidedly deleted/cleared earlier are not in this batch, and
+		// the peer's copies would remain forever. For a full history clear (max_id unbounded) and a
+		// date-range clear, revoke directly scans another batch on the peer's box; date is a shared
+		// attribute, so the same range applies to the peer, whereas the box_id upper bound is the
+		// owner's private ordering and cannot be mapped, so a partial max_id clear keeps the
+		// reverse-lookup model (the official UI has no such entry point).
 		if req.MaxID <= 0 && req.Peer.ID != req.OwnerUserID {
 			peerKeepBoxID := int32(0)
 			if anchor, ok := anchors[req.Peer.ID]; ok {
@@ -1027,9 +1031,10 @@ func eventFromMessage(msg domain.Message) domain.UpdateEvent {
 	}
 }
 
-// backwardRowToByUserRow 把 ListMessagesBackward(扁平 backward 热路径)的行适配为
-// ListMessagesByUserRow,从而复用 ListByUser 既有的解码/用户收集下游逻辑。两者列与
-// base 完全一致；总数由调用方在 NeedTotalCount 时独立查询。
+// backwardRowToByUserRow adapts a ListMessagesBackward row (the flat backward hot path) into a
+// ListMessagesByUserRow, thereby reusing ListByUser's existing decode/user-collection downstream
+// logic. The two have identical columns and base; the total is queried independently by the caller
+// when NeedTotalCount.
 func backwardRowToByUserRow(r sqlcgen.ListMessagesBackwardRow) sqlcgen.ListMessagesByUserRow {
 	return sqlcgen.ListMessagesByUserRow{
 		BoxID:                         r.BoxID,

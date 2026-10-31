@@ -7,9 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessageStoreSavedDialogsLifecycle 覆盖收藏夹分会话 PG 主链路：
-// 直发/转发的 saved_peer 写入、fwd saved_from 持久化（重读非内存 echo）、
-// 聚合分页、置顶、按子会话历史过滤与删除（含置顶清理）。
+// TestMessageStoreSavedDialogsLifecycle covers the saved-messages sub-dialog PG main flow:
+// saved_peer writes for direct/forwarded messages, fwd saved_from persistence (reread, not an in-memory echo),
+// aggregate pagination, pinning, and per-sub-dialog history filtering and deletion (including pin cleanup).
 func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -33,7 +33,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 	selfPeer := domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}
 	bobPeer := domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID}
 
-	// 直发笔记 → saved_peer = self。
+	// Direct note -> saved_peer = self.
 	note, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:    alice.ID,
 		RecipientUserID: alice.ID,
@@ -45,7 +45,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 		t.Fatalf("send note: %v", err)
 	}
 
-	// bob 私聊来信 → alice 转发进收藏夹 → saved_peer = bob 且 fwd saved_from 持久化。
+	// A private message from bob -> alice forwards it into Saved Messages -> saved_peer = bob and fwd saved_from persisted.
 	if _, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:    bob.ID,
 		RecipientUserID: alice.ID,
@@ -74,7 +74,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 	}
 	fwdID := fwdRes.SenderMessages[0].ID
 
-	// 重读 self-chat（非发送 echo）验证持久化：saved_peer 与 fwd saved_from 都在。
+	// Reread the self-chat (not the send echo) to verify persistence: both saved_peer and fwd saved_from are present.
 	selfHistory, err := messages.ListByUser(ctx, alice.ID, domain.MessageFilter{
 		HasPeer: true, Peer: selfPeer, Limit: 10,
 	})
@@ -99,7 +99,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 		}
 	}
 
-	// 聚合：转发更晚在前；分页 limit=1 → slice，offset 翻页到尾页。
+	// Aggregation: the later forward comes first; pagination with limit=1 -> a slice, offset pages through to the last page.
 	list, err := messages.ListSavedDialogs(ctx, alice.ID, domain.SavedDialogsFilter{Limit: 20})
 	if err != nil {
 		t.Fatalf("list saved dialogs: %v", err)
@@ -118,7 +118,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 		t.Fatalf("tail page = %+v err %v, want full self", tail, err)
 	}
 
-	// 置顶：self 置顶后首页在前、exclude 口径、ByPeers/pinned 一致。
+	// Pinning: after pinning self it comes first on the first page; exclude semantics and ByPeers/pinned stay consistent.
 	changed, err := messages.ToggleSavedDialogPin(ctx, alice.ID, selfPeer, true)
 	if err != nil || !changed {
 		t.Fatalf("pin self = %v err %v", changed, err)
@@ -143,7 +143,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 		t.Fatalf("by peers = %+v err %v, want bob only", byPeers.Dialogs, err)
 	}
 
-	// reorder：bob 也置顶后强排为 bob→self。
+	// reorder: after pinning bob too, force-order to bob -> self.
 	if _, err := messages.ToggleSavedDialogPin(ctx, alice.ID, bobPeer, true); err != nil {
 		t.Fatalf("pin bob: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 		t.Fatalf("after reorder = %+v err %v, want bob then self", pinned.Dialogs, err)
 	}
 
-	// 子会话历史过滤。
+	// Sub-dialog history filtering.
 	bobHistory, err := messages.ListByUser(ctx, alice.ID, domain.MessageFilter{
 		HasPeer: true, Peer: selfPeer, SavedPeer: bobPeer, Limit: 10, NeedTotalCount: true,
 	})
@@ -163,7 +163,7 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 		t.Fatalf("bob sublist history = %+v count %d err %v", bobHistory.Messages, bobHistory.Count, err)
 	}
 
-	// 删除 bob 子会话：消息消失、置顶清理、带 pts 的 delete 事件。
+	// Delete the bob sub-dialog: the messages disappear, the pin is cleared, and a pts-carrying delete event is emitted.
 	delRes, err := messages.DeleteSavedHistory(ctx, domain.DeleteSavedHistoryRequest{
 		OwnerUserID: alice.ID,
 		SavedPeer:   bobPeer,
@@ -185,10 +185,10 @@ func TestMessageStoreSavedDialogsLifecycle(t *testing.T) {
 	}
 }
 
-// TestSavedDialogsBackfillRule 验证 0087 回填 CASE 规则与 TDLib 语义对齐：
-// fwd 作者可见或无 fwd → self；仅 from_name → hidden author 2666000。
-// migration 已在建库时应用，这里手工插入老格式行（saved_peer_type=”）后
-// 重放回填语句验证规则本身。
+// TestSavedDialogsBackfillRule verifies the 0087 backfill CASE rule aligns with TDLib semantics:
+// fwd author visible or no fwd -> self; from_name only -> hidden author 2666000.
+// The migration is already applied at database creation, so legacy-format rows (saved_peer_type=”) are
+// inserted by hand here and the backfill statement is replayed to verify the rule itself.
 func TestSavedDialogsBackfillRule(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -231,9 +231,9 @@ INSERT INTO message_boxes (
 			t.Fatalf("insert legacy row %d: %v", boxID, err)
 		}
 	}
-	insert(1, 0, "", 0)                // 直发笔记 → self
-	insert(2, 4242, "", 1700000500)    // fwd 作者可见、saved_from 丢失 → self
-	insert(3, 0, "Hidden", 1700000501) // 仅 from_name → 2666000
+	insert(1, 0, "", 0)                // direct note -> self
+	insert(2, 4242, "", 1700000500)    // fwd author visible, saved_from lost -> self
+	insert(3, 0, "Hidden", 1700000501) // from_name only -> 2666000
 
 	if _, err := pool.Exec(ctx, `
 UPDATE message_boxes

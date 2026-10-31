@@ -12,15 +12,15 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// SecretChatStore 是 store.SecretChatStore 的 PostgreSQL 实现。
-// 盲中继：g_a/g_b/key_fingerprint 原样 BYTEA/BIGINT 存储；握手态迁移用条件
-// UPDATE 做原子 CAS（accept 绑定接受设备、discard 幂等）。行为契约与 memory
-// 实现由 storetest 钉死。
+// SecretChatStore is the PostgreSQL implementation of store.SecretChatStore.
+// Blind relay: g_a/g_b/key_fingerprint are stored verbatim as BYTEA/BIGINT; handshake state
+// transitions use a conditional UPDATE as an atomic CAS (accept binds the accepting device,
+// discard is idempotent). The behavior contract with the memory implementation is pinned by storetest.
 type SecretChatStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewSecretChatStore 基于 pgx 连接池创建 SecretChatStore。
+// NewSecretChatStore creates a SecretChatStore on top of a pgx pool.
 func NewSecretChatStore(db sqlcgen.DBTX) *SecretChatStore {
 	return &SecretChatStore{db: db}
 }
@@ -82,7 +82,7 @@ func (s *SecretChatStore) GetSecretChat(ctx context.Context, chatID int) (domain
 }
 
 func (s *SecretChatStore) AcceptSecretChat(ctx context.Context, chatID int, participantAuthKeyID int64, gb []byte, keyFingerprint int64) (domain.SecretChat, error) {
-	// 原子 CAS：仅 requested 且未绑定接受设备时迁移到 normal。
+	// Atomic CAS: transition to normal only when requested and no accepting device is bound.
 	chat, err := scanSecretChat(s.db.QueryRow(ctx, `
 UPDATE secret_chats
 SET state = 'normal', participant_auth_key_id = $2, g_b = $3, key_fingerprint = $4
@@ -94,7 +94,7 @@ RETURNING `+secretChatColumns, chatID, participantAuthKeyID, nullableBytes(gb), 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.SecretChat{}, fmt.Errorf("accept secret chat: %w", err)
 	}
-	// CAS 落空：按当前态决定错误码。
+	// CAS missed: decide the error code from the current state.
 	current, ok, gerr := s.GetSecretChat(ctx, chatID)
 	if gerr != nil {
 		return domain.SecretChat{}, gerr
@@ -122,7 +122,7 @@ RETURNING `+secretChatColumns, chatID, historyDeleted))
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.SecretChat{}, false, fmt.Errorf("discard secret chat: %w", err)
 	}
-	// 未更新：要么已是终态（幂等成功），要么不存在。
+	// Not updated: either already in a terminal state (idempotent success) or non-existent.
 	current, ok, gerr := s.GetSecretChat(ctx, chatID)
 	if gerr != nil {
 		return domain.SecretChat{}, false, gerr

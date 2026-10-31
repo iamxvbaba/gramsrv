@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelMultiPin 验证超级群多置顶模型：多条共存、filterPinned 搜索、
-// 上限、unpinAll 批量清除、删除被置顶消息后的缓存重算。
+// TestChannelMultiPin verifies the supergroup multi-pin model: multiple coexist, filterPinned search,
+// the cap, unpinAll bulk clearing, and cache recomputation after deleting a pinned message.
 func TestChannelMultiPin(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -68,7 +68,7 @@ func TestChannelMultiPin(t *testing.T) {
 		})
 	}
 
-	// 多条共存：pin 前三条，互不替代。
+	// Multiple coexist: pin the first three, replacing none.
 	for _, id := range ids[:3] {
 		res, err := pin(id, true)
 		if err != nil {
@@ -99,7 +99,7 @@ func TestChannelMultiPin(t *testing.T) {
 			t.Fatalf("filterPinned message %d lacks pinned flag", msg.ID)
 		}
 	}
-	// 普通历史热路径保留 bounded has-more hint，不为每页额外 COUNT。
+	// The ordinary history hot path keeps a bounded has-more hint and does not run an extra COUNT per page.
 	hint, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{
 		ChannelID: channelID, PinnedOnly: true, Limit: 1,
 	})
@@ -109,7 +109,7 @@ func TestChannelMultiPin(t *testing.T) {
 	if len(hint.Messages) != 1 || hint.Count != 2 {
 		t.Fatalf("filterPinned hint messages/count = %d/%d, want 1/2", len(hint.Messages), hint.Count)
 	}
-	// messages.search 首屏显式请求精确总数；页大小不能污染 Count。
+	// The messages.search first screen explicitly requests the exact total; the page size must not pollute Count.
 	exact, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{
 		ChannelID: channelID, PinnedOnly: true, Limit: 1, NeedTotalCount: true,
 	})
@@ -119,7 +119,7 @@ func TestChannelMultiPin(t *testing.T) {
 	if len(exact.Messages) != 1 || exact.Count != 3 {
 		t.Fatalf("filterPinned exact messages/count = %d/%d, want 1/3", len(exact.Messages), exact.Count)
 	}
-	// messages.getSearchCounters/limit=0 只计数，不加载消息及 reply/reaction companion。
+	// messages.getSearchCounters/limit=0 only counts and does not load messages or the reply/reaction companion.
 	countOnly, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{
 		ChannelID: channelID, PinnedOnly: true, NeedTotalCount: true, CountOnly: true,
 	})
@@ -129,7 +129,7 @@ func TestChannelMultiPin(t *testing.T) {
 	if len(countOnly.Messages) != 0 || countOnly.Count != 3 {
 		t.Fatalf("filterPinned count-only messages/count = %d/%d, want 0/3", len(countOnly.Messages), countOnly.Count)
 	}
-	// 精确计数只扫描该频道的 pinned 部分索引，不能退化为全频道消息扫描。
+	// The exact count scans only that channel's pinned partial index and must not degrade into a full channel message scan.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin pinned count explain: %v", err)
@@ -163,7 +163,7 @@ WHERE channel_id = $1 AND NOT deleted AND pinned`, channelID)
 	if !strings.Contains(plan.String(), "channel_messages_live_pinned_idx") {
 		t.Fatalf("pinned count plan misses partial index:\n%s", plan.String())
 	}
-	// 普通历史页的消息行直接携带 pinned 标志（多置顶都标，不只最新）。
+	// The message rows of an ordinary history page carry the pinned flag directly (all multi-pins are flagged, not just the latest).
 	page, err := channels.ListChannelHistory(ctx, member.ID, domain.ChannelHistoryFilter{ChannelID: channelID, Limit: 50})
 	if err != nil {
 		t.Fatalf("list history: %v", err)
@@ -178,7 +178,7 @@ WHERE channel_id = $1 AND NOT deleted AND pinned`, channelID)
 		t.Fatalf("history pinned flags = %d, want 3", flagged)
 	}
 
-	// unpin 最新一条：其它置顶保留，缓存回落到次新。
+	// Unpin the latest: other pins are kept and the cache falls back to the next newest.
 	if _, err := pin(ids[2], false); err != nil {
 		t.Fatalf("unpin latest: %v", err)
 	}
@@ -190,7 +190,7 @@ WHERE channel_id = $1 AND NOT deleted AND pinned`, channelID)
 		t.Fatalf("pinned_message_id after unpin = %d, want %d", view.Channel.PinnedMessageID, ids[1])
 	}
 
-	// 无数量上限（对齐官方）：剩余全部 pin 上，共 pinCount 条同时置顶。
+	// No count limit (matching official): pin all the rest, so pinCount are pinned at once.
 	for _, id := range ids[2:] {
 		if _, err := pin(id, true); err != nil {
 			t.Fatalf("pin %d: %v", id, err)
@@ -206,7 +206,7 @@ WHERE channel_id = $1 AND NOT deleted AND pinned`, channelID)
 		t.Fatalf("filterPinned messages = %d, want %d coexisting pins", len(history.Messages), pinCount)
 	}
 
-	// 删除被置顶的最新消息：置顶集合自动排除，缓存重算。
+	// Delete the latest pinned message: it is automatically excluded from the pinned set and the cache is recomputed.
 	latest := ids[pinCount-1]
 	if _, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
 		UserID: owner.ID, ChannelID: channelID, IDs: []int{latest}, Date: 1700000961,
@@ -221,7 +221,7 @@ WHERE channel_id = $1 AND NOT deleted AND pinned`, channelID)
 		t.Fatalf("pinned_message_id after delete = %d, want %d", view.Channel.PinnedMessageID, ids[pinCount-2])
 	}
 
-	// unpinAll：一条事件批量携带剩余全部置顶 id，缓存清零，再次调用 no-op。
+	// unpinAll: one event carries all remaining pinned ids in bulk, the cache is zeroed, and a second call is a no-op.
 	res, err := channels.UnpinAllChannelMessages(ctx, domain.UnpinAllChannelMessagesRequest{
 		UserID: owner.ID, ChannelID: channelID, Date: 1700000962,
 	})

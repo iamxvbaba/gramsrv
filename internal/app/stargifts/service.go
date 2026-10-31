@@ -839,7 +839,7 @@ func (s *Service) Withdraw(ctx context.Context, req domain.StarGiftWithdrawalReq
 		saved.UniqueGiftID == 0 || !saved.LifecycleStatus.Live() {
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftTransferUnavailable
 	}
-	// can_export_at 只认服务端时钟：前端改时间戳无法提前触发导出。
+	// can_export_at trusts only the server clock: a client tampering with the timestamp cannot trigger the export early.
 	if saved.CanExportAt > req.Date {
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftExportCooldown
 	}

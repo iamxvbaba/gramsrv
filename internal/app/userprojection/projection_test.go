@@ -328,19 +328,21 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	}
 }
 
-// TestForViewersEquivalentToForViewer 锁定 fan-out 模板化的核心安全网：ForViewers(viewers, users)
-// 的每个 viewer 切片必须与逐 viewer 的 ForViewer(viewer, users) 字节等价（隐私/改名/头像投影
-// 不能因批量模板化而漂移泄漏）。覆盖：默认规则陌生人/联系人改名+电话/personal photo/status
-// 隐藏/profile 头像隐藏走 fallback/self/bot/系统账号/viewer 自身也作为 owner 出现。
+// TestForViewersEquivalentToForViewer pins the core safety net of fan-out templating: every
+// viewer slice of ForViewers(viewers, users) must be byte-equivalent to the per-viewer
+// ForViewer(viewer, users) (privacy/rename/photo projection must not drift into leakage
+// because of batch templating). Covers: default-rule strangers / contact rename+phone /
+// personal photo / status hidden / profile photo hidden falling back / self / bot / system
+// account / the viewer itself appearing as an owner.
 func TestForViewersEquivalentToForViewer(t *testing.T) {
 	ctx := context.Background()
 	const (
 		v1  = int64(5001)
 		v2  = int64(5002)
-		o1  = int64(5101) // 陌生人，默认规则
-		o2  = int64(5102) // v1 的联系人（改名+电话），且 v1 给 o2 设了 personal photo
-		o3  = int64(5103) // status 隐藏
-		o4  = int64(5104) // profile photo 隐藏 → 走 fallback
+		o1  = int64(5101) // stranger, default rules
+		o2  = int64(5102) // v1's contact (rename+phone), and v1 set a personal photo for o2
+		o3  = int64(5103) // status hidden
+		o4  = int64(5104) // profile photo hidden → falls back
 		bot = int64(5105)
 	)
 	viewers := []int64{v1, v2}
@@ -352,7 +354,7 @@ func TestForViewersEquivalentToForViewer(t *testing.T) {
 	if _, err := contacts.Upsert(ctx, v1, domain.ContactInput{ContactUserID: o2, Phone: "1111", FirstName: "Alice", LastName: "Friend"}); err != nil {
 		t.Fatalf("upsert contact: %v", err)
 	}
-	// v1 给 o2 设 personal photo：ForViewers 必须与 ForViewer 一样带出 viewer-specific 头像。
+	// v1 set a personal photo for o2: ForViewers must surface the viewer-specific photo just like ForViewer.
 	if _, _, err := contacts.SetPersonalPhoto(ctx, v1, o2, 9300, 300); err != nil {
 		t.Fatalf("set personal photo: %v", err)
 	}
@@ -388,7 +390,7 @@ func TestForViewersEquivalentToForViewer(t *testing.T) {
 		{ID: o4, AccessHash: 14, Phone: "15550000004", FirstName: "O4"},
 		{ID: bot, AccessHash: 15, FirstName: "Bot", Bot: true},
 		{ID: domain.OfficialSystemUserID, FirstName: "System"},
-		{ID: v1, AccessHash: 16, Phone: "15550000016", FirstName: "Viewer1"}, // viewer 自身也作为 owner 出现
+		{ID: v1, AccessHash: 16, Phone: "15550000016", FirstName: "Viewer1"}, // the viewer itself also appears as an owner
 	}
 
 	batch, err := projector.ForViewers(ctx, viewers, users)

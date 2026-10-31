@@ -205,7 +205,7 @@ func tgChannelSearchPostsMessages(viewerUserID int64, history domain.ChannelHist
 		}
 	}
 	chats := tgChannels(viewerUserID, history.Channels)
-	users := tgUsersForViewer(viewerUserID, history.Users) // viewer 自己的帖子作者须带 self 标志
+	users := tgUsersForViewer(viewerUserID, history.Users) // the viewer's own post author needs the self flag
 	if history.Count > len(messages) {
 		out := &tg.MessagesMessagesSlice{
 			Count:    history.Count,
@@ -295,7 +295,7 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 	result := &tg.MessagesMessages{
 		Messages: messages,
 		Chats:    tgChannels(userID, []domain.Channel{history.Channel}),
-		Users:    r.tgUsersForViewer(userID, history.Users), // viewer 补拉自己的消息（含置顶）须带 self
+		Users:    r.tgUsersForViewer(userID, history.Users), // the viewer re-fetching its own messages (including pinned) needs self
 	}
 	r.applyPeerReadModelsToMessages(ctx, userID, result)
 	r.logChannelGetMessagesTrace(ctx, channelID, trace, history.Messages, result)
@@ -335,12 +335,12 @@ func (r *Router) onChannelsDeleteMessages(ctx context.Context, req *tg.ChannelsD
 		return nil, channelDeleteErr(err)
 	}
 	if res.Event.Pts != 0 {
-		// 删除 fan-out 异步化（设计 Phase 0）。channelDeleteMessagesUpdates 是纯 CPU 构建
-		// （不碰 PG、不取 ctx），async 无竞态；同 channel 串行保 pts 单调。
+		// Delete fan-out is async-ified (design Phase 0). channelDeleteMessagesUpdates is a pure CPU
+		// build (touches no PG, takes no ctx), so async has no race; serializing per channel keeps pts monotonic.
 		r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelDeleteMessagesUpdates(viewerUserID, res.Channel, res.Event)
 		})
-		// 被删 broadcast post 的讨论组转发根级联删除同样要让讨论组成员收敛。
+		// The discussion-group forward-root cascade delete of a deleted broadcast post must likewise converge discussion-group members.
 		for _, cascade := range res.DiscussionDeletes {
 			cascade := cascade
 			r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, cascade.Channel.ID, cascade.Event.Pts, cascade.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
@@ -408,17 +408,19 @@ func (r *Router) onChannelsDeleteHistory(ctx context.Context, req *tg.ChannelsDe
 	}
 	pushBatch := func(batch domain.DeleteChannelHistoryResult) *tg.Updates {
 		out := r.channelDeleteMessagesUpdates(userID, batch.Channel, batch.Event)
-		// 每批 fan-out 异步化；批次按 pts 递增顺序入同一 channel 分片 → FIFO 保单调。
+		// Each batch's fan-out is async-ified; batches enter the same channel shard in increasing pts order -> FIFO keeps it monotonic.
 		r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, batch.Channel.ID, batch.Event.Pts, batch.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelDeleteMessagesUpdates(viewerUserID, batch.Channel, batch.Event)
 		})
 		return out
 	}
 	updates := pushBatch(res)
-	// channels.deleteHistory 返回 Updates，TL 层没有 affectedHistory.offset
-	// 续删协议，客户端只发一次请求；超过单批上限的剩余历史必须由服务端
-	// 在本次请求内删完，否则"清空"后旧消息会残留。每批独立事务推进 pts
-	// 并立即推送，中途失败时已删批次保持有效，返回最后成功批次的结果。
+	// channels.deleteHistory returns Updates, and the TL layer has no affectedHistory.offset
+	// continuation protocol, so the client sends only one request; the remaining history beyond
+	// the single-batch cap must be deleted by the server within this request, otherwise old
+	// messages would remain after a "clear". Each batch advances pts in its own transaction and
+	// pushes immediately; on a mid-way failure the already-deleted batches stay effective and the
+	// last successful batch's result is returned.
 	for res.Offset != 0 && ctx.Err() == nil {
 		next, err := r.deps.Channels.DeleteHistory(ctx, userID, domain.DeleteChannelHistoryRequest{
 			UserID:      userID,

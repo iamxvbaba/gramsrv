@@ -89,10 +89,13 @@ func (r *Router) onMessagesUpdatePinnedMessage(ctx context.Context, req *tg.Mess
 	}
 	r.invalidateRPCProjectionForChannel(res.Channel.ID)
 	updates := r.channelPinnedUpdates(userID, res)
-	// pin fan-out 异步化（设计 Phase 0），与已异步的 unpinAll(channels_stubs.go) 对齐。
-	// builder 无 Users 数组（仅 pinned update + ChatMin），无需 owner 预热。pin 的真实变更由
-	// UpdatePinnedChannelMessages{pts} 承载、可经 getChannelDifference 兜底，bundled 的无 pts
-	// UpdateChannel 对 pin 冗余（pts payload 已含变更），丢弃无害——与 unpinAll 取舍一致。
+	// pin fan-out is made asynchronous (design Phase 0), aligned with the
+	// already-asynchronous unpinAll (channels_stubs.go). The builder has no Users
+	// array (only a pinned update + ChatMin), so no owner warm-up is needed. The
+	// real pin change is carried by UpdatePinnedChannelMessages{pts} and can be
+	// recovered via getChannelDifference; the bundled pts-less UpdateChannel is
+	// redundant for pin (the pts payload already contains the change), so dropping
+	// it is harmless -- consistent with the unpinAll trade-off.
 	r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 		return r.channelPinnedUpdates(viewerUserID, res)
 	})

@@ -48,8 +48,10 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	// clear a previously stored rich payload; a rich edit already replaces it.
 	replaceRichMessage := hasRichMessage || hasMessage
 	if hasMessage && richMessage == nil {
-		// 编辑后的文本同样补服务端自动实体（url/@mention/#hashtag/bot command），与发送一致；
-		// 覆盖频道/私聊编辑与各自的定时编辑分支（editScheduledMessage 仅由本处调用）。
+		// Edited text also gets server-side auto entities
+		// (url/@mention/#hashtag/bot command), matching send; this covers channel
+		// and private edits and their respective scheduled-edit branches
+		// (editScheduledMessage is only called from here).
 		entities = r.augmentAutoEntities(message, entities)
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -70,11 +72,13 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, richMessage, replaceRichMessage, scheduleDate)
 	}
 	if media, ok := req.GetMedia(); ok {
-		// 关闭 poll 走 editMessage + InputMediaPoll(closed)（TDesktop "Stop poll" 路径）。
+		// Closing a poll goes through editMessage + InputMediaPoll(closed)
+		// (TDesktop "Stop poll" path).
 		if pollMedia, isPoll := media.(*tg.InputMediaPoll); isPoll {
 			return r.onEditMessageClosePoll(ctx, req, pollMedia)
 		}
-		// live location 续报/停止走 editMessage + InputMediaGeoLive（DrKLO Android 路径）。
+		// live location update/stop goes through editMessage +
+		// InputMediaGeoLive (DrKLO Android path).
 		if liveMedia, isLive := media.(*tg.InputMediaGeoLive); isLive {
 			return r.onEditMessageLiveLocation(ctx, req, liveMedia)
 		}
@@ -87,17 +91,20 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		return nil, messageEmptyErr()
 	}
 	if message == "" && richMessage == nil {
-		// 编辑媒体消息时 message="" 是合法的清空 caption；当前文本-only
-		// 编辑模型由 store 层校验目标消息（无媒体的纯文本消息清空仍会
-		// 落 MESSAGE_EMPTY），RPC 层不再一刀切拒绝。
+		// When editing a media message, message="" is a valid caption clear; the
+		// current text-only edit model validates the target message in the store
+		// layer (clearing a media-less plain-text message still yields
+		// MESSAGE_EMPTY), so the RPC layer no longer rejects it outright.
 		if !hasMediaForContent {
 			return nil, messageEmptyErr()
 		}
 	}
-	// reply_markup（bot inline keyboard）：仅 bot 编辑自己消息时替换/清空（非 bot 丢弃，
-	// 不报错）。P3 仅私聊；markup-only 编辑（无文本）暂不支持——须随文本一起编辑。
-	// 携带 inline markup（即便空 rows）即视为「设置」：空 inline 表示清空键盘，
-	// 否则替换；非 inline（reply keyboard 等）或非 bot 一律不设置（保留原 markup）。
+	// reply_markup (bot inline keyboard): only a bot editing its own message
+	// replaces/clears it (non-bots drop it without error). P3 is private chats
+	// only; markup-only edits (no text) are not supported yet -- it must be edited
+	// together with the text. Carrying inline markup (even empty rows) counts as
+	// "set": empty inline means clear the keyboard, otherwise replace; non-inline
+	// (reply keyboard etc.) or non-bot never sets it (original markup is kept).
 	var replyMarkup *domain.MessageReplyMarkup
 	var setReplyMarkup bool
 	if req.ReplyMarkup != nil {
@@ -140,8 +147,10 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, channelEditErr(err)
 		}
 		updates := r.channelEditMessageUpdates(ctx, userID, res)
-		// 编辑 fan-out 异步化 + 跨 viewer 投影预热（设计 Phase 0/Phase 1；P1-x bot 高频 editMessage
-		// 是稳态放大源）。同步 echo 仍走上面单 viewer 的 channelEditMessageUpdates。
+		// Edit fan-out asynchronous + cross-viewer projection warmup (design
+		// Phase 0/Phase 1; high-frequency P1-x bot editMessage is a steady-state
+		// amplifier). The synchronous echo still uses the single-viewer
+		// channelEditMessageUpdates above.
 		r.enqueueChannelEditMessageFanout(ctx, userID, res)
 		return updates, nil
 	}
@@ -272,7 +281,7 @@ func messageEditErr(err error) error {
 	}
 }
 
-// factCheckErr 把事实核查的领域错误映射成客户端可识别的 rpc_error。
+// factCheckErr maps fact-check domain errors to client-recognizable rpc_errors.
 func factCheckErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrMessageNotModified):

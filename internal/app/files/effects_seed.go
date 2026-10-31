@@ -13,8 +13,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// telegram_effects_export/effects.json 的解析结构。effects 引用文档 id,文档全量元数据
-// 在 documents[] 里(与 messages.availableEffects 同构),blob 在 documents/<docid>.<ext>。
+// Parse structure for telegram_effects_export/effects.json. effects reference document ids,
+// the full document metadata is in documents[] (isomorphic with messages.availableEffects),
+// and blobs are in documents/<docid>.<ext>.
 type seedEffectJSON struct {
 	ID                int64  `json:"id"`
 	Emoticon          string `json:"emoticon"`
@@ -31,13 +32,14 @@ type seedEffectsFileJSON struct {
 	} `json:"result"`
 }
 
-// seedEffects 从 telegram_effects_export 导入消息特效。特效元数据每次启动都从 JSON
-// 重建进内存；document/blob 只有 catalog hash 变化或持久化资源不完整时才重导。
+// seedEffects imports message effects from telegram_effects_export. Effect metadata is rebuilt
+// into memory from JSON on every startup; documents/blobs are re-imported only when the catalog
+// hash changes or the persisted resources are incomplete.
 func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats) error {
 	dir := filepath.Join(root, "telegram_effects_export")
 	raw, err := os.ReadFile(filepath.Join(dir, "effects.json"))
 	if err != nil {
-		return nil // 无 effects 资源 → 跳过
+		return nil // no effects resources → skip
 	}
 	var parsed seedEffectsFileJSON
 	if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -77,7 +79,7 @@ func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats
 		if err := s.putSeedState(ctx, seedEffectsStateKey, stateHash); err != nil {
 			return err
 		}
-		// 导入可能改写了文档/缩略图，重读一次再算 hash。
+		// The import may have rewritten documents/thumbnails, so re-read once before computing the hash.
 		storedDocs, err = s.media.GetDocuments(ctx, ids)
 		if err != nil {
 			return err
@@ -145,14 +147,15 @@ func (s *Service) seedEffectsStateHash(raw []byte, docsDir string) (string, erro
 	})
 }
 
-// AvailableEffects 返回 seed 进内存的消息特效目录与其内容 hash（全局静态;hash 在 seed 时
-// 算一次,handler 直接比对返回 NotModified,无需每次 RPC 重算）。
+// AvailableEffects returns the message effects catalog seeded into memory and its content hash
+// (globally static; the hash is computed once at seed time, and the handler compares it directly
+// to return NotModified, with no need to recompute per RPC).
 func (s *Service) AvailableEffects(ctx context.Context) ([]domain.AvailableEffect, int, error) {
 	return s.effects, s.effectsHash, nil
 }
 
-// effectsCatalogHash 由 effect 字段算稳定正整数 hash（FNV-1a）。内容变则 hash 变,
-// 客户端发旧 hash 即不命中→重取。
+// effectsCatalogHash computes a stable positive-integer hash from the effect fields (FNV-1a).
+// When content changes the hash changes, so a client sending an old hash misses → refetch.
 func effectsCatalogHash(effects []domain.AvailableEffect, docs []domain.Document) (int, error) {
 	if len(effects) == 0 {
 		return 0, nil
@@ -177,8 +180,9 @@ func effectsCatalogHash(effects []domain.AvailableEffect, docs []domain.Document
 	}
 	// Metadata repairs must invalidate cached effect documents too, otherwise
 	// TDLib can overwrite a refreshed set credential with a stale effect reference.
-	// 缩略图字节直接带长度写入 hash，避免 JSON/base64 开销。cached 的实际 size 可能
-	// 只由 len(Bytes) 决定，path/stripped 的 Bytes 更是直接下发给客户端，不能丢出 hash。
+	// Thumbnail bytes are fed into the hash with their length directly, avoiding JSON/base64
+	// overhead. The effective size of a cached thumb may be determined solely by len(Bytes), and
+	// path/stripped Bytes are delivered straight to the client, so they cannot be left out of the hash.
 	trimmed := make([]domain.Document, len(docs))
 	for i, doc := range docs {
 		thumbs := append([]domain.PhotoSize(nil), doc.Thumbs...)

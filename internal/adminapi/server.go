@@ -208,9 +208,9 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
-		log.Info("Admin API 已启用", zap.String("addr", cfg.Addr))
+		log.Info("Admin API enabled", zap.String("addr", cfg.Addr))
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Warn("Admin API 退出", zap.Error(err))
+			log.Warn("Admin API exited", zap.Error(err))
 		}
 	}()
 	go func() {

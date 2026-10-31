@@ -8,10 +8,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// Saved Messages 分会话（saved dialogs）真实实现。
-// 纯 saved 形态（无 parent_peer）按 self-chat 消息的 saved_peer 分组返回；
-// parent_peer = monoforum topic list 仍是范围外，仅校验 parent channel 后
-// 返回空（与既有 monoforum stub 行为一致，见 compatibility-matrix）。
+// Real implementation of Saved Messages sub-dialogs (saved dialogs).
+// The pure saved form (no parent_peer) is grouped and returned by the saved_peer
+// of self-chat messages; parent_peer = monoforum topic list is still out of scope
+// and only validates the parent channel before returning empty (matching the
+// existing monoforum stub behavior, see compatibility-matrix).
 
 func (r *Router) onMessagesGetSavedDialogs(ctx context.Context, req *tg.MessagesGetSavedDialogsRequest) (tg.MessagesSavedDialogsClass, error) {
 	userID, _, err := r.currentUserID(ctx)
@@ -33,7 +34,7 @@ func (r *Router) onMessagesGetSavedDialogs(ctx context.Context, req *tg.Messages
 			return nil, err
 		}
 		if !isMono {
-			// 普通频道(非 monoforum)传 parent_peer:保持旧的良性空响应 + parent 上下文。
+			// An ordinary channel (non-monoforum) passed as parent_peer: keep the old benign empty response + parent context.
 			return &tg.MessagesSavedDialogs{
 				Dialogs:  []tg.SavedDialogClass{},
 				Messages: []tg.MessageClass{},
@@ -41,7 +42,7 @@ func (r *Router) onMessagesGetSavedDialogs(ctx context.Context, req *tg.Messages
 				Users:    []tg.UserClass{},
 			}, nil
 		}
-		// parent_peer = monoforum:返回该频道私信的订阅者子会话列表(管理员视角)。
+		// parent_peer = monoforum: return the subscriber sub-dialog list of this channel's private messages (manager view).
 		return r.monoforumSavedDialogs(ctx, userID, mono, req.Limit, offsetID)
 	}
 	if req.Limit < 0 {
@@ -125,8 +126,9 @@ func (r *Router) onMessagesGetSavedDialogsByID(ctx context.Context, req *tg.Mess
 	}
 	peers := make([]domain.Peer, 0, len(req.IDs))
 	for _, input := range req.IDs {
-		// 未知/已删除 peer 静默缺席（客户端用本接口补 stale 数据，
-		// 部分命中是正常结果）；显式非法构造仍拒绝。
+		// Unknown/deleted peers are silently absent (the client uses this endpoint
+		// to fill in stale data, so a partial hit is a normal result); an explicitly
+		// invalid constructor is still rejected.
 		peer, ok := r.domainPeerFromInputPeer(userID, input)
 		if !ok {
 			return nil, peerIDInvalidErr()
@@ -243,8 +245,8 @@ func (r *Router) onMessagesReorderPinnedSavedDialogs(ctx context.Context, req *t
 	return true, nil
 }
 
-// tgMessagesSavedDialogs 把业务结果转 TL 输出：Full 映射 savedDialogs（已到
-// 末尾），否则 savedDialogsSlice + 总数。
+// tgMessagesSavedDialogs converts the business result to TL output: Full maps to
+// savedDialogs (end reached), otherwise savedDialogsSlice + total count.
 func (r *Router) tgMessagesSavedDialogs(ctx context.Context, userID int64, list domain.SavedDialogList) tg.MessagesSavedDialogsClass {
 	dialogs := make([]tg.SavedDialogClass, 0, len(list.Dialogs))
 	for _, d := range list.Dialogs {
@@ -282,9 +284,11 @@ func (r *Router) tgMessagesSavedDialogs(ctx context.Context, userID int64, list 
 	}
 }
 
-// savedDialogsProjection 投影子会话引用到的 users/chats：self 恒带（self-chat
-// 上下文 + My Notes 子会话），saved peer / fwd 作者 / 跳回源会话批量补齐，
-// hidden author 占位用户在库中不存在、按需合成。
+// savedDialogsProjection projects the users/chats referenced by sub-dialogs: self
+// is always included (self-chat context + the My Notes sub-dialog), and saved
+// peers / fwd authors / jump-back source dialogs are batch-filled; the hidden
+// author placeholder user does not exist in the store and is synthesized on
+// demand.
 func (r *Router) savedDialogsProjection(ctx context.Context, userID int64, list domain.SavedDialogList) ([]tg.UserClass, []tg.ChatClass) {
 	userIDs := make([]int64, 0, len(list.Dialogs))
 	channelIDs := make([]int64, 0)
@@ -357,15 +361,16 @@ func (r *Router) savedDialogsProjection(ctx context.Context, userID int64, list 
 	return users, chats
 }
 
-// tgSavedHiddenAuthorUser 合成 hidden-author 占位用户（官方 user 2666000）。
-// TDesktop/Android 都按 id 特判本地展示，名字仅作兜底。
+// tgSavedHiddenAuthorUser synthesizes the hidden-author placeholder user
+// (official user 2666000). Both TDesktop/Android special-case it by id for local
+// display, so the name is only a fallback.
 func tgSavedHiddenAuthorUser() *tg.User {
 	return &tg.User{ID: domain.SavedHiddenAuthorUserID, FirstName: "Anonymous"}
 }
 
-// savedDialogsHash 与 DrKLO Android SavedMessagesController 的请求 hash 算法
-// 对齐：对返回序列逐项喂 pinned/abs(peerId)/top_message_id/top date；TDesktop
-// hash 恒 0，不触发 notModified。
+// savedDialogsHash aligns with DrKLO Android SavedMessagesController's request
+// hash algorithm: for each returned item, feed pinned/abs(peerId)/top_message_id/
+// top date; TDesktop's hash is always 0 and does not trigger notModified.
 func savedDialogsHash(list domain.SavedDialogList) int64 {
 	dateByID := make(map[int]int, len(list.Messages))
 	for _, msg := range list.Messages {

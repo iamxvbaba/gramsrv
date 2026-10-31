@@ -52,7 +52,7 @@ func TestEditMessageLiveLocationUpdateAndStop(t *testing.T) {
 
 	msg := sendTestLiveLocation(t, r, owner.ID, ownerPeer, 6002, 3600)
 
-	// 续报新坐标。
+	// Report new coordinates.
 	editReq := &tg.MessagesEditMessageRequest{Peer: ownerPeer, ID: msg.ID}
 	next := &tg.InputMediaGeoLive{GeoPoint: &tg.InputGeoPoint{Lat: 40.0, Long: 116.5}}
 	next.SetHeading(180)
@@ -77,7 +77,8 @@ func TestEditMessageLiveLocationUpdateAndStop(t *testing.T) {
 		t.Fatalf("edited period = %d, want preserved 3600", live.Period)
 	}
 
-	// 停止共享：period 收口为已逝时长（≤ 原 period 且 ≥1），客户端立即判定过期。
+	// Stop sharing: period collapses to the elapsed duration (<= original period
+	// and >= 1), so clients treat it as immediately expired.
 	stopReq := &tg.MessagesEditMessageRequest{Peer: ownerPeer, ID: msg.ID}
 	stopped := &tg.InputMediaGeoLive{GeoPoint: &tg.InputGeoPointEmpty{}, Stopped: true}
 	stopReq.SetMedia(stopped)
@@ -94,7 +95,7 @@ func TestEditMessageLiveLocationUpdateAndStop(t *testing.T) {
 		t.Fatalf("stopped period = %d, want small elapsed value", live.Period)
 	}
 
-	// 非 geolive 消息不可走 live 编辑。
+	// A non-geolive message cannot go through live editing.
 	plain, err := r.onMessagesSendMessage(ownerCtx, &tg.MessagesSendMessageRequest{
 		Peer: ownerPeer, Message: "hello", RandomID: 6003,
 	})

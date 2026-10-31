@@ -1,5 +1,7 @@
--- 迁移把已存在行上的 convert_stars 归零，原始值没有副本；向下恢复会凭空把不是
--- 机器人送的礼物也标记成可转换，或读不出来原始数据。拒绝这种不可逆回滚。
+-- The migration zeroes convert_stars on existing rows, and the original values have
+-- no copy; a down-migration would either mark gifts not sent by a bot as
+-- convertible out of thin air or fail to read the original data. Such an
+-- irreversible rollback is refused.
 DO $$
 BEGIN
     IF EXISTS (

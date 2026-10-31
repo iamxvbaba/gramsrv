@@ -12,9 +12,10 @@ import (
 
 const paidMessageChannelCommissionPermille int64 = 850
 
-// SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
-// 与 postgres 行为一致:复用 channel pts/事件;订阅者无需成员记录且只能写自己的 saved_peer，
-// 母频道管理员可以回复任意订阅者。
+// SendMonoforumMessage sends a message to the monoforum (channel DMs) virtual channel,
+// splitting per-subscriber sub-conversations by saved_peer. Matching postgres behaviour: it
+// reuses channel pts/events; a subscriber needs no member record and can only write its own
+// saved_peer, while the parent channel's admin can reply to any subscriber.
 func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 ||
 		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil {
@@ -165,7 +166,7 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 	return domain.SendChannelMessageResult{Channel: cloneChannel(channel), Message: cloneChannelMessage(msg), Event: cloneChannelEvent(event), Recipients: uniqueNonZero(recipients, 0), SenderStarsBalance: senderBalance}, nil
 }
 
-// findMonoforumDuplicateLocked 按 (sender, saved_peer, random_id) 查 monoforum 子会话内的重发消息。
+// findMonoforumDuplicateLocked looks up a resent message within a monoforum sub-conversation by (sender, saved_peer, random_id).
 func (s *ChannelStore) findMonoforumDuplicateLocked(monoforumID, senderUserID int64, savedPeer domain.Peer, randomID int64) (domain.ChannelMessage, bool) {
 	if randomID == 0 {
 		return domain.ChannelMessage{}, false
@@ -180,7 +181,7 @@ func (s *ChannelStore) findMonoforumDuplicateLocked(monoforumID, senderUserID in
 	return domain.ChannelMessage{}, false
 }
 
-// ListMonoforumHistory 拉取某订阅者(saved_peer)在 monoforum 内的私信历史,id 倒序分页。
+// ListMonoforumHistory fetches a subscriber's (saved_peer) DM history inside the monoforum, paginated in descending id order.
 func (s *ChannelStore) ListMonoforumHistory(_ context.Context, filter domain.MonoforumHistoryFilter) (domain.ChannelHistory, error) {
 	if filter.MonoforumID == 0 || filter.SavedPeer.ID == 0 {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
@@ -214,8 +215,10 @@ func (s *ChannelStore) ListMonoforumHistory(_ context.Context, filter domain.Mon
 	return domain.ChannelHistory{Messages: msgs, Count: count, Channel: cloneChannel(channel)}, nil
 }
 
-// ResolveMonoforumSend 按 id 取 monoforum 频道(不要求调用者是 monoforum 成员——订阅者私信频道时
-// 并非 monoforum 成员),并返回调用者是否可管理其母广播频道的 Direct Messages。非 monoforum/不存在 → ErrChannelInvalid。
+// ResolveMonoforumSend fetches a monoforum channel by id (the caller is not required to be
+// a monoforum member -- a subscriber DMing the channel is not a monoforum member), and
+// reports whether the caller can manage Direct Messages of its parent broadcast channel.
+// Not a monoforum / not found -> ErrChannelInvalid.
 func (s *ChannelStore) ResolveMonoforumSend(_ context.Context, viewerUserID, monoforumID int64) (domain.Channel, bool, error) {
 	if viewerUserID == 0 || monoforumID == 0 {
 		return domain.Channel{}, false, domain.ErrChannelInvalid
@@ -231,8 +234,8 @@ func (s *ChannelStore) ResolveMonoforumSend(_ context.Context, viewerUserID, mon
 	return cloneChannel(mono), isAdmin, nil
 }
 
-// ListMonoforumDialogs 列出 monoforum 的订阅者子会话(每个 saved_peer 一条,取其 top 消息),
-// 按 top 消息 id 倒序分页。
+// ListMonoforumDialogs lists a monoforum's subscriber sub-conversations (one per saved_peer,
+// taking its top message), paginated in descending top-message id order.
 func (s *ChannelStore) ListMonoforumDialogs(_ context.Context, filter domain.MonoforumDialogsFilter) (domain.MonoforumDialogList, error) {
 	if filter.MonoforumID == 0 {
 		return domain.MonoforumDialogList{}, domain.ErrChannelInvalid

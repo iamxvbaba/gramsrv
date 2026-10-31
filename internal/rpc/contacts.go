@@ -30,7 +30,7 @@ const (
 	maxContactSetBlocked  = store.MaxBlocklistPeers
 )
 
-// registerContacts 注册 contacts.* RPC handler。
+// registerContacts registers contacts.* RPC handlers.
 func (r *Router) registerContacts(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.ContactsGetContactsRequest](d, tlprofile.SemanticMethodContactsGetContacts, func(ctx context.Context, layerRequest *tg.ContactsGetContactsRequest) (any, error) {
 		return r.onContactsGetContacts(ctx, layerRequest.

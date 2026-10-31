@@ -116,7 +116,7 @@ func TestReadModelChangeListenerRoutesStoryPeer(t *testing.T) {
 		t.Fatalf("story_peer routing = %+v, want user 777 + channel 888", peers)
 	}
 
-	// peer_id==0 或 peer_type 非法都不应触发失效。
+	// Neither peer_id==0 nor an invalid peer_type should trigger invalidation.
 	listener.handlePayload(`{"model":"story_peer","owner_user_id":0,"peer_type":"user","peer_id":0,"version":4}`)
 	listener.handlePayload(`{"model":"story_peer","owner_user_id":0,"peer_type":"","peer_id":999,"version":5}`)
 	if got := len(stories.peersSnapshot()); got != 2 {
@@ -231,8 +231,8 @@ func TestReadModelChangeListenerRoutesLogicalUserDeletionAsCoarseInvalidation(t 
 	}
 }
 
-// TestStoryPeerReadModelNotifyInvalidatesOnStoryWrite 验证 0135 触发器:写 stories /
-// story_hidden_peers → story_peer bump → 统一 read-model NOTIFY → 按 owner peer 失效故事投影。
+// TestStoryPeerReadModelNotifyInvalidatesOnStoryWrite verifies the 0135 trigger: writing stories /
+// story_hidden_peers -> story_peer bump -> unified read-model NOTIFY -> invalidate the story projection by owner peer.
 func TestStoryPeerReadModelNotifyInvalidatesOnStoryWrite(t *testing.T) {
 	pool := testPool(t)
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
@@ -255,22 +255,22 @@ func TestStoryPeerReadModelNotifyInvalidatesOnStoryWrite(t *testing.T) {
 	listener := NewReadModelChangeListener(dsn, ReadModelCacheSet{Stories: stories}, nil)
 	go listener.Run(lctx)
 	if !waitUntil(2*time.Second, func() bool { return stories.flushCount() >= 1 }) {
-		t.Fatal("read model listener 未在预期内连接并 flush")
+		t.Fatal("read model listener did not connect and flush within the expected time")
 	}
 
 	wantPeer := domain.Peer{Type: domain.PeerTypeUser, ID: ownerID}
 
-	// INSERT story → story_peer bump → NOTIFY → 失效 owner peer。
+	// INSERT story -> story_peer bump -> NOTIFY -> invalidate the owner peer.
 	if _, err := pool.Exec(ctx, `
 INSERT INTO stories (owner_peer_type, owner_peer_id, story_id, date, expire_date)
 VALUES ('user', $1, 1, 100, 200)`, ownerID); err != nil {
 		t.Fatalf("insert story: %v", err)
 	}
 	if !waitUntil(3*time.Second, func() bool { return countPeer(stories.peersSnapshot(), wantPeer) >= 1 }) {
-		t.Fatalf("stories INSERT 后 story_peer NOTIFY 未失效 owner peer; got %+v", stories.peersSnapshot())
+		t.Fatalf("after stories INSERT the story_peer NOTIFY did not invalidate the owner peer; got %+v", stories.peersSnapshot())
 	}
 
-	// story_hidden_peers 写也走同一 owner peer 失效。
+	// A story_hidden_peers write also goes through the same owner peer invalidation.
 	before := countPeer(stories.peersSnapshot(), wantPeer)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO story_hidden_peers (viewer_user_id, owner_peer_type, owner_peer_id)
@@ -278,7 +278,7 @@ VALUES ($1, 'user', $2)`, viewerID, ownerID); err != nil {
 		t.Fatalf("insert story_hidden_peers: %v", err)
 	}
 	if !waitUntil(3*time.Second, func() bool { return countPeer(stories.peersSnapshot(), wantPeer) > before }) {
-		t.Fatalf("story_hidden_peers INSERT 后未再失效 owner peer")
+		t.Fatalf("after story_hidden_peers INSERT the owner peer was not invalidated again")
 	}
 	if !waitUntil(3*time.Second, func() bool {
 		stories.mu.Lock()
@@ -290,10 +290,10 @@ VALUES ($1, 'user', $2)`, viewerID, ownerID); err != nil {
 		}
 		return false
 	}) {
-		t.Fatalf("story_hidden_peers INSERT 后 story_hidden_list NOTIFY 未失效 viewer=%d", viewerID)
+		t.Fatalf("after story_hidden_peers INSERT the story_hidden_list NOTIFY did not invalidate viewer=%d", viewerID)
 	}
 
-	// 持久版本脊确实 bump 了 story_peer(owner_user_id=0, peer=user/ownerID)。
+	// The durable version spine really did bump story_peer (owner_user_id=0, peer=user/ownerID).
 	var version int64
 	if err := pool.QueryRow(ctx, `
 SELECT version FROM read_model_versions
@@ -313,12 +313,12 @@ WHERE model='story_hidden_list' AND owner_user_id=$1 AND peer_type='user' AND pe
 		t.Fatalf("story_hidden_list version = %d, want >=1 after hidden write", hiddenListVersion)
 	}
 
-	// DELETE story 也应失效(用 OLD.owner_peer_*)。
+	// DELETE story should invalidate too (using OLD.owner_peer_*).
 	before = countPeer(stories.peersSnapshot(), wantPeer)
 	if _, err := pool.Exec(ctx, `DELETE FROM stories WHERE owner_peer_type='user' AND owner_peer_id=$1`, ownerID); err != nil {
 		t.Fatalf("delete story: %v", err)
 	}
 	if !waitUntil(3*time.Second, func() bool { return countPeer(stories.peersSnapshot(), wantPeer) > before }) {
-		t.Fatalf("stories DELETE 后未失效 owner peer")
+		t.Fatalf("after stories DELETE the owner peer was not invalidated")
 	}
 }

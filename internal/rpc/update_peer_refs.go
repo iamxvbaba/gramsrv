@@ -179,8 +179,9 @@ type updateEventPeerRefs struct {
 	channelIDs map[int64]struct{}
 }
 
-// enrichMessagePollEvent 在 difference 重放时按 viewer 重载消息（media 含最新 poll 权威态与
-// viewer 门控），与 reaction 事件 enrich 同构。
+// enrichMessagePollEvent reloads the message per viewer while replaying a difference
+// (the media carries the latest authoritative poll state and the viewer gating),
+// isomorphic to the reaction event enrich.
 func (r *Router) enrichMessagePollEvent(ctx context.Context, viewerUserID int64, event domain.UpdateEvent) domain.UpdateEvent {
 	if r.deps.Messages == nil || event.Message.ID <= 0 {
 		return event
@@ -207,8 +208,10 @@ func (r *Router) enrichMessagePollEvent(ctx context.Context, viewerUserID int64,
 	return event
 }
 
-// enrichDraftMessageEvent 重放 draft_message 事件时按当前权威态填充草稿内容：
-// 草稿是绝对状态，事件行不固化快照；草稿已删（或读取失败）时 Draft 置 nil → 下发 empty。
+// enrichDraftMessageEvent fills in the draft content from the current authoritative
+// state while replaying a draft_message event: a draft is absolute state and the event
+// row does not freeze a snapshot; when the draft was deleted (or the read fails) Draft
+// is set to nil -> an empty is emitted.
 func (r *Router) enrichDraftMessageEvent(ctx context.Context, viewerUserID int64, event domain.UpdateEvent) domain.UpdateEvent {
 	event.Draft = nil
 	if r.deps.Dialogs == nil || event.Peer.ID == 0 {
@@ -289,7 +292,8 @@ func (r *Router) enrichChannelDiscussion(ctx context.Context, viewerUserID int64
 	for _, msg := range discussion.Messages {
 		collectChannelMessagePeerRefs(msg, discussion.DiscussionChannel.ID, userIDs, channelIDs)
 	}
-	// Post/Discussion channel 已由转换层单独下发，避免重复进 chats。
+	// The Post/Discussion channels are already emitted separately by the conversion
+	// layer, avoiding duplicates in chats.
 	delete(channelIDs, discussion.PostChannel.ID)
 	delete(channelIDs, discussion.DiscussionChannel.ID)
 	removeKnownChannelRefs(channelIDs, discussion.Channels)
@@ -378,7 +382,8 @@ func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs,
 	}
 }
 
-// collectPollMediaUserRefs 收集 poll recent voters（公开投票头像渲染需要 user 实体）。
+// collectPollMediaUserRefs collects the poll's recent voters (public-poll avatar
+// rendering needs the user entity).
 func collectPollMediaUserRefs(media *domain.MessageMedia, userIDs map[int64]struct{}) {
 	if media == nil || media.Poll == nil || media.Poll.Results == nil {
 		return

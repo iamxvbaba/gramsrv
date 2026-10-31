@@ -291,11 +291,11 @@ func TestBotAPIPollingStateClampFilterTailAndDrop(t *testing.T) {
 	}
 }
 
-// TestBotAPIUpdateRetention 锁定 H1 场景矩阵：
-//   - 已确认 + 超宽限 → 删；已确认 + 宽限内 → 留；
-//   - 未确认 + created_at 超保留期 → 删（含无 state 行的 MTProto-only bot）；
-//   - 未确认 + created_at 在保留期内 → 留；
-//   - 删除后 getUpdates 读路径（fromID > confirmed）不受影响。
+// TestBotAPIUpdateRetention pins the H1 scenario matrix:
+//   - confirmed + past grace -> delete; confirmed + within grace -> keep;
+//   - unconfirmed + created_at past retention -> delete (including MTProto-only bots with no state row);
+//   - unconfirmed + created_at within retention -> keep;
+//   - after deletion the getUpdates read path (fromID > confirmed) is unaffected.
 func TestBotAPIUpdateRetention(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -346,10 +346,10 @@ ON CONFLICT (bot_user_id) DO NOTHING`, u.ID); err != nil {
 		return row
 	}
 
-	confirmedOld := enqueue(confirmedBot, 1, now)   // 已确认 + created_at 回拨超宽限 → 删
-	confirmedFresh := enqueue(confirmedBot, 2, now) // 已确认 + 宽限内 → 留
+	confirmedOld := enqueue(confirmedBot, 1, now)   // confirmed + created_at backdated past grace -> delete
+	confirmedFresh := enqueue(confirmedBot, 2, now) // confirmed + within grace -> keep
 	unconfirmedFresh := enqueue(confirmedBot, 3, now)
-	expiredNoState := enqueue(mtprotoOnlyBot, 4, now) // 无 state 行 + created_at 超保留期 → 删
+	expiredNoState := enqueue(mtprotoOnlyBot, 4, now) // no state row + created_at past retention -> delete
 	freshNoState := enqueue(mtprotoOnlyBot, 5, now)
 
 	if err := s.ConfirmBotAPIUpdates(ctx, confirmedBot, confirmedFresh.ID); err != nil {
@@ -368,8 +368,8 @@ ON CONFLICT (bot_user_id) DO NOTHING`, u.ID); err != nil {
 	if err != nil {
 		t.Fatalf("DeleteDeliveredOrExpired: %v", err)
 	}
-	// 共享测试库可能有其它历史行同被回收，只要求至少删掉本测试的 2 行；
-	// 精确归属由下方 remaining 断言保证。
+	// The shared test database may reclaim other historical rows too, so we only require at least 2
+	// of this test's rows to be deleted; exact attribution is guaranteed by the remaining assertions below.
 	if deleted < 2 {
 		t.Fatalf("deleted = %d, want >= 2 (confirmed+grace expired, created_at expired)", deleted)
 	}
@@ -397,7 +397,7 @@ ON CONFLICT (bot_user_id) DO NOTHING`, u.ID); err != nil {
 		t.Fatalf("fresh rows were deleted, remaining=%v", remaining)
 	}
 
-	// 读路径回归：确认水位之后的未确认行仍可被 getUpdates 读到。
+	// Read path regression: unconfirmed rows past the confirmed watermark are still readable by getUpdates.
 	items, err := s.ListBotAPIUpdates(ctx, confirmedBot, confirmedFresh.ID+1, 100)
 	if err != nil {
 		t.Fatalf("list after retention: %v", err)

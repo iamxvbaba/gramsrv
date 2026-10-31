@@ -6,29 +6,29 @@ import (
 	"time"
 )
 
-// 本文件定义媒体相关的业务值对象（文档、照片、贴纸集、可用 reaction、消息媒体）。
-// 这些类型完全不依赖 tg.*；rpc 层负责 domain↔tg 转换。
+// This file defines media-related business value objects (documents, photos, sticker sets, available reactions, message media).
+// These types do not depend on tg.* at all; the rpc layer handles domain↔tg conversion.
 //
-// 字段带 json tag 是为了 store 层可直接 json.Marshal 落 JSONB（消息 media 快照、
-// 文档/照片元数据）。它们是协议无关的纯数据，不是 tg 生成类型。
+// The json tags let the store layer json.Marshal directly into JSONB (message media snapshots,
+// document/photo metadata). They are protocol-neutral pure data, not tg-generated types.
 
-// MediaBackend 标识 blob 字节实际存放的唯一永久后端。
+// MediaBackend identifies the single durable backend where blob bytes actually live.
 type MediaBackend string
 
 const (
-	// MediaBackendLocalFS 表示 blob 字节存在本地磁盘（object_key 为相对路径）。
+	// MediaBackendLocalFS means blob bytes live on local disk (object_key is a relative path).
 	MediaBackendLocalFS MediaBackend = "localfs"
-	// MediaBackendS3 表示 blob 字节存在配置的 S3/MinIO bucket。
+	// MediaBackendS3 means blob bytes live in the configured S3/MinIO bucket.
 	MediaBackendS3 MediaBackend = "s3"
 )
 
-// FileBlob 是一个可下载的二进制对象的索引项：location_key → 后端/对象键/大小/mime。
-// 真正的字节由 blob backend 按 ObjectKey 读写；本结构只描述定位与元数据。
+// FileBlob is an index entry for a downloadable binary object: location_key → backend/object key/size/mime.
+// The actual bytes are read/written by the blob backend by ObjectKey; this struct only describes location and metadata.
 type FileBlob struct {
-	// LocationKey 是稳定的逻辑定位键，由 getFile 的 InputFileLocation 推导：
-	//   doc:<id>            文档主体
-	//   doc:<id>:<type>     文档缩略图（PhotoSize type）
-	//   photo:<id>:<type>   照片某尺寸
+	// LocationKey is the stable logical location key, derived from getFile's InputFileLocation:
+	//   doc:<id>            document body
+	//   doc:<id>:<type>     document thumbnail (PhotoSize type)
+	//   photo:<id>:<type>   one photo size
 	LocationKey string       `json:"location_key"`
 	Backend     MediaBackend `json:"backend"`
 	ObjectKey   string       `json:"object_key"`
@@ -37,8 +37,8 @@ type FileBlob struct {
 	MimeType    string       `json:"mime_type,omitempty"`
 }
 
-// UploadPart 是 upload.saveFilePart/saveBigFilePart 累积的一个分片元数据。
-// 分片字节不进 PG；PG 只记录 object_key/size/hash，组装后清理 metadata 与临时对象。
+// UploadPart is the metadata of one part accumulated by upload.saveFilePart/saveBigFilePart.
+// Part bytes do not enter PG; PG records only object_key/size/hash, and metadata and temp objects are cleaned up after assembly.
 type UploadPart struct {
 	OwnerUserID int64
 	FileID      int64
@@ -51,14 +51,14 @@ type UploadPart struct {
 	SHA256      []byte
 }
 
-// UploadPartUsage 描述某用户当前尚未组装的上传分片占用。
+// UploadPartUsage describes a user's current not-yet-assembled upload part usage.
 type UploadPartUsage struct {
 	Bytes int64
 	Parts int
 	Files int
 }
 
-// UploadPartSlot 描述某个 (owner,file_id,part) 槽位的当前状态，用于判断重试覆盖的配额增量。
+// UploadPartSlot describes the current state of one (owner,file_id,part) slot, used to determine the quota delta of a retry overwrite.
 type UploadPartSlot struct {
 	ExistingBytes int64
 	ObjectKey     string
@@ -66,22 +66,22 @@ type UploadPartSlot struct {
 	Found         bool
 }
 
-// UploadPartQuota 限制某用户 in-flight 上传分片占用；字段 <=0 表示该维度不限制。
+// UploadPartQuota limits a user's in-flight upload part usage; a field <=0 means that dimension is unlimited.
 type UploadPartQuota struct {
 	MaxBytes int64
 	MaxParts int
 	MaxFiles int
 }
 
-// UploadedFileRef 引用一个客户端已通过 upload.saveFilePart(Big) 上传完毕的文件。
-// rpc 层从 tg.InputFile/InputFileBig 转换得到；files 服务据此组装 blob。
+// UploadedFileRef references a file a client has fully uploaded via upload.saveFilePart(Big).
+// The rpc layer converts it from tg.InputFile/InputFileBig; the files service assembles the blob from it.
 type UploadedFileRef struct {
 	OwnerUserID int64
 	FileID      int64
 	Parts       int
 	Name        string
 	Big         bool
-	MD5         string // small file 客户端 md5_checksum（hex），可校验；big file 为空
+	MD5         string // small-file client md5_checksum (hex), verifiable; empty for a big file
 }
 
 // UploadedMediaKind identifies the durable object materialized from a one-shot upload file id.
@@ -105,29 +105,29 @@ type UploadedMediaReceipt struct {
 	CreatedAt   time.Time
 }
 
-// DocumentSpec 描述从上传文件创建 Document 的元数据（来自 InputMediaUploadedDocument）。
+// DocumentSpec describes the metadata for creating a Document from an uploaded file (from InputMediaUploadedDocument).
 type DocumentSpec struct {
 	MimeType   string
 	Attributes []DocumentAttribute
-	Thumb      *UploadedFileRef // 可选缩略图上传，生成 doc:<id>:m
+	Thumb      *UploadedFileRef // optional thumbnail upload, produces doc:<id>:m
 	ForceFile  bool
-	// NosoundVideo 对应 inputMediaUploadedDocument.nosound_video。真实 GIF 仍会
-	// 转成 MP4，但该标志存在时按普通无声视频落库，不附 animated 属性（album 路径）。
+	// NosoundVideo corresponds to inputMediaUploadedDocument.nosound_video. A real GIF is still
+	// converted to MP4, but when this flag is present it is persisted as an ordinary soundless video without the animated attribute (album path).
 	NosoundVideo bool
 }
 
-// FileDownloadRequest 是 upload.getFile 解析后的下载请求；
-// LocationKey 由 rpc 层从 tg.InputFileLocation 推导（doc:<id> / photo:<id>:<type> 等）。
+// FileDownloadRequest is the parsed download request of upload.getFile;
+// LocationKey is derived by the rpc layer from tg.InputFileLocation (doc:<id> / photo:<id>:<type> etc.).
 type FileDownloadRequest struct {
 	LocationKey string
 	Offset      int64
 	Limit       int
 }
 
-// FileChunk 是 upload.getFile 返回的一段内容。Bytes 是只读借用：调用方可以在
-// FileChunk 的生命周期内读取或编码，但不得修改内容、不得把 append 结果写回原
-// backing。文件服务可让 cache/singleflight 的并发 caller 共享 immutable backing，
-// 以避免热门 range 按下载者复制一份 payload。
+// FileChunk is one piece of content returned by upload.getFile. Bytes is a read-only borrow: the caller may read or
+// encode within the lifetime of the FileChunk, but must not modify the content or write an append result back to the original
+// backing. The file service may let concurrent cache/singleflight callers share an immutable backing,
+// so a hot range is not copied into a separate payload per downloader.
 type FileChunk struct {
 	Bytes    []byte
 	MimeType string
@@ -152,36 +152,36 @@ type ImmutableFileRange struct {
 	RangeSHA256 [32]byte
 }
 
-// PhotoSizeKind 标识 PhotoSize 的 TL 变体。
+// PhotoSizeKind identifies the TL variant of a PhotoSize.
 type PhotoSizeKind string
 
 const (
-	// PhotoSizeKindDefault → photoSize（可下载，type/w/h/size）。
+	// PhotoSizeKindDefault → photoSize (downloadable, type/w/h/size).
 	PhotoSizeKindDefault PhotoSizeKind = "size"
-	// PhotoSizeKindStripped → photoStrippedSize（内联字节，秒开模糊图）。
+	// PhotoSizeKindStripped → photoStrippedSize (inline bytes, an instantly-shown blurred image).
 	PhotoSizeKindStripped PhotoSizeKind = "stripped"
-	// PhotoSizeKindCached → photoCachedSize（内联字节 + w/h）。
+	// PhotoSizeKindCached → photoCachedSize (inline bytes + w/h).
 	PhotoSizeKindCached PhotoSizeKind = "cached"
-	// PhotoSizeKindPath → photoPathSize（内联 svg path 字节，矢量占位）。
+	// PhotoSizeKindPath → photoPathSize (inline svg path bytes, a vector placeholder).
 	PhotoSizeKindPath PhotoSizeKind = "path"
-	// PhotoSizeKindProgressive → photoSizeProgressive（渐进式 jpeg 多段大小）。
+	// PhotoSizeKindProgressive → photoSizeProgressive (progressive jpeg multi-segment sizes).
 	PhotoSizeKindProgressive PhotoSizeKind = "progressive"
-	// PhotoSizeKindVideo → photo.video_sizes 里的 videoSize（animated profile video）。
+	// PhotoSizeKindVideo → videoSize in photo.video_sizes (animated profile video).
 	PhotoSizeKindVideo PhotoSizeKind = "video"
-	// PhotoSizeKindVideoEmojiMarkup → photo.video_sizes 里的 videoSizeEmojiMarkup。
+	// PhotoSizeKindVideoEmojiMarkup → videoSizeEmojiMarkup in photo.video_sizes.
 	PhotoSizeKindVideoEmojiMarkup PhotoSizeKind = "video_emoji_markup"
-	// PhotoSizeKindVideoStickerMarkup → photo.video_sizes 里的 videoSizeStickerMarkup。
+	// PhotoSizeKindVideoStickerMarkup → videoSizeStickerMarkup in photo.video_sizes.
 	PhotoSizeKindVideoStickerMarkup PhotoSizeKind = "video_sticker_markup"
 )
 
-// PhotoSize 描述照片/缩略图的一种渲染尺寸。
+// PhotoSize describes one rendering size of a photo/thumbnail.
 type PhotoSize struct {
 	Kind                 PhotoSizeKind `json:"kind"`
 	Type                 string        `json:"type"`
 	W                    int           `json:"w,omitempty"`
 	H                    int           `json:"h,omitempty"`
 	Size                 int           `json:"size,omitempty"`
-	Bytes                []byte        `json:"bytes,omitempty"` // stripped/cached/path 内联内容
+	Bytes                []byte        `json:"bytes,omitempty"` // stripped/cached/path inline content
 	Sizes                []int         `json:"sizes,omitempty"` // progressive
 	VideoStartTs         float64       `json:"video_start_ts,omitempty"`
 	EmojiID              int64         `json:"emoji_id,omitempty"`
@@ -193,12 +193,12 @@ type PhotoSize struct {
 	StickerID            int64         `json:"sticker_id,omitempty"`
 }
 
-// Downloadable 表示该尺寸需要客户端通过 upload.getFile 拉取（而非内联字节）。
+// Downloadable means the size must be pulled by the client via upload.getFile (rather than inline bytes).
 func (s PhotoSize) Downloadable() bool {
 	return s.Kind == PhotoSizeKindDefault || s.Kind == PhotoSizeKindProgressive || s.Kind == PhotoSizeKindVideo
 }
 
-// DocumentAttributeKind 标识 TL DocumentAttribute 变体。
+// DocumentAttributeKind identifies the TL DocumentAttribute variant.
 type DocumentAttributeKind string
 
 const (
@@ -211,7 +211,7 @@ const (
 	DocAttrCustomEmoji DocumentAttributeKind = "custom_emoji"
 )
 
-// DocumentAttribute 是主路径用到的 TL DocumentAttribute 变体的并集。
+// DocumentAttribute is the union of the TL DocumentAttribute variants used on the main path.
 type DocumentAttribute struct {
 	Kind DocumentAttributeKind `json:"kind"`
 
@@ -245,7 +245,7 @@ type DocumentAttribute struct {
 	FileName string `json:"file_name,omitempty"`
 }
 
-// Document 是已存储的 Telegram 文档（贴纸、gif、文件、视频、音频、自定义 emoji……）。
+// Document is a stored Telegram document (sticker, gif, file, video, audio, custom emoji, ...).
 type Document struct {
 	ID            int64               `json:"id"`
 	AccessHash    int64               `json:"access_hash"`
@@ -258,7 +258,7 @@ type Document struct {
 	Thumbs        []PhotoSize         `json:"thumbs,omitempty"`
 }
 
-// StickerSetRef 返回该文档归属的贴纸集引用（若有 sticker/custom_emoji 属性）。
+// StickerSetRef returns the sticker set reference this document belongs to (if it has a sticker/custom_emoji attribute).
 func (d Document) StickerSetRef() (id, accessHash int64, ok bool) {
 	for _, attr := range d.Attributes {
 		if attr.Kind == DocAttrSticker || attr.Kind == DocAttrCustomEmoji {
@@ -379,7 +379,7 @@ func (d Document) stickerMaterialMimeOrExt() string {
 }
 
 // IsGif reports whether the document is a canonical, savable Telegram GIFv.
-// Telegram 的 GIF 是无声 MP4；仅有 animated 属性的 raw image/gif 不是合法 saved GIF。
+// A Telegram GIF is a soundless MP4; a raw image/gif with only the animated attribute is not a valid saved GIF.
 func (d Document) IsGif() bool {
 	if !strings.EqualFold(strings.TrimSpace(d.MimeType), "video/mp4") {
 		return false
@@ -398,7 +398,7 @@ func (d Document) IsGif() bool {
 	return animated && video
 }
 
-// Photo 是已存储的 Telegram 照片（头像或图片消息）。
+// Photo is a stored Telegram photo (avatar or image message).
 type Photo struct {
 	ID            int64       `json:"id"`
 	AccessHash    int64       `json:"access_hash"`
@@ -424,7 +424,7 @@ func ClonePhotoPtr(photo *Photo) *Photo {
 	return &clone
 }
 
-// MessageMediaKind 枚举消息可挂载的媒体载荷。
+// MessageMediaKind enumerates the media payloads a message can carry.
 type MessageMediaKind string
 
 const (
@@ -459,22 +459,22 @@ type MessageGiveaway struct {
 	UntilDate          int      `json:"until_date"`
 }
 
-// MessageTodoItem 是清单中的一项（id 为列表内唯一正整数，客户端分配）。
+// MessageTodoItem is one item in the checklist (id is a unique positive integer within the list, assigned by the client).
 type MessageTodoItem struct {
 	ID       int             `json:"id"`
 	Title    string          `json:"title"`
 	Entities []MessageEntity `json:"entities,omitempty"`
 }
 
-// MessageTodoCompletion 记录某项被谁在何时勾选完成。
+// MessageTodoCompletion records who completed an item and when.
 type MessageTodoCompletion struct {
 	ID          int   `json:"id"`
 	CompletedBy int64 `json:"completed_by"`
 	Date        int   `json:"date"`
 }
 
-// MessageTodo 是待办清单（messageMediaToDo）。append/toggle 经 editMessage 媒体替换链路
-// 整体更新快照（与 live location 同模式）。
+// MessageTodo is a to-do checklist (messageMediaToDo). append/toggle update the snapshot wholesale via the
+// editMessage media-replacement path (same pattern as live location).
 type MessageTodo struct {
 	OthersCanAppend   bool                    `json:"others_can_append,omitempty"`
 	OthersCanComplete bool                    `json:"others_can_complete,omitempty"`
@@ -484,8 +484,8 @@ type MessageTodo struct {
 	Completions       []MessageTodoCompletion `json:"completions,omitempty"`
 }
 
-// MessageGeoPoint 是消息中携带的地理坐标点（messageMediaGeo/Venue 共用）。
-// AccessHash 在发送时随机生成，客户端会原样带回 upload.getWebFile 地图缩略请求。
+// MessageGeoPoint is the geographic coordinate point carried in a message (shared by messageMediaGeo/Venue).
+// AccessHash is generated randomly when sending, and the client echoes it back verbatim in the upload.getWebFile map thumbnail request.
 type MessageGeoPoint struct {
 	Lat            float64 `json:"lat"`
 	Long           float64 `json:"long"`
@@ -493,7 +493,7 @@ type MessageGeoPoint struct {
 	AccuracyRadius int     `json:"accuracy_radius,omitempty"`
 }
 
-// MessageVenue 是带场所信息的位置（messageMediaVenue）。
+// MessageVenue is a location with venue information (messageMediaVenue).
 type MessageVenue struct {
 	Geo       MessageGeoPoint `json:"geo"`
 	Title     string          `json:"title"`
@@ -503,15 +503,15 @@ type MessageVenue struct {
 	VenueType string          `json:"venue_type,omitempty"`
 }
 
-// MessageDice 是互动 emoji（messageMediaDice）。Value 在发送落库时由服务端
-// 一次定值，此后对所有 viewer 与转发快照保持不变。
+// MessageDice is an interactive emoji (messageMediaDice). Value is fixed once by the server when the send
+// is persisted, and stays unchanged for all viewers and forward snapshots thereafter.
 type MessageDice struct {
 	Emoticon string `json:"emoticon"`
 	Value    int    `json:"value"`
 }
 
-// MessageGeoLive 是实时位置（messageMediaGeoLive）。客户端按 message.date + Period
-// 自行计算过期；停止共享 = editMessage 把 Period 改为已逝时长（立即过期），服务端无后台任务。
+// MessageGeoLive is a live location (messageMediaGeoLive). The client computes expiry itself from message.date + Period;
+// stopping sharing = editMessage setting Period to the elapsed duration (expiring immediately), with no server background task.
 type MessageGeoLive struct {
 	Geo                         MessageGeoPoint `json:"geo"`
 	Heading                     int             `json:"heading,omitempty"`
@@ -529,9 +529,9 @@ type MessageStory struct {
 	Story      *Story `json:"story,omitempty"`
 }
 
-// MessageWebPageState 区分链接预览的三种 TL 形态：pending（webPagePending，
-// 已知链接但预览尚未异步抓取完成）、done（webPage，已解析的预览卡片）、
-// empty（webPageEmpty，已解析但该链接无可展示内容）。
+// MessageWebPageState distinguishes the three TL forms of a link preview: pending (webPagePending,
+// link known but preview not yet asynchronously fetched), done (webPage, a resolved preview card),
+// empty (webPageEmpty, resolved but the link has no displayable content).
 type MessageWebPageState string
 
 const (
@@ -540,13 +540,13 @@ const (
 	MessageWebPageStateEmpty   MessageWebPageState = "empty"
 )
 
-// MessageWebPage 是以 messageMediaWebPage 形式挂载的链接预览。URL 是稳定引用，
-// 其余字段是服务端在解析时捕获的快照，使 history/difference 无需重新抓取即可回放
-// （与 MessageStory 同模式）。State 决定投影为 webPagePending / webPage / webPageEmpty。
+// MessageWebPage is a link preview attached as messageMediaWebPage. URL is the stable reference and
+// the remaining fields are the snapshot captured by the server at resolution time, so history/difference can replay
+// without re-fetching (same pattern as MessageStory). State decides the projection to webPagePending / webPage / webPageEmpty.
 //
-// ForceLargeMedia/ForceSmallMedia/Manual/Safe 是 messageMediaWebPage 外层 wrapper
-// 的标志位；HasLargeMedia 是 webPage 本体的标志位。ID 必须在 pending→done 切换前后
-// 保持稳定，客户端按 webPage id 关联占位与解析结果。
+// ForceLargeMedia/ForceSmallMedia/Manual/Safe are the flag bits of the outer messageMediaWebPage wrapper;
+// HasLargeMedia is a flag on the webPage body itself. ID must stay stable across a pending→done
+// switch, since the client correlates the placeholder and the resolved result by webPage id.
 type MessageWebPage struct {
 	State       MessageWebPageState `json:"state"`
 	ID          int64               `json:"id"`
@@ -560,8 +560,8 @@ type MessageWebPage struct {
 	Description string              `json:"description,omitempty"`
 	Author      string              `json:"author,omitempty"`
 	Photo       *Photo              `json:"photo,omitempty"`
-	// ComposeToneEmojiID 映射 webPageAttributeAiComposeTone，用于 TDesktop 渲染
-	// addstyle tone 分享卡片；0 表示普通网页。
+	// ComposeToneEmojiID maps webPageAttributeAiComposeTone, used by TDesktop to render
+	// the addstyle tone share card; 0 means an ordinary web page.
 	ComposeToneEmojiID int64 `json:"compose_tone_emoji_id,omitempty"`
 	// UniqueGift maps webPageAttributeUniqueStarGift (type telegram_nft).
 	UniqueGift *UniqueStarGift `json:"unique_gift,omitempty"`
@@ -579,45 +579,45 @@ type MessageWebPage struct {
 	HasLargeMedia   bool `json:"has_large_media,omitempty"`
 }
 
-// MessageServiceActionKind 标识私聊服务消息动作。
+// MessageServiceActionKind identifies a private-chat service message action.
 type MessageServiceActionKind string
 
 const MessageServiceActionGramTransfer MessageServiceActionKind = "gram_transfer"
 
 const (
 	MessageServiceActionSuggestProfilePhoto MessageServiceActionKind = "suggest_profile_photo"
-	// MessageServiceActionHistoryClear 映射 messageActionHistoryClear。私聊
-	// messages.deleteHistory(just_clear) 复用清理开始时的 top box id，把它
-	// 原位转换成 owner-local 服务消息，使 getDialogs/getHistory 在冷启动时
-	// 仍能从真实 top message 重建会话。
+	// MessageServiceActionHistoryClear maps messageActionHistoryClear. A private-chat
+	// messages.deleteHistory(just_clear) reuses the top box id at the start of the clear and
+	// converts it in place into an owner-local service message, so getDialogs/getHistory can
+	// still rebuild the chat from the real top message on a cold start.
 	MessageServiceActionHistoryClear MessageServiceActionKind = "history_clear"
-	// MessageServiceActionPinMessage 映射 messageActionPinMessage：非
-	// pm_oneside 私聊置顶生成的服务消息，被置顶消息经 reply_to 指向。
+	// MessageServiceActionPinMessage maps messageActionPinMessage: the service message
+	// generated by a non-pm_oneside private-chat pin, with the pinned message referenced via reply_to.
 	MessageServiceActionPinMessage MessageServiceActionKind = "pin_message"
-	// MessageServiceActionPhoneCall 映射 messageActionPhoneCall：私聊通话
-	// 结束（含 missed 超时）后落历史的通话条目，sender 恒为主叫。
+	// MessageServiceActionPhoneCall maps messageActionPhoneCall: the call entry
+	// persisted after a private-chat call ends (including a missed timeout), with the sender always being the caller.
 	MessageServiceActionPhoneCall MessageServiceActionKind = "phone_call"
-	// MessageServiceActionConferenceCall 映射 messageActionConferenceCall：
-	// ad-hoc conference call 的私聊邀请/状态服务消息。
+	// MessageServiceActionConferenceCall maps messageActionConferenceCall:
+	// the private-chat invite/status service message of an ad-hoc conference call.
 	MessageServiceActionConferenceCall MessageServiceActionKind = "conference_call"
-	// MessageServiceActionBotAllowed 映射 messageActionBotAllowed：用户授权
-	// bot 后在 bot 私聊中留下的服务消息。
+	// MessageServiceActionBotAllowed maps messageActionBotAllowed: the service message
+	// left in the bot's private chat after a user authorizes the bot.
 	MessageServiceActionBotAllowed MessageServiceActionKind = "bot_allowed"
-	// MessageServiceActionWebViewDataSent 映射 messageActionWebViewDataSent*
-	//：simple webview 把 data 回传给 bot 后在私聊中留下的服务消息。
+	// MessageServiceActionWebViewDataSent maps messageActionWebViewDataSent*:
+	// the service message left in the private chat after a simple webview passes data back to the bot.
 	MessageServiceActionWebViewDataSent MessageServiceActionKind = "web_view_data_sent"
-	// MessageServiceActionRequestedPeer 映射 messageActionRequestedPeer*：用户
-	// 响应 bot 的 request-peer 按钮后，把所选 peer 作为可恢复服务消息发给 bot。
+	// MessageServiceActionRequestedPeer maps messageActionRequestedPeer*: after a user
+	// responds to the bot's request-peer button, it sends the selected peer to the bot as a recoverable service message.
 	MessageServiceActionRequestedPeer MessageServiceActionKind = "requested_peer"
-	// MessageServiceActionSetChatTheme 映射 messageActionSetChatTheme：
-	// 私聊双方共享的 chat theme token 变更。
+	// MessageServiceActionSetChatTheme maps messageActionSetChatTheme:
+	// a change to the chat theme token shared by both sides of a private chat.
 	MessageServiceActionSetChatTheme MessageServiceActionKind = "set_chat_theme"
-	// MessageServiceActionNoForwardsToggle / Request 映射私聊内容保护的
-	// 状态切换与关闭请求。会话级保护不能写入普通消息的 NoForwards 字段。
+	// MessageServiceActionNoForwardsToggle / Request map the private-chat content-protection
+	// state toggle and close request. Chat-level protection cannot be written to an ordinary message's NoForwards field.
 	MessageServiceActionNoForwardsToggle  MessageServiceActionKind = "no_forwards_toggle"
 	MessageServiceActionNoForwardsRequest MessageServiceActionKind = "no_forwards_request"
-	// MessageServiceActionStarGift 映射 messageActionStarGift：收到一份 Star 礼物。
-	// 礼物快照（贴纸/星价）内嵌在 action 里，收礼人无需额外拉取即可渲染气泡。
+	// MessageServiceActionStarGift maps messageActionStarGift: a Star gift was received.
+	// The gift snapshot (sticker/star price) is embedded in the action, so the recipient can render the bubble without an extra fetch.
 	MessageServiceActionStarGift MessageServiceActionKind = "star_gift"
 	// MessageServiceActionGiftStars maps messageActionGiftStars: fiat-purchased
 	// Stars credited directly to a friend, distinct from collectible Star Gifts.
@@ -634,8 +634,8 @@ const (
 	MessageServiceActionPayment MessageServiceActionKind = "payment_sent_me"
 )
 
-// MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。
-// Reason 取值同 PhoneCallDiscardReason；Duration 仅通话真正建立后非零。
+// MessagePhoneCallAction is the protocol-neutral payload of messageActionPhoneCall.
+// Reason takes the same values as PhoneCallDiscardReason; Duration is non-zero only after the call is actually established.
 type MessagePhoneCallAction struct {
 	CallID   int64  `json:"call_id"`
 	Reason   string `json:"reason,omitempty"`
@@ -643,7 +643,7 @@ type MessagePhoneCallAction struct {
 	Video    bool   `json:"video,omitempty"`
 }
 
-// MessageConferenceCallAction 是 messageActionConferenceCall 的协议中立载荷。
+// MessageConferenceCallAction is the protocol-neutral payload of messageActionConferenceCall.
 type MessageConferenceCallAction struct {
 	CallID            int64  `json:"call_id"`
 	Missed            bool   `json:"missed,omitempty"`
@@ -653,7 +653,7 @@ type MessageConferenceCallAction struct {
 	OtherParticipants []Peer `json:"other_participants,omitempty"`
 }
 
-// MessageBotAllowedAction 是 messageActionBotAllowed 的协议中立载荷。
+// MessageBotAllowedAction is the protocol-neutral payload of messageActionBotAllowed.
 type MessageBotAllowedAction struct {
 	AttachMenu  bool   `json:"attach_menu,omitempty"`
 	FromRequest bool   `json:"from_request,omitempty"`
@@ -665,13 +665,13 @@ const (
 	MaxWebViewDataPayloadLen    = MaxMessageTextLength
 )
 
-// MessageWebViewDataAction 是 messageActionWebViewDataSent* 的协议中立载荷。
+// MessageWebViewDataAction is the protocol-neutral payload of messageActionWebViewDataSent*.
 type MessageWebViewDataAction struct {
 	ButtonText string `json:"button_text"`
 	Data       string `json:"data,omitempty"`
 }
 
-// MessageRequestedPeerAction 是 messageActionRequestedPeer* 的协议中立载荷。
+// MessageRequestedPeerAction is the protocol-neutral payload of messageActionRequestedPeer*.
 type MessageRequestedPeerAction struct {
 	ButtonID int    `json:"button_id"`
 	Peers    []Peer `json:"peers"`
@@ -694,8 +694,8 @@ type MessageRequestedPeerDetails struct {
 	Photo     *Photo `json:"photo,omitempty"`
 }
 
-// MessageNoForwardsAction 是私聊内容保护 service action 的协议中立载荷。
-// ExpiresAt 只用于 request 的读取时绝对过期投影；toggle 保持为 0。
+// MessageNoForwardsAction is the protocol-neutral payload of the private-chat content-protection service action.
+// ExpiresAt is only used for the read-time absolute expiry projection of a request; toggle stays 0.
 type MessageNoForwardsAction struct {
 	PrevValue bool `json:"prev_value"`
 	NewValue  bool `json:"new_value"`
@@ -703,7 +703,7 @@ type MessageNoForwardsAction struct {
 	ExpiresAt int  `json:"expires_at,omitempty"`
 }
 
-// MessageServiceAction 是私聊服务消息动作的协议中立表示。
+// MessageServiceAction is the protocol-neutral representation of a private-chat service message action.
 type MessageServiceAction struct {
 	GramTransfer          *MessageGramTransferAction          `json:"gram_transfer,omitempty"`
 	Kind                  MessageServiceActionKind            `json:"kind"`
@@ -761,8 +761,8 @@ type MessageGiftStarsAction struct {
 	BalanceAfter  int64  `json:"balance_after"`
 }
 
-// MessageStarGiftAction 是 messageActionStarGift 的协议中立载荷：内嵌礼物快照（贴纸/星价）
-// 使收礼人无需额外拉取即可渲染。PeerUserID/PeerChannelID 为收礼方；NameHidden 时下发不暴露 from。
+// MessageStarGiftAction is the protocol-neutral payload of messageActionStarGift: the embedded gift snapshot (sticker/star price)
+// lets the recipient render without an extra fetch. PeerUserID/PeerChannelID is the recipient side; when NameHidden is set the output does not expose from.
 type MessageStarGiftAction struct {
 	GiftID             int64           `json:"gift_id"`
 	Stars              int64           `json:"stars"`
@@ -831,7 +831,7 @@ type MessageStarGiftOfferDeclinedAction struct {
 	Expired bool           `json:"expired,omitempty"`
 }
 
-// MessageMedia 是一条消息媒体载荷的业务表示（落库为消息行上的 JSONB 快照）。
+// MessageMedia is the business representation of a message's media payload (persisted as a JSONB snapshot on the message row).
 type MessageMedia struct {
 	Kind           MessageMediaKind      `json:"kind"`
 	Photo          *Photo                `json:"photo,omitempty"`
@@ -859,8 +859,8 @@ type MessageMedia struct {
 	Voice          bool     `json:"voice,omitempty"`
 	Round          bool     `json:"round,omitempty"`
 	Video          bool     `json:"video,omitempty"`
-	// InvertMedia 映射 message.invert_media：媒体（典型为链接预览）渲染在文本上方。
-	// 存于媒体快照而非消息行，避免新增消息表列；读时投影为 tg.Message.invert_media。
+	// InvertMedia maps message.invert_media: the media (typically a link preview) renders above the text.
+	// Stored in the media snapshot rather than the message row to avoid a new message-table column; projected to tg.Message.invert_media on read.
 	InvertMedia bool `json:"invert_media,omitempty"`
 }
 
@@ -883,14 +883,14 @@ type MessageContact struct {
 	UserID      int64  `json:"user_id,omitempty"`
 }
 
-// IsZero 表示无媒体（用于落库时跳过空快照、转换时回退 MessageMediaEmpty）。
+// IsZero means no media (used to skip an empty snapshot on persist and fall back to MessageMediaEmpty on conversion).
 func (m *MessageMedia) IsZero() bool {
 	return m == nil || m.Kind == MessageMediaKindNone
 }
 
-// HasUnreadPayload 表示该媒体是否参与 media_unread（"未听"）状态。
-// 只有 voice/round 才有此语义：客户端只为它们渲染未听标记并上报
-// readMessageContents；photo/document 置位只会留下永不清除的脏状态。
+// HasUnreadPayload reports whether this media participates in the media_unread ("unheard") state.
+// Only voice/round have this semantics: the client renders the unheard marker only for them and reports
+// readMessageContents; setting it on a photo/document only leaves a dirty state that is never cleared.
 func (m *MessageMedia) HasUnreadPayload() bool {
 	if m.IsZero() || m.Kind != MessageMediaKindDocument {
 		return false
@@ -898,7 +898,7 @@ func (m *MessageMedia) HasUnreadPayload() bool {
 	return m.Voice || m.Round
 }
 
-// StickerPack 是 emoji→文档 id 的映射条目（messages.stickerSet.packs）。
+// StickerPack is an emoji→document id mapping entry (messages.stickerSet.packs).
 type StickerPack struct {
 	Emoticon    string  `json:"emoticon"`
 	DocumentIDs []int64 `json:"document_ids"`
@@ -910,30 +910,30 @@ type StickerKeyword struct {
 }
 
 const (
-	// StickerSetSystemKeyEmojiDefaultStatuses 是 inputStickerSetEmojiDefaultStatuses
-	// 对应的系统集标识：premium 用户 emoji status 选择器的"默认状态"主体集
-	// （messages.getStickerSet 与 account.getDefaultEmojiStatuses 共用）。
+	// StickerSetSystemKeyEmojiDefaultStatuses is the system-set identifier for inputStickerSetEmojiDefaultStatuses:
+	// the "default statuses" main set of the Premium user emoji status picker
+	// (shared by messages.getStickerSet and account.getDefaultEmojiStatuses).
 	StickerSetSystemKeyEmojiDefaultStatuses = "emoji_default_statuses"
-	// StickerSetSystemKeyEmojiDefaultTopicIcons 对应论坛 topic 默认图标系统集。
+	// StickerSetSystemKeyEmojiDefaultTopicIcons is the system set for default forum topic icons.
 	StickerSetSystemKeyEmojiDefaultTopicIcons = "emoji_default_topic_icons"
-	// StickerSetSystemKeyPremiumGifts 对应 premium gifts 系统集。
+	// StickerSetSystemKeyPremiumGifts is the system set for premium gifts.
 	StickerSetSystemKeyPremiumGifts = "premium_gifts"
-	// StickerSetSystemKeyTonGifts 对应 TON gifts 系统集。
+	// StickerSetSystemKeyTonGifts is the system set for TON gifts.
 	StickerSetSystemKeyTonGifts = "ton_gifts"
 )
 
-// StickerSetKind 区分贴纸集用途（影响 getAllStickers / getEmojiStickers 归类）。
+// StickerSetKind distinguishes sticker set purposes (affects getAllStickers / getEmojiStickers classification).
 type StickerSetKind string
 
 const (
 	StickerSetKindStickers StickerSetKind = "stickers"
 	StickerSetKindEmoji    StickerSetKind = "emoji"
 	StickerSetKindMasks    StickerSetKind = "masks"
-	// StickerSetKindSystem 是 TDesktop 通过 InputStickerSetDice/AnimatedEmoji 等系统集请求的内置集。
+	// StickerSetKindSystem is a built-in set TDesktop requests via system sets such as InputStickerSetDice/AnimatedEmoji.
 	StickerSetKindSystem StickerSetKind = "system"
 )
 
-// StickerSet 是贴纸/自定义 emoji 集的元数据 + 有序文档 id。
+// StickerSet is the metadata of a sticker/custom emoji set + ordered document ids.
 type StickerSet struct {
 	ID              int64            `json:"id"`
 	AccessHash      int64            `json:"access_hash"`
@@ -963,7 +963,7 @@ type StickerSet struct {
 	Keywords        []StickerKeyword `json:"keywords,omitempty"`
 	SortOrder       int              `json:"sort_order,omitempty"`
 	Software        string           `json:"software,omitempty"`
-	// SystemKey 是 TDesktop 系统集的稳定标识（如 "animated_emoji"、"dice:🎲"），用于 InputStickerSet* 路由。
+	// SystemKey is the stable identifier of a TDesktop system set (e.g. "animated_emoji", "dice:🎲"), used for InputStickerSet* routing.
 	SystemKey string `json:"system_key,omitempty"`
 }
 
@@ -1005,16 +1005,16 @@ const (
 	ProfilePhotoKindFallback ProfilePhotoKind = "fallback"
 )
 
-// ProfilePhotoRef 是渲染头像所需的最小信息（当前 profile/fallback/personal photo）。
+// ProfilePhotoRef is the minimal information needed to render an avatar (current profile/fallback/personal photo).
 type ProfilePhotoRef struct {
 	PhotoID  int64
 	DCID     int
-	Stripped []byte // photoStrippedSize 内联缩略图，可空
-	Personal bool   // true 表示 viewer 私有联系人头像
-	HasVideo bool   // true 表示 photo.video_sizes 非空，需输出 userProfilePhoto.has_video
+	Stripped []byte // photoStrippedSize inline thumbnail, may be empty
+	Personal bool   // true means a viewer-private contact avatar
+	HasVideo bool   // true means photo.video_sizes is non-empty, requiring output of userProfilePhoto.has_video
 }
 
-// StrippedFromSizes 从照片尺寸列表里取出 stripped 缩略图字节（用于 UserProfilePhoto/ChatPhoto 占位）。
+// StrippedFromSizes extracts the stripped thumbnail bytes from a photo size list (used as the UserProfilePhoto/ChatPhoto placeholder).
 func StrippedFromSizes(sizes []PhotoSize) []byte {
 	for _, s := range sizes {
 		if s.Kind == PhotoSizeKindStripped {
@@ -1024,7 +1024,7 @@ func StrippedFromSizes(sizes []PhotoSize) []byte {
 	return nil
 }
 
-// PhotoHasVideo 从照片尺寸快照推导 UserProfilePhoto.has_video。
+// PhotoHasVideo derives UserProfilePhoto.has_video from a photo size snapshot.
 func PhotoHasVideo(sizes []PhotoSize) bool {
 	for _, s := range sizes {
 		switch s.Kind {
@@ -1035,7 +1035,7 @@ func PhotoHasVideo(sizes []PhotoSize) bool {
 	return false
 }
 
-// StickerSetRefKind 标识 InputStickerSet 的解析方式。
+// StickerSetRefKind identifies how an InputStickerSet is resolved.
 type StickerSetRefKind string
 
 const (
@@ -1044,7 +1044,7 @@ const (
 	StickerSetRefBySystem    StickerSetRefKind = "system"
 )
 
-// StickerSetRef 是 rpc 层从 tg.InputStickerSet 转换得到的贴纸集引用。
+// StickerSetRef is the sticker set reference the rpc layer converts from tg.InputStickerSet.
 type StickerSetRef struct {
 	Kind       StickerSetRefKind
 	ID         int64
@@ -1053,7 +1053,7 @@ type StickerSetRef struct {
 	SystemKey  string
 }
 
-// AvailableReaction 描述 messages.getAvailableReactions 的一项（真实资源由文档 id 引用）。
+// AvailableReaction describes one item of messages.getAvailableReactions (real assets are referenced by document id).
 type AvailableReaction struct {
 	Reaction            string `json:"reaction"`
 	Title               string `json:"title"`
@@ -1069,9 +1069,9 @@ type AvailableReaction struct {
 	Order               int    `json:"order,omitempty"`
 }
 
-// AvailableEffect 是一条消息发送特效（messages.getAvailableEffects）。引用三个文档:
-// 选择器静态图标 / 气泡上的特效贴纸 / 全屏特效动画(后两者可为 0)。属全局静态目录,
-// 服务端 seed 后常驻内存。
+// AvailableEffect is a message send effect (messages.getAvailableEffects). It references three documents:
+// the picker static icon / the effect sticker on the bubble / the full-screen effect animation (the latter two may be 0). It is a global static catalog,
+// resident in memory after the server seeds it.
 type AvailableEffect struct {
 	ID                int64  `json:"id"`
 	Emoticon          string `json:"emoticon"`
@@ -1082,12 +1082,12 @@ type AvailableEffect struct {
 	Order             int    `json:"order,omitempty"`
 }
 
-// DocumentIDs 收集该 effect 引用的全部文档 id（去零去重）。
+// DocumentIDs collects all document ids this effect references (dropping zeros and duplicates).
 func (e AvailableEffect) DocumentIDs() []int64 {
 	return dedupNonZeroIDs(e.StaticIconID, e.EffectStickerID, e.EffectAnimationID)
 }
 
-// DocumentIDs 收集该 reaction 引用的全部文档 id（去零去重，便于批量加载）。
+// DocumentIDs collects all document ids this reaction references (dropping zeros and duplicates, for bulk loading).
 func (r AvailableReaction) DocumentIDs() []int64 {
 	raw := []int64{
 		r.StaticIconID, r.AppearAnimationID, r.SelectAnimationID,
@@ -1108,7 +1108,7 @@ func (r AvailableReaction) DocumentIDs() []int64 {
 	return out
 }
 
-// dedupNonZeroIDs 返回去零去重后的 id 列表（保序）。
+// dedupNonZeroIDs returns the id list with zeros removed and duplicates dropped (order preserved).
 func dedupNonZeroIDs(ids ...int64) []int64 {
 	out := make([]int64, 0, len(ids))
 	seen := make(map[int64]struct{}, len(ids))

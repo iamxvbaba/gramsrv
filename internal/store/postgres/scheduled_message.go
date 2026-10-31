@@ -15,9 +15,10 @@ import (
 
 const maxScheduledMessagePage = 100
 
-// scheduledRetryBackoffSeconds 是后台派发投递失败后的最小重试间隔：投递失败的
-// pending 行（last_error 非空）在该退避窗口内不再被 ClaimDueScheduledMessages
-// 认领，避免对端注销等永久失败的到期消息每秒被反复 claim+send。
+// scheduledRetryBackoffSeconds is the minimum retry interval after a background dispatch delivery
+// fails: pending rows whose delivery failed (last_error non-empty) are no longer claimed by
+// ClaimDueScheduledMessages within this backoff window, avoiding a due message that fails
+// permanently (e.g. the peer deregistered) being claimed+sent every second.
 const scheduledRetryBackoffSeconds = 30
 
 func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.ScheduleMessageRequest) (domain.ScheduledMessage, error) {
@@ -307,12 +308,12 @@ func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit
 	if leaseSeconds <= 0 {
 		leaseSeconds = 60
 	}
-	// retryFloor 让上一次投递失败（last_error 非空）的 pending 行至少退避
-	// scheduledRetryBackoffSeconds 秒再被认领；同时回收 lease 已过期却仍卡在
-	// 'dispatching' 的行——派发器在 claim 之后、MarkScheduledMessageSent 之前
-	// 崩溃/部署/OOM 会留下这种行，旧实现只认领 'pending' 导致该定时消息永久不
-	// 投递且 has_scheduled 永远为真。重投由 random_id 幂等兜底（命中 Duplicate
-	// 仍会 MarkScheduledMessageSent 清状态）。
+	// retryFloor makes pending rows whose last delivery failed (last_error non-empty) wait at least
+	// scheduledRetryBackoffSeconds seconds before being claimed again; it also reclaims rows stuck in
+	// 'dispatching' whose lease has expired -- the dispatcher crashing/redeploying/OOMing after claim
+	// but before MarkScheduledMessageSent leaves such rows, and the old implementation claiming only
+	// 'pending' meant the scheduled message was never delivered and has_scheduled stayed true forever.
+	// Redelivery is covered by random_id idempotency (a Duplicate hit still calls MarkScheduledMessageSent to clear the state).
 	retryFloor := now - scheduledRetryBackoffSeconds
 	rows, err := s.db.Query(ctx, `
 WITH due AS (
@@ -573,11 +574,11 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled rich message: %w", err)
 	}
 	msg.RichMessage = richMessage
-	// scheduled_messages 不存 saved_from：到点投递经 SendPrivateText 实时
-	// 重算 saved 语义（self-chat 直发归 self），fwd saved 维度恒空。
+	// scheduled_messages does not store saved_from: delivery at the due time recomputes the saved
+	// semantics live via SendPrivateText (a direct self-chat send maps to self), and the fwd saved dimension is always empty.
 	_, _, reply, forward, err := messageMetadataFromFields(
 		msg.Silent, msg.NoForwards, replyToMsgID, replyToPeerType, replyToPeerID, replyToTopID,
-		0, // scheduled_messages 不持久化 story 回复（定时回复 story 是边角，恒 0）
+		0, // scheduled_messages does not persist story replies (scheduled story replies are an edge case, always 0)
 		quoteText, quoteEntitiesJSON, quoteOffset, "{}",
 		fwdFromPeerType, fwdFromPeerID, fwdFromName, fwdDate,
 		"", 0, 0,

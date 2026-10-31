@@ -8,7 +8,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// bots.* 管理 RPC 的错误码（与 errors.go 同惯例，独立成文件便于 bot 模块维护）。
+// Error codes for the bots.* management RPCs (same convention as errors.go, kept in a separate file for easier maintenance of the bot module).
 func userBotRequiredErr() error  { return tgerr.New(400, "USER_BOT_REQUIRED") }
 func userBotInvalidErr() error   { return tgerr.New(400, "USER_BOT_INVALID") }
 func botInvalidErr() error       { return tgerr.New(400, "BOT_INVALID") }

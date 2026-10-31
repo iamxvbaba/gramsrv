@@ -1,6 +1,6 @@
 # Bedolaga formatted-text + Telegram Login demo
 
-这个 demo 复刻 Bedolaga 的 Bot 工厂关键配置：
+This demo replicates the key Bot factory configuration of Bedolaga:
 
 ```python
 Bot(
@@ -9,21 +9,24 @@ Bot(
 )
 ```
 
-因此 `/start` 的 `message.answer()` 不显式传 `parse_mode`，仍会由 aiogram 自动向
-telesrv 发送 `parse_mode=HTML`。`/formatdemo` 依次发送默认 HTML、legacy Markdown、
-MarkdownV2，用于验证完整的 `aiogram → telesrv Bot API → MTProto message/update →
-TDesktop` 链路。
+So `/start`'s `message.answer()` does not pass `parse_mode` explicitly, yet
+aiogram still sends `parse_mode=HTML` to telesrv automatically. `/formatdemo`
+sends the default HTML, legacy Markdown, and MarkdownV2 in turn, to verify the
+full `aiogram → telesrv Bot API → MTProto message/update → TDesktop` chain.
 
-`/richdemo` 进一步复刻 Bedolaga 的 rich menu：调用 `sendRichMessage` 发送 HTML 与
-Markdown `InputRichMessage`，携带 inline callback keyboard，再通过
-`editMessageText.rich_message` 编辑 HTML 菜单。HTML 样例覆盖 heading、divider、
-bordered/striped table、`tg-time`、details、blockquote、code 与 footer。第一次请求
-故意带远程 logo；当前本地 blob backend 返回 `WEBPAGE_MEDIA_EMPTY` 后，demo 按
-Bedolaga 的既有策略自动去掉 logo 重试，正文与按钮不会降级成 classic menu。
+`/richdemo` further replicates Bedolaga's rich menu: it calls `sendRichMessage`
+to send HTML and Markdown `InputRichMessage`s with an inline callback keyboard,
+then edits the HTML menu via `editMessageText.rich_message`. The HTML sample
+covers heading, divider, bordered/striped table, `tg-time`, details, blockquote,
+code and footer. The first request deliberately carries a remote logo; after the
+current local blob backend returns `WEBPAGE_MEDIA_EMPTY`, the demo drops the logo
+and retries per Bedolaga's existing strategy, without degrading the body and
+buttons into a classic menu.
 
-## 安装
+## Installation
 
-建议使用虚拟环境，token 只通过环境变量传入：
+A virtual environment is recommended; pass the token only through environment
+variables:
 
 ```powershell
 python -m venv "$env:TEMP\telesrv-bedolaga-demo-venv"
@@ -36,7 +39,7 @@ $env:TELESRV_BOT_API_SERVER = "http://127.0.0.1:8081"
   .\cmd\bots\bedolagaformat\demo.py --drop-pending
 ```
 
-随后在 TDesktop 中向 bot 发送：
+Then send to the bot in TDesktop:
 
 ```text
 /start
@@ -44,7 +47,8 @@ $env:TELESRV_BOT_API_SERVER = "http://127.0.0.1:8081"
 /richdemo
 ```
 
-也可以不启动 polling，直接向指定私聊发送三条格式测试消息：
+You can also skip polling and send the three formatting test messages directly
+to a specified private chat:
 
 ```powershell
 & "$env:TEMP\telesrv-bedolaga-demo-venv\Scripts\python.exe" `
@@ -54,7 +58,8 @@ $env:TELESRV_BOT_API_SERVER = "http://127.0.0.1:8081"
   --marker BEDOLAGA-LOCAL-VERIFY
 ```
 
-只主动验证 rich menu（HTML + Markdown + 按钮 + 编辑 + logo fallback）：
+Verify the rich menu proactively only (HTML + Markdown + buttons + edit + logo
+fallback):
 
 ```powershell
 & "$env:TEMP\telesrv-bedolaga-demo-venv\Scripts\python.exe" `
@@ -65,21 +70,25 @@ $env:TELESRV_BOT_API_SERVER = "http://127.0.0.1:8081"
   --marker BEDOLAGA-RICH-VERIFY
 ```
 
-`--base-url` 只接受 API server 根地址，不要追加 `/bot`。脚本不会打印 token，也不会
-把 token 写入文件。
+`--base-url` only accepts the API server root address; do not append `/bot`. The
+script never prints the token, nor writes it to a file.
 
-## Telegram Login 全链路
+## Telegram Login end to end
 
-同一个 demo 还提供 `/logindemo`，覆盖三个互相独立的公开契约：
+The same demo also provides `/logindemo`, covering three mutually independent
+public contracts:
 
-1. Bot API `login_url` 按钮 → TDesktop/Android 的
-   `messages.requestUrlAuth/acceptUrlAuth` → legacy HMAC 回调；
-2. telesrv 本地 `/telegram-login.js` → popup `postMessage` → JWKS 验签；
-3. 服务端 Authorization Code + PKCE S256 → `/token` Basic Client Secret →
-   JWKS 验签和 `issuer/audience/nonce/subject` 复核。
+1. Bot API `login_url` button → TDesktop/Android
+   `messages.requestUrlAuth/acceptUrlAuth` → legacy HMAC callback;
+2. telesrv local `/telegram-login.js` → popup `postMessage` → JWKS signature
+   verification;
+3. Server-side Authorization Code + PKCE S256 → `/token` Basic Client Secret →
+   JWKS verification and `issuer/audience/nonce/subject` re-check.
 
-先在 telesrv 的 @BotFather 中对目标 bot 运行 `/setlogin`。选择一次 bot 后，可逐条发送，
-也可把下面三行作为一条多行消息粘贴，无需每次重新运行 `/setlogin` 或重选 bot：
+First run `/setlogin` for the target bot in telesrv's @BotFather. After choosing
+a bot once, you can send the commands one by one, or paste the three lines below
+as a single multiline message, without re-running `/setlogin` or re-selecting
+the bot each time:
 
 ```text
 add origin http://127.0.0.1:3000
@@ -87,14 +96,18 @@ add redirect http://127.0.0.1:3000/oauth/callback
 enable
 ```
 
-发送 `/done` 退出配置会话并查看最终摘要。`/cancel` 只退出，不回滚已经成功应用的命令。
+Send `/done` to exit the configuration session and view the final summary.
+`/cancel` only exits and does not roll back commands that were already applied
+successfully.
 
-`/setlogin` 首次创建 client 时只展示一次 OIDC Client Secret；不要写进仓库。可用
-`/logininfo` 查看 Client ID 和登记结果，或用 `/resetloginsecret` 轮换 secret。
-使用 HTTP 域名/IP 时，在 telesrv 配置 `TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP=true`；
-demo 会接受任意合法 HTTP(S) issuer/public origin，不再限制为 loopback。
+`/setlogin` shows the OIDC Client Secret only once when it first creates the
+client; do not commit it to the repository. Use `/logininfo` to view the Client
+ID and registration result, or `/resetloginsecret` to rotate the secret. When
+using an HTTP domain/IP, configure `TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP=true` on
+telesrv; the demo accepts any valid HTTP(S) issuer/public origin and no longer
+restricts to loopback.
 
-把一次性 secret 和 Client ID 放入进程环境，再启动：
+Put the one-time secret and Client ID into the process environment, then start:
 
 ```powershell
 $env:TELESRV_BOT_LOGIN_DEMO = "1"
@@ -108,23 +121,31 @@ $env:TELESRV_BOT_LOGIN_LISTEN = "127.0.0.1:3000"
   .\cmd\bots\bedolagaformat\demo.py --drop-pending --login-demo
 ```
 
-向 bot 发送 `/logindemo`。第一颗按钮必须出现 Telegram 客户端原生授权确认框，批准
-后网页显示 `login_url HMAC verified`；第二颗按钮打开测试页，可分别运行 JS SDK popup
-和 Authorization Code + PKCE。页面只展示验签后的 claims，不展示 access token 或
-Client Secret。省略 `TELESRV_BOT_LOGIN_CLIENT_SECRET` 时仍可验证 JS popup，但服务端
-code flow 会明确禁用。
+Send `/logindemo` to the bot. The first button must bring up the Telegram
+client's native authorization confirmation; after approval the page shows
+`login_url HMAC verified`. The second button opens the test page, where you can
+run the JS SDK popup and Authorization Code + PKCE separately. The page only
+shows signed claims, never the access token or Client Secret. When
+`TELESRV_BOT_LOGIN_CLIENT_SECRET` is omitted the JS popup can still be verified,
+but the server-side code flow is explicitly disabled.
 
-移动 Chrome 会在跳入 Telegram/DrKLO 前让 popup 把短期 browser token 交给原 RP
-标签；父标签随后以精确登记 origin 轮询 `/auth/status`。因此外部 app round-trip
-关闭 popup 或丢失 `window.opener` 时，原标签仍能完成 JWKS 验签。不要给
-`/auth/status` 配 wildcard CORS，也不要在 RP 中记录 browser token 或 ID token。
+Mobile Chrome makes the popup hand the short-lived browser token to the original
+RP tab before jumping into Telegram/DrKLO; the parent tab then polls
+`/auth/status` from the exact registered origin. So when the external app
+round-trip closes the popup or loses `window.opener`, the original tab can still
+complete JWKS verification. Do not configure wildcard CORS for `/auth/status`,
+and do not log the browser token or ID token in the RP.
 
-demo 的 flow/state/nonce 只保存在单进程内存中，带 10 分钟过期和 256 条上限，专用于
-本地与受控测试部署端到端验证，不是生产 relying-party 实现。官方 iOS/Android SDK
-目前把 `https://oauth.telegram.org` 写死；验证自建 issuer 时需使用项目记录的最小
-base-URL patch 或等价测试构建，不能把官方生产 SDK 未修改的结果误判为自建服务结果。
+The demo's flow/state/nonce are kept only in single-process memory, with a
+10-minute expiry and a 256-entry cap, solely for end-to-end verification on
+local and controlled test deployments, not a production relying-party
+implementation. The official iOS/Android SDK currently hardcodes
+`https://oauth.telegram.org`; verifying a self-hosted issuer requires the
+minimal base-URL patch recorded by the project or an equivalent test build, and
+you must not mistake an unmodified official production SDK result for a
+self-hosted service result.
 
-测试命令：
+Test commands:
 
 ```powershell
 & "$env:TEMP\telesrv-bedolaga-demo-venv\Scripts\python.exe" `

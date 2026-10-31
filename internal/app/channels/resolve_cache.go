@@ -15,7 +15,8 @@ const (
 	channelResolveReadModelMaxEntries = 16384
 )
 
-// channelResolveReadModelCache 由统一缓存原语承载(版本闸门 / epoch 守卫 / LRU / clone)。
+// channelResolveReadModelCache is backed by the shared cache primitive
+// (version gate / epoch guard / LRU / clone).
 type channelResolveReadModelCache struct {
 	cache *readmodelcache.Cache[channelViewCacheKey, domain.ChannelView]
 }

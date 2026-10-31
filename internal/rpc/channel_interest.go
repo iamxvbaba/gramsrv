@@ -74,9 +74,10 @@ func (r *Router) syncSessionChannelMemberships(ctx context.Context, userID int64
 	if !ok {
 		return
 	}
-	// 在读取持久成员列表之前采样修订号：读取窗口内若发生增量 join/leave
-	// （AddUserChannelMembership/RemoveUserChannelMembership），全量替换会覆盖增量，
-	// SetSessionChannelMemberships 据此改走合并路径并保持未就绪重试。
+	// Sample the revision number before reading the persistent member list: if an incremental
+	// join/leave (AddUserChannelMembership/RemoveUserChannelMembership) happens during the read
+	// window, a full replace would overwrite the increment, so SetSessionChannelMemberships uses
+	// this to switch to the merge path and keep retrying while not ready.
 	expectedGen := provider.ChannelMembershipGeneration(rawAuthKeyID, sessionID)
 	channelIDs := make([]int64, 0, channelMembershipSyncPageSize)
 	after := int64(0)

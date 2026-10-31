@@ -712,9 +712,9 @@ func TestMessageStoreReadHistoryStaleUnreadRepairDoesNotAdvancePts(t *testing.T)
 	dialogs.mu.RLock()
 	repaired := dialogs.m[recipientID].Dialogs[0]
 	dialogs.mu.RUnlock()
-	// readHistory 重算 UnreadCount、清 mentions/mark，但不清 reaction 角标（与 PG
-	// 对齐；reaction 未读由 readReactions/readMessageContents 单独清），故 UnreadReactions
-	// 保留为 1。
+	// readHistory recomputes UnreadCount and clears mentions/mark, but does not clear the
+	// reaction badge (matching PG; unread reactions are cleared separately by
+	// readReactions/readMessageContents), so UnreadReactions stays at 1.
 	if repaired.UnreadCount != 0 || repaired.UnreadMentions != 0 || repaired.UnreadReactions != 1 || repaired.UnreadMark {
 		t.Fatalf("dialog after repair = %+v, want unread/mentions/mark cleared and reactions preserved", repaired)
 	}
@@ -1420,7 +1420,7 @@ func TestMessageStoreRevokeHistorySweepsPeerSideAfterLocalClear(t *testing.T) {
 			t.Fatalf("SendPrivateText %d: %v", i, err)
 		}
 	}
-	// 先单向清空自己侧。
+	// First clear this side one-way.
 	if _, err := messages.DeleteHistory(ctx, domain.DeleteHistoryRequest{
 		OwnerUserID: 1001,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
@@ -1428,7 +1428,7 @@ func TestMessageStoreRevokeHistorySweepsPeerSideAfterLocalClear(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("local clear: %v", err)
 	}
-	// 再双向清史：反查模型对"我方已无 box"的消息失效，必须直扫对端。
+	// Then a two-way history clear: the back-reference model fails for messages whose box we no longer have, so the peer must be scanned directly.
 	res, err := messages.DeleteHistory(ctx, domain.DeleteHistoryRequest{
 		OwnerUserID: 1001,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
@@ -1477,7 +1477,7 @@ func TestReorderPinnedForceScopedToFolder(t *testing.T) {
 	if _, folderID, err := dialogs.SetPinned(ctx, 1001, archivedPeer, true); err != nil || folderID != domain.DialogArchiveFolderID {
 		t.Fatalf("pin archived folder = %d err %v, want archive", folderID, err)
 	}
-	// 归档列表内 force 重排：绝不允许清掉主列表的置顶。
+	// Force reorder within the archive list: clearing the main list's pins must never be allowed.
 	if changed, err := dialogs.ReorderPinned(ctx, 1001, domain.DialogArchiveFolderID, []domain.Peer{archivedPeer}, true); err != nil || changed {
 		t.Fatalf("reorder archive = changed %v err %v, want no-op", changed, err)
 	}
@@ -1490,7 +1490,7 @@ func TestReorderPinnedForceScopedToFolder(t *testing.T) {
 			t.Fatalf("main pin cleared by archive force reorder: %+v", dialog)
 		}
 	}
-	// 主列表 force 重排同样不得波及归档置顶。
+	// A force reorder of the main list must likewise not affect archive pins.
 	if changed, err := dialogs.ReorderPinned(ctx, 1001, domain.DialogMainFolderID, []domain.Peer{mainPeer}, true); err != nil || changed {
 		t.Fatalf("reorder main = changed %v err %v, want no-op", changed, err)
 	}
@@ -1523,8 +1523,8 @@ func TestSendPrivateTextClearsSenderUnreadMark(t *testing.T) {
 	if _, err := dialogs.SetUnreadMark(ctx, 1000000001, peer, true); err != nil {
 		t.Fatalf("mark unread: %v", err)
 	}
-	// 发送方向发出消息即清手动未读标记（对齐 postgres UpsertOutboxDialog
-	// 与 channel 发送路径）。
+	// Sending a message on the sending side clears the manual unread mark (matching
+	// postgres UpsertOutboxDialog and the channel send path).
 	if _, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:    1000000001,
 		RecipientUserID: 1000000002,

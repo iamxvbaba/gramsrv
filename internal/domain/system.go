@@ -8,26 +8,26 @@ import (
 )
 
 const (
-	// OfficialSystemUserID 是 Telegram 兼容客户端识别的官方系统账号。
+	// OfficialSystemUserID is the official system account recognized by Telegram-compatible clients.
 	OfficialSystemUserID int64 = 777000
 	// OfficialSystemPhone is a reserved service identity, not an ordinary E.164
 	// login number. Auth must recognize and reject it before account lookup.
 	OfficialSystemPhone = "42777"
 
-	// BotFatherUserID 是内置 BotFather 账号，与官方 @BotFather 同 ID。
+	// BotFatherUserID is the built-in BotFather account, with the same ID as the official @BotFather.
 	BotFatherUserID int64 = 93372553
-	// BotFatherAccessHash 固定不变；与迁移 0090 的种子行双写，必须保持一致。
+	// BotFatherAccessHash is fixed; it is double-written with the seed row in migration 0090 and the two must stay consistent.
 	BotFatherAccessHash int64 = 7421896403922962293
 
-	// StickersBotUserID 是内置 @Stickers 账号。它是 server 内置 service bot，
-	// 不走外部 Bot API 进程。
+	// StickersBotUserID is the built-in @Stickers account. It is a server-internal service bot
+	// that does not go through an external Bot API process.
 	StickersBotUserID int64 = 1063110917
-	// StickersBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
+	// StickersBotAccessHash is fixed; it is double-written with the postgres seed row and the two must stay consistent.
 	StickersBotAccessHash int64 = 5213187021149032991
 
-	// ChatBotUserID 是内置 @ChatBot 账号。它把私聊文本转给 server AI provider 链。
+	// ChatBotUserID is the built-in @ChatBot account. It forwards private-chat text to the server AI provider chain.
 	ChatBotUserID int64 = 1250000007
-	// ChatBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
+	// ChatBotAccessHash is fixed; it is double-written with the postgres seed row and the two must stay consistent.
 	ChatBotAccessHash int64 = 6332902371644871201
 
 	// VerifyBotUserID is the built-in @verifybot: it collects official platform
@@ -124,28 +124,28 @@ func PremiumBotConfiguredUsername() string {
 	return "premiumbot"
 }
 
-// officialSystemUserDisplayName 覆盖 OfficialSystemUser 的 FirstName——
-// 空表示「使用 branding.ProductName()」（编译期默认）。operator 在
-// Server Settings → Server identity 中配置的名称既在启动时写入，也在运行期
-// 由身份 watcher 检测到变化后重新写入（主服务器与管理面板分属两个进程、只共享
-// identity.json），因此用 atomic.Value 承载，避免投影路径与刷新路径的数据竞争。
-// 刻意只覆盖展示名，不动 Username：@username 是稳定、可寻址的标识符，
-// 其他东西可能已引用它；展示名则只出现在聊天头部。
+// officialSystemUserDisplayName overrides OfficialSystemUser's FirstName —
+// empty means "use branding.ProductName()" (the compile-time default). The name an operator
+// configures in Server Settings → Server identity is written both at startup and at runtime
+// when the identity watcher detects a change (the main server and the admin panel are two processes sharing
+// only identity.json), so it is held in an atomic.Value to avoid a data race between the projection path and the refresh path.
+// It deliberately overrides only the display name, not Username: @username is a stable, addressable identifier
+// that other things may already reference, whereas the display name appears only in the chat header.
 var officialSystemUserDisplayName atomic.Value
 
-// SetOfficialSystemUserDisplayName 记录 operator 为官方系统账号 (777000)
-// 配置的自定义服务器名，启动时与运行期身份刷新时调用。
-// 传 "" 表示回退到 branding.ProductName()——与 avatar 覆盖相同的
-// 「未设置 → 默认值」契约。
+// SetOfficialSystemUserDisplayName records the custom server name an operator
+// configured for the official system account (777000), called at startup and on runtime identity refresh.
+// Passing "" means fall back to branding.ProductName() — the same
+// "unset → default" contract as the avatar override.
 func SetOfficialSystemUserDisplayName(name string) {
 	officialSystemUserDisplayName.Store(strings.TrimSpace(name))
 }
 
-// officialSystemDisplayName 返回官方系统账号当前生效的展示名：若通过
-// SetOfficialSystemUserDisplayName 设置了 operator 自定义值则用之，否则
-// branding.ProductName()。OfficialSystemUser（777000 的 FirstName）与登录
-// 欢迎消息的 {{server_name}} 占位符（见 login_welcome_template.go）共用，
-// 保证两者一致。
+// officialSystemDisplayName returns the official system account's currently effective display name: the operator's
+// custom value set via SetOfficialSystemUserDisplayName if present, otherwise
+// branding.ProductName(). It is shared by OfficialSystemUser (777000's FirstName) and the login
+// welcome message's {{server_name}} placeholder (see login_welcome_template.go),
+// keeping the two consistent.
 func officialSystemDisplayName() string {
 	if name, ok := officialSystemUserDisplayName.Load().(string); ok && name != "" {
 		return name
@@ -153,7 +153,7 @@ func officialSystemDisplayName() string {
 	return branding.ProductName()
 }
 
-// OfficialSystemUser 返回第一阶段内置的官方系统账号。
+// OfficialSystemUser returns the official system account built in for phase one.
 func OfficialSystemUser() User {
 	return User{
 		ID:         OfficialSystemUserID,
@@ -178,7 +178,7 @@ func StickersBotDescription() string {
 	return "Create custom sticker and emoji packs for " + branding.ProductName() + "."
 }
 
-// BotFatherUser 返回内置 BotFather 账号。username 不以 bot 结尾属种子例外（与官方一致）。
+// BotFatherUser returns the built-in BotFather account. Its username not ending in bot is a seed exception (matching the official behavior).
 func BotFatherUser() User {
 	return User{
 		ID:             BotFatherUserID,
@@ -191,7 +191,7 @@ func BotFatherUser() User {
 	}
 }
 
-// StickersBotUser 返回内置 @Stickers 账号。username 不以 bot 结尾属种子例外（与官方一致）。
+// StickersBotUser returns the built-in @Stickers account. Its username not ending in bot is a seed exception (matching the official behavior).
 func StickersBotUser() User {
 	return User{
 		ID:             StickersBotUserID,
@@ -205,7 +205,7 @@ func StickersBotUser() User {
 	}
 }
 
-// ChatBotUser 返回内置 @ChatBot 账号。
+// ChatBotUser returns the built-in @ChatBot account.
 func ChatBotUser() User {
 	return User{
 		ID:             ChatBotUserID,
@@ -300,8 +300,8 @@ func GiftClaimTestBotUser() User {
 	}
 }
 
-// SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。
-// 所有对 777000 的硬编码注入点统一经此函数，新增内置账号只改这里。
+// SystemUserByID returns a built-in system account; ok=false for a non-system account.
+// Every hard-coded injection point for 777000 goes through this function, so adding a built-in account only touches here.
 func SystemUserByID(id int64) (User, bool) {
 	if id == PremiumBotConfiguredUserID() {
 		return PremiumBotUser(), true

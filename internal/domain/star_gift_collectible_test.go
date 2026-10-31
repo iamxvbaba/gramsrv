@@ -89,8 +89,9 @@ func TestValidateStarGiftCollectibleDraftOfficialProvenance(t *testing.T) {
 	}
 }
 
-// Telegram 会对售罄限定礼物下发 permille=0 的属性（在池中但永不抽取）：它必须能通过
-// 校验，但整池都是 0 权重时仍然非法，因为没有任何可抽取项。
+// Telegram sends attributes with permille=0 for sold-out limited gifts (in the pool
+// but never drawn): they must pass validation, but a whole pool of zero weights is
+// still invalid because there is nothing left to draw.
 func TestValidateStarGiftCollectibleDraftAcceptsZeroPermille(t *testing.T) {
 	write := validCollectibleDraft()
 	write.Models[0].RarityPermille = 0
@@ -118,8 +119,10 @@ func TestValidateStarGiftCollectibleDraftAcceptsZeroPermille(t *testing.T) {
 	}
 }
 
-// 升级预览只采样权重 > 0 的属性：0 权重背景不能凑出预览所需的两个背景，否则预览里只剩
-// 一个背景，TDesktop 的升级动画停不下来；但 0 权重背景仍参与 backdrop_id 去重。
+// The upgrade preview samples only attributes with weight > 0: zero-weight
+// backdrops cannot supply the two backdrops the preview needs, otherwise the
+// preview shows only one backdrop and TDesktop's upgrade animation never stops;
+// but zero-weight backdrops still participate in backdrop_id deduplication.
 func TestValidateStarGiftCollectibleDraftCountsOnlyDrawableBackdrops(t *testing.T) {
 	retired := StarGiftCollectibleAttribute{Kind: StarGiftCollectibleBackdrop, Name: "Retired Backdrop",
 		BackdropID: 2, RarityKind: StarGiftRarityPermille, RarityPermille: 0}

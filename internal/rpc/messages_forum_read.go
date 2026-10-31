@@ -8,16 +8,23 @@ import (
 	"telesrv/internal/domain"
 )
 
-// advanceForumGeneralReadAfterChannelRead 在「直接的频道级 readHistory」(channels.readHistory /
-// messages.readHistory 频道 peer) 推进频道级已读后，顺带把 forum 的 General(topic 1) 话题级水位
-// 也推进到同一个 maxID，并向自己其它设备/当前设备下发 updateReadChannelDiscussionInbox、向
-// General 内发送者下发已读回执。
+// advanceForumGeneralReadAfterChannelRead, after a "direct channel-level
+// readHistory" (channels.readHistory / messages.readHistory with a channel peer)
+// advances channel-level read state, also advances the forum's General (topic 1)
+// topic-level watermark to the same maxID, and sends
+// updateReadChannelDiscussionInbox to the user's other devices/the current device
+// plus read receipts to senders within General.
 //
-// 语义：General 消息即频道根历史（reply_to_top_id ∈ {0,1}），被频道级已读覆盖，故频道级读到顶
-// ⇒ General 也读到顶。仅对 forum 生效（read.Forum 守卫，避免对普通频道多一次查询）。**普通子话题
-// 的 readDiscussion 不经此路径**（其内部对频道级 ReadHistory 的「保守叠加」由 onMessagesReadDiscussion
-// 直接调 service，不触达本 RPC handler），因此读子话题不会回灌 General —— 零话题间 cross-talk，
-// 只有真正的频道级整读才推进 General。
+// Semantics: General messages ARE the channel root history
+// (reply_to_top_id in {0,1}) and are covered by channel-level read state, so
+// reading the channel to the top implies General is read to the top too. It only
+// takes effect for forums (guarded by read.Forum, avoiding an extra query for
+// ordinary channels). **A plain subtopic's readDiscussion does not go through
+// this path** (its internal "conservative overlay" onto channel-level ReadHistory
+// calls the service directly from onMessagesReadDiscussion and never reaches this
+// RPC handler), so reading a subtopic does not feed back into General -- zero
+// cross-talk between topics; only a genuine channel-wide full read advances
+// General.
 func (r *Router) advanceForumGeneralReadAfterChannelRead(ctx context.Context, userID int64, read domain.ReadChannelHistoryResult) {
 	if r.deps.Channels == nil || !read.Forum || read.ChannelID == 0 || read.MaxID <= 0 {
 		return
@@ -32,8 +39,10 @@ func (r *Router) advanceForumGeneralReadAfterChannelRead(ctx context.Context, us
 	if err != nil || !topicRes.Changed {
 		return
 	}
-	// 话题级水位此刻已落库；下面的 durable 事件+在线推送失败只影响其它设备的即时刷新，
-	// getForumTopics 重拉会收敛，故失败仅记日志、不阻断已成功的频道级 readHistory。
+	// The topic-level watermark is already persisted at this point; the durable
+	// event + online push below only affect other devices' immediate refresh, and
+	// a getForumTopics re-pull converges, so a failure is logged only and does not
+	// block the already-successful channel-level readHistory.
 	if err := r.recordChannelDiscussionInbox(ctx, userID, read.ChannelID, topicRes.TopicID, topicRes.MaxID, topicRes.Pts); err != nil {
 		r.log.Warn("record general discussion inbox after channel read",
 			zap.Int64("channel_id", read.ChannelID), zap.Error(err))
@@ -42,8 +51,9 @@ func (r *Router) advanceForumGeneralReadAfterChannelRead(ctx context.Context, us
 	r.pushChannelDiscussionOutboxUpdates(ctx, read.ChannelID, topicRes.TopicID, topicRes.OutboxUpdates)
 }
 
-// recordChannelDiscussionInbox 记录 forum 话题级已读并向自己其它设备/当前设备下发
-// updateReadChannelDiscussionInbox（durable + 账号 pts 簿记，供离线差分恢复）。
+// recordChannelDiscussionInbox records a forum topic-level read and sends
+// updateReadChannelDiscussionInbox to the user's other devices/the current device
+// (durable + account pts bookkeeping, for offline difference recovery).
 func (r *Router) recordChannelDiscussionInbox(ctx context.Context, userID, channelID int64, topicID, maxID, channelPts int) error {
 	if maxID <= 0 || channelID == 0 || topicID <= 0 {
 		return nil
@@ -72,9 +82,11 @@ func (r *Router) recordChannelDiscussionInbox(ctx context.Context, userID, chann
 	return nil
 }
 
-// pushChannelDiscussionOutboxUpdates 在线向话题内发送者下发已读回执
-// updateReadChannelDiscussionOutbox。与频道级 pushChannelReadOutboxUpdates 同为在线 best-effort
-// （不进 durable，客户端重连可由 getForumTopics 的 read_outbox_max_id 兜底）。
+// pushChannelDiscussionOutboxUpdates sends read receipts
+// (updateReadChannelDiscussionOutbox) online to senders within a topic. Like the
+// channel-level pushChannelReadOutboxUpdates it is online best-effort (not
+// durable; on reconnect the client falls back to getForumTopics'
+// read_outbox_max_id).
 func (r *Router) pushChannelDiscussionOutboxUpdates(ctx context.Context, channelID int64, topicID int, updates []domain.ChannelReadOutboxUpdate) {
 	if r.deps.Sessions == nil || channelID == 0 || topicID <= 0 || len(updates) == 0 {
 		return

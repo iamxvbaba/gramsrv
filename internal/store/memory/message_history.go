@@ -117,9 +117,9 @@ func (s *MessageStore) ReadHistory(_ context.Context, req domain.ReadHistoryRequ
 				}
 				dialog.UnreadCount = unread
 				dialog.UnreadMentions = 0
-				// readHistory 不清 reaction 角标（与 PG 一致；reaction 未读由
-				// readReactions/readMessageContents 单独清，否则角标数与 getUnreadReactions
-				// 跳转列表对不上）。
+				// readHistory does not clear the reaction badge (matching PG; unread
+				// reactions are cleared separately by readReactions/readMessageContents,
+				// otherwise the badge count and the getUnreadReactions jump list would disagree).
 				dialog.UnreadMark = false
 				res.MaxID = dialog.ReadInboxMaxID
 				res.StillUnreadCount = unread
@@ -148,7 +148,7 @@ func (s *MessageStore) ReadHistory(_ context.Context, req domain.ReadHistoryRequ
 		}
 		dialog.UnreadCount = unread
 		dialog.UnreadMentions = 0
-		// readHistory 不清 reaction 角标（与 PG 一致，见上）。
+		// readHistory does not clear the reaction badge (matching PG; see above).
 		dialog.UnreadMark = false
 		res.StillUnreadCount = unread
 		pts := s.nextPtsLocked(req.OwnerUserID)
@@ -256,8 +256,8 @@ func (s *MessageStore) DeleteHistory(_ context.Context, req domain.DeleteHistory
 		if req.MaxID > 0 && len(revokeUIDs) > 0 {
 			deleted = append(deleted, s.deleteMemoryMessagesByUIDLocked(revokeUIDs, req.OwnerUserID)...)
 		}
-		// 与 PG 同语义：全量/按日期的双向清史直扫对端残余，我方早已
-		// 单向删除的消息不能在对端残留。
+		// Same semantics as PG: a full/date-range two-way history clear scans the peer's
+		// leftovers directly, so messages we already deleted one-way must not linger on the peer.
 		if req.MaxID <= 0 && req.Peer.ID != req.OwnerUserID {
 			peerDeleted, _, peerMore := s.deleteMemoryMessagesLocked(req.Peer.ID, domain.MaxDeleteHistoryBatch, func(msg domain.Message) bool {
 				if anchor, ok := anchors[req.Peer.ID]; ok && msg.ID == anchor.message.ID {

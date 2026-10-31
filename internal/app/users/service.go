@@ -13,7 +13,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// ErrNotAuthorized 表示当前 auth_key 尚未登录。
+// ErrNotAuthorized means the current auth_key is not logged in yet.
 var (
 	ErrNotAuthorized            = errors.New("not authorized")
 	ErrSystemUserImmutable      = errors.New("system user identity is immutable")
@@ -23,10 +23,10 @@ var (
 	ErrLastSeenBatchUnsupported = errors.New("last seen batch store unsupported")
 )
 
-// ProfilePhotoProvider 批量返回用户当前头像（用于把 PhotoID/DCID/Stripped 富化到 domain.User）。
+// ProfilePhotoProvider returns current user photos in a batch (used to enrich PhotoID/DCID/Stripped into domain.User).
 type ProfilePhotoProvider = userprojection.ProfilePhotoProvider
 
-// Service 提供用户查询。
+// Service provides user queries.
 type Service struct {
 	users           store.UserStore
 	cache           store.UserCache
@@ -47,10 +47,10 @@ type moderationFlagAudienceStore interface {
 	ModerationFlagAudience(ctx context.Context, userID int64, limit int) ([]int64, error)
 }
 
-// Option 调整用户服务可选依赖。
+// Option adjusts the user service's optional dependencies.
 type Option func(*Service)
 
-// WithPhotoProvider 注入头像富化能力（缺省则用户不带头像）。
+// WithPhotoProvider injects photo enrichment (by default users carry no photo).
 func WithPhotoProvider(p ProfilePhotoProvider) Option {
 	return func(s *Service) { s.photos = p }
 }
@@ -94,9 +94,9 @@ const (
 	minUsernameLen      = 5
 	maxUsernameLen      = 32
 	maxProfileNameRunes = 64
-	// bio 长度双档，对齐 appConfig about_length_limit_default=70 /
-	// about_length_limit_premium=140；客户端按 self premium flag 选档，
-	// 服务端档位必须 ≥ 客户端宣告档位。
+	// Two bio length tiers, aligned with appConfig about_length_limit_default=70 /
+	// about_length_limit_premium=140; the client picks a tier by its self premium flag,
+	// and the server tier must be ≥ the tier the client declares.
 	maxProfileAboutRunes        = 70
 	maxProfileAboutRunesPremium = 140
 	maxBatchUsers               = 1000
@@ -105,7 +105,7 @@ const (
 	maxBatchViewerProjectionCells = 131072
 )
 
-// NewService 创建用户服务。
+// NewService creates the user service.
 func NewService(users store.UserStore, opts ...Option) *Service {
 	s := &Service{users: users}
 	for _, opt := range opts {
@@ -121,7 +121,7 @@ func NewService(users store.UserStore, opts ...Option) *Service {
 	return s
 }
 
-// loadSelf 加载当前用户但不富化头像（供内部校验路径使用，避免无谓的头像查询）。
+// loadSelf loads the current user without photo enrichment (for internal validation paths, to avoid needless photo queries).
 func (s *Service) loadSelf(ctx context.Context, userID int64) (domain.User, error) {
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
@@ -136,7 +136,7 @@ func (s *Service) loadSelf(ctx context.Context, userID int64) (domain.User, erro
 	return u, nil
 }
 
-// Self 返回当前登录的用户（带头像）。未登录返回 ErrNotAuthorized。
+// Self returns the current logged-in user (with photo). Returns ErrNotAuthorized when not logged in.
 func (s *Service) Self(ctx context.Context, userID int64) (domain.User, error) {
 	u, err := s.loadSelf(ctx, userID)
 	if err != nil {
@@ -145,7 +145,7 @@ func (s *Service) Self(ctx context.Context, userID int64) (domain.User, error) {
 	return s.projectOne(ctx, userID, u)
 }
 
-// ByID 返回指定用户。调用方必须已登录；access_hash 校验在 RPC 边界完成。
+// ByID returns the given user. The caller must be logged in; access_hash validation happens at the RPC boundary.
 func (s *Service) ByID(ctx context.Context, currentUserID, userID int64) (domain.User, bool, error) {
 	if currentUserID == 0 {
 		return domain.User{}, false, ErrNotAuthorized
@@ -164,7 +164,7 @@ func (s *Service) ByID(ctx context.Context, currentUserID, userID int64) (domain
 	return u, true, nil
 }
 
-// AdminUser 返回 viewer 无关的账号基础事实，供管理用例做 dry-run 与审计。
+// AdminUser returns viewer-independent account base facts for admin dry-run and audit cases.
 func (s *Service) AdminUser(ctx context.Context, userID int64) (domain.User, bool, error) {
 	if userID == 0 {
 		return domain.User{}, false, nil
@@ -199,7 +199,7 @@ func (s *Service) BaseUsersByIDs(ctx context.Context, userIDs []int64) ([]domain
 	return s.loadBaseUsersByIDs(ctx, userIDs)
 }
 
-// ByIDs 批量返回指定用户。调用方必须已登录；缺失用户不会出现在结果中。
+// ByIDs returns the given users in a batch. The caller must be logged in; missing users do not appear in the result.
 func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error) {
 	if currentUserID == 0 {
 		return nil, ErrNotAuthorized
@@ -229,12 +229,14 @@ func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int6
 	return s.projectUsers(ctx, currentUserID, users)
 }
 
-// ByIDsForViewers 跨多个 viewer 批量投影同一组 user（fan-out 模板化）：base user 只加载一次，
-// 隐私/改名/头像投影经 userprojection.ForViewers 收敛成批量查询。返回 map[viewerID][]User，
-// 每个切片与 ByIDs(viewer, ids) 字节等价，包含 viewer-specific personal photo overlay。
-// 供 channel fan-out 预热每 viewer 投影，
-// 把 per-recipient 的 ByIDs(=ForViewer) 折叠成一次跨 viewer 投影。不做 ByIDs 的单 caller 鉴权
-// （viewer 是 fan-out 收件人集合，非 RPC 调用方）。
+// ByIDsForViewers projects the same user set across multiple viewers in a batch (fan-out
+// templating): base users are loaded once, and privacy/rename/photo projection is collapsed
+// into batch queries via userprojection.ForViewers. It returns map[viewerID][]User, each
+// slice byte-equivalent to ByIDs(viewer, ids) and including the viewer-specific personal
+// photo overlay. Used by channel fan-out to prewarm each viewer's projection, folding the
+// per-recipient ByIDs(=ForViewer) into a single cross-viewer projection. It does not do
+// ByIDs' single-caller authorization (the viewers are the fan-out recipient set, not the
+// RPC caller).
 func (s *Service) ByIDsForViewers(ctx context.Context, viewerUserIDs []int64, userIDs []int64) (map[int64][]domain.User, error) {
 	if len(viewerUserIDs) == 0 || len(userIDs) == 0 {
 		return map[int64][]domain.User{}, nil
@@ -255,7 +257,7 @@ func (s *Service) ByIDsForViewers(ctx context.Context, viewerUserIDs []int64, us
 	if err != nil {
 		return nil, err
 	}
-	// projector 为 nil 时 ForViewers 返回各 viewer 的原始 base 副本（与 projectUsers 的 nil 分支一致）。
+	// When projector is nil, ForViewers returns a raw base copy for each viewer (consistent with projectUsers' nil branch).
 	return s.projector.ForViewers(ctx, viewers, base)
 }
 
@@ -294,7 +296,7 @@ func requireBatchBaseUsers(ids []int64, base []domain.User) ([]domain.User, erro
 	return out, nil
 }
 
-// CheckUsername 校验当前用户是否可以占用 username。
+// CheckUsername validates whether the current user can take the username.
 func (s *Service) CheckUsername(ctx context.Context, userID int64, username string) (bool, error) {
 	self, err := s.loadSelf(ctx, userID)
 	if err != nil {
@@ -318,7 +320,7 @@ func (s *Service) checkUsernameAvailable(ctx context.Context, selfID int64, user
 	return !found || u.ID == selfID, nil
 }
 
-// UpdateUsername 修改当前用户的主 username。空字符串表示删除 username。
+// UpdateUsername changes the current user's main username. An empty string deletes the username.
 func (s *Service) UpdateUsername(ctx context.Context, userID int64, username string) (domain.User, error) {
 	self, err := s.loadSelf(ctx, userID)
 	if err != nil {
@@ -348,7 +350,7 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, username str
 	return u, nil
 }
 
-// UpdateProfile 修改当前用户的基础资料。未设置的字段保持原值。
+// UpdateProfile changes the current user's base profile. Unset fields keep their original values.
 func (s *Service) UpdateProfile(ctx context.Context, userID int64, update domain.UserProfileUpdate) (domain.User, error) {
 	self, err := s.loadSelf(ctx, userID)
 	if err != nil {
@@ -472,8 +474,9 @@ func (s *Service) UpdateLastSeenBatch(ctx context.Context, updates []store.UserL
 	return nil
 }
 
-// PremiumActive 报告用户当前是否有效会员。走基础用户缓存路径、不做 viewer
-// 投影，供限额双档判断（pin 上限、reaction 上限、bio 长度等）低成本调用。
+// PremiumActive reports whether the user is currently an active Premium member. It goes
+// through the base-user cache path without viewer projection, for cheap calls in two-tier
+// limit decisions (pin cap, reaction cap, bio length, etc.).
 func (s *Service) PremiumActive(ctx context.Context, userID int64) bool {
 	if s == nil || userID == 0 {
 		return false
@@ -485,9 +488,9 @@ func (s *Service) PremiumActive(ctx context.Context, userID int64) bool {
 	return u.PremiumActiveAt(time.Now().Unix())
 }
 
-// GrantPremium 授予/续期会员：未过期则在现有到期时间上累加 months 个月，
-// 已过期或首次则从当前时刻起算（对齐官方续期语义）。months<=0 清除会员。
-// bot 永不可成为会员。
+// GrantPremium grants/renews Premium: when not expired it adds months to the existing
+// expiry time; when expired or first-time it starts from the current time (matching
+// official renewal semantics). months<=0 clears Premium. A bot can never become Premium.
 func (s *Service) GrantPremium(ctx context.Context, userID int64, months int) (domain.User, error) {
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
@@ -519,7 +522,7 @@ func (s *Service) GrantPremium(ctx context.Context, userID int64, months int) (d
 	return updated, nil
 }
 
-// SetVerified 设置/取消用户认证标记。认证是账号基础事实，所有 user 投影统一消费该字段。
+// SetVerified sets/clears a user's verified flag. Verification is an account base fact and is consumed uniformly by all user projections.
 func (s *Service) SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error) {
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
@@ -545,8 +548,9 @@ func (s *Service) SetVerified(ctx context.Context, userID int64, verified bool) 
 	return updated, nil
 }
 
-// SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。scam/fake
-// 是账号基础事实，所有 user 投影统一消费；写后刷新基础缓存以便投影即时可见。
+// SetScamFake sets/clears a user's scam and fake flags (bots reuse the same path).
+// scam/fake are account base facts consumed uniformly by all user projections; the base
+// cache is refreshed after the write so the projection is immediately visible.
 func (s *Service) SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error) {
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
@@ -589,7 +593,7 @@ func (s *Service) ModerationFlagAudience(ctx context.Context, userID int64, limi
 	return audience.ModerationFlagAudience(ctx, userID, limit)
 }
 
-// SetSupport 设置/取消用户的 support 标记（官方客服账号）。写后刷新基础缓存。
+// SetSupport sets/clears a user's support flag (official support accounts). Refreshes the base cache after the write.
 func (s *Service) SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error) {
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
@@ -612,9 +616,10 @@ func (s *Service) SetSupport(ctx context.Context, userID int64, support bool) (d
 	return updated, nil
 }
 
-// SweepExpiredPremium 清理到期会员（store 把过期行清 NULL）并失效用户缓存，
-// 返回清理后的用户，供 RPC 层向本人在线 session 推 updateUser。premium 下发
-// 正确性由读取路径即时派生保证，这里只做收尾与通知。
+// SweepExpiredPremium clears expired Premium members (the store NULLs out expired rows)
+// and invalidates the user cache, returning the cleaned-up users for the RPC layer to push
+// updateUser to the owner's online sessions. Premium delivery correctness is guaranteed by
+// the read path deriving it on the fly; this only does the cleanup and notification.
 func (s *Service) SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error) {
 	users, err := s.users.SweepExpiredPremium(ctx, now, limit)
 	if err != nil || len(users) == 0 {
@@ -628,8 +633,9 @@ func (s *Service) SweepExpiredPremium(ctx context.Context, now int64, limit int)
 	return users, nil
 }
 
-// UpdateEmojiStatus 更新当前用户 emoji status（premium 专属；零值清除）。
-// 清除不要求会员（到期降级后客户端仍可显式清掉残留状态）。
+// UpdateEmojiStatus updates the current user's emoji status (Premium-only; a zero value
+// clears it). Clearing does not require Premium (after an expiry downgrade the client can
+// still explicitly clear leftover state).
 func (s *Service) UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
 	self, err := s.validateEmojiStatusUpdate(ctx, userID, status)
 	if err != nil {
@@ -689,7 +695,7 @@ func (s *Service) validateEmojiStatusUpdate(ctx context.Context, userID int64, s
 	return self, nil
 }
 
-// UpdateBirthday 设置/清除用户生日（account.updateBirthday）。零值 Birthday 表示清除。
+// UpdateBirthday sets/clears the user's birthday (account.updateBirthday). A zero-value Birthday means clear.
 func (s *Service) UpdateBirthday(ctx context.Context, userID int64, birthday domain.Birthday) (domain.User, error) {
 	self, err := s.loadSelf(ctx, userID)
 	if err != nil {
@@ -700,7 +706,7 @@ func (s *Service) UpdateBirthday(ctx context.Context, userID int64, birthday dom
 			return domain.User{}, domain.ErrBirthdayInvalid
 		}
 	} else {
-		birthday = domain.Birthday{} // 归一化为清除
+		birthday = domain.Birthday{} // normalize to clear
 	}
 	u, err := s.users.UpdateBirthday(ctx, self.ID, birthday)
 	if err != nil {
@@ -710,8 +716,9 @@ func (s *Service) UpdateBirthday(ctx context.Context, userID int64, birthday dom
 	return u, nil
 }
 
-// UpdatePersonalChannel 设置/清除资料页个人频道（account.updatePersonalChannel）；
-// channelID=0 表示清除。频道存在性与「调用者是其成员」由 RPC 层在调用前校验。
+// UpdatePersonalChannel sets/clears the profile personal channel
+// (account.updatePersonalChannel); channelID=0 means clear. The channel's existence and
+// "the caller is a member" are validated by the RPC layer before the call.
 func (s *Service) UpdatePersonalChannel(ctx context.Context, userID int64, channelID int64) (domain.User, error) {
 	self, err := s.loadSelf(ctx, userID)
 	if err != nil {
@@ -739,7 +746,7 @@ func (s *Service) UpdateColor(ctx context.Context, userID int64, forProfile bool
 	return u, nil
 }
 
-// ResolveUsername 解析 username 到用户；调用方必须已登录。
+// ResolveUsername resolves a username to a user; the caller must be logged in.
 func (s *Service) ResolveUsername(ctx context.Context, currentUserID int64, username string) (domain.User, bool, error) {
 	if _, err := s.loadSelf(ctx, currentUserID); err != nil {
 		return domain.User{}, false, err
@@ -762,11 +769,13 @@ func (s *Service) ResolveUsername(ctx context.Context, currentUserID int64, user
 	if err != nil {
 		return domain.User{}, false, err
 	}
-	// 冻结账号对观察者呈 deleted 墓碑：其全部 username（常规槽位 + collectible NFT）
-	// 不再解析到该用户，contacts.resolveUsername 报 USERNAME_NOT_OCCUPIED（客户端显示
-	// 「未找到」）。占用检查走 peer_usernames 注册表持有关系，冻结期仍报告占住
-	// （USERNAME_OCCUPIED），只是投影层隐身；解冻后墓碑消失，解析与占用语义即刻
-	// 恢复，无需任何数据回写。
+	// A frozen account is presented to observers as a deleted tombstone: all of its usernames
+	// (regular slots + collectible NFTs) no longer resolve to that user, and
+	// contacts.resolveUsername reports USERNAME_NOT_OCCUPIED (the client shows "not found").
+	// The occupancy check goes through the peer_usernames registry ownership relation, so
+	// during the freeze it still reports occupied (USERNAME_OCCUPIED) while merely hiding the
+	// projection; after unfreezing the tombstone disappears and resolution and occupancy
+	// semantics recover immediately, with no data write-back.
 	if u.Deleted {
 		return domain.User{}, false, nil
 	}

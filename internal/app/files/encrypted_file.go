@@ -9,11 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// CreateEncryptedFileFromUpload 把已上传分片组装成密聊文件 blob 并铸造 EncryptedFile 快照。
-// 盲中继：内容是客户端加密的 bytes，不解析、不分类、不缩略图；blob 落 location_key
-// "enc:<id>"（复用 BlobBackend，下载经 inputEncryptedFileLocation → 同 key）。
-// access_hash 不强校验（沿用现有媒体 dev 姿态，依赖不可枚举 id）。元数据持久化由调用方
-// （rpc 层经 SecretChats.PutEncryptedFile）负责。
+// CreateEncryptedFileFromUpload assembles uploaded parts into a secret chat file blob and mints
+// an EncryptedFile snapshot. Blind relay: the content is client-encrypted bytes, not parsed, not
+// classified, not thumbnailed; the blob lands at location_key "enc:<id>" (reusing BlobBackend,
+// downloads go through inputEncryptedFileLocation → the same key). access_hash is not strictly
+// checked (following the existing dev posture for media, relying on non-enumerable ids). Metadata
+// persistence is the caller's responsibility (the rpc layer via SecretChats.PutEncryptedFile).
 func (s *Service) CreateEncryptedFileFromUpload(ctx context.Context, file domain.UploadedFileRef, keyFingerprint int) (domain.EncryptedFileRef, error) {
 	body, err := s.assembleUploadBlob(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {

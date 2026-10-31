@@ -11,23 +11,23 @@ import (
 
 const (
 	videoThumbnailTimeout       = 5 * time.Second
-	videoThumbnailMaxInputBytes = 200 << 20 // 200MB；更大文件本阶段跳过 fallback，避免阻塞发送。
+	videoThumbnailMaxInputBytes = 200 << 20 // 200MB; at this stage larger files skip the fallback to avoid blocking sends.
 	videoThumbnailMaxConcurrent = 2
 )
 
-// VideoThumbnailer 从视频字节中抽取静态缩略图。实现必须可失败降级，不影响原发送流程。
+// VideoThumbnailer extracts a static thumbnail from video bytes. An implementation must be able to fail gracefully without affecting the original send flow.
 type VideoThumbnailer interface {
 	Extract(ctx context.Context, data []byte, mimeType string) ([]byte, error)
 }
 
-// FFmpegVideoThumbnailer 使用本机 ffmpeg 抽取第一帧 JPEG。
+// FFmpegVideoThumbnailer uses the local ffmpeg to extract the first frame as JPEG.
 type FFmpegVideoThumbnailer struct {
 	path    string
 	timeout time.Duration
 	slots   chan struct{}
 }
 
-// NewFFmpegVideoThumbnailer 返回基于 PATH 中 ffmpeg 的抽帧器。
+// NewFFmpegVideoThumbnailer returns a frame extractor based on the ffmpeg in PATH.
 func NewFFmpegVideoThumbnailer() (*FFmpegVideoThumbnailer, error) {
 	path, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -40,7 +40,7 @@ func NewFFmpegVideoThumbnailer() (*FFmpegVideoThumbnailer, error) {
 	}, nil
 }
 
-// Extract 抽取第一帧并输出 JPEG bytes。
+// Extract extracts the first frame and outputs JPEG bytes.
 func (t *FFmpegVideoThumbnailer) Extract(ctx context.Context, data []byte, mimeType string) ([]byte, error) {
 	if t == nil || t.path == "" {
 		return nil, fmt.Errorf("ffmpeg thumbnailer unavailable")

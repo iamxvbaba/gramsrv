@@ -1,4 +1,4 @@
-// Package domain 存放业务实体与值对象（User、Peer、Dialog、Message、MessageID 等）。
+// Package domain holds business entities and value objects (User, Peer, Dialog, Message, MessageID, etc.).
 //
-// 铁律：本包禁止依赖 iamxvbaba/td/tg 等协议层类型；TL 类型只允许出现在 RPC/MTProto 边界。
+// Iron rule: this package must not depend on protocol-layer types such as iamxvbaba/td/tg; TL types are only allowed at the RPC/MTProto boundary.
 package domain

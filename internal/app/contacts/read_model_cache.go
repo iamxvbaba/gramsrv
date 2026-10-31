@@ -14,8 +14,9 @@ const (
 	contactListReadModelMaxUsers   = 4096
 )
 
-// contactListReadModelCache 是 contact list read-model 的 per-viewer 缓存,由统一缓存原语
-// readmodelcache.Cache 承载(版本闸门 / epoch 守卫 / LRU 单条驱逐 / clone 内建)。
+// contactListReadModelCache is the per-viewer cache of the contact list read model, backed
+// by the shared cache primitive readmodelcache.Cache (version gate / epoch guard /
+// single-entry LRU eviction / built-in clone).
 type contactListReadModelCache struct {
 	cache *readmodelcache.Cache[int64, domain.ContactList]
 }
@@ -33,8 +34,9 @@ func newContactListReadModelCache(ttl time.Duration) *contactListReadModelCache 
 	}
 }
 
-// getOrLoad 命中即返回 clone,否则经 singleflight load。版本闸门:hasHash 且 currentHash!=0
-// 时仅复用 storedHash==currentHash 的快照,否则重载(对齐 contact_account 版本脊)。
+// getOrLoad returns a clone on a hit, otherwise loads via singleflight. Version gate: when
+// hasHash and currentHash!=0, only reuse the snapshot with storedHash==currentHash, otherwise
+// reload (aligned with the contact_account version spine).
 func (c *contactListReadModelCache) getOrLoad(ctx context.Context, userID int64, currentHash int64, hasHash bool, load func() (domain.ContactList, error)) (domain.ContactList, error) {
 	if c == nil {
 		return load()

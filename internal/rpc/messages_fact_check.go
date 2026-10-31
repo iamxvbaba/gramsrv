@@ -10,10 +10,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// tgFactCheck 把领域事实核查投影成 TL 构造器。
+// tgFactCheck projects a domain fact check into its TL constructor.
 //
-// need_check 置位时按协议只带 hash：country/text 由客户端用
-// messages.getFactCheck 懒加载；已经有结论时直接带上国家与文本。
+// When need_check is set, the protocol carries only the hash: country/text are
+// lazily loaded by the client via messages.getFactCheck; once a verdict exists,
+// the country and text are included directly.
 func tgFactCheck(check *domain.FactCheck) *tg.FactCheck {
 	if check == nil || check.Hash == 0 {
 		return nil
@@ -30,7 +31,8 @@ func tgFactCheck(check *domain.FactCheck) *tg.FactCheck {
 	return out
 }
 
-// onMessagesEditFactCheck 处理 messages.editFactCheck：给一条消息写入事实核查结论。
+// onMessagesEditFactCheck handles messages.editFactCheck: writes a fact-check
+// verdict onto a message.
 func (r *Router) onMessagesEditFactCheck(ctx context.Context, req *tg.MessagesEditFactCheckRequest) (tg.UpdatesClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
@@ -43,7 +45,8 @@ func (r *Router) onMessagesEditFactCheck(ctx context.Context, req *tg.MessagesEd
 	if err != nil {
 		return nil, err
 	}
-	// 客户端只在广播频道提供事实核查入口；私有对话与群组没有这个概念。
+	// Clients only expose the fact-check entry point in broadcast channels;
+	// private chats and groups have no such concept.
 	if peer.Type != domain.PeerTypeChannel {
 		return nil, peerIDInvalidErr()
 	}
@@ -69,7 +72,8 @@ func (r *Router) onMessagesEditFactCheck(ctx context.Context, req *tg.MessagesEd
 	return r.factCheckUpdates(ctx, userID, res), nil
 }
 
-// onMessagesDeleteFactCheck 处理 messages.deleteFactCheck：撤掉事实核查标签。
+// onMessagesDeleteFactCheck handles messages.deleteFactCheck: removes the
+// fact-check tag.
 func (r *Router) onMessagesDeleteFactCheck(ctx context.Context, req *tg.MessagesDeleteFactCheckRequest) (tg.UpdatesClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
@@ -98,7 +102,8 @@ func (r *Router) onMessagesDeleteFactCheck(ctx context.Context, req *tg.Messages
 	return r.factCheckUpdates(ctx, userID, res), nil
 }
 
-// onMessagesGetFactCheck 处理 messages.getFactCheck：批量读取事实核查标签。
+// onMessagesGetFactCheck handles messages.getFactCheck: batch-reads fact-check
+// tags.
 func (r *Router) onMessagesGetFactCheck(ctx context.Context, req *tg.MessagesGetFactCheckRequest) ([]tg.FactCheck, error) {
 	if req == nil || len(req.MsgID) == 0 {
 		return nil, inputRequestInvalidErr()
@@ -127,7 +132,7 @@ func (r *Router) onMessagesGetFactCheck(ctx context.Context, req *tg.MessagesGet
 	return out, nil
 }
 
-// factCheckUpdates 把事实核查写入产生的结果投影成 tg.Updates。
+// factCheckUpdates projects the result of a fact-check write into tg.Updates.
 func (r *Router) factCheckUpdates(ctx context.Context, viewerUserID int64, res domain.EditFactCheckResult) *tg.Updates {
 	edit := domain.EditChannelMessageResult{
 		Channel: res.Channel, Message: res.Message, Event: res.Event, Recipients: res.Recipients,

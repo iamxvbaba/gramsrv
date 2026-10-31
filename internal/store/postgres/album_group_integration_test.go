@@ -53,7 +53,7 @@ func TestAlbumGroupReservationConvergesAcrossPostgresInstances(t *testing.T) {
 	if err != nil || groupedID != 761 {
 		t.Fatalf("reserve full = %d err=%v, want 761", groupedID, err)
 	}
-	// 新 store 实例模拟另一进程；失败子集必须恢复首次整包的组。
+	// A fresh store instance simulates another process; a failed subset must recover the group of the first full batch.
 	replayed, err := NewMessageStore(pool).ReserveAlbumGroup(ctx, pgAlbumReq(sender.ID, privatePeer, 762, full[1:]...))
 	if err != nil || replayed != groupedID {
 		t.Fatalf("reserve subset = %d err=%v, want %d", replayed, err, groupedID)
@@ -62,15 +62,15 @@ func TestAlbumGroupReservationConvergesAcrossPostgresInstances(t *testing.T) {
 		t.Fatalf("changed intent err=%v, want ErrMessageRandomIDDuplicate", err)
 	}
 
-	// 同 random_id 在不同 peer 作用域独立，不会误并相册。
+	// The same random_id is independent per peer scope and does not wrongly merge albums.
 	channelPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: recipient.ID}
 	channelGroup, err := firstStore.ReserveAlbumGroup(ctx, pgAlbumReq(sender.ID, channelPeer, 764, full[0]))
 	if err != nil || channelGroup != 764 {
 		t.Fatalf("channel peer isolated group = %d err=%v, want 764", channelGroup, err)
 	}
 
-	// 两个实例同时预留部分重叠的批次，shared random_id 的 advisory lock 必须让
-	// 两边串行收敛；最终 4/5/6 三个 item 全部同组。
+	// Two instances reserve partially overlapping batches concurrently; the advisory lock
+	// on the shared random_id must make both converge serially; finally items 4/5/6 all share one group.
 	left := pgAlbumReq(sender.ID, privatePeer, 765, pgAlbumItem(76004, "four"), pgAlbumItem(76005, "shared"))
 	right := pgAlbumReq(sender.ID, privatePeer, 766, pgAlbumItem(76005, "shared"), pgAlbumItem(76006, "six"))
 	requests := []domain.AlbumGroupReservationRequest{left, right}
@@ -98,7 +98,7 @@ func TestAlbumGroupReservationConvergesAcrossPostgresInstances(t *testing.T) {
 		}
 	}
 
-	// 一个请求同时命中两个历史组必须整体失败，不能绑定其中的新 item。
+	// A request hitting two historical groups at once must fail as a whole and must not bind the new item into either.
 	oldA := pgAlbumItem(76007, "old-a")
 	oldB := pgAlbumItem(76008, "old-b")
 	newItem := pgAlbumItem(76009, "new")

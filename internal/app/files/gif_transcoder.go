@@ -19,7 +19,7 @@ const (
 	gifTranscodeMaxConcurrent  = 2
 )
 
-// GIFVideo 是服务端把真实 GIF 规范化为 Telegram GIFv 后的结果。
+// GIFVideo is the server's result after normalizing a real GIF into Telegram GIFv.
 type GIFVideo struct {
 	Data     []byte
 	Width    int
@@ -27,7 +27,7 @@ type GIFVideo struct {
 	Duration float64
 }
 
-// GIFTranscoder 必须输出无声、faststart 的 H.264 MP4，并返回可持久化的视频元数据。
+// GIFTranscoder must output a silent, faststart H.264 MP4 and return persistable video metadata.
 type GIFTranscoder interface {
 	Transcode(ctx context.Context, data []byte) (GIFVideo, error)
 }

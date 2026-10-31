@@ -16,9 +16,12 @@ import (
 const userOnlineTTL = 5 * time.Minute
 const presenceDialogFanoutCandidateLimit = 512
 
-// onlineNotifyRefreshInterval 是「每 RPC 上线广播」的去重间隔：同一 session 在此间隔内的在线续期
-// 不再向对端重复广播在线态。TDesktop 的在线 TTL 为 5min，客户端 account.updateStatus 周期为分钟级；
-// 普通 RPC 只需刷新内存水位，presence fan-out 以分钟级节流即可保持 UI 新鲜。
+// onlineNotifyRefreshInterval is the dedup interval for the "broadcast online on
+// every RPC" behavior: an online renewal for the same session within this interval
+// no longer re-broadcasts the online state to peers. TDesktop's online TTL is 5min
+// and the client's account.updateStatus period is on the order of minutes; an
+// ordinary RPC only needs to refresh the in-memory watermark, so throttling the
+// presence fan-out to the minute level keeps the UI fresh.
 const onlineNotifyRefreshInterval = 2 * time.Minute
 
 type presencePersistMode uint8
@@ -28,11 +31,14 @@ const (
 	presencePersistAsync
 )
 
-// offlineAnnounceGrace 是最后一个连接断开后广播 offline 的去抖宽限。
-// 移动端重连/换 session 都是「先断旧再建新」，瞬时无连接会对全部好友广播一轮
-// offline→online 抖动；宽限期内重新上线则跳过广播。被动查询不受去抖影响：
-// presence 条目断连即清，查询回落到持久化 last_seen，语义一致。
-// var 而非 const：测试需要缩短等待。
+// offlineAnnounceGrace is the debounce grace before broadcasting offline after the
+// last connection drops. Mobile reconnects / session switches are all "tear down
+// the old, then build the new", and a momentary absence of connections would
+// broadcast a round of offline->online churn to all friends; coming back online
+// within the grace period skips the broadcast. Passive queries are unaffected by
+// the debounce: a presence entry is cleared as soon as the connection drops, and
+// the query falls back to the persisted last_seen, so the semantics are unchanged.
+// A var rather than a const: tests need to shorten the wait.
 var offlineAnnounceGrace = 8 * time.Second
 
 type presenceSessionKey struct {
@@ -49,8 +55,9 @@ type presenceTracker struct {
 	mu        sync.RWMutex
 	bySession map[presenceSessionKey]presenceSessionState
 	byUser    map[int64]map[presenceSessionKey]domain.UserStatus
-	// offlineTimers 跟踪每个 user 挂起的 offline 广播去抖定时器，使重新上线能取消它，
-	// 避免断连风暴下 O(N) 个裸 time.AfterFunc 在 runtime timer heap 长期堆积。
+	// offlineTimers tracks each user's pending offline-broadcast debounce timer so
+	// going back online can cancel it, avoiding O(N) bare time.AfterFunc timers
+	// piling up in the runtime timer heap during a disconnect storm.
 	offlineTimers         map[int64]*time.Timer
 	offlineRunning        int64
 	lastSeenDirectRunning int64
@@ -98,7 +105,8 @@ func (p *presenceTracker) armOfflineTimer(userID int64, d time.Duration, fire fu
 	p.mu.Unlock()
 }
 
-// cancelOfflineTimer 取消某 user 挂起的 offline 广播去抖定时器（重新上线时调用）。
+// cancelOfflineTimer cancels a user's pending offline-broadcast debounce timer
+// (called when going back online).
 func (p *presenceTracker) cancelOfflineTimer(userID int64) {
 	if p == nil || userID == 0 {
 		return
@@ -111,10 +119,14 @@ func (p *presenceTracker) cancelOfflineTimer(userID int64) {
 	p.mu.Unlock()
 }
 
-// setSessionStatus 记录 session 的在线态，并返回是否需要向对端「广播在线」（notify）。
-// notify 仅在「本 session 此前已在线、本次仍是在线续期、且距上次广播未超 onlineNotifyRefreshInterval」
-// 时为 false——即每 RPC 的重复在线续期被去重。首次上线/离线/转在线/超刷新间隔一律 true。
-// 整个判定在 p.mu 内原子完成：开群洪峰下并发首帧只有第一个返回 true，其余看到刚写入的新鲜态返回 false。
+// setSessionStatus records the session's online state and returns whether the peer
+// needs to hear about it ("broadcast online", notify). notify is false only when
+// "this session was already online, is still renewing online, and the time since
+// the last broadcast is under onlineNotifyRefreshInterval" - i.e. repeated online
+// renewals on every RPC are deduplicated. First online/offline/switch-to-online/
+// interval exceeded are always true. The whole decision is done atomically inside
+// p.mu: on a burst of channel creation only the first concurrent frame returns
+// true, and the rest see the freshly written state and return false.
 func (p *presenceTracker) setSessionStatus(key presenceSessionKey, userID int64, status domain.UserStatus) bool {
 	if p == nil || userID == 0 {
 		return true
@@ -181,7 +193,8 @@ func (p *presenceTracker) removeSessionLocked(key presenceSessionKey, userID int
 	}
 }
 
-// expireOnline 把已过期的 online 条目原地降级为 offline，返回受影响用户的去重列表。
+// expireOnline downgrades expired online entries to offline in place and returns
+// the deduplicated list of affected users.
 func (p *presenceTracker) expireOnline(now int) []int64 {
 	if p == nil {
 		return nil
@@ -338,8 +351,10 @@ func (r *Router) announceFrozenEmptyStatus(userID int64) {
 }
 
 func (r *Router) setPresenceFromContext(ctx context.Context, userID int64, offline bool, persistMode presencePersistMode) (domain.UserStatus, bool) {
-	// 冻结账号永不上线：即使客户端显式 updateStatus(online) 或重连续期，也强制按
-	// offline 处理，内存 tracker 不会重新登记 online，也不得向对端广播在线态。
+	// A frozen account never goes online: even if the client explicitly calls
+	// updateStatus(online) or renews on reconnect, it is forced to offline, the
+	// in-memory tracker does not re-register online, and the online state must not
+	// be broadcast to peers.
 	if !offline && r.isFrozenPresenceUser(userID) {
 		offline = true
 	}
@@ -351,18 +366,20 @@ func (r *Router) setPresenceFromContext(ctx context.Context, userID int64, offli
 			Expires:   now + int(userOnlineTTL/time.Second),
 			WasOnline: now,
 		}
-		// 重新上线：取消可能挂起的 offline 去抖广播定时器。
+		// Back online: cancel any pending offline-broadcast debounce timer.
 		r.presence.cancelOfflineTimer(userID)
 	}
 	notify := true
 	if key, ok := presenceSessionKeyFromContext(ctx); ok {
 		notify = r.presence.setSessionStatus(key, userID, status)
 	}
-	// 在线续期（!offline）去抖；显式 offline 是权威写，强制落库。
-	// 冻结账号例外：冻结期的会话续期不得刷新 last_seen，否则 users.last_seen_at
-	// 一直保持「刚刚」，任何未走冻结投影的读取都会再次泄漏最近在线。
+	// Online renewals (!offline) are debounced; an explicit offline is an
+	// authoritative write and is always persisted. The frozen-account case is the
+	// exception: a session renewal during the freeze must not refresh last_seen, or
+	// users.last_seen_at would stay "just now" and any read that does not go through
+	// the freeze projection would leak the recent-online state again.
 	if r.isFrozenPresenceUser(userID) {
-		// no-op: frozen 账号不记录冻结期的并发活动
+		// no-op: a frozen account does not record activity during the freeze
 	} else if persistMode == presencePersistAsync {
 		r.persistLastSeenAsync(ctx, userID, now, !offline)
 	} else {
@@ -375,19 +392,25 @@ func (r *Router) announceSessionOnline(ctx context.Context, userID int64) {
 	if userID == 0 {
 		return
 	}
-	// bot 不参与 presence：官方 bot 无 status，从不产生 updateUserStatus，也不写
-	// last_seen。bot 登录（importBotAuthorization）经此路径，必须整体短路——否则
-	// 与 bot 有私聊的用户会收到协议中不存在的 bot 在线/离线广播，bot 也不登记
-	// presence 条目，sweeper 因此天然不会遇到 bot。
+	// Bots do not take part in presence: an official bot has no status, never
+	// produces updateUserStatus and never writes last_seen. Bot login
+	// (importBotAuthorization) goes through this path and must be short-circuited
+	// entirely - otherwise users with a private chat with the bot would receive
+	// bot online/offline broadcasts that do not exist in the protocol; the bot also
+	// does not register a presence entry, so the sweeper naturally never encounters
+	// a bot.
 	if bot, known := r.userBotStatus(ctx, userID); !known || bot {
 		return
 	}
 	r.seedFrozenPresence(ctx, userID)
 	status, notify := r.setPresenceFromContext(ctx, userID, false, presencePersistAsync)
 	if !notify {
-		// 本 session 已在线且在刷新间隔内：跳过「向对端广播在线 + 拉对端在线态给本 session」。
-		// setPresenceFromContext 已每 RPC 续期在线水位；这里省掉开群洪峰下每 RPC 的扇出 + 推送
-		// （实测每 RPC ~70ms，是去分区后开群尾延迟/CPU 的主要残余）。
+		// This session is already online and within the refresh interval: skip both
+		// "broadcast online to peers" and "pull peer online states to this session".
+		// setPresenceFromContext already renews the online watermark on every RPC;
+		// this drops the per-RPC fan-out + push during a burst of channel creation
+		// (measured at ~70ms per RPC, the main residual tail latency/CPU cost after
+		// the partition removal).
 		return
 	}
 	r.pushSessionOnlineAsync(ctx, userID, status)
@@ -421,13 +444,16 @@ func (r *Router) lookupUserBotStatus(ctx context.Context, userID int64) (bool, b
 	if userID == 0 || r.deps.Users == nil {
 		return false, false, nil
 	}
-	// bot 标志不可变 → 永久 in-process 缓存，避免 announceSessionOnline 每 RPC 都发一次重投影
-	// Users.ByID。仅缓存已存在的用户结果。命中后纯内存。
+	// The bot flag is immutable -> a permanent in-process cache, avoiding a
+	// reprojecting Users.ByID on every announceSessionOnline RPC. Only the results
+	// for users that exist are cached. A hit is purely in-memory.
 	if v, ok := r.botStatus.Load(userID); ok {
 		return v.(bool), true, nil
 	}
-	// 冷启动洪峰下用 singleflight 合并并发首查：~50 个并发首帧只打 1 次 PG（其余共享），
-	// 避免 Users.ByID 重投影 herd（曾让首帧 user_resolve 飙到 ~1.1s）。
+	// During the cold-start surge, singleflight coalesces concurrent first lookups:
+	// ~50 concurrent first frames hit PG only once (the rest share), avoiding a
+	// Users.ByID reprojection herd (which once drove first-frame user_resolve up to
+	// ~1.1s).
 	v, err, _ := r.authUserSF.Do("bot:"+strconv.FormatInt(userID, 10), func() (any, error) {
 		if cached, ok := r.botStatus.Load(userID); ok {
 			return botStatusResult{bot: cached.(bool), known: true}, nil
@@ -522,8 +548,9 @@ func (r *Router) reserveLastSeenPersist(userID int64, lastSeenAt int, debounce b
 	return updater, true
 }
 
-// persistLastSeen 落库 last_seen。debounce=true 时（在线高频续期）数秒内只落一次 DB；
-// debounce=false 是权威写（显式 offline / 断连），从不跳过。
+// persistLastSeen persists last_seen. With debounce=true (high-frequency online
+// renewals) it writes to the DB only once every few seconds; debounce=false is an
+// authoritative write (explicit offline / disconnect) and is never skipped.
 func (r *Router) persistLastSeen(ctx context.Context, userID int64, lastSeenAt int, debounce bool) {
 	updater, ok := r.reserveLastSeenPersist(userID, lastSeenAt, debounce)
 	if !ok {
@@ -629,9 +656,11 @@ func (r *Router) presenceBackgroundContext(ctx context.Context, timeout time.Dur
 // SessionOffline is called by mtprotoedge when an active connection disappears.
 // Business-side effects stay here: mtprotoedge only reports lifecycle facts.
 //
-// 同步路径只做内存清理（presence/clientInfo 条目）；持久化与 offline 广播经
-// 去抖宽限后在后台带超时执行——连接关闭发生在 serveConn 退出路径上，同步做
-// DB 写与逐 peer 查询会在断连风暴时放大 DB 压力并拖住 goroutine 退出。
+// The synchronous path only does in-memory cleanup (presence/clientInfo entries);
+// persistence and the offline broadcast run in the background with a timeout after
+// the debounce grace - the connection close happens on the serveConn exit path, and
+// doing the DB write and per-peer queries synchronously would amplify DB pressure
+// during a disconnect storm and stall the goroutine's exit.
 func (r *Router) SessionOffline(rawAuthKeyID [8]byte, sessionID, userID int64, lastForUser bool) {
 	r.SessionOfflineAt(rawAuthKeyID, sessionID, userID, lastForUser, int(r.clock.Now().Unix()))
 }
@@ -651,14 +680,17 @@ func (r *Router) SessionOfflineAt(rawAuthKeyID [8]byte, sessionID, userID int64,
 	if disconnectedAt <= 0 {
 		disconnectedAt = int(r.clock.Now().Unix())
 	}
-	// 用可跟踪的定时器，重新上线时能取消（见 cancelOfflineTimer），避免断连风暴堆积。
+	// Use a trackable timer that can be cancelled when going back online (see
+	// cancelOfflineTimer), avoiding a pile-up during a disconnect storm.
 	r.presence.armOfflineTimer(userID, offlineAnnounceGrace, func() {
 		r.announceUserOfflineIfStillGone(rawAuthKeyID, sessionID, userID, disconnectedAt)
 	})
 }
 
-// announceUserOfflineIfStillGone 在去抖宽限到期后持久化 last_seen 并广播 offline；
-// 宽限期内用户重新上线则整体跳过。WasOnline 取断连时刻，数据不受去抖延迟影响。
+// announceUserOfflineIfStillGone persists last_seen and broadcasts offline after
+// the debounce grace expires; if the user comes back online within the grace period
+// it is skipped entirely. WasOnline takes the disconnect instant, so the data is
+// unaffected by the debounce delay.
 func (r *Router) announceUserOfflineIfStillGone(rawAuthKeyID [8]byte, sessionID, userID int64, disconnectedAt int) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -671,7 +703,8 @@ func (r *Router) announceUserOfflineIfStillGone(rawAuthKeyID [8]byte, sessionID,
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	ctx = WithSessionID(WithRawAuthKeyID(ctx, rawAuthKeyID), sessionID)
-	// bot 不广播 offline、不写 last_seen（与 announceSessionOnline 对称）。
+	// Bots do not broadcast offline and do not write last_seen (symmetric with
+	// announceSessionOnline).
 	if bot, known := r.userBotStatus(ctx, userID); !known || bot {
 		return
 	}
@@ -683,15 +716,18 @@ func (r *Router) announceUserOfflineIfStillGone(rawAuthKeyID [8]byte, sessionID,
 		return
 	}
 	status := domain.UserStatus{Kind: domain.UserStatusOffline, WasOnline: disconnectedAt}
-	// 断连降级是权威 last_seen，不去抖；生命周期写经有界 batch
-	// 合并，WasOnline 仍取真实断连时刻而不是 flush 时刻。
+	// The disconnect downgrade is an authoritative last_seen and is not debounced;
+	// lifecycle writes are coalesced through a bounded batch, and WasOnline still
+	// takes the real disconnect instant rather than the flush instant.
 	r.persistLastSeenAsync(ctx, userID, disconnectedAt, false)
 	r.pushUserStatus(ctx, userID, status)
 }
 
-// RunPresenceSweeper 周期把过期的 online presence 降级为 offline 并广播给在线
-// 关注方。客户端正常每隔几分钟 updateStatus 续期；停止续期（后台挂起）的设备
-// 到期后好友应主动收到 offline，而不是等到下次查询才看到状态变化。
+// RunPresenceSweeper periodically downgrades expired online presence to offline and
+// broadcasts it to online watchers. A client normally renews via updateStatus every
+// few minutes; when a device stops renewing (suspended in the background), its
+// friends should actively receive offline once it expires rather than seeing the
+// status change only on the next query.
 func (r *Router) RunPresenceSweeper(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -710,7 +746,7 @@ func (r *Router) sweepExpiredPresence(ctx context.Context) {
 	for _, userID := range r.presence.expireOnline(now) {
 		status, ok := r.presence.statusFor(userID, now)
 		if ok && status.Kind == domain.UserStatusOnline {
-			continue // 该用户另有未过期的 online session
+			continue // the user has another unexpired online session
 		}
 		if !ok {
 			status = domain.UserStatus{Kind: domain.UserStatusOffline, WasOnline: now}
@@ -739,8 +775,9 @@ func (r *Router) withUserPresence(u domain.User) domain.User {
 	if u.ID == 0 {
 		return u
 	}
-	// bot 不参与 presence：官方 bot user 不带 status（客户端状态栏恒显 "bot"），
-	// tg 转换层对 bot 也不会输出 Status。
+	// Bots do not take part in presence: an official bot user carries no status (the
+	// client status bar always shows "bot"), and the tg conversion layer does not
+	// output Status for a bot either.
 	if u.Bot {
 		return u
 	}
@@ -818,8 +855,9 @@ func (r *Router) tgUsers(users []domain.User) []tg.UserClass {
 	return out
 }
 
-// tgUsersForViewer 与 tgUsers 同样补 presence，但 viewer 自己的 user 走 self 分支
-// （DrKLO 靠 user.self 判定 Saved Messages；self=false 会污染账号缓存）。
+// tgUsersForViewer backfills presence like tgUsers, but the viewer's own user takes
+// the self branch (DrKLO decides Saved Messages from user.self; self=false would
+// pollute the account cache).
 func (r *Router) tgUsersForViewer(viewerUserID int64, users []domain.User) []tg.UserClass {
 	out := tgUsersForViewer(viewerUserID, r.withUsersPresence(users))
 	r.withBotProfileFlagsForUsers(context.Background(), out)
@@ -922,12 +960,17 @@ func (r *Router) pushUserStatus(ctx context.Context, userID int64, status domain
 		Date: int(r.clock.Now().Unix()),
 		Seq:  0,
 	}
-	// presence 是 transient（不写 durable log）：未就绪的 session 直接跳过、不进 pending。
+	// presence is transient (does not write to the durable log): a session that is
+	// not ready is skipped outright and does not enter pending.
 	r.pushUserMessageTransient(ctx, userID, "push user status (own sessions)", update)
-	// 接收者集 = 与本 user 有联系人/私聊关系且当前在线的对端。用「本 user 自己的
-	// contacts + dialog 对端 ∩ 在线」一次性算出（onlineRelevantPeerIDs，2 次查询 + 内存过滤），
-	// 而非遍历全部在线候选逐个 GetPeerDialogs（旧 onlinePrivateDialogPeerIDs 的 O(在线数) N+1，
-	// 断连/sweeper 风暴下 O(M×512) 串行 PG）。私聊 dialog 双向建行，两种算法得到同一集合。
+	// The recipient set = peers that have a contact/private-chat relationship with
+	// this user and are currently online. It is computed in one shot from "this
+	// user's own contacts + dialog peers ∩ online" (onlineRelevantPeerIDs, 2 queries
+	// + in-memory filtering), rather than iterating over every online candidate and
+	// calling GetPeerDialogs one by one (the old onlinePrivateDialogPeerIDs's
+	// O(online count) N+1, or O(M×512) serial PG during a disconnect/sweeper storm).
+	// A private-chat dialog is written as a row in both directions, so the two
+	// algorithms yield the same set.
 	recipients := r.onlineRelevantPeerIDs(ctx, userID)
 	visible := r.statusTimestampVisibleToViewers(ctx, userID, recipients)
 	for _, recipientID := range recipients {
@@ -1067,8 +1110,9 @@ func (r *Router) pushStatusPrivacyRefresh(ctx context.Context, ownerUserID int64
 	}
 }
 
-// presenceCandidateCacheTTL 是 presence fan-out 候选集（联系人 ∪ 私聊对端）的缓存有效期；
-// lastSeenPersistDebounce 是在线续期写 last_seen 的去抖窗口。
+// presenceCandidateCacheTTL is the cache lifetime of the presence fan-out candidate
+// set (contacts ∪ private-chat peers); lastSeenPersistDebounce is the debounce
+// window for writing last_seen on online renewals.
 const (
 	presenceCandidateCacheTTL = 2 * time.Minute
 	lastSeenPersistDebounce   = 25 * time.Second
@@ -1091,14 +1135,20 @@ func (r *Router) onlineRelevantPeerIDs(ctx context.Context, userID int64) []int6
 	if len(candidates) == 0 {
 		return nil
 	}
-	// online 过滤每次实时进行（不进缓存），所以缓存只影响「候选范围」，不影响在线判定时效。
+	// The online filter runs live every time (it does not enter the cache), so the
+	// cache only affects the "candidate scope", not the freshness of the online
+	// decision.
 	return provider.OnlineUserIDsForCandidates(candidates, 0)
 }
 
-// presenceFanoutCandidates 返回 presence fan-out 的候选 peer 集合（联系人 ∪ 私聊对端，online
-// 过滤前），带短 TTL 缓存。命中时零 DB 查询；未命中走原 hydration 路径算一次并缓存。候选集
-// 变动很慢（加好友 / 开新私聊），陈旧最多 TTL 秒生效，对 presence（best-effort、transient）可接受。
-// 仅在两条查询都未报错时才写缓存，避免把瞬时错误导致的残缺集合钉住 TTL。
+// presenceFanoutCandidates returns the candidate peer set for presence fan-out
+// (contacts ∪ private-chat peers, before the online filter), with a short TTL
+// cache. A hit means zero DB queries; a miss goes through the original hydration
+// path to compute it once and cache it. The candidate set changes slowly (adding a
+// friend / starting a new private chat), and staleness of at most TTL seconds is
+// acceptable for presence (best-effort, transient). The cache is written only when
+// both queries returned without error, so a partial set caused by a transient error
+// is not pinned for the TTL.
 func (r *Router) presenceFanoutCandidates(ctx context.Context, userID int64) []int64 {
 	now := r.clock.Now()
 	if cached, ok := r.presenceCandidateCache.Load(userID); ok {

@@ -8,10 +8,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelPollFanoutViewsPostgres 验证 Phase 4 poll 模板化的 postgres 路径：新批量 SQL
-// （batchPollViewerOptions / batchChannelMemberAvailableMinID + pollViewerAggregates(viewer=0)）
-// 正确运行，且 ChannelPollFanoutViews 对每个 viewer 与逐 viewer GetChannelMessages（旧 fan-out 路径）
-// 的 enrich poll 字节等价、可见性一致。门控于 TELESRV_TEST_POSTGRES_DSN。
+// TestChannelPollFanoutViewsPostgres verifies the Phase 4 poll-templated postgres path: the new batch SQL
+// (batchPollViewerOptions / batchChannelMemberAvailableMinID + pollViewerAggregates(viewer=0))
+// runs correctly, and ChannelPollFanoutViews is byte-equivalent in enrich poll and consistent in visibility with
+// per-viewer GetChannelMessages (the old fan-out path) for each viewer. Gated on TELESRV_TEST_POSTGRES_DSN.
 func TestChannelPollFanoutViewsPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -120,14 +120,14 @@ func TestChannelPollFanoutViewsPostgres(t *testing.T) {
 			t.Fatalf("viewer %d Results mismatch:\n batch=%+v\n  old=%+v", viewer, got.Results, refPoll.Results)
 		}
 	}
-	// members 可见、stranger（非成员）不可见。
+	// Members are visible; a stranger (non-member) is not.
 	if views.Polls[owner.ID] == nil || views.Polls[voted.ID] == nil || views.Polls[unvoted.ID] == nil {
 		t.Fatal("members should be visible")
 	}
 	if views.Polls[stranger.ID] != nil {
 		t.Fatal("non-member stranger must be invisible (nil)")
 	}
-	// voted 视角应见自己 chosen。
+	// The voted viewer should see their own chosen option.
 	sawChosen := false
 	for _, v := range views.Polls[voted.ID].Results.Voters {
 		if v.Chosen {

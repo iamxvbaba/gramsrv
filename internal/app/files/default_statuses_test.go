@@ -42,11 +42,11 @@ func TestEnsureDefaultEmojiStatusSet(t *testing.T) {
 	ctx := context.Background()
 	svc, media := defaultStatusesTestService(t)
 	putAnimatedEmojiSet(t, media, []domain.StickerPack{
-		// seed 导出常见为裸码点（无 FE0F），精选清单两种形态都必须匹配。
+		// The seed export is usually bare code points (no FE0F); the curated list must match both forms.
 		{Emoticon: "❤", DocumentIDs: []int64{101}},
 		{Emoticon: "👍", DocumentIDs: []int64{102}},
-		{Emoticon: "☕️", DocumentIDs: []int64{103}}, // 带 FE0F 的反向形态
-		{Emoticon: "🥔", DocumentIDs: []int64{999}},  // 不在精选清单，必须被排除
+		{Emoticon: "☕️", DocumentIDs: []int64{103}}, // the reverse form with FE0F
+		{Emoticon: "🥔", DocumentIDs: []int64{999}},  // not in the curated list, must be excluded
 	})
 
 	count, created, err := svc.EnsureDefaultEmojiStatusSet(ctx)
@@ -70,7 +70,7 @@ func TestEnsureDefaultEmojiStatusSet(t *testing.T) {
 	if !got[101] || !got[102] || !got[103] || got[999] {
 		t.Fatalf("document ids = %v, want 101/102/103 without 999", set.DocumentIDs)
 	}
-	// 精选顺序：☕(=103) 在 ❤(=101) 之前、❤ 在 👍(=102) 之前（按清单序而非 pack 序）。
+	// Curated order: ☕(=103) before ❤(=101), and ❤ before 👍(=102) (by list order, not pack order).
 	index := map[int64]int{}
 	for i, id := range set.DocumentIDs {
 		index[id] = i
@@ -79,7 +79,7 @@ func TestEnsureDefaultEmojiStatusSet(t *testing.T) {
 		t.Fatalf("document order = %v, want curated order ☕<❤<👍", set.DocumentIDs)
 	}
 
-	// 幂等：第二次调用不得重建。
+	// Idempotent: the second call must not rebuild.
 	count2, created2, err := svc.EnsureDefaultEmojiStatusSet(ctx)
 	if err != nil {
 		t.Fatalf("ensure again: %v", err)
@@ -88,7 +88,7 @@ func TestEnsureDefaultEmojiStatusSet(t *testing.T) {
 		t.Fatalf("ensure again = (count=%d, created=%v), want (3, false)", count2, created2)
 	}
 
-	// ResolveStickerSet（inputStickerSetEmojiDefaultStatuses 的服务路径）能解析。
+	// ResolveStickerSet (the service path for inputStickerSetEmojiDefaultStatuses) can resolve it.
 	resolved, docs, found, err := svc.ResolveStickerSet(ctx, domain.StickerSetRef{
 		Kind:      domain.StickerSetRefBySystem,
 		SystemKey: domain.StickerSetSystemKeyEmojiDefaultStatuses,

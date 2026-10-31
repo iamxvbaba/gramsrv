@@ -65,8 +65,8 @@ func TestChannelStoreSendMessageFansOutDialogRows(t *testing.T) {
 		t.Fatalf("send channel message: %v", err)
 	}
 
-	// H4a：发送事务不再对全员 upsert channel_dialogs——dialog 投影读时派生。
-	// friend 视角：top 来自 channels.top_message_id，unread 由可见 incoming 消息动态重算。
+	// H4a: the send transaction no longer upserts channel_dialogs for all members—the dialog projection is derived at read time.
+	// friend perspective: top comes from channels.top_message_id, unread is recomputed dynamically from visible incoming messages.
 	friendView, err := channels.GetChannelDialogs(ctx, friend.ID, []int64{channelID})
 	if err != nil {
 		t.Fatalf("get friend dialogs after send: %v", err)
@@ -76,8 +76,8 @@ func TestChannelStoreSendMessageFansOutDialogRows(t *testing.T) {
 		t.Fatalf("friend derived dialog = %+v, want top %d read 0 unread 2", friendView.Dialogs, sent.Message.ID)
 	}
 
-	// 发送者自己的 outbox 回执水位不得随发送推进：同账号另一设备会把它当成
-	// "对端已读"渲染双勾。推进只能来自 peer 的 readHistory（见下方断言）。
+	// The sender's own outbox receipt watermark must not advance on send: another device on the same account would take it as
+	// "the peer has read" and render a double check. Advancement can only come from the peer's readHistory (see the assertions below).
 	ownerViewBefore, err := channels.GetChannelDialogs(ctx, owner.ID, []int64{channelID})
 	if err != nil {
 		t.Fatalf("get owner dialogs after send: %v", err)
@@ -162,8 +162,8 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, owner.ID).Scan(&ownerMemberR
 	if err != nil {
 		t.Fatalf("get owner channel dialogs after archive: %v", err)
 	}
-	// 归档清除 pinned（对齐 TDesktop History::setFolderPointer 的本地
-	// unpin），unread_mark 与 folder_id 保留。
+	// Archiving clears pinned (matching TDesktop History::setFolderPointer's local
+	// unpin), while unread_mark and folder_id are kept.
 	if len(ownerDialogs.Dialogs) != 1 || ownerDialogs.Dialogs[0].Pinned || ownerDialogs.Dialogs[0].PinnedOrder != 0 || !ownerDialogs.Dialogs[0].UnreadMark || ownerDialogs.Dialogs[0].FolderID != domain.DialogArchiveFolderID {
 		t.Fatalf("owner channel dialog settings = %+v, want unpinned after archive with unread mark kept", ownerDialogs.Dialogs)
 	}
@@ -756,8 +756,8 @@ func TestChannelStoreSendMessageSkipDeliveryAdvancesReadBoundary(t *testing.T) {
 		t.Fatalf("hidden recipients = %+v, want bot skipped", hidden.Recipients)
 	}
 
-	// H4a：skip 成员的读边界推进只写 channel_members 行；unread 派生自动把被隐藏
-	// 消息排除（read boundary 已越过它）。
+	// H4a: advancing a skip member's read boundary only writes the channel_members row; the unread derivation automatically
+	// excludes hidden messages (the read boundary has moved past them).
 	hiddenView, err := channels.GetChannelDialogs(ctx, bot.ID, []int64{channelID})
 	if err != nil {
 		t.Fatalf("get bot dialogs after hidden: %v", err)

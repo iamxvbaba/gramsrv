@@ -14,10 +14,10 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestChannelMemberRankRPC 覆盖成员 Tag（rank-only 编辑）的权限矩阵：
-// actor ∈ {creator, manage_ranks admin, 普通成员} × target ∈ {自己, 普通成员,
-// 自己提拔的 admin, 他人提拔的 admin, creator} × 群级 edit_rank 开关 {开, 关}，
-// 以及 editAdmin 撤管清 rank 的旧语义回归。
+// TestChannelMemberRankRPC covers the permission matrix of member Tags (rank-only edits):
+// actor ∈ {creator, manage_ranks admin, ordinary member} × target ∈ {self, ordinary member,
+// self-promoted admin, admin promoted by someone else, creator} × group-level edit_rank switch
+// {on, off}, plus a regression of the old semantics where editAdmin demotion clears the rank.
 func TestChannelMemberRankRPC(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -63,7 +63,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		return res.Participant
 	}
 
-	// creator 给普通成员设 tag：角色不变、rank 持久、推送 updateChannelParticipant。
+	// creator sets a tag on an ordinary member: role unchanged, rank persists, pushes updateChannelParticipant.
 	rankUpdates, err := editRank(owner.ID, &tg.InputPeerUser{UserID: plain.ID, AccessHash: plain.AccessHash}, "navigator")
 	if err != nil {
 		t.Fatalf("creator set member tag: %v", err)
@@ -95,7 +95,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("plain participant rank = %q, want navigator", rank)
 	}
 
-	// admins filter 是两端消息徽章的数据源：必须返回管理员 + 带 tag 的普通成员。
+	// The admins filter is the data source for the message badges on both ends: it must return admins + ordinary members with a tag.
 	adminsRes, err := r.onChannelsGetParticipants(WithUserID(ctx, other.ID), &tg.ChannelsGetParticipantsRequest{
 		Channel: inputChannel,
 		Filter:  &tg.ChannelParticipantsAdmins{},
@@ -126,7 +126,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("admins filter must not contain untagged plain member: %+v", badgeRanks)
 	}
 
-	// 普通成员改自己（开关默认开，inputPeerSelf 路径）。
+	// An ordinary member edits itself (the switch defaults to on, inputPeerSelf path).
 	if _, err := editRank(plain.ID, &tg.InputPeerSelf{}, "pilot"); err != nil {
 		t.Fatalf("plain member edits own tag: %v", err)
 	}
@@ -136,12 +136,12 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("self rank = %q, want pilot", rank)
 	}
 
-	// 普通成员改别人 → CHAT_ADMIN_REQUIRED。
+	// An ordinary member edits someone else -> CHAT_ADMIN_REQUIRED.
 	if _, err := editRank(plain.ID, &tg.InputPeerUser{UserID: other.ID, AccessHash: other.AccessHash}, "x"); err == nil || !strings.Contains(err.Error(), "CHAT_ADMIN_REQUIRED") {
 		t.Fatalf("plain member edits other tag err = %v, want CHAT_ADMIN_REQUIRED", err)
 	}
 
-	// creator 授予 tagger 管理 Tags 的管理员权限；manage_ranks 必须持久化并下发。
+	// creator grants the tagger admin rights to manage Tags; manage_ranks must persist and be sent.
 	if _, err := r.onChannelsEditAdmin(WithUserID(ctx, owner.ID), &tg.ChannelsEditAdminRequest{
 		Channel: inputChannel,
 		UserID:  &tg.InputUser{UserID: tagger.ID, AccessHash: tagger.AccessHash},
@@ -169,20 +169,20 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("tagger chat admin rights = %+v, want manage_ranks=true", taggerChat)
 	}
 
-	// manage_ranks admin 改普通成员 → OK。
+	// manage_ranks admin edits an ordinary member -> OK.
 	if _, err := editRank(tagger.ID, &tg.InputPeerUser{UserID: plain.ID, AccessHash: plain.AccessHash}, "lookout"); err != nil {
 		t.Fatalf("manage_ranks admin edits plain member: %v", err)
 	}
-	// manage_ranks admin 改 creator → USER_CREATOR。
+	// manage_ranks admin edits creator -> USER_CREATOR.
 	if _, err := editRank(tagger.ID, &tg.InputPeerUser{UserID: owner.ID, AccessHash: owner.AccessHash}, "boss"); err == nil || !strings.Contains(err.Error(), "USER_CREATOR") {
 		t.Fatalf("admin edits creator tag err = %v, want USER_CREATOR", err)
 	}
-	// manage_ranks admin 改自己 → OK。
+	// manage_ranks admin edits itself -> OK.
 	if _, err := editRank(tagger.ID, &tg.InputPeerSelf{}, "chief"); err != nil {
 		t.Fatalf("admin edits own tag: %v", err)
 	}
 
-	// tagger 提拔 other（promoted_by=tagger）后可改其 tag；creator 重新提拔后不可。
+	// After tagger promotes other (promoted_by=tagger) it can edit other's tag; after creator re-promotes, it cannot.
 	if _, err := r.onChannelsEditAdmin(WithUserID(ctx, tagger.ID), &tg.ChannelsEditAdminRequest{
 		Channel:     inputChannel,
 		UserID:      &tg.InputUser{UserID: other.ID, AccessHash: other.AccessHash},
@@ -205,7 +205,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("admin edits tag of admin promoted by creator err = %v, want RIGHT_FORBIDDEN", err)
 	}
 
-	// 关闭群级 Member Tags 开关（default_banned_rights.edit_rank=true）。
+	// Turn off the group-level Member Tags switch (default_banned_rights.edit_rank=true).
 	if _, err := r.onMessagesEditChatDefaultBannedRights(WithUserID(ctx, owner.ID), &tg.MessagesEditChatDefaultBannedRightsRequest{
 		Peer:         peer,
 		BannedRights: tg.ChatBannedRights{EditRank: true},
@@ -220,7 +220,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 	if rights, ok := switchedChat.GetDefaultBannedRights(); !ok || !rights.EditRank {
 		t.Fatalf("default banned rights after switch = %+v, want edit_rank=true round-trip", switchedChat)
 	}
-	// 开关关闭后：普通成员改自己 → RIGHT_FORBIDDEN；admin/creator 改自己仍可。
+	// With the switch off: an ordinary member editing itself -> RIGHT_FORBIDDEN; admin/creator editing itself still works.
 	if _, err := editRank(plain.ID, &tg.InputPeerSelf{}, "pilot2"); err == nil || !strings.Contains(err.Error(), "RIGHT_FORBIDDEN") {
 		t.Fatalf("plain member edits own tag with switch off err = %v, want RIGHT_FORBIDDEN", err)
 	}
@@ -236,12 +236,12 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("creator rank = %q, want captain", rank)
 	}
 
-	// rank 超长 → 拒绝。
+	// rank too long -> rejected.
 	if _, err := editRank(owner.ID, &tg.InputPeerUser{UserID: plain.ID, AccessHash: plain.AccessHash}, strings.Repeat("r", domain.MaxChannelAdminRankLength+1)); err == nil {
 		t.Fatalf("over-length rank accepted, want error")
 	}
 
-	// editAdmin 撤管仍清空 rank（旧语义回归）。
+	// editAdmin demotion still clears the rank (old-semantics regression).
 	if _, err := r.onChannelsEditAdmin(WithUserID(ctx, owner.ID), &tg.ChannelsEditAdminRequest{
 		Channel:     inputChannel,
 		UserID:      &tg.InputUser{UserID: other.ID, AccessHash: other.AccessHash},
@@ -257,7 +257,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("demoted rank = %q, want cleared", rank)
 	}
 
-	// admin log：rank 编辑必须记 participant_edit_rank，且 edit_rank filter 可检索。
+	// admin log: a rank edit must record participant_edit_rank, and it must be retrievable via the edit_rank filter.
 	filter := tg.ChannelAdminLogEventsFilter{}
 	filter.SetEditRank(true)
 	logReq := &tg.ChannelsGetAdminLogRequest{Channel: inputChannel, Limit: 50}
@@ -270,8 +270,9 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("admin log with edit_rank filter is empty, want participant_edit_rank events")
 	}
 
-	// 重进是全新 participant：admin（带 manage_ranks 与 tag）退群重进后是普通
-	// 成员、无 admin rights、无 rank，且不再出现在 admins filter（徽章数据源）。
+	// Rejoining is a brand-new participant: an admin (with manage_ranks and a tag) that leaves and
+	// rejoins becomes an ordinary member with no admin rights and no rank, and no longer appears in
+	// the admins filter (the badge data source).
 	if _, err := r.onChannelsLeaveChannel(WithUserID(ctx, tagger.ID), inputChannel); err != nil {
 		t.Fatalf("tagger leaves: %v", err)
 	}
@@ -299,7 +300,7 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		}
 	}
 
-	// kick→解禁→重进：tag 不复活。
+	// kick -> unban -> rejoin: the tag does not come back.
 	if _, err := r.onChannelsEditBanned(WithUserID(ctx, owner.ID), &tg.ChannelsEditBannedRequest{
 		Channel:      inputChannel,
 		Participant:  &tg.InputPeerUser{UserID: plain.ID, AccessHash: plain.AccessHash},
@@ -325,8 +326,8 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		}
 	}
 
-	// creator 离开会把 owner 交给其他活跃成员；旧 creator 重进是普通成员，
-	// 不保留 creator tag。
+	// When the creator leaves, ownership passes to another active member; the old creator rejoining
+	// is an ordinary member and does not keep the creator tag.
 	if _, err := r.onChannelsLeaveChannel(WithUserID(ctx, owner.ID), inputChannel); err != nil {
 		t.Fatalf("creator leaves: %v", err)
 	}
@@ -348,8 +349,8 @@ func TestChannelMemberRankRPC(t *testing.T) {
 		t.Fatalf("rejoined old creator rank = %q, want cleared", rank)
 	}
 
-	// 成员 Tag 是 megagroup 专属：broadcast 频道上任何路径（含 creator/self）
-	// 一律 MEGAGROUP_ID_INVALID，broadcast 的 admins filter 才能保持纯管理员列表。
+	// Member Tags are megagroup-only: on a broadcast channel every path (including creator/self) is
+	// uniformly MEGAGROUP_ID_INVALID, so the broadcast admins filter stays a pure admin list.
 	bcCreated, err := r.onChannelsCreateChannel(WithUserID(ctx, owner.ID), &tg.ChannelsCreateChannelRequest{
 		Broadcast: true,
 		Title:     "Member Tag Broadcast",

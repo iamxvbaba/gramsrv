@@ -11,8 +11,8 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestBotStoreRoundTripPostgres 验证迁移 0090 的 bot 模型：BotFather 种子行、
-// CreateBotAccount 双行事务、空 phone 不撞唯一索引、token 轮换、对话状态。
+// TestBotStoreRoundTripPostgres verifies the bot model from migration 0090: the BotFather seed row,
+// the CreateBotAccount two-row transaction, empty phone not colliding with the unique index, token rotation, and chat state.
 func TestBotStoreRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -20,7 +20,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	users := NewUserStore(pool)
 	bots := NewBotStore(pool)
 
-	// BotFather 种子：users 行 + bots 行 + 不可登录（token 为空）。
+	// BotFather seed: users row + bots row + cannot sign in (empty token).
 	bf, found, err := users.ByID(ctx, domain.BotFatherUserID)
 	if err != nil || !found {
 		t.Fatalf("BotFather user not seeded: found=%v err=%v", found, err)
@@ -45,12 +45,12 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	if !hasDone {
 		t.Fatalf("BotFather commands = %+v, want /done for persistent /setlogin sessions", bfProfile.Commands)
 	}
-	// 空 phone 查询不得命中任何行。
+	// An empty-phone query must not match any row.
 	if _, found, err := users.ByPhone(ctx, ""); err != nil || found {
 		t.Fatalf("ByPhone('') found=%v err=%v, want not found", found, err)
 	}
 
-	// owner 用户 + 两个空 phone 的 bot（验证部分唯一索引）。
+	// owner user + two bots with empty phone (verifying the partial unique index).
 	suffix := time.Now().UnixNano() % 1_000_000_000
 	ownerPhone := fmt.Sprintf("1666%d", suffix)
 	owner, err := users.Create(ctx, domain.User{AccessHash: 7, Phone: ownerPhone, FirstName: "BotOwner"})
@@ -70,7 +70,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 			t.Fatalf("create bot %d: %v", i, err)
 		}
 		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID) // bots 行随 FK CASCADE
+			_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID) // the bots row follows via FK CASCADE
 		})
 		return u, p
 	}
@@ -83,7 +83,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("bot1 = %+v, want is_bot with bot_info_version=1", bot1)
 	}
 
-	// username 冲突映射 ErrUsernameOccupied，且不留 users 孤儿行。
+	// A username conflict maps to ErrUsernameOccupied and leaves no orphan users row.
 	if _, _, err := bots.CreateBotAccount(ctx, domain.User{
 		AccessHash: 999,
 		FirstName:  "Dup",
@@ -100,7 +100,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("ListBotsByOwner = %d err=%v, want 2", len(list), err)
 	}
 
-	// token 轮换。
+	// token rotation.
 	if err := bots.UpdateBotTokenSecret(ctx, bot1.ID, "rotated-secret"); err != nil {
 		t.Fatalf("rotate token: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		t.Fatalf("rotate missing bot err = %v, want ErrBotNotFound", err)
 	}
 
-	// 对话状态 upsert/get/delete。
+	// chat state upsert/get/delete.
 	state := domain.BotChatState{
 		BotUserID: domain.BotFatherUserID,
 		UserID:    owner.ID,
@@ -140,7 +140,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		t.Fatal("state still present after delete")
 	}
 
-	// P2 元数据写入 + bot_info_version bump（postgres 单事务）。
+	// P2 metadata write + bot_info_version bump (single postgres transaction).
 	uBefore, _, _ := users.ByID(ctx, bot1.ID)
 	v1, err := bots.UpdateBotCommands(ctx, bot1.ID, []domain.BotCommand{{Command: "start", Description: "begin"}})
 	if err != nil || v1 <= uBefore.BotInfoVersion {
@@ -221,12 +221,12 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	if created, err := bots.AllowBotSendMessage(ctx, bot1.ID, owner.ID, true); err != nil || created {
 		t.Fatalf("AllowBotSendMessage repeat = %v,%v, want false,nil", created, err)
 	}
-	// 不存在的 bot → ErrBotNotFound。
+	// A non-existent bot → ErrBotNotFound.
 	if _, err := bots.UpdateBotCommands(ctx, 424243, nil); err != domain.ErrBotNotFound {
 		t.Fatalf("update missing bot err = %v, want ErrBotNotFound", err)
 	}
 
-	// SignInBot：PG 全链路 token 校验 + authorizations 绑定。
+	// SignInBot: full PG token verification + authorizations binding.
 	authSvc := appauth.NewService(users, NewAuthorizationStore(pool), memory.NewCodeStore(), nil, nil, "12345",
 		appauth.WithBotLogin(bots))
 	var authKeyID [8]byte
@@ -249,12 +249,12 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	if uid, ok, err := authSvc.UserID(ctx, authKeyID); err != nil || !ok || uid != bot1.ID {
 		t.Fatalf("UserID after SignInBot = %d,%v,%v, want %d", uid, ok, err, bot1.ID)
 	}
-	// 旧 token（轮换前 secret）必须失效。
+	// The old token (pre-rotation secret) must be invalidated.
 	oldToken := domain.FormatBotToken(profile1.BotUserID, profile1.TokenSecret)
 	if _, err := authSvc.SignInBot(ctx, domain.Authorization{AuthKeyID: authKeyID}, oldToken); err != domain.ErrBotTokenInvalid {
 		t.Fatalf("old token err = %v, want ErrBotTokenInvalid", err)
 	}
-	// BotFather 空 token 永不可登录。
+	// The BotFather empty token can never sign in.
 	if _, err := authSvc.SignInBot(ctx, domain.Authorization{AuthKeyID: authKeyID}, domain.FormatBotToken(domain.BotFatherUserID, "")); err != domain.ErrBotTokenInvalid {
 		t.Fatalf("BotFather token err = %v, want ErrBotTokenInvalid", err)
 	}

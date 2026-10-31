@@ -11,8 +11,8 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// PhoneChangeStore 在事务内更新 users.phone。updateUserPhone 没有
-// pts/pts_count，因此这里不得分配账号 PTS 或写 durable event/outbox。
+// PhoneChangeStore updates users.phone inside a transaction. updateUserPhone has no
+// pts/pts_count, so this must not allocate account PTS or write durable event/outbox.
 type PhoneChangeStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries

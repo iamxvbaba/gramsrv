@@ -29,7 +29,7 @@ func TestEffectsCatalogHashIncludesInlineThumbnailContents(t *testing.T) {
 				t.Fatal("hash calculation modified the source thumbnail")
 			}
 
-			// path/stripped 的内联字节会直接下发；长度相同也必须刷新客户端目录。
+			// The inline bytes of path/stripped are delivered directly; even with the same length the client catalog must be refreshed.
 			docs[0].Thumbs[0].Bytes[3]++
 			newHash, err := effectsCatalogHash(effects, docs)
 			if err != nil {

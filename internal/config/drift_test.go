@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// writeDriftFiles 在临时目录落一对 .env / .env.example 并返回路径。省略的内容
-// 代表文件不存在。
+// writeDriftFiles drops a pair of .env / .env.example into a temp dir and returns
+// their paths. An omitted argument means the file does not exist.
 func writeDriftFiles(t *testing.T, example, env string) (cfgPath, examplePath string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -36,11 +36,12 @@ func TestDetectEnvDriftSplitsMissingAndUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("envDriftAt: %v", err)
 	}
-	// ALPHA 与被注释的 OPTIONAL 都声明在模板里、本机未设 → Missing，且保持模板顺序。
+	// ALPHA and the commented-out OPTIONAL are both declared in the template and unset
+	// locally -> Missing, preserving template order.
 	if want := []string{"TELESRV_ALPHA", "TELESRV_OPTIONAL"}; !reflect.DeepEqual(drift.Missing, want) {
 		t.Errorf("Missing = %v, want %v", drift.Missing, want)
 	}
-	// BETA 两边都有；TYPO_KEY 只在 .env → Unknown（笔误信号）。
+	// BETA is in both; TYPO_KEY is only in .env -> Unknown (a typo signal).
 	if want := []string{"TELESRV_TYPO_KEY"}; !reflect.DeepEqual(drift.Unknown, want) {
 		t.Errorf("Unknown = %v, want %v", drift.Unknown, want)
 	}
@@ -50,7 +51,8 @@ func TestDetectEnvDriftProcessEnvCountsAsSet(t *testing.T) {
 	cfgPath, examplePath := writeDriftFiles(t,
 		"TELESRV_ALPHA=\nTELESRV_BETA=\n",
 		"")
-	// 进程环境优先级高于文件：设了就不算缺失，哪怕 .env 里没有。
+	// The process environment takes precedence over the file: being set there means
+	// not missing, even if .env lacks it.
 	t.Setenv("TELESRV_ALPHA", "from-process")
 
 	drift, err := envDriftAt(cfgPath, examplePath)
@@ -63,7 +65,8 @@ func TestDetectEnvDriftProcessEnvCountsAsSet(t *testing.T) {
 }
 
 func TestDetectEnvDriftMissingTemplateIsNotAnError(t *testing.T) {
-	// 生产镜像不带 .env.example：必须静默跳过，而不是启动报错。
+	// Production images carry no .env.example: it must be silently skipped, not fail
+	// at startup.
 	cfgPath, examplePath := writeDriftFiles(t, "", "TELESRV_ALPHA=1\n")
 
 	drift, err := envDriftAt(cfgPath, examplePath)
@@ -76,8 +79,9 @@ func TestDetectEnvDriftMissingTemplateIsNotAnError(t *testing.T) {
 }
 
 func TestDetectEnvDriftWithoutConfigFileListsTemplateDefaults(t *testing.T) {
-	// 没有 .env（配置全走进程环境/默认值）时，模板里每个键都进入 Missing，
-	// 由调用方按 INFO 展示——这正是「新装机/纯环境变量部署」的可见性。
+	// With no .env (config entirely from the process environment/defaults), every key
+	// in the template lands in Missing and the caller presents them at INFO -- exactly
+	// the visibility a fresh install / pure environment-variable deployment needs.
 	cfgPath, examplePath := writeDriftFiles(t,
 		"TELESRV_ALPHA=1\nTELESRV_BETA=2\n",
 		"")
@@ -95,7 +99,8 @@ func TestDetectEnvDriftWithoutConfigFileListsTemplateDefaults(t *testing.T) {
 }
 
 func TestDetectEnvDriftUnknownKeysAreSorted(t *testing.T) {
-	// .env 由 map 读入、遍历顺序随机，报告必须稳定（日志与断言都依赖它）。
+	// .env is read into a map with random iteration order, so the report must be
+	// stable (both logs and assertions depend on it).
 	cfgPath, examplePath := writeDriftFiles(t,
 		"TELESRV_KEEP=1\n",
 		"TELESRV_ZULU=1\nTELESRV_ALFA=1\nTELESRV_KEEP=2\n")
@@ -110,10 +115,11 @@ func TestDetectEnvDriftUnknownKeysAreSorted(t *testing.T) {
 }
 
 func TestDetectEnvDriftIgnoresNonFieldLines(t *testing.T) {
-	// 模板里有分组头、说明注释与非 TELESRV_ 行，都不能被当成字段键。
+	// Group headers, explanatory comments and non-TELESRV_ lines in the template must
+	// not be treated as field keys.
 	cfgPath, examplePath := writeDriftFiles(t,
 		"## Server & Network -- Where the server listens\n"+
-			"# это просто комментарий без ключа\n"+
+			"# a plain comment without a key\n"+
 			"# =====\n"+
 			"POSTGRES_PASSWORD=irrelevant\n"+
 			"TELESRV_LISTEN=127.0.0.1:2398\n",
@@ -142,9 +148,11 @@ func TestDetectEnvDriftAcceptsConfigKeySyntaxWithoutLoggingValues(t *testing.T) 
 	}
 }
 
-// TestRepoEnvExampleParses 验证仓库根真实 .env.example 能被漂移比对完整解析：
-// 分组头、说明注释、占位行都不得被当成字段，且必须解析出文档规模的一批字段键。
-// （方向「模板里有、代码没人读」涉及动态键与外置二进制，不在此守。）
+// TestRepoEnvExampleParses verifies the real .env.example at the repo root parses
+// fully for the drift comparison: group headers, explanatory comments and placeholder
+// lines must not be taken as fields, and a documentation-scale batch of field keys
+// must be parsed out. (The reverse direction, "template has it but no code reads it",
+// involves dynamic keys and out-of-tree binaries and is not guarded here.)
 func TestRepoEnvExampleParses(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

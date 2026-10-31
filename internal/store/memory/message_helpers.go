@@ -137,8 +137,9 @@ func cloneRequestedPeerMedia(media *domain.MessageMedia) *domain.MessageMedia {
 	return &clone
 }
 
-// cloneReplyMarkup 深拷 reply markup 快照：与 postgres 每盒独立 decode 对齐
-// （双 store 行为一致），避免发送方/接收方两行共享底层 rows/Data 切片。
+// cloneReplyMarkup deep-copies the reply markup snapshot: this matches postgres decoding
+// each box independently (both stores behave the same), avoiding the sender/recipient rows
+// sharing the underlying rows/Data slices.
 func cloneReplyMarkup(m *domain.MessageReplyMarkup) *domain.MessageReplyMarkup {
 	if m == nil {
 		return nil
@@ -164,8 +165,9 @@ func cloneReplyMarkup(m *domain.MessageReplyMarkup) *domain.MessageReplyMarkup {
 	return &clone
 }
 
-// cloneRichMessage 深拷 Layer 228 富文本快照：复制不透明 blocks、Bot API 投影与内嵌媒体切片，
-// 避免发送方/接收方两行共享底层切片（与 postgres 每盒独立 decode 对齐）。
+// cloneRichMessage deep-copies the Layer 228 rich-text snapshot: it copies the opaque
+// blocks, the Bot API projection and the embedded media slices, avoiding the sender/recipient
+// rows sharing the underlying slices (matching postgres decoding each box independently).
 func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
 	if m == nil {
 		return nil
@@ -225,7 +227,7 @@ func editMessageEvent(msg domain.Message) domain.UpdateEvent {
 	}
 }
 
-// webPageEvent 是链接预览就地替换事件（Date 取消息发送时间，不引入 edit_date）。
+// webPageEvent is the in-place link-preview replacement event (Date is the message send time; edit_date is not introduced).
 func webPageEvent(msg domain.Message) domain.UpdateEvent {
 	if msg.ID == 0 {
 		return domain.UpdateEvent{}
