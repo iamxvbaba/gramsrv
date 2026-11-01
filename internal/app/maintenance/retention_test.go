@@ -44,7 +44,7 @@ func TestRetentionWorkerReclaimsExpiredTempKeys(t *testing.T) {
 
 func TestRetentionWorkerSkipsNilTempKeyStore(t *testing.T) {
 	w := NewRetentionWorker(nil, zap.NewNop(), time.Hour, time.Hour, 100)
-	w.runOnce(context.Background()) // 不应 panic
+	w.runOnce(context.Background()) // should not panic
 }
 
 type fakeBotAPIRetention struct {
@@ -313,7 +313,7 @@ func TestRetentionWorkerSkipsOrphanDeleteWithoutDurableHeartbeat(t *testing.T) {
 	if store.calls != 0 {
 		t.Fatalf("orphan delete calls = %d, want 0 without durable heartbeat", store.calls)
 	}
-	entries := logs.FilterMessage("缺少 active raw auth key heartbeat，本轮跳过 orphan GC").All()
+	entries := logs.FilterMessage("active raw auth key heartbeat missing; skipping orphan GC this round").All()
 	if len(entries) != 1 || entries[0].ContextMap()["signal"] != "active_raw_auth_key_heartbeat_missing" {
 		t.Fatalf("missing heartbeat signals = %+v", entries)
 	}
@@ -351,7 +351,7 @@ func TestRetentionWorkerSkipsOrphanDeleteWhenActiveSnapshotFails(t *testing.T) {
 	if active.calls != 1 || store.heartbeatCalls != 0 || store.calls != 0 {
 		t.Fatalf("snapshot/heartbeat/delete calls = %d/%d/%d, want 1/0/0", active.calls, store.heartbeatCalls, store.calls)
 	}
-	entries := logs.FilterMessage("读取 active raw auth key snapshot 失败，本轮跳过 orphan GC").All()
+	entries := logs.FilterMessage("failed to read active raw auth key snapshot; skipping orphan GC this round").All()
 	if len(entries) != 1 || entries[0].ContextMap()["signal"] != "active_raw_auth_key_snapshot_failed" {
 		t.Fatalf("snapshot failure signals = %+v", entries)
 	}
@@ -405,7 +405,7 @@ func TestRetentionWorkerSkipsOrphanDeleteWhenHeartbeatFails(t *testing.T) {
 	if store.heartbeatCalls != 1 || store.calls != 0 {
 		t.Fatalf("heartbeat/delete calls = %d/%d, want 1/0", store.heartbeatCalls, store.calls)
 	}
-	entries := logs.FilterMessage("刷新 active raw auth key heartbeat 失败，本轮跳过 orphan GC").All()
+	entries := logs.FilterMessage("failed to refresh active raw auth key heartbeat, skipping orphan GC this round").All()
 	if len(entries) != 1 || entries[0].ContextMap()["signal"] != "auth_key_heartbeat_failed" {
 		t.Fatalf("heartbeat failure signals = %+v", entries)
 	}

@@ -9,13 +9,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// Scheduled video chat（定时通话）RPC。客户端流程（TDesktop calls_group_call.cpp）：
-// createGroupCall(schedule_date) → State::Waiting 倒计时（不 join）→ 管理员
-// startScheduledGroupCall 清 schedule_date → updateGroupCall（无 schedule_date）→
-// 客户端 setScheduledDate(0) 触发 initialJoin 正式入会。开播提醒是 per-viewer 的
-// schedule_start_subscribed flag（toggleGroupCallStartSubscription）。
+// Scheduled video chat RPCs. Client flow (TDesktop calls_group_call.cpp):
+// createGroupCall(schedule_date) -> State::Waiting countdown (no join) -> an admin calls
+// startScheduledGroupCall to clear schedule_date -> updateGroupCall (no schedule_date) -> the client
+// setScheduledDate(0) triggers initialJoin to join for real. The start reminder is a per-viewer
+// schedule_start_subscribed flag (toggleGroupCallStartSubscription).
 
-// applyScheduleSubscription 为单个 viewer 回填 ScheduleStartSubscribed 投影字段。
+// applyScheduleSubscription backfills the ScheduleStartSubscribed projection field for a single
+// viewer.
 func (r *Router) applyScheduleSubscription(ctx context.Context, call domain.GroupCall, viewerUserID int64) domain.GroupCall {
 	if call.ScheduleDate == 0 || viewerUserID == 0 {
 		return call
@@ -50,12 +51,13 @@ func (r *Router) onPhoneStartScheduledGroupCall(ctx context.Context, in tg.Input
 	}
 	channel := scope.channel
 	if !changed {
-		// 幂等：已开始，只回快照，不重复扇出/服务消息。
+		// Idempotent: already started, return only the snapshot without repeating the fan-out/service
+		// message.
 		return r.groupCallUpdateContainer(ctx, scope.userID, channel,
 			groupCallUpdateFor(channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil), nil
 	}
 	now := int(r.clock.Now().Unix())
-	// started 服务消息（与即时创建的 started 同构）。
+	// started service message (isomorphic to the started one for an immediate create).
 	var serviceRes domain.SendChannelMessageResult
 	if res, err := r.deps.Channels.AppendCallServiceMessage(ctx, channel.ID, scope.userID, now, domain.ChannelMessageAction{
 		Type:           domain.ChannelActionGroupCall,
@@ -67,10 +69,11 @@ func (r *Router) onPhoneStartScheduledGroupCall(ctx context.Context, in tg.Input
 	} else {
 		r.log.Warn("scheduled group call started service message", zap.Int64("channel_id", channel.ID), zap.Error(err))
 	}
-	// Core 仅瞬时推送 updateGroupCall（schedule_date 已清，客户端据此自动入会）；
-	// service event 只由 durable channel lane 投递，并保留在当前 RPC response。
-	// 订阅者与普通在线成员走同一瞬时信令路径；离线订阅者的推送提醒（push notification）
-	// 属通知系统范围，当前不实现（记矩阵 todo）。
+	// Core only pushes updateGroupCall transiently (schedule_date is cleared, so clients join
+	// automatically); the service event is delivered only by the durable channel lane and stays in the
+	// current RPC response. Subscribers take the same transient signaling path as ordinary online
+	// members; push notifications for offline subscribers belong to the notification system and are not
+	// implemented yet (tracked as a matrix todo).
 	r.pushGroupCallUpdate(ctx, channel, call)
 	out := r.groupCallUpdateContainer(ctx, scope.userID, channel,
 		groupCallUpdateFor(channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil)
@@ -94,7 +97,7 @@ func (r *Router) onPhoneToggleGroupCallStartSubscription(ctx context.Context, re
 		return nil, groupCallAlreadyDiscardedErr()
 	}
 	if scope.call.ScheduleDate == 0 {
-		// 只有未开始的定时通话才有开播提醒可订。
+		// Only a not-yet-started scheduled call has a start reminder to subscribe to.
 		return nil, groupCallInvalidErr()
 	}
 	if err := r.deps.GroupCalls.SetScheduleSubscription(ctx, scope.call.ID, scope.userID, req.Subscribed); err != nil {
@@ -102,7 +105,8 @@ func (r *Router) onPhoneToggleGroupCallStartSubscription(ctx context.Context, re
 	}
 	call := scope.call
 	call.ScheduleStartSubscribed = req.Subscribed
-	// 订阅是 per-viewer 私有状态：响应给本设备，推送同步本人其它在线设备即可。
+	// The subscription is per-viewer private state: respond to this device and push to sync the
+	// user's other online devices.
 	update := groupCallUpdateFor(scope.channel, call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL)
 	r.pushUserMessageTransient(ctx, scope.userID, "schedule subscription update",
 		r.groupCallUpdateContainer(ctx, scope.userID, scope.channel, update, nil))

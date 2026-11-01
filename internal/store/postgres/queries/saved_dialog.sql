@@ -1,7 +1,8 @@
--- Saved Messages 分会话（saved dialogs）查询组。
--- 子会话 = self-chat box 行按 saved_peer 分组；top message 不物化，由
--- MAX(box_id) 聚合现算（box_id 单调于时间，date 序与 id 序一致），
--- 删除/清史后的一致性由查询本身保证。
+-- Saved Messages sub-conversation (saved dialogs) query set.
+-- A sub-conversation = self-chat box rows grouped by saved_peer; the top message is
+-- not materialized but computed on the fly via MAX(box_id) aggregation (box_id is
+-- monotonic in time, so date order and id order agree), and consistency after
+-- deletion/history clearing is guaranteed by the query itself.
 
 -- name: ListSavedDialogTops :many
 WITH tops AS (

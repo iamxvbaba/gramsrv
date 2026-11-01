@@ -26,8 +26,9 @@ func seedEvent(t *testing.T, events *memory.UpdateEventStore, userID int64, pts 
 	}
 }
 
-// TestGetDifferenceStopsAtHole：getDifference 只返回从 from 起连续的事件，遇在途空洞即截断，
-// State.Pts 取最后连续值；后续事件到齐后下次拉取可继续，绝不跳过空洞。
+// TestGetDifferenceStopsAtHole: getDifference returns only the contiguous events from
+// from onward, truncating at an in-flight hole; State.Pts takes the last contiguous
+// value; once the later events arrive, the next fetch can continue, never skipping the hole.
 func TestGetDifferenceStopsAtHole(t *testing.T) {
 	ctx := context.Background()
 	var authKeyID [8]byte
@@ -35,7 +36,7 @@ func TestGetDifferenceStopsAtHole(t *testing.T) {
 	events := memory.NewUpdateEventStore()
 	svc := NewService(memory.NewUpdateStateStore(), events)
 
-	// pts 1,2,3 已提交，4 在途（缺），5,6 已提交 → 连续只到 3。
+	// pts 1,2,3 committed, 4 in-flight (missing), 5,6 committed → contiguous prefix stops at 3.
 	for _, p := range []int{1, 2, 3, 5, 6} {
 		seedEvent(t, events, userID, p)
 	}
@@ -44,25 +45,26 @@ func TestGetDifferenceStopsAtHole(t *testing.T) {
 		t.Fatalf("GetDifference: %v", err)
 	}
 	if len(diff.Events) != 3 || diff.State.Pts != 3 {
-		t.Fatalf("diff = %d events, state.pts %d; want 3 连续事件、止于空洞(pts=3)", len(diff.Events), diff.State.Pts)
+		t.Fatalf("diff = %d events, state.pts %d; want 3 contiguous events, stopping at the hole (pts=3)", len(diff.Events), diff.State.Pts)
 	}
 	if diff.Partial {
-		t.Fatalf("Partial=true，want false（被空洞而非 limit 截断）")
+		t.Fatalf("Partial=true, want false (truncated by a hole, not by limit)")
 	}
 
-	// 补上 pts=4（在途事务提交）后，从 3 继续应拿到 4,5,6。
+	// After filling in pts=4 (the in-flight transaction commits), continuing from 3 should yield 4,5,6.
 	seedEvent(t, events, userID, 4)
 	diff, err = svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 3})
 	if err != nil {
 		t.Fatalf("GetDifference after fill: %v", err)
 	}
 	if len(diff.Events) != 3 || diff.State.Pts != 6 {
-		t.Fatalf("events after gap filled = %d, state.pts %d; want 4,5,6 到 pts=6", len(diff.Events), diff.State.Pts)
+		t.Fatalf("events after gap filled = %d, state.pts %d; want 4,5,6 through pts=6", len(diff.Events), diff.State.Pts)
 	}
 }
 
-// TestGetDifferenceSliceOnLimit：连续事件填满 limit 时返回 Partial(=differenceSlice)，
-// State.Pts 为中间态；客户端据此续拉，最终一页 Partial=false。
+// TestGetDifferenceSliceOnLimit: when contiguous events fill the limit, returns
+// Partial (=differenceSlice) with State.Pts as the intermediate state; the client
+// uses it to continue fetching until the final page has Partial=false.
 func TestGetDifferenceSliceOnLimit(t *testing.T) {
 	ctx := context.Background()
 	var authKeyID [8]byte
@@ -79,7 +81,7 @@ func TestGetDifferenceSliceOnLimit(t *testing.T) {
 		t.Fatalf("GetDifference: %v", err)
 	}
 	if len(diff.Events) != getDifferenceLimit || !diff.Partial || diff.State.Pts != getDifferenceLimit {
-		t.Fatalf("第一页 = %d events partial %v state.pts %d; want %d/true/%d",
+		t.Fatalf("first page = %d events partial %v state.pts %d; want %d/true/%d",
 			len(diff.Events), diff.Partial, diff.State.Pts, getDifferenceLimit, getDifferenceLimit)
 	}
 
@@ -88,13 +90,14 @@ func TestGetDifferenceSliceOnLimit(t *testing.T) {
 		t.Fatalf("GetDifference page2: %v", err)
 	}
 	if len(diff.Events) != 25 || diff.Partial || diff.State.Pts != total {
-		t.Fatalf("第二页 = %d events partial %v state.pts %d; want 25/false/%d",
+		t.Fatalf("second page = %d events partial %v state.pts %d; want 25/false/%d",
 			len(diff.Events), diff.Partial, diff.State.Pts, total)
 	}
 }
 
-// TestGetStateReportsContiguousNotMax：getState 报告最大连续 pts，而非最大已提交 pts，
-// 避免首次登录基线越过在途空洞而丢消息。
+// TestGetStateReportsContiguousNotMax: getState reports the maximum contiguous pts,
+// not the maximum committed pts, so a first-login baseline cannot jump over an
+// in-flight hole and lose messages.
 func TestGetStateReportsContiguousNotMax(t *testing.T) {
 	ctx := context.Background()
 	var authKeyID [8]byte
@@ -102,7 +105,7 @@ func TestGetStateReportsContiguousNotMax(t *testing.T) {
 	events := memory.NewUpdateEventStore()
 	svc := NewService(memory.NewUpdateStateStore(), events)
 
-	for _, p := range []int{1, 2, 3, 5, 6} { // 4 在途空洞，最大已提交=6
+	for _, p := range []int{1, 2, 3, 5, 6} { // 4 is an in-flight hole, max committed=6
 		seedEvent(t, events, userID, p)
 	}
 	st, err := svc.GetState(ctx, authKeyID, userID)
@@ -110,7 +113,7 @@ func TestGetStateReportsContiguousNotMax(t *testing.T) {
 		t.Fatalf("GetState: %v", err)
 	}
 	if st.Pts != 3 {
-		t.Fatalf("GetState.Pts=%d, want 3（最大连续，而非最大已提交 6）", st.Pts)
+		t.Fatalf("GetState.Pts=%d, want 3 (max contiguous, not max committed 6)", st.Pts)
 	}
 }
 

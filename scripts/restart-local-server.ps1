@@ -143,12 +143,14 @@ function Test-RepoEdgeProcess {
 
 function Get-RepoEdgeProcesses {
     param([int]$Port, [string]$ExePath)
-    # 按 PID 去重，合并两条发现路径：
-    #   1) 端口监听者——主路径，但 Get-NetTCPConnection 偶发返回空（曾漏判成 "no listener"，
-    #      导致旧进程没被停、promote 复制撞文件锁）。
-    #   2) 按进程名/路径 + 仓库 bin 下 telesrv-edge* 可执行文件——兜底覆盖端口漏报，并能抓到
-    #      “持有 telesrv-edge.exe / telesrv-edge.exe~ 文件锁但端口尚未就绪”的实例（promote 复制前必须停掉）。
-    # 这个脚本只接管 Edge；Core/Egress/SFU 即使同在 repo/bin 下，也不能被旧单体式进程名兜底误杀。
+    # Deduplicate by PID, merging two discovery paths:
+    #   1) Port listeners -- the main path, but Get-NetTCPConnection occasionally returns nothing (once
+    #      misjudged as "no listener", so the old process was not stopped and the promote copy hit a file lock).
+    #   2) By process name/path + the telesrv-edge* executables under the repo bin -- a fallback for missed
+    #      ports that also catches instances "holding the telesrv-edge.exe / telesrv-edge.exe~ file lock while
+    #      the port is not ready yet" (they must be stopped before the promote copy).
+    # This script only manages Edge; Core/Egress/SFU must not be killed by the old monolith-style process-name
+    # fallback even when they live under repo/bin too.
     $foundByPid = @{}
 
     $listenerPids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
@@ -181,8 +183,9 @@ function Get-RepoEdgeProcesses {
         if ($foundByPid.ContainsKey($procId)) {
             continue
         }
-        # 只接管仓库内的 Edge 实例：路径在 repo/bin 下，或路径不可读但进程名看起来就是 telesrv-edge（兜底）。
-        # 仓库外的同名进程（用户在别处跑的）一律不动。
+        # Only manage Edge instances inside the repo: the path is under repo/bin, or the path is unreadable but
+        # the process name looks like telesrv-edge (fallback). Same-named processes outside the repo (run by
+        # the user elsewhere) are never touched.
         $isRepoProcess = Test-RepoEdgeProcess -Process $proc -ExePath $ExePath
         if ($isRepoProcess) {
             $foundByPid[$procId] = $proc
@@ -263,8 +266,9 @@ try {
 
     if (-not $SkipBuild) {
         Write-Step "Promote executable"
-        # telesrv-edge.exe 可能被外部 watcher/watchdog 抢先重生的实例占用文件锁；停掉持有者后短暂重试，
-        # 避免直接撞 "being used by another process" 复制失败（曾因此 promote 失败）。
+        # telesrv-edge.exe may be file-locked by an instance an external watcher/watchdog respawned first; after
+        # stopping the holder, retry briefly to avoid failing the copy with "being used by another process"
+        # (a promote once failed this way).
         $promoted = $false
         for ($attempt = 1; $attempt -le 10; $attempt++) {
             try {

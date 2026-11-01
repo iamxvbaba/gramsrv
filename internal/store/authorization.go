@@ -10,7 +10,8 @@ import (
 
 var ErrAuthorizationStateChanged = errors.New("authorization state changed")
 
-// AuthorizationStore 持久化设备授权（auth_key ↔ user 绑定）。实现见 store/memory（测试替身）、store/postgres。
+// AuthorizationStore persists device authorizations (auth_key <-> user bindings). See
+// store/memory (test double) and store/postgres for implementations.
 type AuthorizationStore interface {
 	Bind(ctx context.Context, a domain.Authorization) error
 	// BindWithDelivery is the successful human-login boundary. The authorization
@@ -19,7 +20,7 @@ type AuthorizationStore interface {
 	// must not append another delivery row.
 	BindWithDelivery(ctx context.Context, a domain.Authorization, user domain.User, effects DeliveryEffectsBuilder[AuthorizationDeliverySnapshot]) error
 	ByAuthKey(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
-	// UpdateClientInfo 合并更新已绑定授权的客户端元数据，使设备列表与 auth key 协商事实一致。
+	// UpdateClientInfo merges updated client metadata into the bound authorization so the device list matches the auth key negotiation facts.
 	UpdateClientInfo(ctx context.Context, authKeyID [8]byte, info domain.AuthKeyClientInfo) error
 	ListByUser(ctx context.Context, userID int64) ([]domain.Authorization, error)
 	Delete(ctx context.Context, authKeyID [8]byte) error

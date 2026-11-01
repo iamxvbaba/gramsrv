@@ -1,20 +1,20 @@
 package domain
 
-// AppConfig 是客户端应用配置。
+// AppConfig is the client application configuration.
 type AppConfig struct {
 	Client string
 	Hash   int
 	JSON   []byte
 }
 
-// CountryCode 是一个国家的电话区号规则。
+// CountryCode is the phone dialing-code rule for a country.
 type CountryCode struct {
 	CountryCode string
 	Prefixes    []string
 	Patterns    []string
 }
 
-// Country 是登录页国家/区号选择项。
+// Country is a country/dialing-code option on the login page.
 type Country struct {
 	ISO2         string
 	DefaultName  string
@@ -23,7 +23,7 @@ type Country struct {
 	CountryCodes []CountryCode
 }
 
-// CountriesList 是 help.getCountriesList 查询结果。
+// CountriesList is the result of the help.getCountriesList query.
 type CountriesList struct {
 	Hash      int
 	Countries []Country

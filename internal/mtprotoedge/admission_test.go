@@ -39,7 +39,7 @@ func TestAdmissionConnectionLimitsAndIdempotentRelease(t *testing.T) {
 	}
 
 	release1()
-	release1() // 幂等归还不得把计数减成负数。
+	release1() // idempotent release must not drive the counter negative.
 	releaseAgain, ok := a.acquireConnection(ip1b)
 	if !ok {
 		t.Fatal("released per-IP/global slot was not reusable")
@@ -64,7 +64,7 @@ func TestAdmissionHandshakeLimitAndRelease(t *testing.T) {
 		t.Fatal("second handshake bypassed semaphore")
 	}
 	release()
-	release() // 幂等
+	release() // idempotent
 	release2, ok := a.tryAcquireHandshake()
 	if !ok {
 		t.Fatal("released handshake slot was not reusable")

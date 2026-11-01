@@ -12,9 +12,11 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
-// TestPushTransientSkipsNotReadySession 锁定不变量：transient 推送（typing/presence）对
-// 未就绪 session 直接跳过、不进 pending；而普通 durable 推送会进 pending。回归 transient
-// updates 与 durable 共用 pending 队列、被老化/溢出/重试耗尽误丢且 getDifference 无法补的问题。
+// TestPushTransientSkipsNotReadySession locks in the invariant: a transient push
+// (typing/presence) skips a not-ready session directly and does not enter pending;
+// an ordinary durable push does enter pending. Regression for transient updates
+// sharing the pending queue with durable ones, being wrongly dropped by
+// aging/overflow/exhausted retries, and not being recoverable via getDifference.
 func TestPushTransientSkipsNotReadySession(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	const userID = int64(100)
@@ -27,11 +29,11 @@ func TestPushTransientSkipsNotReadySession(t *testing.T) {
 	}
 	c.userID.Store(userID)
 	c.userIDResolved.Store(true)
-	// receivesUpdates 保持 false：session 未就绪（尚未 getState 建立同步基线）。
+	// receivesUpdates stays false: the session is not ready (has not yet getState'd to establish the sync baseline).
 	sm.Register(c)
 	key := connSessionKey(c)
 
-	// transient：未就绪 → 跳过、不入队。
+	// transient: not ready → skip, do not enqueue.
 	if _, err := sm.PushToUserTransientExceptAuthKeySession(context.Background(), userID, [8]byte{}, 0, proto.MessageFromServer, &tg.UpdatesTooLong{}, 0); err != nil {
 		t.Fatalf("transient push: %v", err)
 	}
@@ -42,7 +44,7 @@ func TestPushTransientSkipsNotReadySession(t *testing.T) {
 		t.Fatalf("transient push queued %d pending, want 0 (must skip not-ready session)", n)
 	}
 
-	// durable（普通）：未就绪 → 入 pending（就绪后排空，丢弃时由 getDifference 兜底）。
+	// durable (ordinary): not ready → enter pending (drained once ready; if dropped, caught by getDifference).
 	if _, err := sm.PushToUserExceptSession(context.Background(), userID, 0, proto.MessageFromServer, &tg.UpdatesTooLong{}); err != nil {
 		t.Fatalf("durable push: %v", err)
 	}

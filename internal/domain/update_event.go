@@ -1,31 +1,31 @@
 package domain
 
-// UpdateEventType 标识 update 队列事件类型。
+// UpdateEventType identifies the update queue event type.
 type UpdateEventType string
 
 const (
 	UpdateEventNewMessage        UpdateEventType = "new_message"
 	UpdateEventReadHistoryInbox  UpdateEventType = "read_history_inbox"
 	UpdateEventReadHistoryOutbox UpdateEventType = "read_history_outbox"
-	// forum 话题级已读：messages.readDiscussion 推进 per-topic 水位后下发。
+	// Forum topic-level read: sent after messages.readDiscussion advances the per-topic watermark.
 	UpdateEventReadChannelDiscussionInbox  UpdateEventType = "read_channel_discussion_inbox"
 	UpdateEventReadChannelDiscussionOutbox UpdateEventType = "read_channel_discussion_outbox"
 	UpdateEventReadMessageContents         UpdateEventType = "read_message_contents"
 	UpdateEventEditMessage                 UpdateEventType = "edit_message"
-	// UpdateEventBotCallbackQuery 仅用于 Bot API 专用 update_id 队列投影；不写账号
-	// pts/difference/outbox。
+	// UpdateEventBotCallbackQuery is used only for the Bot API-specific update_id queue projection; it does not write account
+	// pts/difference/outbox.
 	UpdateEventBotCallbackQuery UpdateEventType = "bot_callback_query"
-	// UpdateEventBotPreCheckoutQuery 与 callback 一样只服务 Bot API 队列投影；
-	// 不写账号 pts/difference/outbox。付款方挂在支付 RPC 里等 bot 应答，见
-	// precheckout_registry.go。
+	// UpdateEventBotPreCheckoutQuery, like callback, only serves the Bot API queue projection;
+	// it does not write account pts/difference/outbox. The payer waits in the payment RPC for the bot's answer, see
+	// precheckout_registry.go.
 	UpdateEventBotPreCheckoutQuery UpdateEventType = "bot_pre_checkout_query"
-	// UpdateEventWebPage 映射 updateWebPage：异步解析完成后把消息里的 pending 链接预览
-	// 占位就地替换为已解析卡片。携带账号 pts（非 LacksWirePts），消息快照经 box JOIN 重建，
-	// 故 difference/dispatch 与 edit_message 同走通用消息事件路径，仅 tg 投影构造器不同。
+	// UpdateEventWebPage maps updateWebPage: after async parsing completes it replaces the pending link preview
+	// placeholder in the message in place with the resolved card. It carries account pts (not LacksWirePts), and the message snapshot is rebuilt via a box JOIN,
+	// so difference/dispatch follows the generic message event path like edit_message, differing only in the tg projection constructor.
 	UpdateEventWebPage UpdateEventType = "web_page"
-	// UpdateEventMessagePoll 映射 updateMessagePoll（投票/关闭后 poll 状态变化；
-	// Message 为该 owner 视角消息，media 在 difference 重放时按 viewer 重新 enrich）。
-	// 当前历史实现仍将 poll 作为待复核的 LacksWirePts 事件。
+	// UpdateEventMessagePoll maps updateMessagePoll (poll state changes after a vote/close;
+	// Message is the message from that owner's perspective, and the media is re-enriched per viewer when difference replays it).
+	// The current history implementation still treats poll as a to-be-reviewed LacksWirePts event.
 	UpdateEventMessagePoll      UpdateEventType = "message_poll"
 	UpdateEventContactsReset    UpdateEventType = "contacts_reset"
 	UpdateEventDialogPinned     UpdateEventType = "dialog_pinned"
@@ -33,16 +33,16 @@ const (
 	UpdateEventDialogUnreadMark UpdateEventType = "dialog_unread_mark"
 	UpdateEventPeerSettings     UpdateEventType = "peer_settings"
 	UpdateEventPeerStoryBlocked UpdateEventType = "peer_story_blocked"
-	// UpdateEventUserPhone 只用于读取历史版本已落库的 updateUserPhone 事件。
-	// TL 构造器不携 pts，当前写路径禁止再产生该 event。
+	// UpdateEventUserPhone is used only to read updateUserPhone events persisted by historical versions.
+	// The TL constructor carries no pts, and the current write path must no longer produce this event.
 	UpdateEventUserPhone UpdateEventType = "user_phone"
 	// UpdateEventUserEmojiStatus carries the exact immutable status snapshot.
 	// It consumes account pts even though updateUserEmojiStatus has no pts.
 	UpdateEventUserEmojiStatus UpdateEventType = "user_emoji_status"
 	UpdateEventDeleteMessages  UpdateEventType = "delete_messages"
-	// UpdateEventPinnedMessages 映射 updatePinnedMessages（私聊置顶/取消
-	// 置顶；MessageIDs 是该 owner 自己视角的 box id，Bool 为 pinned）。
-	// TL 构造器自带账号 pts/pts_count，不属于 LacksWirePts。
+	// UpdateEventPinnedMessages maps updatePinnedMessages (private-chat pin/unpin;
+	// MessageIDs are the box ids from that owner's own perspective, and Bool is pinned).
+	// The TL constructor carries its own account pts/pts_count and is not LacksWirePts.
 	UpdateEventPinnedMessages           UpdateEventType = "pinned_messages"
 	UpdateEventDialogFilter             UpdateEventType = "dialog_filter"
 	UpdateEventDialogFilterOrder        UpdateEventType = "dialog_filter_order"
@@ -58,25 +58,25 @@ const (
 	UpdateEventDeleteQuickReply         UpdateEventType = "delete_quick_reply"
 	UpdateEventQuickReplyMessage        UpdateEventType = "quick_reply_message"
 	UpdateEventDeleteQuickReplyMessages UpdateEventType = "delete_quick_reply_messages"
-	// UpdateEventChannelState 表示当前账号与某频道的成员关系发生变化
-	// （leave/kick），离线设备经 difference 收到 updateChannel 后重新拉取
-	// channel 状态并移除会话。
+	// UpdateEventChannelState means the current account's membership in a channel changed
+	// (leave/kick); an offline device receiving updateChannel via difference re-fetches
+	// the channel state and removes the chat.
 	UpdateEventChannelState UpdateEventType = "channel_state"
-	// UpdateEventDraftMessage 映射 updateDraftMessage（云草稿变更；Peer 为会话，
-	// MaxID 复用为 forum top_msg_id）。事件只是"该会话草稿变过"的标记——草稿是
-	// 绝对状态而非增量，difference/outbox 重放时按 Peer 重载当前草稿填充 Draft
-	// 字段（已删则下发 draftMessageEmpty），不在事件行里固化内容快照。
+	// UpdateEventDraftMessage maps updateDraftMessage (cloud draft change; Peer is the chat and
+	// MaxID is reused as the forum top_msg_id). The event is only a marker that "this chat's draft changed" — a draft is
+	// absolute state, not a delta, so a difference/outbox replay reloads the current draft by Peer to fill the Draft
+	// field (or sends draftMessageEmpty if deleted), not freezing a content snapshot in the event row.
 	UpdateEventDraftMessage UpdateEventType = "draft_message"
-	// UpdateEventSavedDialogPinned 映射 updateSavedDialogPinned（收藏夹
-	// 子会话置顶翻转；Peer 为子会话分组键，Bool 为 pinned）。
+	// UpdateEventSavedDialogPinned maps updateSavedDialogPinned (a saved-messages
+	// sub-chat pin flip; Peer is the sub-chat grouping key and Bool is pinned).
 	UpdateEventSavedDialogPinned UpdateEventType = "saved_dialog_pinned"
-	// UpdateEventPinnedSavedDialogs 映射 updatePinnedSavedDialogs
-	// （收藏夹置顶顺序整表，Peers 为新顺序）。
+	// UpdateEventPinnedSavedDialogs maps updatePinnedSavedDialogs
+	// (the full saved-messages pin order table; Peers is the new order).
 	UpdateEventPinnedSavedDialogs UpdateEventType = "pinned_saved_dialogs"
 	UpdateEventNoop               UpdateEventType = "noop"
 )
 
-// UpdateEvent 是账号视角的增量事件，按 user_id + pts 顺序持久化。
+// UpdateEvent is an account-perspective incremental event, persisted in user_id + pts order.
 type UpdateEvent struct {
 	UserID           int64
 	Type             UpdateEventType
@@ -95,18 +95,18 @@ type UpdateEvent struct {
 	MaxID            int
 	StillUnreadCount int
 	ChannelPts       int
-	// TopMsgID 仅 forum per-topic 已读事件（read_channel_discussion_*）使用：承载话题 id
-	// （General=1），与 MaxID(=read_max_id) 一起映射 updateReadChannelDiscussionInbox/Outbox。
+	// TopMsgID is used only by the forum per-topic read events (read_channel_discussion_*): it carries the topic id
+	// (General=1), mapping updateReadChannelDiscussionInbox/Outbox together with MaxID(=read_max_id).
 	TopMsgID int
 	Users    []User
 	Channels []Channel
 	FilterID int
-	// FolderID 是 read 类事件发生时该会话所在的物理 folder（0 主列表/1 归档），
-	// 填入 updateReadChannelInbox.folder_id。
+	// FolderID is the physical folder the chat was in when the read-class event occurred (0 main list/1 archive),
+	// filled into updateReadChannelInbox.folder_id.
 	FolderID     int
 	DialogFilter *DialogFolder
-	// Draft 仅 draft_message 事件使用：不持久化，difference/outbox 重放时按
-	// Peer(+MaxID=top_msg_id) 重载当前草稿填充；nil 表示草稿已删（下发 empty）。
+	// Draft is used only by draft_message events: not persisted, it is filled by reloading the current draft by
+	// Peer (+MaxID=top_msg_id) during a difference/outbox replay; nil means the draft was deleted (sends empty).
 	Draft             *DialogDraft
 	FilterOrder       []int
 	FolderPeers       []FolderPeerUpdate
@@ -116,7 +116,7 @@ type UpdateEvent struct {
 	QuickReply        QuickReply
 	QuickReplyMessage QuickReplyMessage
 	BotCallbackQuery  *BotCallbackQuery
-	// BotPreCheckout 携带付款前询问本身；该事件没有消息，Peer/MessageID 为零。
+	// BotPreCheckout carries the pre-checkout query itself; this event has no message and Peer/MessageID are zero.
 	BotPreCheckout *BotPreCheckoutQuery
 	// BotAPIUpdateID is the HTTP Bot API update_id. It is intentionally separate
 	// from MTProto Pts: Bot API ephemeral envelopes never advance account state.
@@ -124,10 +124,10 @@ type UpdateEvent struct {
 	EphemeralMessage *EphemeralMessage
 }
 
-// LacksWirePts 表示该事件占用了账号 pts，但它对应的 TL update 构造器没有
-// 账号 pts 字段（reaction、channel 已读、dialog/folder/settings 状态类）。
-// 在线投递这类事件必须附带显式 pts 簿记，否则客户端水位与服务端错位，
-// 下一条真正带 pts 的更新会被判为空洞。
+// LacksWirePts means the event consumed account pts, but its corresponding TL update constructor has no
+// account pts field (reaction, channel read, dialog/folder/settings state classes).
+// Online delivery of such events must carry explicit pts bookkeeping, or the client watermark drifts from the server's
+// and the next genuinely pts-bearing update is judged a gap.
 func (e UpdateEvent) LacksWirePts() bool {
 	switch e.Type {
 	case UpdateEventMessagePoll,
@@ -156,27 +156,27 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventDeleteQuickReply,
 		UpdateEventQuickReplyMessage,
 		UpdateEventDeleteQuickReplyMessages:
-		// updateFolderPeers 自带 pts/pts_count，不在此列。
+		// updateFolderPeers carries its own pts/pts_count and is not in this list.
 		return true
 	case UpdateEventReadChannelDiscussionInbox, UpdateEventReadChannelDiscussionOutbox:
-		// forum 话题已读映射 updateReadChannelDiscussionInbox/Outbox，无账号 pts 字段。
+		// Forum topic read maps updateReadChannelDiscussionInbox/Outbox and has no account pts field.
 		return true
 	case UpdateEventReadHistoryInbox, UpdateEventReadHistoryOutbox:
-		// channel peer 映射 updateReadChannelInbox/Outbox，无账号 pts 字段；
-		// 私聊形态自带 pts/pts_count。
+		// A channel peer maps updateReadChannelInbox/Outbox and has no account pts field;
+		// the private-chat form carries its own pts/pts_count.
 		return e.Peer.Type == PeerTypeChannel
 	default:
 		return false
 	}
 }
 
-// UpdateDifference 是 updates.getDifference 的业务层结果。
+// UpdateDifference is the business-layer result of updates.getDifference.
 type UpdateDifference struct {
 	State         UpdateState
 	Events        []UpdateEvent
 	ChannelNudges []ChannelDifferenceNudge
-	// Partial 为 true 表示连续事件被 limit 截断、后面还有（映射 updates.differenceSlice，
-	// 客户端据 State 继续翻页）；false 表示已到当前连续末尾（updates.difference）。
+	// Partial being true means the continuous events were truncated by the limit and more remain (maps updates.differenceSlice,
+	// and the client keeps paging from State); false means the current continuous end was reached (updates.difference).
 	Partial bool
 }
 

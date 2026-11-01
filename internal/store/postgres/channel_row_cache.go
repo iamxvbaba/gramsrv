@@ -7,23 +7,29 @@ import (
 	"telesrv/internal/readmodelcache"
 )
 
-// ChannelRowCache 是「共享频道行」(channels 表一行 → domain.Channel) 的进程内强一致缓存,
-// 由统一缓存原语 readmodelcache.Cache 承载(LRU 单条驱逐 / epoch 守卫 / singleflight 内建)。
+// ChannelRowCache is a strongly consistent in-process cache of the "shared channel row"
+// (one channels-table row → domain.Channel), backed by the unified cache primitive
+// readmodelcache.Cache (per-entry LRU eviction / epoch guard / built-in singleflight).
 //
-// 只缓存全 viewer 通用、变更不频繁的频道行；per-viewer 的 member(权限/读态) 由
-// ChannelMemberCache 以 (channel_id,user_id) 单独隔离,dialog(top/未读)、boost 仍实时查 PG。
+// It caches only the viewer-agnostic, infrequently changing channel row; the per-viewer member
+// (permissions/read state) is isolated separately by ChannelMemberCache keyed by
+// (channel_id,user_id), and dialog (top/unread) and boost are still queried live from PG.
 //
-// 一致性靠统一 read-model PG LISTEN/NOTIFY 实时失效(见 ReadModelChangeListener)而非 TTL：
-// channels 表上的 read-model 触发器在提交时发布 channel_base 事件,listener 收到即 delete
-// 对应条目；listener (重)连接时整表 flush,兜住断连窗口内丢失的通知。无 TTL,故 epoch 守卫
-// 是防永久 stale 的唯一保障(已内建于原语)。
+// Consistency relies on real-time invalidation through the unified read-model PG LISTEN/NOTIFY
+// (see ReadModelChangeListener) rather than a TTL: the read-model trigger on the channels table
+// publishes a channel_base event on commit, and the listener deletes the corresponding entry on
+// receipt; on (re)connect the listener flushes the whole table, covering notifications lost in
+// the disconnect window. There is no TTL, so the epoch guard is the only safeguard against
+// permanent staleness (built into the primitive).
 //
-// 仅在连接池句柄(非事务)上消费(见 ChannelStore.cacheActive)：事务内一律实时读,保证读己写。
+// It is consumed only on the pool handle (not in a transaction) (see ChannelStore.cacheActive):
+// inside a transaction everything is read live to guarantee read-your-write.
 type ChannelRowCache struct {
 	cache *readmodelcache.Cache[int64, domain.Channel]
 }
 
-// NewChannelRowCache 创建容量为 max 的频道行缓存；max<=0 返回 nil(表示禁用,调用方按 nil 跳过)。
+// NewChannelRowCache creates a channel row cache with capacity max; max<=0 returns nil
+// (meaning disabled, and callers skip on nil).
 func NewChannelRowCache(max int) *ChannelRowCache {
 	cache := readmodelcache.New[int64, domain.Channel](readmodelcache.Config[int64, domain.Channel]{
 		MaxEntries: max,
@@ -89,7 +95,7 @@ func (c *ChannelRowCache) put(ch domain.Channel) {
 	c.cache.Store(ch.ID, ch)
 }
 
-// delete 失效单个频道(listener 收到该 id 的变更通知时调用)。
+// delete invalidates a single channel (called when the listener receives a change notification for that id).
 func (c *ChannelRowCache) delete(id int64) {
 	if c == nil || id == 0 {
 		return
@@ -97,7 +103,8 @@ func (c *ChannelRowCache) delete(id int64) {
 	c.cache.Invalidate(id)
 }
 
-// flush 清空整表(listener 每次 (重)连接、建立 LISTEN 后调用,兜住断连窗口内丢失的通知)。
+// flush clears the whole table (called by the listener on every (re)connect after establishing
+// LISTEN, covering notifications lost in the disconnect window).
 func (c *ChannelRowCache) flush() {
 	if c == nil {
 		return
@@ -105,7 +112,8 @@ func (c *ChannelRowCache) flush() {
 	c.cache.Flush()
 }
 
-// cloneChannelRow 深拷频道行的可变字段(切片),使缓存与调用方互不别名污染。
+// cloneChannelRow deep-copies the channel row's mutable fields (slices), so the cache and the
+// caller do not alias-pollute each other.
 func cloneChannelRow(ch domain.Channel) domain.Channel {
 	if ch.PhotoStripped != nil {
 		ch.PhotoStripped = append([]byte(nil), ch.PhotoStripped...)

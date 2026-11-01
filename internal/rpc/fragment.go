@@ -25,7 +25,7 @@ import (
 // Every entry point degrades: with Deps.Usernames nil (or on any registry error)
 // the wire shape is exactly what it was before collectibles existed.
 
-// registerFragment 注册 fragment.* RPC handler。
+// registerFragment registers fragment.* RPC handlers.
 func (r *Router) registerFragment(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.FragmentGetCollectibleInfoRequest](d, tlprofile.SemanticMethodFragmentGetCollectibleInfo, func(ctx context.Context, layerRequest *tg.FragmentGetCollectibleInfoRequest) (any, error) {
 		return r.onFragmentGetCollectibleInfo(ctx, layerRequest)

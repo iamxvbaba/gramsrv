@@ -1,4 +1,4 @@
--- v2 编号 0258；移植自 main 0231_shop_settings（main 3a84827a，B7g），见 docs/main-v2-sync.md。
+-- v2 number 0258; ported from main 0231_shop_settings (main 3a84827a, B7g), see docs/main-v2-sync.md.
 -- Shop-wide settings shared with the FlashGram bot.
 -- stars_rate: FG Stars credited per one Telegram Star (the bot's purchase rate).
 

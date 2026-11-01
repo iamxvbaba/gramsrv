@@ -12,19 +12,19 @@ type channelMemberCacheKey struct {
 	userID    int64
 }
 
-// ChannelMemberCache 是 channel_members 表一行的进程内 read-model 缓存,
-// 由统一缓存原语 readmodelcache.Cache 承载(LRU 单条驱逐 / epoch 守卫 / singleflight 内建)。
+// ChannelMemberCache is the in-process read-model cache of a channel_members row,
+// backed by the common cache primitive readmodelcache.Cache (single-entry LRU eviction / epoch guard / built-in singleflight).
 //
-// 它只在连接池读路径上使用,事务内全部绕过;一致性由 read_model trigger + LISTEN/NOTIFY
-// 失效驱动。channel_members 同时承载 member access 与 read boundary 两类状态,因此 listener
-// 断线重连会整表 flush,避免通知丢失时产生权限/可见性旧读。epoch 守卫确保被踢成员的失效
-// 不会被一次在飞 load 的 stale Active 行覆盖——否则被踢成员可继续读历史,构成访问控制旁路。
+// It is used only on pool read paths, bypassed entirely inside transactions; consistency is driven by the read_model trigger + LISTEN/NOTIFY
+// invalidation. channel_members carries both member access and read boundary state, so a listener
+// reconnect flushes the whole table, avoiding stale permission/visibility reads when a notification is lost. The epoch guard ensures that invalidating a kicked member
+// is not overwritten by a stale Active row from an in-flight load—otherwise a kicked member could keep reading history, an access-control bypass.
 type ChannelMemberCache struct {
 	cache *readmodelcache.Cache[channelMemberCacheKey, domain.ChannelMember]
 }
 
-// NewChannelMemberCache 创建容量为 max 的成员缓存;max<=0 返回 nil(禁用,调用方按 nil 跳过)。
-// domain.ChannelMember 为扁平值(无共享可变字段),故不设 Clone。
+// NewChannelMemberCache creates a member cache with capacity max; max<=0 returns nil (disabled; callers skip on nil).
+// domain.ChannelMember is a flat value (no shared mutable fields), so no Clone is set.
 func NewChannelMemberCache(max int) *ChannelMemberCache {
 	cache := readmodelcache.New[channelMemberCacheKey, domain.ChannelMember](readmodelcache.Config[channelMemberCacheKey, domain.ChannelMember]{
 		MaxEntries: max,

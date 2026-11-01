@@ -19,7 +19,8 @@ func (r *Router) registerUpload(d *tlprofile.Dispatcher) {
 	r.registerUploadWebFile(d)
 }
 
-// storageFileType 映射 storage.FileType，优先信任字节魔数以兼容历史上写错 mime 的 seed blob。
+// storageFileType maps storage.FileType, trusting the byte magic first to accommodate
+// historically mis-typed-mime seed blobs.
 func storageFileType(mime string, data []byte) tg.StorageFileTypeClass {
 	switch sniffImageType(data) {
 	case "jpeg":
@@ -46,7 +47,7 @@ func storageFileType(mime string, data []byte) tg.StorageFileTypeClass {
 	return &tg.StorageFileUnknown{}
 }
 
-// sniffImageType 用魔数探测常见图片类型。
+// sniffImageType detects common image types by magic bytes.
 func sniffImageType(data []byte) string {
 	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
 		return "jpeg"

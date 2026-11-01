@@ -1,8 +1,9 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    # schema 只取 *.up.sql，避免 golang-migrate 的 down 脚本（DROP）被 sqlc 当成 schema 的一部分。
-    # 与 golang-migrate 共用同一份迁移文件，单一事实源。
+    # schema takes only *.up.sql, so golang-migrate's down scripts (DROP) are not
+    # treated as part of the schema by sqlc.
+    # Shares the same migration files with golang-migrate: a single source of truth.
     schema: "deploy/migrations/*.up.sql"
     queries: "internal/store/postgres/queries"
     gen:

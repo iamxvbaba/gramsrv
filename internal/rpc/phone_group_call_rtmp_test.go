@@ -16,7 +16,8 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// fakeLiveStreams 是 LiveStreamsService 的测试替身，按 channelID 存可拉流段。
+// fakeLiveStreams is a test double for LiveStreamsService that stores fetchable stream parts by
+// channelID.
 type fakeLiveStreams struct {
 	channels map[int64][]domain.LiveStreamChannel
 	parts    map[int64]map[int64][]byte // channelID → time_ms → part
@@ -57,7 +58,8 @@ type rtmpFixture struct {
 	live *fakeLiveStreams
 }
 
-// newRtmpFixture 复制 newGroupCallFixture 的用户/频道搭建，但注入 LiveStreams 替身。
+// newRtmpFixture replicates newGroupCallFixture's user/channel setup but injects a LiveStreams test
+// double.
 func newRtmpFixture(t *testing.T) *rtmpFixture {
 	t.Helper()
 	ctx := t.Context()
@@ -126,7 +128,8 @@ func (f *rtmpFixture) createLive(t *testing.T) *tg.GroupCall {
 	return call
 }
 
-// TestRtmpCreateAndAdminGetUrl 验证 RTMP 直播创建后管理员可取 url/key，revoke 轮换 key。
+// TestRtmpCreateAndAdminGetUrl verifies that after an RTMP livestream is created an admin can fetch
+// the url/key and revoke rotates the key.
 func TestRtmpCreateAndAdminGetUrl(t *testing.T) {
 	f := newRtmpFixture(t)
 	ownerCtx := f.userCtx(f.owner, 11)
@@ -143,14 +146,14 @@ func TestRtmpCreateAndAdminGetUrl(t *testing.T) {
 	}
 	key1 := res.Key
 
-	// 非管理员不得取推流凭据。
+	// A non-admin must not fetch the stream credentials.
 	if _, err := f.router.onPhoneGetGroupCallStreamRtmpURL(f.userCtx(f.member, 22), &tg.PhoneGetGroupCallStreamRtmpURLRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
 	}); err == nil {
 		t.Fatalf("non-admin got rtmp url without error")
 	}
 
-	// revoke 轮换 key 并断开推流会话。
+	// revoke rotates the key and disconnects the stream session.
 	res2, err := f.router.onPhoneGetGroupCallStreamRtmpURL(ownerCtx, &tg.PhoneGetGroupCallStreamRtmpURLRequest{
 		Peer:   &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
 		Revoke: true,
@@ -166,13 +169,13 @@ func TestRtmpCreateAndAdminGetUrl(t *testing.T) {
 	}
 }
 
-// TestRtmpJoinReturnsStreamParams 验证 RTMP viewer join 返回 stream:true 的 connection params，
-// 管理员附带 rtmp_stream_url/key，普通观众不下发凭据。
+// TestRtmpJoinReturnsStreamParams verifies an RTMP viewer join returns connection params with
+// stream:true; managers get rtmp_stream_url/key attached, ordinary viewers get no credentials.
 func TestRtmpJoinReturnsStreamParams(t *testing.T) {
 	f := newRtmpFixture(t)
 	call := f.createLive(t)
 
-	// 管理员 join：带 url/key。
+	// Admin join: carries url/key.
 	ownerRes, err := f.router.onPhoneJoinGroupCall(f.userCtx(f.owner, 12), &tg.PhoneJoinGroupCallRequest{
 		Call:   &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash},
 		JoinAs: &tg.InputPeerSelf{},
@@ -193,7 +196,7 @@ func TestRtmpJoinReturnsStreamParams(t *testing.T) {
 		t.Fatalf("admin join missing rtmp url/key: %+v", params)
 	}
 
-	// 普通成员 join：stream:true 但无凭据。
+	// Ordinary member join: stream:true but no credentials.
 	memberRes, err := f.router.onPhoneJoinGroupCall(f.userCtx(f.member, 22), &tg.PhoneJoinGroupCallRequest{
 		Call:   &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash},
 		JoinAs: &tg.InputPeerSelf{},

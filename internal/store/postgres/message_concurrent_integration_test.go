@@ -9,10 +9,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendPrivateTextConcurrentNoPtsGap 是「PG 事务内分配 pts」的正确性核心证明：
-// N 条消息并发 sender→recipient 发送，全部成功提交后，接收方账号事件 pts 必须严格连续 1..N
-// （无空洞、无重复、无丢失），且 MaxContiguousPts == N。
-// box id 仍可由外部计数器提供，pts 则由 user_update_watermarks 在同一 PG tx 内推进。
+// TestSendPrivateTextConcurrentNoPtsGap is the core correctness proof for "allocate pts inside a
+// PG transaction": with N messages sent concurrently sender→recipient, after all commit
+// successfully the recipient's account event pts must be strictly contiguous 1..N (no gaps, no
+// duplicates, no loss), and MaxContiguousPts == N. box id may still come from an external counter,
+// while pts is advanced by user_update_watermarks within the same PG tx.
 func TestSendPrivateTextConcurrentNoPtsGap(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -37,7 +38,7 @@ func TestSendPrivateTextConcurrentNoPtsGap(t *testing.T) {
 	}
 	ids := []int64{sender.ID, recipient.ID}
 	t.Cleanup(func() {
-		// 按 FK 依赖序清理子表（message_boxes.from_user_id 为 RESTRICT）再删用户。
+		// Clean up child tables in FK dependency order (message_boxes.from_user_id is RESTRICT) before deleting users.
 		_, _ = pool.Exec(ctx, "DELETE FROM dispatch_outbox WHERE target_user_id = ANY($1::bigint[])", ids)
 		_, _ = pool.Exec(ctx, "DELETE FROM user_update_events WHERE user_id = ANY($1::bigint[])", ids)
 		_, _ = pool.Exec(ctx, "DELETE FROM message_boxes WHERE owner_user_id = ANY($1::bigint[])", ids)
@@ -90,27 +91,27 @@ WHERE user_id = ANY($1::bigint[])`, ids).Scan(&initialWatermarks); err != nil {
 		}
 	}
 
-	// 进程内检测 allocator 是否给接收方分配了重复 pts。
+	// In-process check for whether the allocator assigned duplicate pts to the recipient.
 	seen := map[int]int{}
 	for i := 0; i < n; i++ {
 		if prev, ok := seen[recipPts[i]]; ok {
-			t.Errorf("recipient pts %d 被发送 #%d 和 #%d 同时分配（allocator 并发重复）", recipPts[i], prev, i)
+			t.Errorf("recipient pts %d assigned by both send #%d and #%d (allocator concurrent duplicate)", recipPts[i], prev, i)
 		}
 		seen[recipPts[i]] = i
 	}
 
-	// 接收方应有 n 条事件，pts 连续 1..n（无空洞无重复无丢失）。
+	// The recipient should have n events with pts contiguous 1..n (no gaps, no duplicates, no loss).
 	events := NewUpdateEventStore(pool)
 	got, err := events.ListAfter(ctx, recipient.ID, 0, n+10)
 	if err != nil {
 		t.Fatalf("list recipient events: %v", err)
 	}
 	if len(got) != n {
-		t.Fatalf("recipient events = %d, want %d（无丢失无重复）", len(got), n)
+		t.Fatalf("recipient events = %d, want %d (no loss, no duplicates)", len(got), n)
 	}
 	for i, ev := range got {
 		if ev.Pts != i+1 {
-			t.Fatalf("recipient event[%d].Pts = %d, want %d（pts 必须连续无洞）", i, ev.Pts, i+1)
+			t.Fatalf("recipient event[%d].Pts = %d, want %d (pts must be contiguous with no gaps)", i, ev.Pts, i+1)
 		}
 	}
 	contig, err := events.MaxContiguousPts(ctx, recipient.ID)

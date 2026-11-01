@@ -10,17 +10,17 @@ import (
 	"telesrv/internal/store"
 )
 
-// BoxIDAllocator 用 Redis INCR 分配 owner 视角的 message box id。
+// BoxIDAllocator uses Redis INCR to allocate owner-visible message box ids.
 type BoxIDAllocator struct {
 	counter counterAllocator
 }
 
-// ChannelIDAllocator 用 Redis INCR 分配全局 channel/supergroup id。
+// ChannelIDAllocator uses Redis INCR to allocate global channel/supergroup ids.
 type ChannelIDAllocator struct {
 	counter counterAllocator
 }
 
-// ChannelMessageIDAllocator 用 Redis INCR 分配 channel 维度 message id。
+// ChannelMessageIDAllocator uses Redis INCR to allocate channel-scoped message ids.
 type ChannelMessageIDAllocator struct {
 	counter counterAllocator
 }
@@ -61,7 +61,7 @@ return redis.call("INCR", KEYS[1])
 `)
 )
 
-// NewBoxIDAllocator 创建 Redis-backed message box id allocator。
+// NewBoxIDAllocator creates a Redis-backed message box id allocator.
 func NewBoxIDAllocator(c *redis.Client, source store.CounterSource) *BoxIDAllocator {
 	return &BoxIDAllocator{counter: counterAllocator{
 		c:      c,
@@ -71,7 +71,7 @@ func NewBoxIDAllocator(c *redis.Client, source store.CounterSource) *BoxIDAlloca
 	}}
 }
 
-// NewChannelIDAllocator 创建 Redis-backed channel id allocator。
+// NewChannelIDAllocator creates a Redis-backed channel id allocator.
 func NewChannelIDAllocator(c *redis.Client, source store.CounterSource) *ChannelIDAllocator {
 	return &ChannelIDAllocator{counter: counterAllocator{
 		c:      c,
@@ -81,7 +81,7 @@ func NewChannelIDAllocator(c *redis.Client, source store.CounterSource) *Channel
 	}}
 }
 
-// NewChannelMessageIDAllocator 创建 Redis-backed channel message id allocator。
+// NewChannelMessageIDAllocator creates a Redis-backed channel message id allocator.
 func NewChannelMessageIDAllocator(c *redis.Client, source store.CounterSource) *ChannelMessageIDAllocator {
 	return &ChannelMessageIDAllocator{counter: counterAllocator{
 		c:      c,

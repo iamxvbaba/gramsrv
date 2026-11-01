@@ -7,9 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestUpdateEventListAfterCarriesPinServiceReply 复现离线差分场景：
-// 接收方经 ListAfter 读到的 pin 服务消息事件必须携带 reply_to（指向
-// 接收方视角的被置顶消息），否则 TDesktop 渲染 "pinned Deleted message"。
+// TestUpdateEventListAfterCarriesPinServiceReply reproduces the offline difference scenario:
+// the pin service message event the recipient reads via ListAfter must carry reply_to (pointing to the
+// pinned message from the recipient's perspective), otherwise TDesktop renders "pinned Deleted message".
 func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -58,7 +58,7 @@ func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
 		t.Fatalf("send pin service: %v", err)
 	}
 	if svc.RecipientMessage.ReplyTo == nil || svc.RecipientMessage.ReplyTo.MessageID != sent.RecipientMessage.ID {
-		t.Fatalf("recipient service reply = %+v, want bob 视角 id %d", svc.RecipientMessage.ReplyTo, sent.RecipientMessage.ID)
+		t.Fatalf("recipient service reply = %+v, want bob's perspective id %d", svc.RecipientMessage.ReplyTo, sent.RecipientMessage.ID)
 	}
 
 	events, err := NewUpdateEventStore(pool).ListAfter(ctx, bob.ID, 0, 50)
@@ -78,23 +78,23 @@ func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
 			t.Fatalf("service event action = %+v, want pin_message", event.Message.Media.ServiceAction)
 		}
 		if event.Message.ReplyTo == nil {
-			t.Fatalf("difference 路径服务消息事件丢失 reply_to（TDesktop 将渲染 pinned Deleted message）：%+v", event.Message)
+			t.Fatalf("difference-path service message event lost reply_to (TDesktop will render pinned Deleted message): %+v", event.Message)
 		}
 		if event.Message.ReplyTo.MessageID != sent.RecipientMessage.ID {
-			t.Fatalf("service event reply id = %d, want bob 视角 %d", event.Message.ReplyTo.MessageID, sent.RecipientMessage.ID)
+			t.Fatalf("service event reply id = %d, want bob's perspective %d", event.Message.ReplyTo.MessageID, sent.RecipientMessage.ID)
 		}
 	}
 	if !foundService {
 		t.Fatalf("bob events lack pin service message: %+v", events)
 	}
 
-	// pinned_messages 事件也必须可经 difference 回放。
+	// The pinned_messages event must also be replayable via difference.
 	foundPinned := false
 	for _, event := range events {
 		if event.Type == domain.UpdateEventPinnedMessages {
 			foundPinned = true
 			if !event.Bool || len(event.MessageIDs) != 1 || event.MessageIDs[0] != sent.RecipientMessage.ID {
-				t.Fatalf("pinned event = %+v, want pinned=true with bob 视角 id", event)
+				t.Fatalf("pinned event = %+v, want pinned=true with bob's perspective id", event)
 			}
 		}
 	}
@@ -102,9 +102,10 @@ func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
 		t.Fatalf("bob events lack pinned_messages: %+v", events)
 	}
 
-	// getDialogs 的 top message 必须带全量元数据：TDesktop 把它先入缓存
-	// 且后续完整版不覆盖，缺 reply 头会让 pin 服务消息永久渲染成
-	// "pinned Deleted message"（实测离线场景抓到的真 bug）。
+	// getDialogs' top message must carry full metadata: TDesktop caches it first
+	// and the later full version does not overwrite it, so a missing reply header
+	// makes the pin service message permanently render as
+	// "pinned Deleted message" (a real bug caught in an offline scenario).
 	dialogs := NewDialogStore(pool)
 	list, err := dialogs.ListByPeers(ctx, bob.ID, []domain.Peer{{Type: domain.PeerTypeUser, ID: alice.ID}})
 	if err != nil {
@@ -121,7 +122,7 @@ func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
 		t.Fatalf("dialog top message media = %+v, want pin service action", top.Media)
 	}
 	if top.ReplyTo == nil || top.ReplyTo.MessageID != sent.RecipientMessage.ID {
-		t.Fatalf("getDialogs top message 丢失 reply 头：%+v, want reply_to=%d", top.ReplyTo, sent.RecipientMessage.ID)
+		t.Fatalf("getDialogs top message lost its reply header: %+v, want reply_to=%d", top.ReplyTo, sent.RecipientMessage.ID)
 	}
 	byUser, err := dialogs.ListByUser(ctx, bob.ID, domain.DialogFilter{Limit: 10})
 	if err != nil {
@@ -132,7 +133,7 @@ func TestUpdateEventListAfterCarriesPinServiceReply(t *testing.T) {
 		if msg.ID == svc.RecipientMessage.ID && msg.Peer == (domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}) {
 			foundTop = true
 			if msg.ReplyTo == nil || msg.ReplyTo.MessageID != sent.RecipientMessage.ID {
-				t.Fatalf("ListByUser top message 丢失 reply 头：%+v", msg.ReplyTo)
+				t.Fatalf("ListByUser top message lost its reply header: %+v", msg.ReplyTo)
 			}
 		}
 	}

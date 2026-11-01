@@ -1,5 +1,7 @@
--- 频道私信(Direct Messages)：母广播频道关联一个 monoforum 虚拟频道承载订阅者私信。
--- monoforum=true 标记该频道是 monoforum;linked_monoforum_id 双向关联母频道 ↔ monoforum。
+-- Channel direct messages: a parent broadcast channel is linked to a monoforum
+-- virtual channel that carries subscriber direct messages. monoforum=true marks
+-- the channel as a monoforum; linked_monoforum_id bidirectionally links the parent
+-- channel <-> monoforum.
 ALTER TABLE public.channels
     ADD COLUMN monoforum boolean DEFAULT false NOT NULL;
 ALTER TABLE public.channels

@@ -15,10 +15,10 @@ var (
 	// ErrPeerModerationFlagsInvalid rejects the impossible scam+fake state at
 	// every write boundary shared by user, bot and channel projections.
 	ErrPeerModerationFlagsInvalid = errors.New("peer moderation flags invalid")
-	// ErrPremiumRequired 表示该操作仅限有效会员（PREMIUM_ACCOUNT_REQUIRED）。
+	// ErrPremiumRequired means the operation is limited to an active Premium account (PREMIUM_ACCOUNT_REQUIRED).
 	ErrPremiumRequired = errors.New("premium account required")
-	// ErrPremiumBotUnsupported 表示 bot 账号不可被授予会员（官方语义）。
+	// ErrPremiumBotUnsupported means a bot account cannot be granted Premium (official semantics).
 	ErrPremiumBotUnsupported = errors.New("bot accounts cannot be premium")
-	// ErrBirthdayInvalid 表示生日的月/日/年不在合法范围（BIRTHDAY_INVALID）。
+	// ErrBirthdayInvalid means the birthday month/day/year is out of the legal range (BIRTHDAY_INVALID).
 	ErrBirthdayInvalid = errors.New("birthday invalid")
 )

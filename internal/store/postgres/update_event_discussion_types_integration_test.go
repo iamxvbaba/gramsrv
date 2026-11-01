@@ -8,12 +8,13 @@ import (
 	storepkg "telesrv/internal/store"
 )
 
-// TestUpdateEventAppendDiscussionTypes 回归迁移 0003：forum 话题已读的 durable 事件类型
-// read_channel_discussion_inbox / read_channel_discussion_outbox 必须能写入 user_update_events。
-// 0001 的 user_update_events_type_check 白名单原本遗漏这两种类型（0002/a180fbc 加了话题已读
-// 功能却没补约束），导致真 PostgreSQL 上 messages.readDiscussion 首次标已读 append durable 事件
-// 被 CHECK 约束拒（SQLSTATE 23514）→ RPC 500，且话题已读不进 durable / getDifference。
-// memory store 无 CHECK 约束故单测未暴露，真双机 DrKLO 才发现。
+// TestUpdateEventAppendDiscussionTypes regresses migration 0003: the forum topic-read durable event
+// types read_channel_discussion_inbox / read_channel_discussion_outbox must be writable into user_update_events.
+// 0001's user_update_events_type_check whitelist originally missed these two types (0002/a180fbc added
+// the topic-read feature without adding the constraint), so on a real PostgreSQL the first
+// messages.readDiscussion topic-read append of a durable event was rejected by the CHECK constraint
+// (SQLSTATE 23514) -> RPC 500, and the topic read never entered durable / getDifference.
+// The memory store has no CHECK constraint so unit tests did not expose it; only a real two-machine DrKLO run found it.
 func TestUpdateEventAppendDiscussionTypes(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -50,7 +51,7 @@ func TestUpdateEventAppendDiscussionTypes(t *testing.T) {
 			Date:     1700000900 + i,
 		})
 		if aerr != nil {
-			t.Fatalf("append %s 失败（迁移 0003 约束白名单是否缺该类型?）: %v", et, aerr)
+			t.Fatalf("append %s failed (is the type missing from migration 0003's constraint whitelist?): %v", et, aerr)
 		}
 		if ev.Pts <= 0 || ev.PtsCount != 1 {
 			t.Fatalf("append %s: pts=%d pts_count=%d, want one allocated account PTS", et, ev.Pts, ev.PtsCount)

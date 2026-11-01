@@ -108,7 +108,7 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 		t.Fatalf("edge exclusion = %x/%d", storedAuthKey, storedSession)
 	}
 
-	// 同号重试是幂等读，不得产生 PTS/event/outbox。
+	// Retrying the same number is an idempotent read and must not produce PTS/event/outbox.
 	retry, err := changes.ChangePhoneWithDelivery(ctx, domain.PhoneChangeRequest{UserID: u1.ID, Phone: newPhone, Date: 1700000002}, func(store.UserDeliverySnapshot) ([]store.DeliveryEffect, error) {
 		t.Fatal("idempotent phone replay invoked delivery builder")
 		return nil, nil
@@ -116,8 +116,8 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 	if err != nil || retry.Changed || retry.User.Phone != newPhone {
 		t.Fatalf("idempotent retry = %+v err=%v", retry, err)
 	}
-	// 改号不分配账号 PTS（updateUserPhone 无 pts），重试同样不得产生
-	// PTS/event/outbox。
+	// A phone change allocates no account PTS (updateUserPhone has no pts), and a retry must likewise
+	// produce no PTS/event/outbox.
 	if pts, err := events.MaxContiguousPts(ctx, u1.ID); err != nil || pts != 0 {
 		t.Fatalf("pts after retry = %d err=%v", pts, err)
 	}
@@ -125,7 +125,7 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 		t.Fatalf("edge deliveries after idempotent retry = %d err=%v, want 1", deliveryCount, err)
 	}
 
-	// 冲突更新整体回滚：号码不变，也不产生 PTS/event。
+	// A conflicting update rolls back entirely: the number is unchanged and no PTS/event is produced.
 	if _, err := changes.ChangePhoneWithDelivery(ctx, domain.PhoneChangeRequest{UserID: u2.ID, Phone: newPhone}, postgresPhoneChangeEffects([8]byte{}, 0)); !errors.Is(err, domain.ErrPhoneNumberOccupied) {
 		t.Fatalf("occupied change err = %v", err)
 	}

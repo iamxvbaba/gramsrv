@@ -10,9 +10,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestBusinessAuthKeyInt64 钉死 [8]byte→int64 与 store/postgres authKeyIDToInt64
-// 同源（小端，MTProto 即 SHA1 低 64 位）。两者漂移会让密聊绑定键与
-// update_states/authorizations 对不上。
+// TestBusinessAuthKeyInt64 pins [8]byte->int64 to the same source as
+// store/postgres authKeyIDToInt64 (little-endian, MTProto is the low 64 bits of
+// SHA1). Drift between the two would make the secret chat binding key and
+// update_states/authorizations not line up.
 func TestBusinessAuthKeyInt64(t *testing.T) {
 	cases := [][8]byte{
 		{1, 0, 0, 0, 0, 0, 0, 0},
@@ -22,7 +23,7 @@ func TestBusinessAuthKeyInt64(t *testing.T) {
 	for _, id := range cases {
 		want := int64(binary.LittleEndian.Uint64(id[:]))
 		if got := businessAuthKeyInt64(id); got != want {
-			t.Fatalf("businessAuthKeyInt64(%v) = %d, want %d (little-endian, 同 authKeyIDToInt64)", id, got, want)
+			t.Fatalf("businessAuthKeyInt64(%v) = %d, want %d (little-endian, same as authKeyIDToInt64)", id, got, want)
 		}
 	}
 }
@@ -45,7 +46,7 @@ func TestEncryptedChatForViewerRequested(t *testing.T) {
 	chat := baseChat()
 	chat.State = domain.SecretChatStateRequested
 
-	// admin 视角：encryptedChatWaiting（无 g_a），access_hash=admin。
+	// admin viewpoint: encryptedChatWaiting (no g_a), access_hash=admin.
 	adminView, ok := tgEncryptedChatForViewer(chat, 1).(*tg.EncryptedChatWaiting)
 	if !ok {
 		t.Fatalf("admin view type = %T, want *tg.EncryptedChatWaiting", tgEncryptedChatForViewer(chat, 1))
@@ -54,7 +55,7 @@ func TestEncryptedChatForViewerRequested(t *testing.T) {
 		t.Fatalf("admin waiting view = %+v", adminView)
 	}
 
-	// participant 视角：encryptedChatRequested（携 g_a），access_hash=participant。
+	// participant viewpoint: encryptedChatRequested (carries g_a), access_hash=participant.
 	partView, ok := tgEncryptedChatForViewer(chat, 2).(*tg.EncryptedChatRequested)
 	if !ok {
 		t.Fatalf("participant view type = %T, want *tg.EncryptedChatRequested", tgEncryptedChatForViewer(chat, 2))
@@ -68,7 +69,7 @@ func TestEncryptedChatForViewerNormal(t *testing.T) {
 	chat := baseChat()
 	chat.State = domain.SecretChatStateNormal
 
-	// admin 视角：GAOrB = g_b。
+	// admin viewpoint: GAOrB = g_b.
 	adminView, ok := tgEncryptedChatForViewer(chat, 1).(*tg.EncryptedChat)
 	if !ok {
 		t.Fatalf("admin view type = %T, want *tg.EncryptedChat", tgEncryptedChatForViewer(chat, 1))
@@ -77,7 +78,7 @@ func TestEncryptedChatForViewerNormal(t *testing.T) {
 		t.Fatalf("admin normal view = %+v (GAOrB must be g_b)", adminView)
 	}
 
-	// participant 视角：GAOrB = g_a。
+	// participant viewpoint: GAOrB = g_a.
 	partView := tgEncryptedChatForViewer(chat, 2).(*tg.EncryptedChat)
 	if partView.AccessHash != 222 || !bytes.Equal(partView.GAOrB, chat.GA) {
 		t.Fatalf("participant normal view = %+v (GAOrB must be g_a)", partView)

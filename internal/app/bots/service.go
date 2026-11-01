@@ -1,6 +1,6 @@
-// Package bots 实现 bot 账号业务：BotFather 对话状态机、bot 创建、token 管理与
-// botInfo 查询。bot 登录（auth.importBotAuthorization）在 app/auth 经 store.BotStore
-// 直接校验 token，不依赖本包。
+// Package bots implements bot account business logic: the BotFather dialog state machine, bot creation, token
+// management, and botInfo lookups. Bot login (auth.importBotAuthorization) validates the token directly in
+// app/auth via store.BotStore and does not depend on this package.
 package bots
 
 import (
@@ -22,7 +22,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// blockChecker 报告 userID 是否 block 了 blockedUserID（store.ContactStore 子集）。
+// blockChecker reports whether userID has blocked blockedUserID (subset of store.ContactStore).
 type blockChecker interface {
 	IsBlocked(ctx context.Context, userID, blockedUserID int64) (bool, error)
 }
@@ -92,18 +92,19 @@ type verificationApplications interface {
 // (customVerifications, verifierBotTargets): they are the built-in @verifierbot's
 // only way to reach the feature, and are kept next to the dialog that uses them.
 
-// RouterHooks 是 rpc 层回调（router 创建后经 SetRouterHooks 延迟注入，打破
-// router↔bots 的构造循环；这些能力都依赖 TL/连接层边界，不能在 app 层实现）：
-//   - RevokeBotSessions：token revoke 后撤销 bot 的全部已登录 session（删
-//     authorization + 强制断连）。
-//   - BotLifecycleDeliveryEffects：在 bot account aggregate 内投影 owner 的
-//     durable non-PTS updateUser effect。
-//   - BotInfoDeliveryEffects：在 bot-info aggregate 内投影冻结受众的 durable
-//     non-PTS updateUser effects。
-//   - BotCommandsDeliveryEffects：在 bot commands transaction 内投影精确受众的
-//     durable non-PTS updateBotCommands effects。
-//   - StickerSetDeliveryEffects：在 sticker-set transaction 内构建并持久化
-//     updateStickerSets 的 durable non-PTS delivery fact。
+// RouterHooks are rpc-layer callbacks (injected late through SetRouterHooks after the router is
+// created, breaking the router↔bots construction cycle; these capabilities depend on the
+// TL/connection-layer boundary and cannot be implemented in the app layer):
+//   - RevokeBotSessions: after a token revoke, revoke all of the bot's logged-in sessions
+//     (delete the authorization + force a disconnect).
+//   - BotLifecycleDeliveryEffects: project the owner's durable non-PTS updateUser effect inside
+//     the bot account aggregate.
+//   - BotInfoDeliveryEffects: project the frozen audience's durable non-PTS updateUser effects
+//     inside the bot-info aggregate.
+//   - BotCommandsDeliveryEffects: project the exact audience's durable non-PTS
+//     updateBotCommands effects inside the bot commands transaction.
+//   - StickerSetDeliveryEffects: build and persist the durable non-PTS delivery fact of
+//     updateStickerSets inside the sticker-set transaction.
 type RouterHooks interface {
 	RevokeBotSessions(ctx context.Context, botUserID int64) error
 	BotLifecycleDeliveryEffects(ctx context.Context) store.DeliveryEffectsBuilder[store.BotLifecycleDeliverySnapshot]
@@ -113,18 +114,19 @@ type RouterHooks interface {
 	InvalidateStickerSetCatalog(kind domain.StickerSetKind)
 }
 
-// TextDraftPusher 推送 @ChatBot AI 流式回复的 transient 文本草稿，由 rpc 层转换为
-// UpdateUserTyping/sendMessageTextDraftAction。它独立于普通 bot hooks，避免 BotFather
-// 和 @Stickers 的测试/依赖被 AI 对话能力污染。
+// TextDraftPusher pushes the transient text draft for @ChatBot's AI streaming reply, which the rpc layer
+// converts into UpdateUserTyping/sendMessageTextDraftAction. It is independent of the normal bot hooks, to
+// keep BotFather and @Stickers tests/dependencies from being polluted by the AI chat capability.
 type TextDraftPusher interface {
 	PushBotTextDraft(ctx context.Context, botUserID, userID, randomID int64, text string)
 }
 
-// replyLockStripes 是回复串行化条带数：同一用户的 BotFather 回复落同一条带、
-// 串行执行（状态机 RMW 原子 + 回复保序），不同用户并发；固定大小不随用户数增长。
+// replyLockStripes is the number of reply serialization stripes: BotFather replies for the same user go to the
+// same stripe and run serially (atomic state-machine RMW + ordered replies), while different users run
+// concurrently; the size is fixed and does not grow with the user count.
 const replyLockStripes = 256
 
-// Service 提供 bot 账号业务。
+// Service provides bot account business logic.
 type Service struct {
 	users      store.UserStore
 	bots       store.BotStore
@@ -163,12 +165,12 @@ type Service struct {
 	dialogLimiter    store.RateLimiter
 	dialogRateLimit  int
 	dialogRateWindow time.Duration
-	// replySeq 是回复 randomID 在 crypto/rand 失败时的兜底单调序列。
+	// replySeq is the fallback monotonic sequence for reply randomIDs when crypto/rand fails.
 	replySeq   atomic.Int64
 	replyLocks [replyLockStripes]sync.Mutex
 }
 
-// Option 调整 bots 服务的可选依赖。
+// Option adjusts the bots service's optional dependencies.
 type Option func(*Service)
 
 // WithBotAPIURL makes BotFather show the public Bot API base URL next to a
@@ -177,7 +179,7 @@ func WithBotAPIURL(url string) Option {
 	return func(s *Service) { s.botAPIURL = strings.TrimRight(strings.TrimSpace(url), "/") }
 }
 
-// WithLogger 注入日志器（缺省 zap.NewNop）。
+// WithLogger injects the logger (defaults to zap.NewNop).
 func WithLogger(log *zap.Logger) Option {
 	return func(s *Service) {
 		if log != nil {
@@ -186,7 +188,7 @@ func WithLogger(log *zap.Logger) Option {
 	}
 }
 
-// WithNow 注入时钟（测试用）。
+// WithNow injects the clock (for tests).
 func WithNow(now func() time.Time) Option {
 	return func(s *Service) {
 		if now != nil {
@@ -195,8 +197,9 @@ func WithNow(now func() time.Time) Option {
 	}
 }
 
-// WithBlockChecker 注入 block 关系查询：BotFather 回复前据此设置 RecipientBlocked，
-// 用户 block 掉 BotFather 后不再向其收件箱投递（对齐 rpc 发送路径语义）。
+// WithBlockChecker injects the block-relationship lookup: BotFather sets RecipientBlocked based on it before
+// replying, so that a user who has blocked BotFather no longer receives deliveries to their inbox (matching
+// the rpc send-path semantics).
 func WithBlockChecker(c blockChecker) Option {
 	return func(s *Service) {
 		if c != nil {
@@ -205,8 +208,8 @@ func WithBlockChecker(c blockChecker) Option {
 	}
 }
 
-// WithPublicChannelUsernameResolver 注入公开频道 username 查询能力，用于 bot
-// username 预检，避免 bot 与 public channel 产生同名可见入口。
+// WithPublicChannelUsernameResolver injects a public channel username lookup, used for bot username
+// pre-checks to avoid a bot and a public channel producing the same visible entry.
 func WithPublicChannelUsernameResolver(c publicChannelUsernameResolver) Option {
 	return func(s *Service) {
 		if c != nil {
@@ -215,10 +218,10 @@ func WithPublicChannelUsernameResolver(c publicChannelUsernameResolver) Option {
 	}
 }
 
-// WithUserCache 注入 users 基础资料缓存：bot 元数据写入（first_name/about/
-// bot_info_version bump）后必须失效该 bot 的缓存条目，否则 TTL 内 getUsers
-// 返回旧 first_name 与旧 bot_info_version——version bump 被缓存遮蔽，客户端
-// 感知不到变更、不会重拉 getFullUser。
+// WithUserCache injects the users base-profile cache: after bot metadata writes (first_name/about/
+// bot_info_version bump) the bot's cache entry must be invalidated; otherwise getUsers returns the old
+// first_name and old bot_info_version within the TTL -- the version bump is masked by the cache, the client
+// cannot perceive the change and will not re-fetch getFullUser.
 func WithUserCache(c store.UserCache) Option {
 	return func(s *Service) {
 		if c != nil {
@@ -227,7 +230,7 @@ func WithUserCache(c store.UserCache) Option {
 	}
 }
 
-// WithStickerSetCreator 注入 sticker set 创建/查询能力，供内置 @Stickers bot 使用。
+// WithStickerSetCreator injects sticker set creation/lookup capability for the built-in @Stickers bot.
 func WithStickerSetCreator(c stickerSetCreator) Option {
 	return func(s *Service) {
 		if c != nil {
@@ -246,7 +249,7 @@ func (s *Service) SetDonationsSource(src donationsSource) {
 	s.donations = src
 }
 
-// WithAIChatGenerator 注入内置 @ChatBot 使用的 AI 文本生成器。
+// WithAIChatGenerator injects the AI text generator used by the built-in @ChatBot.
 func WithAIChatGenerator(g aiChatGenerator) Option {
 	return func(s *Service) {
 		if g != nil {
@@ -333,7 +336,7 @@ func WithTelegramLogin(login *telegramloginapp.Service) Option {
 	}
 }
 
-// WithAIChatStreamThrottle 调整 @ChatBot 流式草稿推送的最小时间间隔（测试用）。
+// WithAIChatStreamThrottle adjusts the minimum interval between @ChatBot streaming draft pushes (for tests).
 func WithAIChatStreamThrottle(d time.Duration) Option {
 	return func(s *Service) {
 		if d >= 0 {
@@ -348,8 +351,8 @@ func WithPublicBaseURL(baseURL string) Option {
 	}
 }
 
-// invalidateUserCache 在 bot 的 users 行变更（含 version bump）后清缓存。
-// 失效失败只记日志：缓存最长 TTL 后自愈，不阻塞写路径。
+// invalidateUserCache clears the cache after the bot's users row changes (including a version bump).
+// A failed invalidation only logs: the cache self-heals after at most the TTL, and the write path is not blocked.
 func (s *Service) invalidateUserCache(ctx context.Context, botUserID int64) {
 	if s.userCache == nil {
 		return
@@ -370,8 +373,8 @@ func (s *Service) invalidateBotReadCaches(ctx context.Context, botUserID int64) 
 	s.invalidateUserCache(ctx, botUserID)
 }
 
-// InvalidateBotProfileReadModel 供 ReadModelChangeListener 在 user_base 事件(bot 写会
-// bump bot_info_version)时跨实例失效本进程 bot 资料缓存。
+// InvalidateBotProfileReadModel lets ReadModelChangeListener invalidate this process's bot profile cache
+// across instances on a user_base event (a bot write bumps bot_info_version).
 func (s *Service) InvalidateBotProfileReadModel(userID int64) {
 	if s == nil {
 		return
@@ -379,7 +382,7 @@ func (s *Service) InvalidateBotProfileReadModel(userID int64) {
 	s.invalidateBotProfileCache(userID)
 }
 
-// FlushBotProfileReadModel 供 listener 重连时整表 flush，兜住断连窗口内丢失的 user_base 通知。
+// FlushBotProfileReadModel lets the listener flush the entire table on reconnect, covering user_base notifications lost during a disconnect window.
 func (s *Service) FlushBotProfileReadModel() {
 	if s == nil || s.cache == nil {
 		return
@@ -387,15 +390,15 @@ func (s *Service) FlushBotProfileReadModel() {
 	s.cache.flush()
 }
 
-// SetRouterHooks 注入 rpc 层回调（router 创建后装配，与 P1 的
-// SetLifecycleObserver 同款延迟注入）。
+// SetRouterHooks injects rpc-layer callbacks (wired after the router is created, the same lazy injection
+// style as P1's SetLifecycleObserver).
 func (s *Service) SetRouterHooks(h RouterHooks) {
 	if s != nil {
 		s.hooks = h
 	}
 }
 
-// SetTextDraftPusher 注入 @ChatBot 流式草稿推送边界。
+// SetTextDraftPusher injects the @ChatBot streaming draft push boundary.
 func (s *Service) SetTextDraftPusher(p TextDraftPusher) {
 	if s != nil {
 		s.textDrafts = p
@@ -443,7 +446,7 @@ func (s *Service) SetVerifierTargets(t verifierBotTargets) {
 	}
 }
 
-// NewService 创建 bots 服务。
+// NewService creates the bots service.
 func NewService(users store.UserStore, bots store.BotStore, messages store.MessageStore, opts ...Option) *Service {
 	s := &Service{
 		users:                 users,
@@ -504,7 +507,7 @@ func (s *Service) loadBotProfiles(ctx context.Context, botUserIDs []int64) (map[
 	return out, nil
 }
 
-// BotInfo 返回 bot 的元数据（userFull.bot_info hydrate 用）。
+// BotInfo returns the bot's metadata (used to hydrate userFull.bot_info).
 func (s *Service) BotInfo(ctx context.Context, botUserID int64) (domain.BotProfile, bool, error) {
 	return s.botProfile(ctx, botUserID)
 }
@@ -513,7 +516,7 @@ type botBatchStore interface {
 	GetBots(ctx context.Context, botUserIDs []int64) (map[int64]domain.BotProfile, error)
 }
 
-// BotInfos 批量返回 bot 元数据，供频道 full info / participants 这类高频富化路径避免逐 bot 点查。
+// BotInfos returns bot metadata in a batch, so high-frequency enrichment paths like channel full info / participants avoid a per-bot point lookup.
 func (s *Service) BotInfos(ctx context.Context, botUserIDs []int64) (map[int64]domain.BotProfile, error) {
 	return s.botProfiles(ctx, botUserIDs)
 }
@@ -537,7 +540,7 @@ func uniqueBotUserIDs(ids []int64) []int64 {
 	return out
 }
 
-// CheckUsername 校验 bot username 语法与全局可见入口占用（users + public channels）。
+// CheckUsername validates bot username syntax and global visible-entry occupancy (users + public channels).
 func (s *Service) CheckUsername(ctx context.Context, ownerUserID int64, username string) (bool, error) {
 	if s == nil || s.users == nil || ownerUserID == 0 {
 		return false, domain.ErrBotUsernameInvalid
@@ -612,7 +615,7 @@ func (s *Service) CreateBotWithDelivery(ctx context.Context, ownerUserID int64, 
 	return u, domain.FormatBotToken(u.ID, secret), nil
 }
 
-// ListOwnedBots 返回当前 owner 管理的 bot 用户列表（排除 BotFather 种子）。
+// ListOwnedBots returns the list of bot users managed by the current owner (excluding the BotFather seed).
 func (s *Service) ListOwnedBots(ctx context.Context, ownerUserID int64) ([]domain.User, error) {
 	owned, err := s.ownedBots(ctx, ownerUserID)
 	if err != nil {
@@ -647,7 +650,7 @@ func (s *Service) DeleteBotWithDelivery(ctx context.Context, botUserID int64, ef
 	return u, nil
 }
 
-// ExportBotToken 返回 bot token；revoke=true 时先轮换 secret 并撤销已登录 session。
+// ExportBotToken returns the bot token; when revoke=true it first rotates the secret and revokes logged-in sessions.
 func (s *Service) ExportBotToken(ctx context.Context, ownerUserID, botUserID int64, revoke bool) (string, error) {
 	if revoke {
 		return s.RevokeBotToken(ctx, ownerUserID, botUserID)
@@ -679,8 +682,8 @@ func (s *Service) AdminExportBotToken(ctx context.Context, botUserID int64) (str
 	return domain.FormatBotToken(botUserID, profile.TokenSecret), nil
 }
 
-// RevokeBotToken 生成新 token 随机段并落库；旧 token 立即不可登录，并踢掉所有
-// 已凭旧 token 登录的 session（经注入的 SessionRevoker）。
+// RevokeBotToken generates a new token random segment and persists it; the old token can no longer log in
+// immediately, and all sessions logged in with the old token are kicked (via the injected SessionRevoker).
 func (s *Service) RevokeBotToken(ctx context.Context, ownerUserID, botUserID int64) (string, error) {
 	profile, found, err := s.botProfile(ctx, botUserID)
 	if err != nil {
@@ -698,10 +701,12 @@ func (s *Service) RevokeBotToken(ctx context.Context, ownerUserID, botUserID int
 	}
 	s.invalidateBotProfileCache(botUserID)
 	token := domain.FormatBotToken(botUserID, secret)
-	// 撤销已登录 session：旧 token 已不可重新登录，但已建立的连接仍持有 auth_key，
-	// 必须主动失效（删 authorization + 断连），否则旧持有者继续以 bot 身份操作。
-	// secret 已轮换不可回滚，故失败时仍返回新 token，但透出 ErrBotSessionsNotRevoked
-	// 让调用方诚实告知用户「需重试以确保旧 session 终止」，绝不谎称已止血。
+	// Revoke logged-in sessions: the old token can no longer log in, but established connections still hold an
+	// auth_key and must be actively invalidated (delete authorization + disconnect), otherwise the old holder
+	// continues to act as the bot. The secret has already been rotated and cannot be rolled back, so on failure
+	// we still return the new token but surface ErrBotSessionsNotRevoked so the caller can honestly tell the
+	// user that a retry is needed to ensure the old session is terminated, never falsely claiming the bleeding
+	// has stopped.
 	if s.hooks != nil {
 		if err := s.hooks.RevokeBotSessions(ctx, botUserID); err != nil {
 			s.log.Warn("revoke bot sessions", zap.Int64("bot_user_id", botUserID), zap.Error(err))
@@ -711,11 +716,12 @@ func (s *Service) RevokeBotToken(ctx context.Context, ownerUserID, botUserID int
 	return token, nil
 }
 
-// SetBotCommands 覆盖式写入 bot 的 default scope 命令（bots.setBotCommands /
-// BotFather /setcommands 共用收口）。校验命令名/描述/数量；写库（含 version bump）
-// command mutation、version bump 与精确私聊受众的 durable updateBotCommands
-// effects 在 BotStore 单事务提交。真实变更返回提交后的 bot_info_version，
-// 同值重放返回 0，供调用边界跳过缓存失效。
+// SetBotCommands overwrites the bot's default-scope commands (the shared sink for
+// bots.setBotCommands / BotFather /setcommands). It validates command names/descriptions/count;
+// the command mutation, version bump and the exact private-chat audience's durable
+// updateBotCommands effects commit in a single BotStore transaction. A real change returns the
+// committed bot_info_version; replaying the same value returns 0 so the caller can skip cache
+// invalidation.
 func (s *Service) SetBotCommands(ctx context.Context, botUserID int64, commands []domain.BotCommand) (int, error) {
 	if len(commands) > domain.MaxBotCommands {
 		return 0, domain.ErrBotCommandInvalid
@@ -744,7 +750,7 @@ func (s *Service) SetBotCommands(ctx context.Context, botUserID int64, commands 
 	return 0, nil
 }
 
-// GetBotCommands 返回 bot 的 default scope 命令。
+// GetBotCommands returns the bot's default scope commands.
 func (s *Service) GetBotCommands(ctx context.Context, botUserID int64) ([]domain.BotCommand, error) {
 	profile, found, err := s.botProfile(ctx, botUserID)
 	if err != nil {
@@ -833,7 +839,7 @@ func (s *Service) GetBotInfo(ctx context.Context, botUserID int64, langCode stri
 	return values, nil
 }
 
-// SetBotMenuButton 设置 bot 的 menu button（per-bot 全局），返回新 bot_info_version。
+// SetBotMenuButton sets the bot's menu button (per-bot global) and returns the new bot_info_version.
 func (s *Service) SetBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (int, error) {
 	switch button.Type {
 	case domain.BotMenuButtonDefault, domain.BotMenuButtonCommands:
@@ -845,9 +851,9 @@ func (s *Service) SetBotMenuButton(ctx context.Context, botUserID int64, button 
 			button.URL == "" || len(button.URL) > domain.MaxBotMenuButtonURLLen {
 			return 0, domain.ErrBotMenuButtonInvalid
 		}
-		// 强制 https（对齐官方 BUTTON_URL_INVALID）：menu button URL 经
-		// userFull.bot_info.menu_button 下发给所有交互用户的客户端 webview 入口，
-		// 拒绝 javascript:/file:/intent: 等非 https scheme，防 bot 投毒。
+		// Force https (matching the official BUTTON_URL_INVALID): the menu button URL is delivered via
+		// userFull.bot_info.menu_button to every interacting user's client webview entry, so reject non-https
+		// schemes like javascript:/file:/intent:, preventing bot poisoning.
 		if u, err := url.Parse(button.URL); err != nil || u.Scheme != "https" || u.Host == "" {
 			return 0, domain.ErrBotMenuButtonInvalid
 		}
@@ -867,7 +873,7 @@ func (s *Service) SetBotMenuButton(ctx context.Context, botUserID int64, button 
 	return version, nil
 }
 
-// GetBotMenuButton 返回 bot 的 menu button。
+// GetBotMenuButton returns the bot's menu button.
 func (s *Service) GetBotMenuButton(ctx context.Context, botUserID int64) (domain.BotMenuButton, error) {
 	profile, found, err := s.botProfile(ctx, botUserID)
 	if err != nil {
@@ -879,7 +885,7 @@ func (s *Service) GetBotMenuButton(ctx context.Context, botUserID int64) (domain
 	return profile.MenuButton, nil
 }
 
-// SetInlinePlaceholder 设置 inline mode placeholder；空字符串表示关闭 inline mode。
+// SetInlinePlaceholder sets the inline mode placeholder; an empty string disables inline mode.
 func (s *Service) SetInlinePlaceholder(ctx context.Context, botUserID int64, placeholder string) (int, error) {
 	placeholder = strings.TrimSpace(placeholder)
 	if utf8.RuneCountInString(placeholder) > domain.MaxBotInlinePlaceholderLen {
@@ -893,7 +899,7 @@ func (s *Service) SetInlinePlaceholder(ctx context.Context, botUserID int64, pla
 	return version, nil
 }
 
-// SetInlineGeo 设置 bot 是否可在 inline query 中接收用户位置。
+// SetInlineGeo sets whether the bot can receive the user's location in inline queries.
 func (s *Service) SetInlineGeo(ctx context.Context, botUserID int64, enabled bool) (int, error) {
 	version, err := s.bots.SetBotInlineGeo(ctx, botUserID, enabled)
 	if err != nil {
@@ -903,7 +909,7 @@ func (s *Service) SetInlineGeo(ctx context.Context, botUserID int64, enabled boo
 	return version, nil
 }
 
-// SetJoinGroups 设置 bot 能否被加入群组（allow=true → bot_nochats=false）。
+// SetJoinGroups sets whether the bot can be added to groups (allow=true -> bot_nochats=false).
 func (s *Service) SetJoinGroups(ctx context.Context, botUserID int64, allow bool) (int, error) {
 	version, err := s.bots.SetBotNochats(ctx, botUserID, !allow)
 	if err != nil {
@@ -913,8 +919,8 @@ func (s *Service) SetJoinGroups(ctx context.Context, botUserID int64, allow bool
 	return version, nil
 }
 
-// SetPrivacy 设置 bot 群内 privacy mode（enabled=true 隐私模式开 → bot_chat_history=false，
-// 即 bot 只看命令/回复；enabled=false → 关闭隐私 → bot_chat_history=true，能看全部消息）。
+// SetPrivacy sets the bot's in-group privacy mode (enabled=true, privacy on -> bot_chat_history=false,
+// i.e. the bot only sees commands/replies; enabled=false, privacy off -> bot_chat_history=true, it sees all messages).
 func (s *Service) SetPrivacy(ctx context.Context, botUserID int64, enabled bool) (int, error) {
 	version, err := s.bots.SetBotChatHistory(ctx, botUserID, !enabled)
 	if err != nil {
@@ -941,7 +947,7 @@ func (s *Service) AllowSendMessage(ctx context.Context, userID, botUserID int64,
 	return s.bots.AllowBotSendMessage(ctx, botUserID, userID, fromRequest)
 }
 
-// OwnsBot 报告 ownerUserID 是否为 botUserID 的 owner（非 BotFather 自身）。
+// OwnsBot reports whether ownerUserID is the owner of botUserID (not BotFather itself).
 func (s *Service) OwnsBot(ctx context.Context, ownerUserID, botUserID int64) (bool, error) {
 	profile, found, err := s.botProfile(ctx, botUserID)
 	if err != nil {
@@ -950,7 +956,7 @@ func (s *Service) OwnsBot(ctx context.Context, ownerUserID, botUserID int64) (bo
 	return found && profile.OwnerUserID == ownerUserID && botUserID != domain.BotFatherUserID, nil
 }
 
-// tokenSecretAlphabet 对齐官方 token 随机段字符集。
+// tokenSecretAlphabet matches the official token random-segment character set.
 const tokenSecretAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 
 func randomTokenSecret() (string, error) {

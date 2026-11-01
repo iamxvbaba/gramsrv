@@ -6,7 +6,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// LangPackStore 持久化客户端语言包。
+// LangPackStore persists client language packs.
 type LangPackStore interface {
 	GetPack(ctx context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error)
 	GetStrings(ctx context.Context, langPack, langCode string, keys []string) (domain.LangPack, error)

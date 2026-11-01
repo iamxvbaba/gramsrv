@@ -14,11 +14,13 @@ import (
 	"telesrv/internal/store"
 )
 
-// preCheckoutTimeout 是客户端挂起等待应答的窗口。与 preCheckoutTimeoutSeconds 是同一
-// 个 10 秒要求，写成 time.Duration 只为直接交给 time.NewTimer。
+// preCheckoutTimeout is the window during which the client suspends waiting for
+// an answer. It is the same 10 second requirement as preCheckoutTimeoutSeconds,
+// written as a time.Duration only to hand directly to time.NewTimer.
 //
-// 超时即视为 bot 没有批准这笔支付，付款失败，绝不降级为直接扣款——那正是 pre-checkout
-// 要防的事。
+// A timeout means the bot did not approve this payment, the payment fails, and it
+// is never downgraded to a direct charge - which is exactly what pre-checkout is
+// meant to prevent.
 const preCheckoutTimeout = preCheckoutTimeoutSeconds * time.Second
 
 var errBotPreCheckoutRegistryStoreRequired = errors.New("bot pre-checkout shared registry store is required")
@@ -27,20 +29,23 @@ var errBotPreCheckoutRegistryStoreRequired = errors.New("bot pre-checkout shared
 // it can take the question back. It only needs to outlive the 10 second window.
 const preCheckoutRecordTTL = preCheckoutTimeout + 5*time.Second
 
-// preCheckoutRegistry 协调一次挂起的 pre-checkout 询问。
+// preCheckoutRegistry coordinates one pending pre-checkout query.
 //
-// 与 callbackRegistry 的差别在于时效：callback 允许 25s 且超时只影响按钮动画，
-// 而 pre-checkout 是付款前的闸门，窗口固定 10s，超时必须让付款失败。
+// The difference from callbackRegistry is timing: a callback allows 25s and a timeout only
+// affects the button animation, while pre-checkout is the gate before payment, with a fixed
+// 10s window, and a timeout must fail the payment.
 //
-// v2 的 Core 横向扩展：付款方的 RPC 挂在一个实例上，bot 的
-// messages.setBotPrecheckoutResults 或 Bot API answerPreCheckoutQuery 可能落在另一
-// 个实例。所以属主和唯一胜出的答案放在共享 store 里，进程内只记本实例在等的
-// query_id 供测试观察。等待结束时 TakeBotPreCheckout 原子地删除记录并取回已胜出的
-// 答案："等待者已超时、答案迟到"要么被采纳（答案先到），要么被拒为 QUERY_ID_INVALID
-// （记录已删），不会出现 bot 以为批准了而付款方已离开的写入路径。
+// v2 Core scales horizontally: the payer's RPC waits on one instance, while the bot's
+// messages.setBotPrecheckoutResults or Bot API answerPreCheckoutQuery may land on another
+// instance. So the owner and the single winning answer live in the shared store, and the
+// process only remembers the query_ids this instance is waiting on, for tests to observe.
+// When the wait ends, TakeBotPreCheckout atomically deletes the record and takes the winning
+// answer: "the waiter timed out and the answer arrived late" is either accepted (the answer
+// came first) or rejected as QUERY_ID_INVALID (the record is gone); there is no write path
+// where the bot believes it approved while the payer has already left.
 type preCheckoutRegistry struct {
 	mu      sync.Mutex
-	pending map[int64]int64 // query_id → bot_user_id，本实例正在等待的询问
+	pending map[int64]int64 // query_id → bot_user_id, the queries this instance is waiting on
 	shared  store.BotPreCheckoutRegistryStore
 }
 
@@ -48,8 +53,8 @@ func newPreCheckoutRegistry(shared store.BotPreCheckoutRegistryStore) *preChecko
 	return &preCheckoutRegistry{pending: make(map[int64]int64), shared: shared}
 }
 
-// register 在共享 store 里登记一次询问并返回 query_id。调用方必须以 await 或
-// abandon 收尾，否则记录要等 TTL 才过期。
+// register records a query in the shared store and returns its query_id. The caller must
+// finish with await or abandon, otherwise the record only expires after its TTL.
 func (p *preCheckoutRegistry) register(ctx context.Context, botUserID, userID int64) (int64, error) {
 	if p == nil || p.shared == nil {
 		return 0, errBotPreCheckoutRegistryStoreRequired
@@ -70,7 +75,7 @@ func (p *preCheckoutRegistry) register(ctx context.Context, botUserID, userID in
 	return 0, fmt.Errorf("allocate bot pre-checkout query id")
 }
 
-// abandon 收回一次还没开始等待的询问（投递失败时）。
+// abandon withdraws a query whose wait has not started (when delivery fails).
 func (p *preCheckoutRegistry) abandon(ctx context.Context, botUserID, queryID int64) {
 	p.removeLocal(queryID)
 	if p != nil && p.shared != nil {
@@ -87,7 +92,8 @@ func (p *preCheckoutRegistry) removeLocal(queryID int64) {
 	p.mu.Unlock()
 }
 
-// resolve 只接受属主 bot 的应答：其它 bot 拿到 query_id 也无法代答付款闸门。
+// resolve only accepts the owning bot's answer: another bot that obtains the
+// query_id still cannot answer for the payment gate.
 func (p *preCheckoutRegistry) resolve(ctx context.Context, callerBotID, queryID int64, ans domain.BotPreCheckoutAnswer) (bool, error) {
 	if p == nil || p.shared == nil {
 		return false, errBotPreCheckoutRegistryStoreRequired
@@ -95,7 +101,7 @@ func (p *preCheckoutRegistry) resolve(ctx context.Context, callerBotID, queryID 
 	return p.shared.ResolveBotPreCheckout(ctx, callerBotID, queryID, ans)
 }
 
-// pendingSnapshot 返回本实例挂起询问的 query_id，供测试断言"有没有被问过"。
+// pendingSnapshot returns the query_ids pending on this instance, for tests to assert "was it asked".
 func (p *preCheckoutRegistry) pendingSnapshot() []int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -112,11 +118,12 @@ func (p *preCheckoutRegistry) size() int {
 	return len(p.pending)
 }
 
-// await 阻塞到 bot 应答、10s 超时，或调用方 ctx 取消，然后无论结果如何都 Take
-// 掉共享记录，保证此后迟到的应答只会得到 QUERY_ID_INVALID。
+// await blocks until the bot answers, the 10s timeout, or the caller's ctx is cancelled, and
+// then Takes the shared record whatever the outcome, so a later answer only gets
+// QUERY_ID_INVALID.
 //
-// 返回的 answered 为 false 时，调用方必须让付款失败——把"没有批准"降级成"直接
-// 扣款"正是 pre-checkout 要防的事。
+// When the returned answered is false the caller must fail the payment -- downgrading "not
+// approved" to "charge anyway" is exactly what pre-checkout exists to prevent.
 func (p *preCheckoutRegistry) await(ctx context.Context, botUserID, queryID int64) (domain.BotPreCheckoutAnswer, bool, error) {
 	if p == nil || p.shared == nil {
 		return domain.BotPreCheckoutAnswer{}, false, errBotPreCheckoutRegistryStoreRequired
@@ -138,13 +145,15 @@ func (p *preCheckoutRegistry) await(ctx context.Context, botUserID, queryID int6
 	if takeErr != nil {
 		return domain.BotPreCheckoutAnswer{}, false, takeErr
 	}
-	// 答案恰好在等待超时与 Take 之间胜出：bot 已被告知成功，按它的回答处理。
+	// The answer won right between the wait timeout and Take: the bot was told it succeeded, so honor its answer.
 	return taken, takenFound, nil
 }
 
-// awaitBotPreCheckout 走完整链路：投递 update（Bot API 队列 + MTProto push），然后挂起
-// 最多 10 秒等应答。Bot 不应答即视为拒绝——这正是 Telegram 的约定：10 秒内不答 = 这笔
-// 支付不成立，所以超时绝不能降级成直接扣款。
+// awaitBotPreCheckout runs the full path: deliver the update (Bot API queue +
+// MTProto push), then suspend for up to 10 seconds waiting for an answer. A bot
+// that does not answer is taken as a refusal - this is Telegram's contract: no
+// answer within 10 seconds means the payment does not stand, so a timeout must
+// never degrade into a direct charge.
 func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {
 	query := domain.BotPreCheckoutQuery{
 		BotUserID: botUserID, UserID: payerUserID,
@@ -202,8 +211,8 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 		QueryID: queryID, UserID: payerUserID, Currency: currency, TotalAmount: totalAmount,
 	}
 	update.Payload = []byte(payload)
-	// updateBotPrecheckoutQuery 是 ephemeral 控制消息（无 pts/qts）：durable 的那份是
-	// 上面的 Bot API 队列，MTProto 推送只用来唤醒在线的 bot 会话。
+	// updateBotPrecheckoutQuery is an ephemeral control message (no pts/qts): the durable copy is
+	// the Bot API queue above, and the MTProto push only wakes online bot sessions.
 	r.pushUserMessageTransient(ctx, botUserID, "push bot pre-checkout query", &tg.Updates{
 		Updates: []tg.UpdateClass{update},
 		Date:    int(r.clock.Now().Unix()),
@@ -220,7 +229,7 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 		return internalErr()
 	}
 	if !answered {
-		// 超时即失败：没有批准就没有付款。
+		// A timeout is a failure: no approval, no payment.
 		return preCheckoutFailedErr()
 	}
 	if reply.OK {
@@ -229,28 +238,33 @@ func (r *Router) awaitBotPreCheckout(ctx context.Context, botUserID, payerUserID
 	return preCheckoutDeclinedErr(reply.Error)
 }
 
-// serviceBotPreCheckout 让内置 service bot 同步回答 pre-checkout。它们没有 MTProto
-// 会话也没有 Bot API 消费者，若走"投递 update + 挂起 10 秒"必然每次都超时付款。
+// serviceBotPreCheckout lets a built-in service bot answer pre-checkout
+// synchronously. They have no MTProto session and no Bot API consumer, so going
+// through "deliver the update + suspend 10 seconds" would inevitably time out and
+// fail the payment every time.
 //
-// 它是可选能力（type-assert）而非 ServiceBotCallbacks 的成员：绝大多数内置 bot 都不卖
-// 东西，强迫它们实现一个用不到的方法没有意义。
+// It is an optional capability (a type assertion) rather than a member of
+// ServiceBotCallbacks: the vast majority of built-in bots sell nothing, and forcing
+// them to implement a method they do not use is pointless.
 type serviceBotPreCheckout interface {
 	ServiceBotCallbacks
 	OnPreCheckoutQuery(ctx context.Context, query domain.BotPreCheckoutQuery) (domain.BotPreCheckoutAnswer, bool, error)
 }
 
-// botInvoicePreCheckoutResponder 让内置 service bot 同步回答 pre-checkout，
-// 免得它们在没有 MTProto 会话的情况下必然超时。
+// botInvoicePreCheckoutResponder lets a built-in service bot answer pre-checkout
+// synchronously, sparing it the inevitable timeout when it has no MTProto session.
 type botInvoicePreCheckoutResponder interface {
 	HandlesBot(botUserID int64) bool
 	OnPreCheckoutQuery(ctx context.Context, query domain.BotPreCheckoutQuery) (domain.BotPreCheckoutAnswer, bool, error)
 }
 
-// runPreCheckout 在扣款前向 bot 询问并等待应答。
+// runPreCheckout asks the bot before charging and waits for its answer.
 //
-// 内置 service bot 没有 MTProto 会话也没有 Bot API 消费者，走"投递 update + 挂起"
-// 必然超时，因此先尝试同步应答器（与 callback 的处理一致，见 bots_callback.go）。
-// 外部 bot 一律走真实链路：投递 update，然后最多挂起 10 秒。
+// A built-in service bot has no MTProto session and no Bot API consumer, so
+// "deliver the update + suspend" inevitably times out; therefore try the
+// synchronous responder first (consistent with callback handling, see
+// bots_callback.go). External bots always take the real path: deliver the update,
+// then suspend for up to 10 seconds.
 func (r *Router) runPreCheckout(ctx context.Context, botUserID, payerUserID int64, currency string, totalAmount int64, payload string) error {
 	if responder, ok := r.deps.ServiceBotCallbacks.(serviceBotPreCheckout); ok &&
 		r.deps.ServiceBotCallbacks.HandlesBot(botUserID) {

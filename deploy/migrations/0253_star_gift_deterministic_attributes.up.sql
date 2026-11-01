@@ -1,4 +1,4 @@
--- v2 编号 0253；移植自 main 0225_star_gift_deterministic_attributes（main 3a84827a，B7b–7e），见 docs/main-v2-sync.md。
+-- v2 number 0253; ported from main 0225_star_gift_deterministic_attributes (main 3a84827a, B7b–7e), see docs/main-v2-sync.md.
 -- A collectible may intentionally use one deterministic model or pattern.
 -- Keep the activation trigger as a defence-in-depth check, but require one
 -- distinct animated document instead of forcing an artificial second choice.

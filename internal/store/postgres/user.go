@@ -17,13 +17,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// UserStore 用 PostgreSQL 实现 store.UserStore。
+// UserStore implements store.UserStore with PostgreSQL.
 type UserStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewUserStore 基于 pgx 连接池（或事务）创建 UserStore。
+// NewUserStore creates a UserStore on top of a pgx pool (or transaction).
 func NewUserStore(db sqlcgen.DBTX) *UserStore {
 	return &UserStore{db: db, q: sqlcgen.New(db)}
 }
@@ -55,7 +55,7 @@ func (s *UserStore) ByIDs(ctx context.Context, ids []int64) ([]domain.User, erro
 }
 
 func (s *UserStore) ByPhone(ctx context.Context, phone string) (domain.User, bool, error) {
-	// bot 行 phone 为空串（0090 起 phone 唯一性只覆盖非空值），空查询必须判未找到。
+	// A bot row's phone is the empty string (since 0090 phone uniqueness covers only non-empty values), so an empty lookup must report not-found.
 	if phone == "" {
 		return domain.User{}, false, nil
 	}
@@ -453,7 +453,7 @@ func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, err
 	return userFromModel(row), nil
 }
 
-// SetPremiumUntil 把会员到期时间设为绝对 Unix 秒（0 = 清除会员）。
+// SetPremiumUntil sets the Premium expiry to an absolute Unix second (0 = clear Premium).
 func (s *UserStore) SetPremiumUntil(ctx context.Context, userID int64, until int) (domain.User, error) {
 	row, err := s.q.SetUserPremiumUntil(ctx, sqlcgen.SetUserPremiumUntilParams{
 		ID:               userID,
@@ -468,7 +468,7 @@ func (s *UserStore) SetPremiumUntil(ctx context.Context, userID int64, until int
 	return userFromModel(row), nil
 }
 
-// SetVerified 设置/取消用户认证标记。
+// SetVerified sets/clears the user's verified flag.
 func (s *UserStore) SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error) {
 	row, err := s.q.SetUserVerified(ctx, sqlcgen.SetUserVerifiedParams{
 		ID:       userID,
@@ -491,7 +491,7 @@ func (s *UserStore) SetVerifiedWithDelivery(ctx context.Context, userID int64, v
 		})
 }
 
-// SetSupport 设置/取消用户的 support 标记（官方客服账号）。
+// SetSupport sets/clears the user's support flag (official support account).
 func (s *UserStore) SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error) {
 	row, err := s.q.SetUserSupport(ctx, sqlcgen.SetUserSupportParams{
 		ID:      userID,
@@ -514,7 +514,7 @@ func (s *UserStore) SetSupportWithDelivery(ctx context.Context, userID int64, su
 		})
 }
 
-// SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。
+// SetScamFake sets/clears the user's scam and fake flags (bots reuse the same path).
 func (s *UserStore) SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error) {
 	if scam && fake {
 		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
@@ -859,7 +859,7 @@ SELECT owner_id, user_id FROM ranked WHERE ordinal <= $2 ORDER BY owner_id, user
 	return out, nil
 }
 
-// SweepExpiredPremium 清空到期会员行并返回清理后的用户。
+// SweepExpiredPremium clears expired Premium rows and returns the swept users.
 func (s *UserStore) SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -982,7 +982,7 @@ SELECT id FROM unique_star_gifts WHERE id=$1 FOR UPDATE`, status.Collectible.Col
 	return q.UpdateUserEmojiStatus(ctx, params)
 }
 
-// UpdateBirthday 更新用户生日（零值 Birthday 表示清除）。
+// UpdateBirthday updates the user's birthday (a zero-value Birthday clears it).
 func (s *UserStore) UpdateBirthday(ctx context.Context, userID int64, birthday domain.Birthday) (domain.User, error) {
 	row, err := s.q.UpdateUserBirthday(ctx, sqlcgen.UpdateUserBirthdayParams{
 		ID:            userID,
@@ -1165,7 +1165,7 @@ func userDeliverySnapshotTx(ctx context.Context, tx pgx.Tx, u domain.User) (stor
 	return snapshot, nil
 }
 
-// premiumUntilFromModel 把可空 timestamptz 转为 Unix 秒（NULL → 0）。
+// premiumUntilFromModel converts a nullable timestamptz to Unix seconds (NULL -> 0).
 func premiumUntilFromModel(t pgtype.Timestamptz) int {
 	if !t.Valid {
 		return 0
@@ -1173,7 +1173,7 @@ func premiumUntilFromModel(t pgtype.Timestamptz) int {
 	return int(t.Time.Unix())
 }
 
-// premiumUntilToModel 把 Unix 秒转为可空 timestamptz（<=0 → NULL）。
+// premiumUntilToModel converts Unix seconds to a nullable timestamptz (<=0 -> NULL).
 func premiumUntilToModel(until int) pgtype.Timestamptz {
 	if until <= 0 {
 		return pgtype.Timestamptz{}

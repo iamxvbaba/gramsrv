@@ -5,14 +5,14 @@ import (
 	"errors"
 )
 
-// ErrAlbumGroupReservationInvalid 表示相册分组预留缺少发送者、目标、
-// random_id 或 proposed grouped_id。RPC 边界通常会更早拦截这些输入；
-// domain/store 仍 fail-fast，避免坏绑定进入持久层。
+// ErrAlbumGroupReservationInvalid means an album group reservation is missing a sender, target,
+// random_id or proposed grouped_id. The RPC boundary usually rejects these inputs earlier;
+// domain/store still fails fast to keep a bad binding from reaching the persistence layer.
 var ErrAlbumGroupReservationInvalid = errors.New("album group reservation invalid")
 
-// AlbumGroupReservationRequest 在任何相册 item 落库或上传媒体解析前，原子地把
-// 一组 random_id 绑定到同一个 grouped_id。Peer 是幂等作用域的一部分：同一发送者
-// 可以在不同会话中复用 random_id，而不会互相污染相册分组。
+// AlbumGroupReservationRequest atomically binds a set of random_ids to the same grouped_id
+// before any album item is persisted or uploaded media is parsed. Peer is part of the idempotency scope:
+// the same sender can reuse a random_id in different sessions without cross-contaminating album groups.
 type AlbumGroupReservationRequest struct {
 	SenderUserID      int64
 	Peer              Peer
@@ -20,16 +20,16 @@ type AlbumGroupReservationRequest struct {
 	ProposedGroupedID int64
 }
 
-// AlbumGroupReservationItem 把 random_id 与该 item 的不可变客户端意图绑定。
-// IntentHash 是在媒体解析/服务端派生字段产生前计算的 SHA-256；相同 random_id
-// 若携带不同意图必须报冲突，不能借旧 album reservation 绕过发送幂等校验。
+// AlbumGroupReservationItem binds a random_id to that item's immutable client intent.
+// IntentHash is the SHA-256 computed before media parsing/server-derived fields are produced; the same random_id
+// carrying a different intent must report a conflict and must not bypass send-idempotency checks via an old album reservation.
 type AlbumGroupReservationItem struct {
 	RandomID   int64
 	IntentHash []byte
 }
 
-// Validate 校验持久层必须依赖的最小不变量。同一批内重复 random_id 与发送幂等
-// 冲突同义，必须显式失败，不能静默去重后改变客户端请求的消息条数。
+// Validate checks the minimal invariants the persistence layer must rely on. A duplicate random_id within
+// one batch is synonymous with a send-idempotency conflict and must fail explicitly, not silently dedup and change the client's requested message count.
 func (r AlbumGroupReservationRequest) Validate() error {
 	if r.SenderUserID <= 0 || r.Peer.ID <= 0 || r.ProposedGroupedID == 0 || len(r.Items) == 0 {
 		return ErrAlbumGroupReservationInvalid

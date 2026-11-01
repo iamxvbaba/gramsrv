@@ -198,8 +198,8 @@ func (s *ChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID i
 			SelfBoostsApplied: selfBoosts,
 		}, nil
 	}
-	// getChannelDialog 与 countActiveUserBoostsForPeer 互不依赖，并发执行省一次串行往返。
-	// 两者都走 s.db（pgxpool，并发安全，各取独立连接），各写自己的返回变量。
+	// getChannelDialog and countActiveUserBoostsForPeer do not depend on each other; running them concurrently saves a serial round trip.
+	// Both go through s.db (pgxpool, concurrency-safe, each taking its own connection) and write their own result variables.
 	var (
 		dialog         domain.ChannelDialog
 		selfBoosts     int
@@ -236,9 +236,9 @@ func (s *ChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID i
 	return view, nil
 }
 
-// linkedChatUsable 校验 Channel.LinkedChatID 指向的对端真实可用。linked_chat_id 是双向的:
-// broadcast 指向讨论组(须为 megagroup),megagroup 指向母频道(须为 broadcast)。任一方向
-// 悬空(对端不存在/已删除/类型不符)都会让客户端渲染"讨论"入口,点进去却是空频道。
+// linkedChatUsable verifies that the counterpart pointed to by Channel.LinkedChatID is really usable. linked_chat_id is bidirectional:
+// a broadcast points to a discussion group (which must be a megagroup), a megagroup points to the parent channel (which must be a broadcast). A dangling
+// direction in either case (counterpart missing/deleted/type mismatch) makes the client render a "Discussion" entry that opens an empty channel.
 func (s *ChannelStore) linkedChatUsable(ctx context.Context, ch domain.Channel) bool {
 	if ch.LinkedChatID == 0 {
 		return false
@@ -288,10 +288,10 @@ func (s *ChannelStore) GetLinkedDiscussionChannel(ctx context.Context, viewerUse
 	return domain.ChannelView{Channel: linked, Self: self}, nil
 }
 
-// ResolveChannel 是 GetChannel 的轻量版：只做访问校验并返回 Channel(含 access_hash)+Self，
-// 跳过 dialog top message / 读态 / boost 求和这 3 条额外 PG 查询。供 inputPeerFor 等只需
-// access_hash / 频道标志的纯解析路径用——它们此前为拿一个 access_hash 付了完整 4 查询投影。
-// 访问语义与 GetChannel 完全一致（私有非成员 ErrChannelPrivate、公开预览成员）。
+// ResolveChannel is the lightweight version of GetChannel: it only does the access check and returns Channel (with access_hash) + Self,
+// skipping the 3 extra PG queries for dialog top message / read state / boost sum. Used by pure-resolution paths like inputPeerFor that only need
+// access_hash / channel flags—which previously paid the full 4-query projection just to get an access_hash.
+// Access semantics are exactly the same as GetChannel (private non-member ErrChannelPrivate, public preview member).
 func (s *ChannelStore) ResolveChannel(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelView, error) {
 	channel, member, preview, err := s.getChannelForViewer(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
@@ -299,7 +299,7 @@ func (s *ChannelStore) ResolveChannel(ctx context.Context, viewerUserID, channel
 	}
 	view := domain.ChannelView{Channel: channel, Self: member}
 	if preview {
-		// previewChannelDialog 是纯内存构造（无额外查询），保持与 GetChannel 预览态的 Dialog 一致。
+		// previewChannelDialog is a pure in-memory construction (no extra query), keeping the Dialog consistent with GetChannel's preview state.
 		view.Dialog = previewChannelDialog(viewerUserID, channel, member)
 	}
 	return view, nil
@@ -648,9 +648,9 @@ func int64s(ids []int64) []int64 {
 	return append([]int64(nil), ids...)
 }
 
-// nonNullInt64s 返回非 nil 的 []int64 副本，供写入 NOT NULL bigint[] 列时用——nil 切片会被
-// pgx 编码成 SQL NULL 违反 NOT NULL 约束（列的 DEFAULT '{}' 只在列被省略时生效，显式传参不触发）。
-// 空列表写成 '{}' 而非 NULL；读路径仍把空数组归一回 nil，双 store 行为一致。
+// nonNullInt64s returns a non-nil copy of []int64, for writing a NOT NULL bigint[] column—a nil slice is
+// encoded by pgx as SQL NULL, violating the NOT NULL constraint (the column's DEFAULT '{}' only applies when the column is omitted, not when passed explicitly).
+// An empty list is written as '{}' rather than NULL; the read path still normalizes an empty array back to nil, so both stores behave consistently.
 func nonNullInt64s(ids []int64) []int64 {
 	if len(ids) == 0 {
 		return []int64{}

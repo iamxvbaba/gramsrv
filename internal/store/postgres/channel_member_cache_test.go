@@ -13,7 +13,7 @@ import (
 
 func TestChannelMemberCacheNilDisabled(t *testing.T) {
 	if c := NewChannelMemberCache(0); c != nil {
-		t.Fatalf("max<=0 应返回 nil(禁用)，got %v", c)
+		t.Fatalf("max<=0 should return nil (disabled), got %v", c)
 	}
 	var nilCache *ChannelMemberCache
 	nilCache.put(domain.ChannelMember{ChannelID: 1, UserID: 2})
@@ -21,7 +21,7 @@ func TestChannelMemberCacheNilDisabled(t *testing.T) {
 	nilCache.deleteChannel(1)
 	nilCache.flush()
 	if _, ok := nilCache.get(1, 2); ok {
-		t.Fatalf("nil 缓存 get 必须返回 ok=false")
+		t.Fatalf("nil cache get must return ok=false")
 	}
 }
 
@@ -36,22 +36,22 @@ func TestChannelMemberCachePutGetDeleteFlush(t *testing.T) {
 	}
 
 	if _, ok := c.get(10, 20); ok {
-		t.Fatalf("空缓存不应命中")
+		t.Fatalf("an empty cache should not hit")
 	}
 	c.put(member)
 	got, ok := c.get(10, 20)
 	if !ok || got.ChannelID != 10 || got.UserID != 20 || got.Role != domain.ChannelRoleAdmin || got.ReadInboxMaxID != 9 {
-		t.Fatalf("put/get 往返失败: %+v ok=%v", got, ok)
+		t.Fatalf("put/get round trip failed: %+v ok=%v", got, ok)
 	}
 
 	c.delete(10, 20)
 	if _, ok := c.get(10, 20); ok {
-		t.Fatalf("delete 后不应命中")
+		t.Fatalf("should not hit after delete")
 	}
 	c.put(member)
 	c.flush()
 	if _, ok := c.get(10, 20); ok {
-		t.Fatalf("flush 后不应命中")
+		t.Fatalf("should not hit after flush")
 	}
 }
 
@@ -84,23 +84,23 @@ func TestChannelMemberCacheDeleteChannelAndCap(t *testing.T) {
 	c.put(domain.ChannelMember{ChannelID: 1, UserID: 11})
 	c.deleteChannel(1)
 	if _, ok := c.get(1, 10); ok {
-		t.Fatalf("deleteChannel 应失效同频道成员")
+		t.Fatalf("deleteChannel should invalidate members of the same channel")
 	}
 	if _, ok := c.get(1, 11); ok {
-		t.Fatalf("deleteChannel 应失效同频道成员")
+		t.Fatalf("deleteChannel should invalidate members of the same channel")
 	}
 
 	c.put(domain.ChannelMember{ChannelID: 2, UserID: 10})
 	c.put(domain.ChannelMember{ChannelID: 2, UserID: 11})
-	c.put(domain.ChannelMember{ChannelID: 2, UserID: 12}) // 超 cap=2:LRU 单条驱逐最旧的 (2,10)
+	c.put(domain.ChannelMember{ChannelID: 2, UserID: 12}) // over cap=2: LRU evicts the oldest single entry (2,10)
 	if _, ok := c.get(2, 10); ok {
-		t.Fatalf("超限后最旧条目 (2,10) 应被驱逐")
+		t.Fatalf("over the limit the oldest entry (2,10) should be evicted")
 	}
 	if _, ok := c.get(2, 11); !ok {
-		t.Fatalf("LRU 单条驱逐应保留次新条目 (2,11),证明非整表 flush")
+		t.Fatalf("single-entry LRU eviction should keep the next-newest entry (2,11), proving it is not a whole-table flush")
 	}
 	if _, ok := c.get(2, 12); !ok {
-		t.Fatalf("超限后最新写入的条目 (2,12) 应在")
+		t.Fatalf("the newest written entry (2,12) should be present after exceeding the limit")
 	}
 }
 
@@ -175,46 +175,46 @@ func TestReadModelChangeListenerInvalidatesChannelCaches(t *testing.T) {
 	}, nil)
 	listener.handlePayload(`{"model":"channel_member","owner_user_id":100,"peer_type":"channel","peer_id":7,"version":2}`)
 	if _, ok := members.get(7, 100); ok {
-		t.Fatalf("channel_member 事件应失效指定成员")
+		t.Fatalf("a channel_member event should invalidate the specified member")
 	}
 	if _, ok := members.get(7, 200); !ok {
-		t.Fatalf("channel_member 事件不应失效同频道其它成员")
+		t.Fatalf("a channel_member event should not invalidate other members of the same channel")
 	}
 	if got := fullBots.channelsSnapshot(); len(got) != 1 || got[0] != 7 {
-		t.Fatalf("channel_member 应失效 full bot info: %+v", got)
+		t.Fatalf("channel_member should invalidate full bot info: %+v", got)
 	}
 	if got := botMembers.channelsSnapshot(); len(got) != 1 || got[0] != 7 {
-		t.Fatalf("channel_member 应失效 bot member ids: %+v", got)
+		t.Fatalf("channel_member should invalidate bot member ids: %+v", got)
 	}
 	if got := mediaCounts.viewerSnapshot(); len(got) != 1 || got[0] != [2]int64{100, 7} {
-		t.Fatalf("channel_member 应失效该 viewer 的 media count: %+v", got)
+		t.Fatalf("channel_member should invalidate the media count for that viewer: %+v", got)
 	}
 
 	listener.handlePayload(`{"model":"channel_base","owner_user_id":0,"peer_type":"channel","peer_id":7,"version":3}`)
 	if _, ok := rows.get(7); ok {
-		t.Fatalf("channel_base 事件应失效频道行")
+		t.Fatalf("a channel_base event should invalidate the channel row")
 	}
 	if _, ok := members.get(7, 200); ok {
-		t.Fatalf("channel_base 事件应失效该频道所有成员")
+		t.Fatalf("a channel_base event should invalidate all members of that channel")
 	}
 	if _, ok := members.get(8, 100); !ok {
-		t.Fatalf("channel_base 事件不应失效其它频道成员")
+		t.Fatalf("a channel_base event should not invalidate members of other channels")
 	}
 	if got := fullBots.channelsSnapshot(); len(got) != 2 || got[1] != 7 {
-		t.Fatalf("channel_base 应失效 full bot info: %+v", got)
+		t.Fatalf("channel_base should invalidate full bot info: %+v", got)
 	}
 	if got := botMembers.channelsSnapshot(); len(got) != 2 || got[1] != 7 {
-		t.Fatalf("channel_base 应失效 bot member ids: %+v", got)
+		t.Fatalf("channel_base should invalidate bot member ids: %+v", got)
 	}
 
 	listener.handlePayload(`{"model":"channel_participants","owner_user_id":0,"peer_type":"channel","peer_id":7,"version":4}`)
 	if got := botMembers.channelsSnapshot(); len(got) != 3 || got[2] != 7 {
-		t.Fatalf("channel_participants 应失效 bot member ids: %+v", got)
+		t.Fatalf("channel_participants should invalidate bot member ids: %+v", got)
 	}
 
 	listener.handlePayload(`{"model":"channel_media_counts","owner_user_id":0,"peer_type":"channel","peer_id":7,"version":5}`)
 	if got := mediaCounts.channelSnapshot(); len(got) != 1 || got[0] != 7 {
-		t.Fatalf("channel_media_counts 应失效该频道 media count: %+v", got)
+		t.Fatalf("channel_media_counts should invalidate the media count for that channel: %+v", got)
 	}
 }
 
@@ -226,7 +226,7 @@ func TestReadModelChangeListenerInvalidatesPrivateMediaCountCache(t *testing.T) 
 
 	listener.handlePayload(`{"model":"private_media_counts","owner_user_id":100,"peer_type":"user","peer_id":200,"version":2}`)
 	if got := privateCounts.keysSnapshot(); len(got) != 1 || got[0] != [2]int64{100, 200} {
-		t.Fatalf("private_media_counts 应失效 owner+peer media count: %+v", got)
+		t.Fatalf("private_media_counts should invalidate the owner+peer media count: %+v", got)
 	}
 }
 
@@ -269,9 +269,9 @@ func (f *fakeAccountSettingsReadModelCache) WarmAccountSettingsReadModel(_ conte
 	return nil
 }
 
-// TestReadModelChangeListenerBotFullFlushesChannelFullBots 回归: bot 改资料(bot_full 事件,
-// 迁移 0013)须 flush channelFullBotInfoCache(否则群信息页 bot 简介/命令跨实例陈旧至 TTL);
-// 普通用户的 user_base 事件不得 flush(否则该缓存形同虚设)。
+// TestReadModelChangeListenerBotFullFlushesChannelFullBots regression: a bot profile change (bot_full event,
+// migration 0013) must flush channelFullBotInfoCache (otherwise the group info page's bot bio/commands stay stale across instances until TTL);
+// a regular user's user_base event must not flush (otherwise the cache is effectively useless).
 func TestReadModelChangeListenerBotFullFlushesChannelFullBots(t *testing.T) {
 	fullBots := &fakeChannelFullBotReadModelCache{}
 	listener := NewReadModelChangeListener("", ReadModelCacheSet{
@@ -280,12 +280,12 @@ func TestReadModelChangeListenerBotFullFlushesChannelFullBots(t *testing.T) {
 
 	listener.handlePayload(`{"model":"bot_full","owner_user_id":1780243210,"peer_type":"user","peer_id":1780243210,"version":2}`)
 	if got := fullBots.flushCount(); got != 1 {
-		t.Fatalf("bot_full 应 flush channelFullBotInfoCache: flushes=%d", got)
+		t.Fatalf("bot_full should flush channelFullBotInfoCache: flushes=%d", got)
 	}
 
 	listener.handlePayload(`{"model":"user_base","owner_user_id":500,"peer_type":"user","peer_id":500,"version":3}`)
 	if got := fullBots.flushCount(); got != 1 {
-		t.Fatalf("user_base(普通用户) 不应 flush channelFullBots: flushes=%d", got)
+		t.Fatalf("user_base (regular user) should not flush channelFullBots: flushes=%d", got)
 	}
 }
 

@@ -13,12 +13,14 @@ import (
 
 const encryptedDifferencePageSize = 1000
 
-// 私聊密聊 qts 消息收发 RPC handler（P1）。服务端是盲中继：sendEncrypted* 的 bytes 是
-// 客户端加密的 DecryptedMessage，服务端盲存进【接收方设备】的 qts 队列、原样转发，
-// 永不解密。在线推 updateNewEncryptedMessage（设备定向，离线靠 getDifference 补回）。
-// 设计见 docs/secret-chat-module.md §7/§8。
+// Private secret chat qts message send/receive RPC handler (P1). The server is a
+// blind relay: the bytes of sendEncrypted* are a client-encrypted DecryptedMessage;
+// the server blindly stores them into the [receiver device]'s qts queue and forwards
+// them verbatim, never decrypting. Online it pushes updateNewEncryptedMessage
+// (device-targeted; offline recovery via getDifference). Design: see
+// docs/secret-chat-module.md §7/§8.
 
-// pushEncryptedNewMessage 把 updateNewEncryptedMessage 定向投递给接收设备。
+// pushEncryptedNewMessage targets updateNewEncryptedMessage at the receiving device.
 func (r *Router) pushEncryptedNewMessage(ctx context.Context, msg domain.SecretChatMessage) {
 	if msg.ReceiverUserID == 0 || msg.ReceiverAuthKeyID == 0 {
 		return
@@ -38,7 +40,7 @@ func (r *Router) pushEncryptedNewMessage(ctx context.Context, msg domain.SecretC
 		_, _ = targeted.PushToUserAuthKey(ctx, msg.ReceiverUserID, deviceAuthKeyBytes(msg.ReceiverAuthKeyID), proto.MessageFromServer, upd)
 		return
 	}
-	// 设备隔离是安全边界；缺少定向能力时只保留 durable qts，离线 difference 补回。
+	// Device isolation is a security boundary; without targeting capability only the durable qts is kept, recovered by offline difference.
 	r.log.Error("secret chat targeted session binder unavailable",
 		zap.Int64("target_user_id", msg.ReceiverUserID),
 		zap.Int64("target_auth_key_id", msg.ReceiverAuthKeyID))
@@ -69,7 +71,7 @@ func (r *Router) sendEncryptedCommon(ctx context.Context, peer tg.InputEncrypted
 		return nil, secretChatErr(err)
 	}
 	r.pushEncryptedNewMessage(ctx, stored)
-	// 无 server message id；幂等重发返回首次落库 date（store dedup 保证）。
+	// No server message id; an idempotent resend returns the first-persisted date (guaranteed by store dedup).
 	return &tg.MessagesSentEncryptedMessage{Date: stored.Date}, nil
 }
 
@@ -87,8 +89,10 @@ func (r *Router) onMessagesSendEncryptedService(ctx context.Context, req *tg.Mes
 	return r.sendEncryptedCommon(ctx, req.Peer, req.RandomID, req.Data, true)
 }
 
-// onMessagesReceivedQueue 确认接收设备已处理到 max_qts（推进 confirmed + 标 acked 可 GC）。
-// 返回空 Vector<long>：DrKLO 调用处忽略响应（sendRequest(req, null)），空集安全。
+// onMessagesReceivedQueue acknowledges that the receiving device has processed up to
+// max_qts (advance confirmed + mark acked so it can be GC'd). Returns an empty
+// Vector<long>: the DrKLO call site ignores the response (sendRequest(req, null)), so
+// an empty set is safe.
 func (r *Router) onMessagesReceivedQueue(ctx context.Context, maxQts int) ([]int64, error) {
 	if r.deps.SecretChats == nil {
 		return nil, notImplementedErr()
@@ -127,7 +131,7 @@ func (r *Router) onMessagesReportEncryptedSpam(ctx context.Context, peer tg.Inpu
 	return true, nil
 }
 
-// deviceEncryptedQts 返回当前设备已分配的最高 qts（getState 注入用，无则 0）。
+// deviceEncryptedQts returns the highest qts allocated to the current device (for getState injection; 0 if none).
 func (r *Router) deviceEncryptedQts(ctx context.Context) int {
 	if r.deps.SecretChats == nil {
 		return 0
@@ -143,8 +147,9 @@ func (r *Router) deviceEncryptedQts(ctx context.Context) int {
 	return qts
 }
 
-// encryptedDifference 返回当前设备 qts > sinceQts 的连续前缀、推进后的 qts 与是否还有
-// 下一页。存储错误或 qts gap 必须 fail-fast，禁止越过缺口推进客户端水位。
+// encryptedDifference returns the contiguous prefix of the current device's
+// qts > sinceQts, the advanced qts, and whether another page remains. A storage
+// error or qts gap must fail-fast; never advance the client watermark past a gap.
 func (r *Router) encryptedDifference(ctx context.Context, sinceQts int) ([]tg.EncryptedMessageClass, int, bool, error) {
 	if r.deps.SecretChats == nil {
 		return nil, sinceQts, false, nil
@@ -177,8 +182,8 @@ func (r *Router) encryptedDifference(ctx context.Context, sinceQts int) ([]tg.En
 	return out, newQts, partial, nil
 }
 
-// injectEncryptedMessages 把加密消息与推进后的 qts 注入差分响应（按类型分别写 State /
-// IntermediateState 的 Qts）。
+// injectEncryptedMessages injects the encrypted messages and the advanced qts into
+// the difference response (writing Qts of State / IntermediateState by type).
 func injectEncryptedMessages(diff tg.UpdatesDifferenceClass, encMsgs []tg.EncryptedMessageClass, newQts int) tg.UpdatesDifferenceClass {
 	switch v := diff.(type) {
 	case *tg.UpdatesDifference:
@@ -191,10 +196,13 @@ func injectEncryptedMessages(diff tg.UpdatesDifferenceClass, encMsgs []tg.Encryp
 	return diff
 }
 
-// encryptedStateUpdates 返回当前设备未投递的握手/已读状态事件重建出的 update（进
-// OtherUpdates）、涉及的 peer user id（补 Users）、以及要登记已投递的事件 id。
-// encryption 事件按 secret_chats 权威态重建（不固化密钥材料快照）。账号级邀请在
-// accept 后只对未绑定设备投影为 discarded；获胜设备消费并跳过，绝不能收到 normal 泄漏。
+// encryptedStateUpdates returns the updates rebuilt from the current device's
+// undelivered handshake/read state events (into OtherUpdates), the peer user ids
+// involved (to top up Users), and the event ids to register as delivered. The
+// encryption event is rebuilt from the authoritative secret_chats state (no frozen
+// key-material snapshot). An account-level invitation after accept is projected as
+// discarded only to unbound devices; the winning device consumes and skips it and
+// must never receive a normal leak.
 func (r *Router) encryptedStateUpdates(ctx context.Context, userID int64) (updates []tg.UpdateClass, peerUserIDs []int64, eventIDs []int64, partial bool, err error) {
 	if r.deps.SecretChats == nil {
 		return nil, nil, nil, false, nil
@@ -230,8 +238,10 @@ func (r *Router) encryptedStateUpdates(ctx context.Context, userID int64) (updat
 
 			chatView := tgEncryptedChatForViewer(chat, userID)
 			if ev.TargetAuthKeyID == 0 && chat.State == domain.SecretChatStateNormal {
-				// 账号级事件只承载 accept 前邀请。accept 后获胜设备已有同步响应；其它设备
-				// 必须收敛为 discarded，不能用当前 normal 权威态泄漏 access_hash/g_a。
+				// The account-level event only carries the pre-accept invitation. After
+				// accept the winning device already has the synchronous response; other
+				// devices must converge to discarded and must not leak access_hash/g_a
+				// via the current normal authoritative state.
 				if chat.AuthKeyOf(userID) == deviceKey {
 					continue
 				}
@@ -251,8 +261,8 @@ func (r *Router) encryptedStateUpdates(ctx context.Context, userID int64) (updat
 	return updates, peerUserIDs, eventIDs, partial, nil
 }
 
-// injectEncryptedOtherUpdates 把握手/已读 update 追加进差分的 OtherUpdates、把 peer
-// user 对象追加进 Users。
+// injectEncryptedOtherUpdates appends the handshake/read updates into the
+// difference's OtherUpdates and the peer user objects into Users.
 func (r *Router) injectEncryptedOtherUpdates(ctx context.Context, viewerUserID int64, diff tg.UpdatesDifferenceClass, updates []tg.UpdateClass, peerUserIDs []int64) tg.UpdatesDifferenceClass {
 	if len(updates) == 0 {
 		return diff

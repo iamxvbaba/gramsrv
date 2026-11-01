@@ -8,20 +8,24 @@ import (
 	"telesrv/internal/domain"
 )
 
-// sendPhoneCallServiceMessage 把已终结的通话落成 messageActionPhoneCall 历史
-// （完整复刻 pin 服务消息模式，messages_pin.go）。要点：
-//   - sender 恒为主叫 AdminID——无论谁发起 discard（官方语义：主叫侧渲染
-//     「呼出」、被叫侧渲染「未接来电/通话 X 分钟」，missed 在被叫侧计未读）；
-//   - Origin 置零：双方全部设备（含 discard 发起设备）都经 outbox 收到
-//     updateNewMessage（带 pts）——发起设备的 RPC 响应里只有 updatePhoneCall，
-//     服务消息必须从 update 流来；离线设备重连经 getDifference 补收，正好
-//     补偿信令直推的不可靠（「未接来电」由此而来）；
-//   - RandomID 由 callID 确定性派生：状态机保证一通通话只落一次历史，
-//     极端重放也会被发送管道的 random_id 去重吸收；
-//   - 失败仅 Warn 不回滚：通话状态是真值，历史是装饰（与 pin 同哲学）。
+// sendPhoneCallServiceMessage records a terminated call as messageActionPhoneCall history (a full
+// replica of the pin service-message pattern, messages_pin.go). Key points:
+//   - the sender is always the caller's AdminID — no matter who initiates the discard (official
+//     semantics: the caller side renders "outgoing", the callee side renders "missed call/call X
+//     minutes", and missed counts as unread on the callee side);
+//   - Origin is zeroed: all devices on both sides (including the discard-initiating device) receive
+//     updateNewMessage (with pts) via the outbox — the initiating device's RPC response only holds
+//     updatePhoneCall, so the service message must come from the update stream; an offline device
+//     catches up via getDifference on reconnect, which exactly compensates for the unreliability of
+//     direct signaling push (this is where "missed call" comes from);
+//   - RandomID is derived deterministically from callID: the state machine guarantees a call records
+//     history only once, and an extreme replay is absorbed by the send pipeline's random_id dedup;
+//   - failure only Warns and does not roll back: the call state is the truth, history is decoration
+//     (the same philosophy as pin).
 //
-// 注意：本路径绕过 RPC 层的 checkSendRateLimit（限速挂在 handler 侧）——
-// 这是有意为之，呼叫轰炸防护由通话并发上限与振铃超时承担。
+// Note: this path bypasses the RPC layer's checkSendRateLimit (rate limiting sits on the handler
+// side) — this is intentional; call-flood protection is carried by the call concurrency cap and the
+// ringing timeout.
 func (r *Router) sendPhoneCallServiceMessage(ctx context.Context, call domain.PhoneCall) {
 	if r.deps.Messages == nil || !call.Terminal() {
 		return

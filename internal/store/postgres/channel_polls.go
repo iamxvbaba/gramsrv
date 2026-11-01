@@ -11,8 +11,8 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// 频道/超级群消息 poll 投票/关闭：成员资格与消息可见性沿用 reaction 同款校验，
-// poll 级语义委托 poll.go 的共享 SQL。
+// Channel/supergroup message poll voting/closing: membership and message visibility reuse the same validation as reactions,
+// and poll-level semantics are delegated to poll.go's shared SQL.
 
 func (s *ChannelStore) VoteChannelMessagePoll(ctx context.Context, req domain.VoteChannelMessagePollRequest) (domain.ChannelMessagePollResult, error) {
 	return s.mutateChannelMessagePoll(ctx, req.UserID, req.ChannelID, req.MessageID, req.Date, func(ctx context.Context, tx pgx.Tx, def domain.PollDefinition, date int) error {
@@ -93,8 +93,8 @@ func (s *ChannelStore) mutateChannelMessagePoll(
 	}, nil
 }
 
-// populateChannelMessagesPolls 把页内全部 poll media 按请求 viewer 视角 enrich；
-// 由 populateChannelMessagesReactions 统一挂载（所有频道消息读路径共用一个 choke point）。
+// populateChannelMessagesPolls enriches all poll media in the page from the requesting viewer's perspective;
+// it is uniformly mounted by populateChannelMessagesReactions (all channel message read paths share one choke point).
 func (s *ChannelStore) populateChannelMessagesPolls(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, messages []domain.ChannelMessage) error {
 	refs := make([]pollMediaRef, 0, 2)
 	for i := range messages {

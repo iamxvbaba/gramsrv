@@ -58,7 +58,7 @@ const (
 	ClientTypeTelegramTT ClientType = "telegram-tt"
 )
 
-// ClientInfo 是 initConnection 携带的客户端信息。
+// ClientInfo is the client information carried by initConnection.
 type ClientInfo struct {
 	APIID          int
 	DeviceModel    string
@@ -74,12 +74,12 @@ type ClientInfo struct {
 	typeResolved bool
 }
 
-// WithLayer 在 ctx 注入客户端 layer（来自 invokeWithLayer）。
+// WithLayer injects the client layer into ctx (from invokeWithLayer).
 func WithLayer(ctx context.Context, layer int) context.Context {
 	return context.WithValue(ctx, layerKey, layer)
 }
 
-// LayerFrom 返回 ctx 中的客户端 layer，未设置时为 0。
+// LayerFrom returns the client layer in ctx, or 0 when unset.
 func LayerFrom(ctx context.Context) int {
 	if v, ok := ctx.Value(layerKey).(int); ok {
 		return v
@@ -87,26 +87,28 @@ func LayerFrom(ctx context.Context) int {
 	return 0
 }
 
-// WithClientInfo 在 ctx 注入客户端信息（来自 initConnection）。
+// WithClientInfo injects client info into ctx (from initConnection).
 func WithClientInfo(ctx context.Context, info ClientInfo) context.Context {
 	info = normalizeClientInfo(info)
 	return context.WithValue(ctx, clientInfoKey, info)
 }
 
-// ClientInfoFrom 返回 ctx 中的客户端信息。
+// ClientInfoFrom returns the client info in ctx.
 func ClientInfoFrom(ctx context.Context) (ClientInfo, bool) {
 	v, ok := ctx.Value(clientInfoKey).(ClientInfo)
 	return v, ok
 }
 
-// WithClientIP 在 ctx 注入客户端连接的对端 IP（来自 MTProto 连接的 RemoteAddr）。
-// 仅在需要时（绑定设备授权）由 edge 写入，其余 RPC 不依赖它。edge 通过中立
-// internal/transport 载体写入，这里仅做别名以便 rpc 业务层读取，避免反向依赖。
+// WithClientIP injects the client connection's peer IP into ctx (from the MTProto
+// connection's RemoteAddr). It is written by the edge only when needed (device
+// authorization binding); other RPCs do not depend on it. The edge writes it
+// through the neutral internal/transport carrier; this is only an alias so the
+// rpc business layer can read it without a reverse dependency.
 func WithClientIP(ctx context.Context, ip string) context.Context {
 	return transport.WithClientIP(ctx, ip)
 }
 
-// ClientIPFrom 返回 ctx 中的客户端对端 IP，未设置时 ok=false。
+// ClientIPFrom returns the client peer IP in ctx, or ok=false when unset.
 func ClientIPFrom(ctx context.Context) (string, bool) {
 	return transport.ClientIPFrom(ctx)
 }
@@ -249,30 +251,32 @@ func clientTypeFromStrongEvidence(info ClientInfo) ClientType {
 	}
 }
 
-// WithRawAuthKeyID 在 ctx 注入连接实际使用的 auth_key_id。
+// WithRawAuthKeyID injects the auth_key_id actually used by the connection into ctx.
 func WithRawAuthKeyID(ctx context.Context, id [8]byte) context.Context {
 	return context.WithValue(ctx, rawAuthKeyIDKey, id)
 }
 
-// RawAuthKeyIDFrom 返回连接实际使用的 auth_key_id。
+// RawAuthKeyIDFrom returns the auth_key_id actually used by the connection.
 func RawAuthKeyIDFrom(ctx context.Context) ([8]byte, bool) {
 	v, ok := ctx.Value(rawAuthKeyIDKey).([8]byte)
 	return v, ok
 }
 
-// WithAuthKeyID 在 ctx 注入业务视角的 auth_key_id；temp auth_key 绑定后会解析为 perm auth_key。
+// WithAuthKeyID injects the business-view auth_key_id into ctx; a temp auth_key resolves to a perm auth_key once bound.
 func WithAuthKeyID(ctx context.Context, id [8]byte) context.Context {
 	return context.WithValue(ctx, authKeyIDKey, id)
 }
 
-// AuthKeyIDFrom 返回 ctx 中业务视角的 auth_key_id。已握手连接均有（即便尚未登录）。
+// AuthKeyIDFrom returns the business-view auth_key_id from ctx. Every handshaken connection has it (even before login).
 func AuthKeyIDFrom(ctx context.Context) ([8]byte, bool) {
 	v, ok := ctx.Value(authKeyIDKey).([8]byte)
 	return v, ok
 }
 
-// rawAuthKeyIDForOrigin 返回用于 update/outbox 当前 session 排除的物理 raw key。
-// 单测/非 edge 调用若没有注入 raw key，才回退业务 key；生产 Router context 两者都有。
+// rawAuthKeyIDForOrigin returns the physical raw key used to exclude the current
+// session from updates/outbox. Only unit tests / non-edge callers without an
+// injected raw key fall back to the business key; the production Router context
+// has both.
 func rawAuthKeyIDForOrigin(ctx context.Context) [8]byte {
 	if id, ok := RawAuthKeyIDFrom(ctx); ok {
 		return id
@@ -281,23 +285,23 @@ func rawAuthKeyIDForOrigin(ctx context.Context) [8]byte {
 	return id
 }
 
-// WithSessionID 在 ctx 注入调用方的 MTProto session_id。
+// WithSessionID injects the caller's MTProto session_id into ctx.
 func WithSessionID(ctx context.Context, id int64) context.Context {
 	return context.WithValue(ctx, sessionIDKey, id)
 }
 
-// SessionIDFrom 返回 ctx 中调用方的 MTProto session_id。
+// SessionIDFrom returns the caller's MTProto session_id from ctx.
 func SessionIDFrom(ctx context.Context) (int64, bool) {
 	v, ok := ctx.Value(sessionIDKey).(int64)
 	return v, ok
 }
 
-// WithUserID 在 ctx 注入当前已登录用户 id。
+// WithUserID injects the currently logged-in user id into ctx.
 func WithUserID(ctx context.Context, id int64) context.Context {
 	return context.WithValue(ctx, userIDKey, id)
 }
 
-// UserIDFrom 返回 ctx 中当前已登录用户 id。
+// UserIDFrom returns the currently logged-in user id from ctx.
 func UserIDFrom(ctx context.Context) (int64, bool) {
 	v, ok := ctx.Value(userIDKey).(int64)
 	if !ok || v == 0 {
@@ -306,8 +310,9 @@ func UserIDFrom(ctx context.Context) (int64, bool) {
 	return v, true
 }
 
-// withInvokeWithoutUpdates 标记当前请求被 invokeWithoutUpdates 包装：
-// 客户端声明该 session 不接收主动 updates（media/temp 连接的请求一律带此包装）。
+// withInvokeWithoutUpdates marks the current request as wrapped by
+// invokeWithoutUpdates: the client declares this session receives no proactive
+// updates (requests on media/temp connections always carry this wrapper).
 func withInvokeWithoutUpdates(ctx context.Context) context.Context {
 	return context.WithValue(ctx, invokeWithoutUpdatesKey, true)
 }

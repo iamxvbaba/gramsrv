@@ -8,9 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessageStoreResolveWebPageIntegration 对 live Postgres 验证 WebPageResolve 分支：
-// 双盒 media 就地换 done、body/edit_date 不变（无「已编辑」标记）、durable web_page 事件
-// 经 box JOIN 重建出 done media（difference 复用）、幂等。需 TELESRV_TEST_POSTGRES_DSN。
+// TestMessageStoreResolveWebPageIntegration verifies the WebPageResolve branch against a live Postgres:
+// both boxes swap media to done in place, body/edit_date stay unchanged (no "edited" marker), the durable
+// web_page event rebuilds done media via a box JOIN (reused by difference), and it is idempotent. Requires TELESRV_TEST_POSTGRES_DSN.
 func TestMessageStoreResolveWebPageIntegration(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -63,7 +63,7 @@ func TestMessageStoreResolveWebPageIntegration(t *testing.T) {
 		t.Fatalf("body/edit_date changed: body=%q edit_date=%d", self.Message.Body, self.Message.EditDate)
 	}
 
-	// 接收方盒子：media=done，body/edit_date 不变。
+	// Recipient box: media=done, body/edit_date unchanged.
 	rh, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}, Limit: 10})
 	if err != nil {
 		t.Fatalf("recipient history: %v", err)
@@ -75,7 +75,7 @@ func TestMessageStoreResolveWebPageIntegration(t *testing.T) {
 		t.Fatalf("recipient body/edit_date changed: %+v", rh.Messages[0])
 	}
 
-	// durable 事件：difference 复用经 box JOIN 重建出 done media。
+	// Durable event: difference reuse rebuilds done media via a box JOIN.
 	recipientEvents, err := NewUpdateEventStore(pool).ListAfter(ctx, recipient.ID, 0, 10)
 	if err != nil {
 		t.Fatalf("recipient events: %v", err)
@@ -85,7 +85,7 @@ func TestMessageStoreResolveWebPageIntegration(t *testing.T) {
 		t.Fatalf("recipient durable web_page event = %+v, want done media", last)
 	}
 
-	// 幂等：再次解析 → ErrMessageNotModified。
+	// Idempotent: resolving again -> ErrMessageNotModified.
 	if _, err := messages.EditMessage(ctx, resolveReq); !errors.Is(err, domain.ErrMessageNotModified) {
 		t.Fatalf("re-resolve err = %v, want ErrMessageNotModified", err)
 	}

@@ -1,4 +1,4 @@
--- v2 编号 0233；移植自 main 0204_star_gift_support_only（main 8bdd708a），见 docs/main-v2-sync.md。
+-- v2 number 0233; ported from main 0204_star_gift_support_only (main 8bdd708a), see docs/main-v2-sync.md.
 -- Restrict a catalog gift to official-support accounts only. The flag lives on
 -- the immutable catalog revision (like require_premium) and is enforced at the
 -- RPC purchase boundary: buyers without the support account flag are treated as

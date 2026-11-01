@@ -239,8 +239,10 @@ VALUES (
 ON CONFLICT DO NOTHING;
 
 -- name: BatchListDispatchEvents :many
--- 按 (user_id, pts) 精确批量取账号事件，供 outbox worker 一次性加载一批 claim 的事件详情，
--- 取代逐条 ListUserUpdateEventsAfter。列与 ListUserUpdateEventsAfter 完全一致以复用转换逻辑。
+-- Fetch account events in exact bulk by (user_id, pts) so the outbox worker can load
+-- the event details of a batch of claims at once, replacing per-row
+-- ListUserUpdateEventsAfter. The columns match ListUserUpdateEventsAfter exactly to
+-- reuse the conversion logic.
 SELECT
   e.user_id,
   e.pts,

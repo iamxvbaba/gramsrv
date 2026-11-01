@@ -15,10 +15,11 @@ const mimeApplicationXTGSticker = "application/x-tgsticker"
 // (webK) uses it as a hard classifier for Lottie stickers, native clients ignore it.
 const tgAnimatedStickerTGSFileName = "AnimatedSticker.tgs"
 
-// 本文件集中 domain media 值对象 → tg.* 的转换；tg.* 只在 rpc 层出现。
-// 供 reaction / sticker 资源 RPC 与消息 media 共用。
+// This file centralizes the conversion of domain media value objects → tg.*;
+// tg.* appears only in the rpc layer. Shared by reaction / sticker resource RPCs
+// and message media.
 
-// tgMessageMedia 把消息 media 快照转成 tg.MessageMediaClass；空载荷回退 MessageMediaEmpty。
+// tgMessageMedia converts a message media snapshot into tg.MessageMediaClass; an empty payload falls back to MessageMediaEmpty.
 func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 	if m.IsZero() {
 		return &tg.MessageMediaEmpty{}
@@ -189,9 +190,9 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 	}
 }
 
-// tgWebPageMedia 把链接预览快照转成 messageMediaWebPage：外层 wrapper 携带
-// force_large/force_small/manual/safe 标志，内层按 state 投影为
-// webPagePending / webPage / webPageEmpty。
+// tgWebPageMedia converts a link preview snapshot into messageMediaWebPage: the outer
+// wrapper carries force_large/force_small/manual/safe flags, and the inner part is
+// projected by state into webPagePending / webPage / webPageEmpty.
 func tgWebPageMedia(w domain.MessageWebPage) tg.MessageMediaClass {
 	return &tg.MessageMediaWebPage{
 		ForceLargeMedia: w.ForceLargeMedia,
@@ -202,8 +203,9 @@ func tgWebPageMedia(w domain.MessageWebPage) tg.MessageMediaClass {
 	}
 }
 
-// tgWebPage 按链接预览快照的 state 投影出对应的 tg.WebPageClass。done 形态必须
-// 始终填齐非可选的 id/url/display_url/hash，否则客户端不渲染卡片。
+// tgWebPage projects the corresponding tg.WebPageClass by the link preview snapshot's
+// state. The done shape must always fill the non-optional id/url/display_url/hash,
+// otherwise the client renders no card.
 func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 	switch w.State {
 	case domain.MessageWebPageStateDone:
@@ -266,7 +268,7 @@ func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 			page.SetURL(w.URL)
 		}
 		return page
-	default: // pending：webPagePending{id,date}，url 可选但客户端需它展示待解析链接。
+	default: // pending: webPagePending{id,date}; url is optional but the client needs it to show the unresolved link.
 		page := &tg.WebPagePending{ID: w.ID, Date: w.Date}
 		if w.URL != "" {
 			page.SetURL(w.URL)
@@ -275,7 +277,7 @@ func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 	}
 }
 
-// tgGeoPoint 把 domain 坐标点转成 tg.GeoPoint。
+// tgGeoPoint converts a domain coordinate point into tg.GeoPoint.
 func tgGeoPoint(g domain.MessageGeoPoint) tg.GeoPointClass {
 	out := &tg.GeoPoint{Lat: g.Lat, Long: g.Long, AccessHash: g.AccessHash}
 	if g.AccuracyRadius > 0 {
@@ -284,7 +286,7 @@ func tgGeoPoint(g domain.MessageGeoPoint) tg.GeoPointClass {
 	return out
 }
 
-// tgChatPhoto 由 domain.Channel 反范式头像字段构造 ChatPhoto（频道/群头像缩略）。
+// tgChatPhoto builds a ChatPhoto from the denormalized avatar fields of domain.Channel (channel/group avatar thumbnail).
 func tgChatPhoto(ch domain.Channel) tg.ChatPhotoClass {
 	if ch.PhotoID == 0 {
 		return &tg.ChatPhotoEmpty{}
@@ -296,8 +298,9 @@ func tgChatPhoto(ch domain.Channel) tg.ChatPhotoClass {
 	return p
 }
 
-// tgChannelChatPhotoFull 为 channelFull.chat_photo 构造完整 Photo（合成 a/c 尺寸；
-// getFile 按 photo:<id>:<type> 解析，忽略 access_hash，故合成尺寸也可下载）。
+// tgChannelChatPhotoFull builds a full Photo for channelFull.chat_photo (synthesizing
+// a/c sizes; getFile resolves by photo:<id>:<type> and ignores access_hash, so a
+// synthetic size is downloadable too).
 func tgChannelChatPhotoFull(ch domain.Channel) tg.PhotoClass {
 	if ch.PhotoID == 0 {
 		return &tg.PhotoEmpty{}
@@ -316,7 +319,7 @@ func syntheticAvatarSizes() []tg.PhotoSizeClass {
 	}
 }
 
-// tgPhoto 把 domain.Photo 转成 tg.PhotoClass。
+// tgPhoto converts domain.Photo into tg.PhotoClass.
 func tgPhoto(p domain.Photo) tg.PhotoClass {
 	if p.ID == 0 {
 		return &tg.PhotoEmpty{}
@@ -337,7 +340,7 @@ func tgPhoto(p domain.Photo) tg.PhotoClass {
 	}
 }
 
-// tgDocument 把 domain.Document 转成 tg.DocumentClass。
+// tgDocument converts domain.Document into tg.DocumentClass.
 func tgDocument(d domain.Document) tg.DocumentClass {
 	if d.ID == 0 {
 		return &tg.DocumentEmpty{}
@@ -587,7 +590,7 @@ func tgInputStickerSetFromIDs(id, accessHash int64) tg.InputStickerSetClass {
 
 // ---- available reactions ----
 
-// tgAvailableReactions 用真实文档构造 messages.availableReactions；docByID 由 handler 预加载。
+// tgAvailableReactions builds messages.availableReactions from real documents; docByID is preloaded by the handler.
 func tgAvailableReactions(reactions []domain.AvailableReaction, docByID map[int64]domain.Document, hash int) *tg.MessagesAvailableReactions {
 	out := &tg.MessagesAvailableReactions{Hash: hash, Reactions: make([]tg.AvailableReaction, 0, len(reactions))}
 	doc := func(id int64) tg.DocumentClass {
@@ -619,7 +622,7 @@ func tgAvailableReactions(reactions []domain.AvailableReaction, docByID map[int6
 	return out
 }
 
-// reactionDocumentIDs 收集一组 reaction 引用的全部文档 id（用于批量预加载）。
+// reactionDocumentIDs collects all document ids referenced by a set of reactions (for batch preloading).
 func reactionDocumentIDs(reactions []domain.AvailableReaction) []int64 {
 	seen := make(map[int64]struct{})
 	out := make([]int64, 0, len(reactions)*7)
@@ -635,8 +638,9 @@ func reactionDocumentIDs(reactions []domain.AvailableReaction) []int64 {
 	return out
 }
 
-// tgAvailableEffects 构造 messages.availableEffects:effects 引用文档 id,文档对象在
-// 独立 Documents 数组(去重),docByID 由 handler 预加载。
+// tgAvailableEffects builds messages.availableEffects: effects reference document
+// ids, and the document objects go in a separate Documents array (deduped); docByID
+// is preloaded by the handler.
 func tgAvailableEffects(effects []domain.AvailableEffect, docByID map[int64]domain.Document, hash int) *tg.MessagesAvailableEffects {
 	out := &tg.MessagesAvailableEffects{
 		Hash:      hash,
@@ -677,7 +681,7 @@ func tgAvailableEffects(effects []domain.AvailableEffect, docByID map[int64]doma
 	return out
 }
 
-// effectDocumentIDs 收集一组 effect 引用的全部文档 id（用于批量预加载）。
+// effectDocumentIDs collects all document ids referenced by a set of effects (for batch preloading).
 func effectDocumentIDs(effects []domain.AvailableEffect) []int64 {
 	seen := make(map[int64]struct{})
 	out := make([]int64, 0, len(effects)*3)
@@ -769,7 +773,7 @@ func tgStickerKeywords(keywords []domain.StickerKeyword) []tg.StickerKeyword {
 	return out
 }
 
-// tgMessagesStickerSet 构造完整 messages.stickerSet（set + packs + documents）。
+// tgMessagesStickerSet builds a full messages.stickerSet (set + packs + documents).
 func tgMessagesStickerSet(set domain.StickerSet, docs []domain.Document) *tg.MessagesStickerSet {
 	return &tg.MessagesStickerSet{
 		Set:       tgStickerSet(set),
@@ -779,7 +783,7 @@ func tgMessagesStickerSet(set domain.StickerSet, docs []domain.Document) *tg.Mes
 	}
 }
 
-// stickerSetRefFromInput 把 tg.InputStickerSet 转成 domain.StickerSetRef。
+// stickerSetRefFromInput converts tg.InputStickerSet into domain.StickerSetRef.
 func stickerSetRefFromInput(input tg.InputStickerSetClass) (domain.StickerSetRef, bool) {
 	switch in := input.(type) {
 	case *tg.InputStickerSetID:
@@ -809,7 +813,7 @@ func stickerSetRefFromInput(input tg.InputStickerSetClass) (domain.StickerSetRef
 	}
 }
 
-// mediaCatalogHash 用一组 int64（文档/集合 id）算稳定 hash，供 *NotModified 缓存判定。
+// mediaCatalogHash computes a stable hash over a set of int64 (document/set ids), for the *NotModified cache decision.
 func mediaCatalogHash(values []int64) int64 {
 	var hash uint64
 	for _, v := range values {

@@ -8,23 +8,27 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 密聊（Secret Chat）domain ↔ tg 投影。服务端是盲中继：g_a/g_b/key_fingerprint
-// 原样回放。chat 双视角不对称（见 docs/secret-chat-module.md §3.6）：
-//   - access_hash 双方不同（按 viewer 取 admin/participant 列）。
-//   - GAOrB 对 admin 视角是 g_b、对 participant 视角是 g_a（TL 注释钉死）。
-//   - pending 态：admin 看 encryptedChatWaiting（无 g_a），participant 看
-//     encryptedChatRequested（携 g_a）。
+// Secret Chat domain <-> tg projection. The server is a blind relay: g_a/g_b/
+// key_fingerprint are replayed verbatim. The chat is asymmetric between the two
+// viewpoints (see docs/secret-chat-module.md §3.6):
+//   - access_hash differs per side (taken from the admin/participant column by viewer).
+//   - GAOrB is g_b from the admin viewpoint and g_a from the participant viewpoint
+//     (pinned by the TL comments).
+//   - pending state: the admin sees encryptedChatWaiting (no g_a), the participant
+//     sees encryptedChatRequested (carries g_a).
 
-// deviceAuthKeyBytes 把绑定维度的 int64 auth_key_id 转回 [8]byte（用于 SessionManager
-// 按业务 auth_key 定向投递）。与 businessAuthKeyInt64 互逆（小端）。
+// deviceAuthKeyBytes converts the binding-dimension int64 auth_key_id back to
+// [8]byte (used by SessionManager to deliver to a specific business auth_key).
+// It is the inverse of businessAuthKeyInt64 (little-endian).
 func deviceAuthKeyBytes(id int64) [8]byte {
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], uint64(id))
 	return b
 }
 
-// tgEncryptedMessage 把 qts 队列里的不透明加密消息投影为 TL EncryptedMessage(Service)。
-// 盲中继：Bytes 原样回放，不解密。
+// tgEncryptedMessage projects the opaque encrypted message from the qts queue
+// into the TL EncryptedMessage(Service). Blind relay: Bytes is replayed verbatim,
+// not decrypted.
 func tgEncryptedMessage(m domain.SecretChatMessage) tg.EncryptedMessageClass {
 	if m.IsService {
 		return &tg.EncryptedMessageService{
@@ -43,7 +47,7 @@ func tgEncryptedMessage(m domain.SecretChatMessage) tg.EncryptedMessageClass {
 	}
 }
 
-// tgEncryptedFile 把密聊文件快照投影为 TL EncryptedFile(Empty)。
+// tgEncryptedFile projects a secret chat file snapshot into TL EncryptedFile(Empty).
 func tgEncryptedFile(ref *domain.EncryptedFileRef) tg.EncryptedFileClass {
 	if ref == nil || ref.ID == 0 {
 		return &tg.EncryptedFileEmpty{}
@@ -57,15 +61,17 @@ func tgEncryptedFile(ref *domain.EncryptedFileRef) tg.EncryptedFileClass {
 	}
 }
 
-// businessAuthKeyInt64 把 ctx 业务视角 auth_key_id（[8]byte）转成 DB/绑定维度的
-// int64。必须与 store/postgres authKeyIDToInt64 同源（小端，MTProto 即 SHA1 低 64 位），
-// 否则密聊绑定键与 update_states/authorizations 对不上。一致性见
-// convert_encrypted_test.go。
+// businessAuthKeyInt64 converts the ctx business-view auth_key_id ([8]byte) into
+// the DB/binding-dimension int64. It must share the same source as store/postgres
+// authKeyIDToInt64 (little-endian, MTProto is the low 64 bits of SHA1); otherwise
+// the secret chat binding key and update_states/authorizations will not line up.
+// Consistency is covered in convert_encrypted_test.go.
 func businessAuthKeyInt64(id [8]byte) int64 {
 	return int64(binary.LittleEndian.Uint64(id[:]))
 }
 
-// tgEncryptedChatForViewer 把密聊投影为 viewerID 视角的 EncryptedChatClass。
+// tgEncryptedChatForViewer projects a secret chat into EncryptedChatClass from
+// the viewerID viewpoint.
 func tgEncryptedChatForViewer(chat domain.SecretChat, viewerID int64) tg.EncryptedChatClass {
 	if chat.Terminal() {
 		return &tg.EncryptedChatDiscarded{
@@ -75,7 +81,7 @@ func tgEncryptedChatForViewer(chat domain.SecretChat, viewerID int64) tg.Encrypt
 	}
 	accessHash := chat.AccessHashFor(viewerID)
 	if chat.State == domain.SecretChatStateNormal {
-		// GAOrB：admin 看 g_b、participant 看 g_a。
+		// GAOrB: the admin sees g_b, the participant sees g_a.
 		gaOrB := chat.GA
 		if chat.IsAdmin(viewerID) {
 			gaOrB = chat.GB
@@ -90,7 +96,8 @@ func tgEncryptedChatForViewer(chat domain.SecretChat, viewerID int64) tg.Encrypt
 			KeyFingerprint: chat.KeyFingerprint,
 		}
 	}
-	// requested 态：admin 视角 waiting（无 g_a），participant 视角 requested（携 g_a）。
+	// requested state: the admin viewpoint is waiting (no g_a), the participant
+	// viewpoint is requested (carries g_a).
 	if chat.IsAdmin(viewerID) {
 		return &tg.EncryptedChatWaiting{
 			ID:            chat.ID,

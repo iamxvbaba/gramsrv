@@ -9,10 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 共享媒体索引维护(迁移 0118)。分类真值唯一来自 domain.ClassifyMediaCategories;
-// 写路径只在「创建」和「编辑改媒体」两处维护,删除靠读查询 JOIN 过滤 deleted、不在此维护。
+// Shared media index maintenance (migration 0118). The single source of truth for categories is
+// domain.ClassifyMediaCategories; the write path maintains it only at the two points "create" and
+// "edit changes media", while deletion is handled by the read queries joining against deleted and
+// is not maintained here.
 
-// insertChannelMediaIndexTx 为一条频道消息按其媒体类别写索引行(无类别则 no-op)。
+// insertChannelMediaIndexTx writes index rows for a channel message by its media categories (no-op if there are no categories).
 func insertChannelMediaIndexTx(ctx context.Context, tx pgx.Tx, channelID int64, id, date int, media *domain.MessageMedia, entities []domain.MessageEntity) error {
 	for _, c := range domain.ClassifyMediaCategories(media, entities) {
 		if _, err := tx.Exec(ctx, `
@@ -25,7 +27,7 @@ ON CONFLICT (channel_id, id, category) DO NOTHING`, channelID, id, int16(c), dat
 	return nil
 }
 
-// deleteChannelMediaIndexTx 清掉一条频道消息的全部索引行(编辑改媒体前先清后插)。
+// deleteChannelMediaIndexTx clears all index rows of a channel message (delete then insert before editing media).
 func deleteChannelMediaIndexTx(ctx context.Context, tx pgx.Tx, channelID int64, id int) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM channel_message_media WHERE channel_id = $1 AND id = $2`, channelID, id); err != nil {
 		return fmt.Errorf("delete channel media index: %w", err)
@@ -33,7 +35,7 @@ func deleteChannelMediaIndexTx(ctx context.Context, tx pgx.Tx, channelID int64, 
 	return nil
 }
 
-// replaceChannelMediaIndexTx 在编辑替换媒体后重建索引行(类别可能变化)。
+// replaceChannelMediaIndexTx rebuilds the index rows after an edit replaces the media (the categories may change).
 func replaceChannelMediaIndexTx(ctx context.Context, tx pgx.Tx, channelID int64, id, date int, media *domain.MessageMedia, entities []domain.MessageEntity) error {
 	if err := deleteChannelMediaIndexTx(ctx, tx, channelID, id); err != nil {
 		return err
@@ -41,7 +43,7 @@ func replaceChannelMediaIndexTx(ctx context.Context, tx pgx.Tx, channelID int64,
 	return insertChannelMediaIndexTx(ctx, tx, channelID, id, date, media, entities)
 }
 
-// insertMessageBoxMediaIndexTx 为一条私聊 owner box 按其媒体类别写索引行。
+// insertMessageBoxMediaIndexTx writes index rows for a private owner box by its media categories.
 func insertMessageBoxMediaIndexTx(ctx context.Context, tx pgx.Tx, ownerUserID, peerID int64, boxID, date int, media *domain.MessageMedia, entities []domain.MessageEntity) error {
 	for _, c := range domain.ClassifyMediaCategories(media, entities) {
 		if _, err := tx.Exec(ctx, `
@@ -54,7 +56,7 @@ ON CONFLICT (owner_user_id, box_id, category) DO NOTHING`, ownerUserID, boxID, p
 	return nil
 }
 
-// deleteMessageBoxMediaIndexTx 清掉一条私聊 owner box 的全部索引行。
+// deleteMessageBoxMediaIndexTx clears all index rows of a private owner box.
 func deleteMessageBoxMediaIndexTx(ctx context.Context, tx pgx.Tx, ownerUserID int64, boxID int) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM message_box_media WHERE owner_user_id = $1 AND box_id = $2`, ownerUserID, boxID); err != nil {
 		return fmt.Errorf("delete message box media index: %w", err)
@@ -62,7 +64,7 @@ func deleteMessageBoxMediaIndexTx(ctx context.Context, tx pgx.Tx, ownerUserID in
 	return nil
 }
 
-// replaceMessageBoxMediaIndexTx 在编辑替换媒体后重建索引行。
+// replaceMessageBoxMediaIndexTx rebuilds the index rows after an edit replaces the media.
 func replaceMessageBoxMediaIndexTx(ctx context.Context, tx pgx.Tx, ownerUserID, peerID int64, boxID, date int, media *domain.MessageMedia, entities []domain.MessageEntity) error {
 	if err := deleteMessageBoxMediaIndexTx(ctx, tx, ownerUserID, boxID); err != nil {
 		return err

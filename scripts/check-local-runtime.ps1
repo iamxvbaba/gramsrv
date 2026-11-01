@@ -46,7 +46,7 @@ $ReadyLogPatterns = @(
     "*telesrv core role ready*",
     "*telesrv egress ready*",
     "*telesrv-sfu started*",
-    "*telesrv 服务就绪*"
+    "*telesrv server ready*"
 )
 
 function Write-Step([string]$Message) {

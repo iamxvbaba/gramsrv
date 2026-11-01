@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestSignUpPremiumGrant 验证新注册账号默认赠送 3 个月会员（WithPremiumGrant），
-// 以及 0 = 关闭赠送分支。
+// TestSignUpPremiumGrant verifies that newly registered accounts are granted 3 months of Premium by
+// default (WithPremiumGrant), and that 0 = the grant-disabled branch.
 func TestSignUpPremiumGrant(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345", WithPremiumGrant(3))

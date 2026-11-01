@@ -163,16 +163,17 @@ func TestCachedReadModelVersionStoreWaitsOverlappingBatchKeys(t *testing.T) {
 	}
 }
 
-// TestCachedReadModelVersionStoreEpochGuardRejectsStaleWriteback 证明 epoch 守卫堵住了
-// lost-update：一次锁外 DB load 期间到达的 NOTIFY(写入新 hash)不得被 load 返回的旧 hash 覆盖。
-// 这是 4 个 hash-only 消费缓存(private/channel media counts、participants、active ids)正确性的根。
+// TestCachedReadModelVersionStoreEpochGuardRejectsStaleWriteback proves the epoch guard closes
+// a lost-update: a NOTIFY (writing a new hash) that arrives during an out-of-lock DB load must
+// not be overwritten by the stale hash the load returns. This is the root of correctness for the
+// 4 hash-only consumer caches (private/channel media counts, participants, active ids).
 func TestCachedReadModelVersionStoreEpochGuardRejectsStaleWriteback(t *testing.T) {
 	ctx := context.Background()
 	key := ReadModelKey{Model: "private_media_counts", OwnerUserID: 100, PeerType: domain.PeerTypeUser, PeerID: 100}
 	base := &blockingReadModelVersionStore{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
-		hashes:  map[ReadModelKey]int64{key: 11}, // DB 此刻仍是旧 hash 11
+		hashes:  map[ReadModelKey]int64{key: 11}, // DB is still the stale hash 11 at this moment
 	}
 	cache := NewCachedReadModelVersionStore(base, time.Hour, 100)
 
@@ -187,11 +188,11 @@ func TestCachedReadModelVersionStoreEpochGuardRejectsStaleWriteback(t *testing.T
 		resultCh <- rows
 	}()
 
-	// 等到 load 已 claim inflight 并阻塞在 base.ReadModelHashes 内。
+	// Wait until load has claimed the inflight and is blocked inside base.ReadModelHashes.
 	<-base.started
-	// 模拟 NOTIFY 在 load 期间送来权威新 hash 99（写入并自增 epoch）。
+	// Simulate NOTIFY delivering an authoritative new hash 99 during load (write and bump epoch).
 	cache.UpdateReadModelHash(key, 99)
-	// 放行 load：它会返回旧 hash 11；epoch 守卫必须拒绝用 11 覆盖 99。
+	// Release load: it returns the stale hash 11; the epoch guard must refuse to overwrite 99 with 11.
 	close(base.release)
 
 	select {
@@ -205,7 +206,7 @@ func TestCachedReadModelVersionStoreEpochGuardRejectsStaleWriteback(t *testing.T
 		t.Fatal("timeout waiting for in-flight reader")
 	}
 
-	// 后续读仍须是 99，且不再打 base —— 证明缓存没被旧值污染、也没被错误驱逐。
+	// Subsequent reads must still be 99 and no longer hit base -- proving the cache was neither polluted by the stale value nor wrongly evicted.
 	callsBefore := base.calls.Load()
 	rows, err := cache.ReadModelHashes(ctx, []ReadModelKey{key})
 	if err != nil {

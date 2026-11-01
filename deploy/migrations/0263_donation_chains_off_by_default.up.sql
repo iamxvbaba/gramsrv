@@ -1,5 +1,6 @@
--- v2 编号 0263；移植自 main 0239_donation_chains_off_by_default（main 10d011c1，B10），见 docs/main-v2-sync.md。
--- v2 的 0255 已把 Ganache 种成关闭；本迁移再关闭仍带占位端点的 Sepolia，并保留运维已配置的链。
+-- v2 number 0263; ported from main 0239_donation_chains_off_by_default (main 10d011c1, B10), see docs/main-v2-sync.md.
+-- v2's 0255 already seeds Ganache as disabled; this migration also disables Sepolia while it still has the
+-- placeholder endpoint, and keeps any chain an operator has configured.
 -- Crypto donations: no chain is watchable out of the box.
 --
 -- The seed migration shipped ganache (http://127.0.0.1:7545) and sepolia

@@ -80,9 +80,10 @@ func privatePinnedIDs(t *testing.T, store *memory.MessageStore, ownerID, peerID 
 	return ids
 }
 
-// TestMessagesUpdatePinnedMessagePrivateSharedPin 验证私聊共享置顶全链路：
-// 双侧 box 翻转、updatePinnedMessages 账号 pts 事件、messageActionPinMessage
-// 服务消息（reply_to 指向被置顶消息）、filterPinned 搜索与 userFull 发现。
+// TestMessagesUpdatePinnedMessagePrivateSharedPin verifies the full private-chat
+// shared-pin flow: both-side box flips, the updatePinnedMessages account pts
+// event, the messageActionPinMessage service message (reply_to pointing at the
+// pinned message), filterPinned search and userFull discovery.
 func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 	ctx := context.Background()
 	r, messageStore, userStore := newPinTestRouter(t)
@@ -107,7 +108,7 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 	}
 	bobBoxID := bobList.Messages[0].ID
 
-	// 共享置顶（未设 pm_oneside = 官方"同时为对方置顶"勾选形态）。
+	// Shared pin (pm_oneside unset = official "also pin for the other party" checkbox form).
 	pinRes, err := r.onMessagesUpdatePinnedMessage(WithUserID(ctx, alice.ID), &tg.MessagesUpdatePinnedMessageRequest{
 		Peer: &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		ID:   aliceMsg.ID,
@@ -120,7 +121,7 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 		t.Fatalf("pin update = %+v, want pinned with account pts", pinnedUpdate)
 	}
 	if len(pinnedUpdate.Messages) != 1 || pinnedUpdate.Messages[0] != aliceMsg.ID {
-		t.Fatalf("pin update messages = %v, want [%d] (alice 视角 box id)", pinnedUpdate.Messages, aliceMsg.ID)
+		t.Fatalf("pin update messages = %v, want [%d] (alice-view box id)", pinnedUpdate.Messages, aliceMsg.ID)
 	}
 	if peer, ok := pinnedUpdate.Peer.(*tg.PeerUser); !ok || peer.UserID != bob.ID {
 		t.Fatalf("pin update peer = %+v, want bob", pinnedUpdate.Peer)
@@ -134,18 +135,18 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 	}
 	reply, ok := svc.GetReplyTo()
 	if !ok {
-		t.Fatalf("pin service message lacks reply_to (客户端凭此渲染置顶预览)")
+		t.Fatalf("pin service message lacks reply_to (clients render the pin preview from it)")
 	}
 	if header, ok := reply.(*tg.MessageReplyHeader); !ok || header.ReplyToMsgID != aliceMsg.ID {
 		t.Fatalf("service reply_to = %+v, want alice box id %d", reply, aliceMsg.ID)
 	}
 
-	// 双侧置顶状态 + 对端服务消息（含对端视角 reply_to 翻译）。
+	// Both-side pin state + the peer's service message (including peer-view reply_to translation).
 	if ids := privatePinnedIDs(t, messageStore, alice.ID, bob.ID); len(ids) != 1 || ids[0] != aliceMsg.ID {
 		t.Fatalf("alice pinned = %v, want [%d]", ids, aliceMsg.ID)
 	}
 	if ids := privatePinnedIDs(t, messageStore, bob.ID, alice.ID); len(ids) != 1 || ids[0] != bobBoxID {
-		t.Fatalf("bob pinned = %v, want [%d] (bob 视角 box id)", ids, bobBoxID)
+		t.Fatalf("bob pinned = %v, want [%d] (bob-view box id)", ids, bobBoxID)
 	}
 	bobAfter, _ := messageStore.ListByUser(ctx, bob.ID, domain.MessageFilter{
 		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}, Limit: 10,
@@ -164,7 +165,7 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 		t.Fatalf("bob history lacks pin service message: %+v", bobAfter.Messages)
 	}
 
-	// 幂等：重复 pin 返回空 updates，不再生成服务消息。
+	// Idempotent: a repeated pin returns empty updates and generates no service message.
 	repeat, err := r.onMessagesUpdatePinnedMessage(WithUserID(ctx, alice.ID), &tg.MessagesUpdatePinnedMessageRequest{
 		Peer: &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		ID:   aliceMsg.ID,
@@ -176,7 +177,7 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 		t.Fatalf("repeat pin update = %+v, want no-op", update)
 	}
 
-	// 搜索发现链路：filterPinned（bob 视角）带总数与 message.pinned 标志。
+	// Search discovery path: filterPinned (bob view) carries the count and the message.pinned flag.
 	searchReq := &tg.MessagesSearchRequest{
 		Peer:   &tg.InputPeerUser{UserID: alice.ID, AccessHash: alice.AccessHash},
 		Filter: &tg.InputMessagesFilterPinned{},
@@ -198,7 +199,7 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 		t.Fatalf("pinned search msg = id %d pinned %v, want bob box id %d pinned", msg.ID, msg.Pinned, bobBoxID)
 	}
 
-	// userFull 发现链路：pinned_msg_id + can_pin_message。
+	// userFull discovery path: pinned_msg_id + can_pin_message.
 	full, err := r.onUsersGetFullUser(WithUserID(ctx, alice.ID), &tg.InputUser{UserID: bob.ID, AccessHash: bob.AccessHash})
 	if err != nil {
 		t.Fatalf("get full user: %v", err)
@@ -210,7 +211,7 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 		t.Fatalf("userFull can_pin_message = false, want true")
 	}
 
-	// unpin：双侧清除，事件 pinned=false。
+	// unpin: cleared on both sides, event pinned=false.
 	unpinReq := &tg.MessagesUpdatePinnedMessageRequest{
 		Peer: &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		ID:   aliceMsg.ID,
@@ -231,12 +232,12 @@ func TestMessagesUpdatePinnedMessagePrivateSharedPin(t *testing.T) {
 		t.Fatalf("alice pinned after unpin = %v, want empty", ids)
 	}
 	if ids := privatePinnedIDs(t, messageStore, bob.ID, alice.ID); len(ids) != 0 {
-		t.Fatalf("bob pinned after unpin = %v, want empty (共享置顶 unpin 双侧传播)", ids)
+		t.Fatalf("bob pinned after unpin = %v, want empty (shared-pin unpin propagates to both sides)", ids)
 	}
 }
 
-// TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll 验证 pm_oneside
-// 单侧置顶（不传播、无服务消息）与 unpinAllMessages 清扫。
+// TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll verifies pm_oneside
+// one-sided pin (no propagation, no service message) and unpinAllMessages cleanup.
 func TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll(t *testing.T) {
 	ctx := context.Background()
 	r, messageStore, userStore := newPinTestRouter(t)
@@ -256,7 +257,7 @@ func TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll(t *testing.T) {
 		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}, Limit: 10,
 	})
 
-	// pm_oneside = 官方私聊置顶框默认形态（未勾选"同时为对方置顶"）。
+	// pm_oneside = the official private-chat pin dialog's default form ("also pin for the other party" unchecked).
 	onesideReq := &tg.MessagesUpdatePinnedMessageRequest{
 		Peer: &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		ID:   aliceMsg.ID,
@@ -276,7 +277,7 @@ func TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll(t *testing.T) {
 		t.Fatalf("alice oneside pinned = %v, want 1", ids)
 	}
 	if ids := privatePinnedIDs(t, messageStore, bob.ID, alice.ID); len(ids) != 0 {
-		t.Fatalf("bob pinned after oneside = %v, want empty (单侧不传播)", ids)
+		t.Fatalf("bob pinned after oneside = %v, want empty (one-sided does not propagate)", ids)
 	}
 	bobAfter, _ := messageStore.ListByUser(ctx, bob.ID, domain.MessageFilter{
 		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}, Limit: 10,
@@ -285,8 +286,9 @@ func TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll(t *testing.T) {
 		t.Fatalf("bob history grew %d -> %d after oneside pin, want unchanged", len(bobBefore.Messages), len(bobAfter.Messages))
 	}
 
-	// 单侧→共享升级：同一消息再发不带 pm_oneside 的 pin，必须向对端
-	// 传播并生成服务消息（own 侧已置顶不构成整体 no-op）。
+	// One-sided -> shared upgrade: re-sending a pin for the same message without
+	// pm_oneside must propagate to the peer and generate a service message (the
+	// own side already being pinned does not make the whole operation a no-op).
 	upgradeRes, err := r.onMessagesUpdatePinnedMessage(WithUserID(ctx, alice.ID), &tg.MessagesUpdatePinnedMessageRequest{
 		Peer: &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		ID:   aliceMsg.ID,
@@ -301,7 +303,7 @@ func TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll(t *testing.T) {
 		t.Fatalf("upgrade pin lacks service message, want messageActionPinMessage")
 	}
 
-	// 再追加一条共享置顶，然后 unpinAll 一次清掉两条。
+	// Add a second shared pin, then clear both at once with unpinAll.
 	sent2, err := r.onMessagesSendMessage(WithUserID(ctx, alice.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		Message:  "shared target",
@@ -337,12 +339,12 @@ func TestMessagesUpdatePinnedMessagePrivateOnesideAndUnpinAll(t *testing.T) {
 		t.Fatalf("alice pinned after unpinAll = %v, want empty", ids)
 	}
 	if ids := privatePinnedIDs(t, messageStore, bob.ID, alice.ID); len(ids) != 0 {
-		t.Fatalf("bob pinned after unpinAll = %v, want empty (共享置顶同步清除)", ids)
+		t.Fatalf("bob pinned after unpinAll = %v, want empty (shared pins cleared in sync)", ids)
 	}
 }
 
-// TestMessagesUpdatePinnedMessageSavedMessagesAndServiceGuard 验证 Saved
-// Messages 置顶（无服务消息）与服务消息禁止置顶。
+// TestMessagesUpdatePinnedMessageSavedMessagesAndServiceGuard verifies pinning in
+// Saved Messages (no service message) and that pinning a service message is forbidden.
 func TestMessagesUpdatePinnedMessageSavedMessagesAndServiceGuard(t *testing.T) {
 	ctx := context.Background()
 	r, messageStore, userStore := newPinTestRouter(t)
@@ -369,7 +371,7 @@ func TestMessagesUpdatePinnedMessageSavedMessagesAndServiceGuard(t *testing.T) {
 		t.Fatalf("saved pin update = %+v, want pinned", update)
 	}
 	if findServiceMessageUpdate(t, pinRes) != nil {
-		t.Fatalf("saved messages pin generated service message, want none (无人可通知)")
+		t.Fatalf("saved messages pin generated service message, want none (no one to notify)")
 	}
 	list, _ := messageStore.ListByUser(ctx, alice.ID, domain.MessageFilter{
 		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: alice.ID}, Limit: 10,
@@ -378,7 +380,7 @@ func TestMessagesUpdatePinnedMessageSavedMessagesAndServiceGuard(t *testing.T) {
 		t.Fatalf("saved history = %+v, want single pinned message without service message", list.Messages)
 	}
 
-	// 服务消息不可置顶：先用共享置顶在双人聊天里生成一条服务消息再试。
+	// A service message cannot be pinned: first generate one in a two-person chat via a shared pin, then try.
 	bob, _ := userStore.Create(ctx, domain.User{AccessHash: 76, Phone: "15550009206", FirstName: "Bob"})
 	sent2, err := r.onMessagesSendMessage(WithUserID(ctx, alice.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},

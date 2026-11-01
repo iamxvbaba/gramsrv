@@ -86,15 +86,17 @@ func ChatThemes(hash int64) tg.AccountThemesClass {
 	}
 }
 
-// chatThemeList 用官方外观 catalog(appearancefetch 导出)的聊天主题。
+// chatThemeList uses the chat themes from the official appearance catalog (exported by appearancefetch).
 func chatThemeList() []tg.Theme {
 	return catalogChatThemes(appearance.Default().ChatThemes)
 }
 
-// catalogChatThemes 把官方聊天主题转成 tg.Theme。官方每个主题只带 classic+tinted 两组
-// settings,而 DrKLO 选择器丢弃 base-theme 设置 <4 的主题
-// (MediaDataController.generateEmojiPreviewThemes),故扩展到 telesrv 宣告的 5 个 base:
-// 浅色 base(classic/day/arctic)复用官方浅色设置,深色 base(tinted/night)复用官方深色设置。
+// catalogChatThemes converts the official chat themes into tg.Theme. Each official theme
+// only ships two settings groups, classic+tinted, while DrKLO's picker drops themes with
+// fewer than 4 base-theme settings (MediaDataController.generateEmojiPreviewThemes), so
+// this expands them to the 5 bases declared by telesrv: the light bases (classic/day/arctic)
+// reuse the official light settings and the dark bases (tinted/night) reuse the official
+// dark settings.
 func catalogChatThemes(cts []appearance.ChatTheme) []tg.Theme {
 	out := make([]tg.Theme, 0, len(cts))
 	for i, ct := range cts {
@@ -175,8 +177,9 @@ func DefaultThemes(hash int64) tg.AccountThemesClass {
 	}
 }
 
-// DefaultThemeList 返回内置默认主题切片(全标 is_default=true)。account.getThemes
-// 把它与用户自定义主题合并(rpc 层),故单独暴露列表。
+// DefaultThemeList returns the built-in default theme slice (all marked is_default=true).
+// account.getThemes merges it with user-defined themes (at the rpc layer), so the list is
+// exposed separately.
 func DefaultThemeList() []tg.Theme {
 	themes := chatThemeList()
 	for i := range themes {
@@ -346,7 +349,7 @@ func availableReaction(reaction defaultReaction, index int) tg.AvailableReaction
 	}
 }
 
-// Stickers 返回空的全量 messages.stickers。禁止回 stickersNotModified：DrKLO 对
+// StickerSet returns an empty full messages.stickers. Returning stickersNotModified is forbidden: DrKLO's
 func StickerSet(req *tg.MessagesGetStickerSetRequest) tg.MessagesStickerSetClass {
 	if req != nil && req.Hash == emptyStickerSetHash {
 		return &tg.MessagesStickerSetNotModified{}
@@ -388,9 +391,11 @@ func StickerSet(req *tg.MessagesGetStickerSetRequest) tg.MessagesStickerSetClass
 	}
 }
 
-// EmojiGroups 返回 emoji 分类目录(客户端 emoji 面板顶部的主题快捷标签)。优先用 catalog
-// 固化的官方分组,未 seed 时回 NotModified(客户端保留本地/无分组)。icon_emoji_id 指向
-// custom-emoji 文档,本地缺该文档时分类图标回退占位,不影响分组与按词搜索。
+// EmojiGroups returns the emoji category catalog (the theme shortcut tabs at the top of
+// the client's emoji panel). It prefers the official groups fixed in the catalog, returning
+// NotModified when not seeded (the client keeps its local set / no groups). icon_emoji_id
+// points at a custom-emoji document; when that document is missing locally the category
+// icon falls back to a placeholder, without affecting the groups or keyword search.
 func EmojiGroups(hash int) tg.MessagesEmojiGroupsClass {
 	groups, h := catalog.EmojiGroups()
 	if len(groups) == 0 || hash == h {

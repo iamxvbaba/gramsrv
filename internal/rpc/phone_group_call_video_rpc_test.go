@@ -11,8 +11,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// groupCallVideoJoinParams 构造带视频 ssrc-groups 的上行 join JSON
-// （ssrc/sources 全部按 int32 位重解释写出，与 tgcalls serialize 一致）。
+// groupCallVideoJoinParams builds an uplink join JSON with video ssrc-groups (ssrc/sources are all
+// written as bit-reinterpreted int32, consistent with tgcalls serialize).
 func groupCallVideoJoinParams(t *testing.T, audioSSRC int32, groups []map[string]any) tg.DataJSON {
 	t.Helper()
 	payload := map[string]any{
@@ -31,7 +31,7 @@ func groupCallVideoJoinParams(t *testing.T, audioSSRC int32, groups []map[string
 	return tg.DataJSON{Data: string(data)}
 }
 
-// simulcastGroups 是摄像头 3 层标准布局：SIM[s,s+2,s+4] + 每层 FID 对。
+// simulcastGroups is the standard 3-layer camera layout: SIM[s,s+2,s+4] + an FID pair per layer.
 func simulcastGroups(base int64) []map[string]any {
 	return []map[string]any{
 		{"semantics": "SIM", "sources": []int64{base, base + 2, base + 4}},
@@ -62,7 +62,8 @@ func connectionVideoEndpoint(t *testing.T, conn *tg.UpdateGroupCallConnection) s
 	for _, h := range params.Video.RtpHdrexts {
 		ids[h.ID] = true
 	}
-	// 客户端硬编码的扩展 id 表：1=audio-level、2=abs-send-time、3=twcc、13=video-orientation。
+	// Client-hard-coded extension id table: 1=audio-level, 2=abs-send-time, 3=twcc,
+	// 13=video-orientation.
 	for _, want := range []int{1, 2, 3, 13} {
 		if !ids[want] {
 			t.Fatalf("rtp-hdrexts missing id=%d: %v", want, params.Video.RtpHdrexts)
@@ -92,8 +93,9 @@ func TestGroupCallVideoLifecycle(t *testing.T) {
 		t.Fatalf("createGroupCall: %v", err)
 	}
 	call := findUpdate[*tg.UpdateGroupCall](t, createRes).Call.(*tg.GroupCall)
-	// ⚠ unmuted_video_limit 是非可选 int：0 会让两端视频/屏幕共享闸门
-	//（activeVideoSendersCount >= limit）恒真，按钮直接报「不能共享」。
+	// ⚠ unmuted_video_limit is a non-optional int: 0 would make the video/screen-share gate on both
+	// platforms (activeVideoSendersCount >= limit) always true, and the button would report "cannot
+	// share" outright.
 	if call.UnmutedVideoLimit <= 0 || !call.CanStartVideo {
 		t.Fatalf("call video gates = limit %d can_start_video %v, want positive limit + can_start_video",
 			call.UnmutedVideoLimit, call.CanStartVideo)
@@ -101,7 +103,7 @@ func TestGroupCallVideoLifecycle(t *testing.T) {
 	inputCall := tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash}
 	f.sessions.reset()
 
-	// join：带 simulcast 组 + video_stopped（摄像头未开）。
+	// join: carries simulcast groups + video_stopped (camera off).
 	audioSSRC := int32(-100200300)
 	videoBase := int64(audioSSRC) + 1
 	joinReq := &tg.PhoneJoinGroupCallRequest{
@@ -124,15 +126,15 @@ func TestGroupCallVideoLifecycle(t *testing.T) {
 	}
 	row := participantRow(t, joinRes)
 	if !row.VideoJoined {
-		t.Fatalf("self row must carry video_joined（缺它 TDesktop 强制关本端摄像头）")
+		t.Fatalf("self row must carry video_joined (without it TDesktop forces the local camera off)")
 	}
 	if _, has := row.GetVideo(); has {
 		t.Fatalf("video_stopped join must not expose video field")
 	}
 	f.sessions.reset()
 
-	// 开摄像头：editGroupCallParticipant(video_stopped=false) → video 字段出现，
-	// endpoint 与 join 响应一致、source_groups 原样回放。
+	// Camera on: editGroupCallParticipant(video_stopped=false) -> the video field appears, the
+	// endpoint matches the join response, and source_groups are replayed verbatim.
 	editReq := &tg.PhoneEditGroupCallParticipantRequest{
 		Call:        &inputCall,
 		Participant: &tg.InputPeerSelf{},
@@ -148,23 +150,23 @@ func TestGroupCallVideoLifecycle(t *testing.T) {
 		t.Fatalf("video field missing after camera on")
 	}
 	if video.Endpoint != wantEndpoint {
-		t.Fatalf("participant video.endpoint = %q, want %q（必须与 join 响应逐字节一致）", video.Endpoint, wantEndpoint)
+		t.Fatalf("participant video.endpoint = %q, want %q (must be byte-for-byte identical to the join response)", video.Endpoint, wantEndpoint)
 	}
 	if len(video.SourceGroups) != 4 || video.SourceGroups[0].Semantics != "SIM" {
-		t.Fatalf("source_groups = %+v, want SIM+3×FID 原样回放", video.SourceGroups)
+		t.Fatalf("source_groups = %+v, want SIM+3×FID replayed verbatim", video.SourceGroups)
 	}
 	if got := video.SourceGroups[0].Sources[0]; int64(int32(got)) != int64(int32(videoBase)) {
 		t.Fatalf("SIM[0] = %d, want %d", got, videoBase)
 	}
 
-	// 幂等重放（video 维度绝不报错）。
+	// Idempotent replay (the video dimension never errors).
 	editAgain := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: &tg.InputPeerSelf{}}
 	editAgain.SetVideoStopped(false)
 	if _, err := f.router.onPhoneEditGroupCallParticipant(ownerCtx, editAgain); err != nil {
-		t.Fatalf("redundant video edit must succeed, got %v（错误会触发客户端 rejoin 风暴）", err)
+		t.Fatalf("redundant video edit must succeed, got %v (an error would trigger a client rejoin storm)", err)
 	}
 
-	// 暂停：字段保留 + paused。
+	// Pause: keep the field + paused.
 	pauseReq := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: &tg.InputPeerSelf{}}
 	pauseReq.SetVideoPaused(true)
 	pauseRes, err := f.router.onPhoneEditGroupCallParticipant(ownerCtx, pauseReq)
@@ -177,7 +179,7 @@ func TestGroupCallVideoLifecycle(t *testing.T) {
 		t.Fatalf("paused video = %+v has=%v, want paused field kept", video, has)
 	}
 
-	// 关摄像头：字段消失。
+	// Camera off: the field disappears.
 	stopReq := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: &tg.InputPeerSelf{}}
 	stopReq.SetVideoStopped(true)
 	stopRes, err := f.router.onPhoneEditGroupCallParticipant(ownerCtx, stopReq)
@@ -205,7 +207,7 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 	call := findUpdate[*tg.UpdateGroupCall](t, createRes).Call.(*tg.GroupCall)
 	inputCall := tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash}
 
-	// 未入会先共享：GROUPCALL_JOIN_MISSING。
+	// Sharing before joining: GROUPCALL_JOIN_MISSING.
 	if _, err := f.router.onPhoneJoinGroupCallPresentation(memberCtx, &tg.PhoneJoinGroupCallPresentationRequest{
 		Call:   &inputCall,
 		Params: groupCallVideoJoinParams(t, 7777, simulcastGroups(7778)),
@@ -213,7 +215,7 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 		t.Fatalf("presentation before main join must fail")
 	}
 
-	// 主 join。
+	// Main join.
 	const mainSSRC = int32(424242)
 	if _, err := f.router.onPhoneJoinGroupCall(memberCtx, &tg.PhoneJoinGroupCallRequest{
 		Call:   &inputCall,
@@ -224,7 +226,7 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 	}
 	f.sessions.reset()
 
-	// 屏幕共享 join：独立 ssrc、2 层布局。
+	// Screen-share join: independent ssrc, 2-layer layout.
 	const screenSSRC = int32(515151)
 	screenGroups := []map[string]any{
 		{"semantics": "SIM", "sources": []int64{int64(screenSSRC) + 1, int64(screenSSRC) + 3}},
@@ -240,7 +242,7 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 	}
 	conn := findUpdate[*tg.UpdateGroupCallConnection](t, presRes)
 	if !conn.Presentation {
-		t.Fatalf("presentation connection must carry presentation flag（否则被主实例误食）")
+		t.Fatalf("presentation connection must carry presentation flag (otherwise the main instance consumes it by mistake)")
 	}
 	wantEndpoint := fmt.Sprintf("presentation-%d", uint32(screenSSRC))
 	if got := connectionVideoEndpoint(t, conn); got != wantEndpoint {
@@ -256,13 +258,13 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 	}
 	audioSource, hasAudio := pres.GetAudioSource()
 	if !hasAudio || audioSource != int(screenSSRC) {
-		t.Fatalf("presentation.audio_source = %d has=%v, want %d（DrKLO 缺它会 4s 循环重建）", audioSource, hasAudio, screenSSRC)
+		t.Fatalf("presentation.audio_source = %d has=%v, want %d (without it DrKLO loops rebuilding every 4s)", audioSource, hasAudio, screenSSRC)
 	}
 	if len(pres.SourceGroups) != 3 {
 		t.Fatalf("presentation source_groups = %+v", pres.SourceGroups)
 	}
 
-	// checkGroupCall 必须把 presentation 的全部 ssrc 认作活跃。
+	// checkGroupCall must treat all of presentation's ssrcs as active.
 	sources := []int{int(mainSSRC), int(screenSSRC), int(screenSSRC) + 1, int(screenSSRC) + 3}
 	alive, err := f.router.onPhoneCheckGroupCall(memberCtx, &tg.PhoneCheckGroupCallRequest{
 		Call:    &inputCall,
@@ -272,10 +274,10 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 		t.Fatalf("checkGroupCall: %v", err)
 	}
 	if len(alive) != len(sources) {
-		t.Fatalf("checkGroupCall alive = %v, want all of %v（缺失会触发屏幕实例循环重建）", alive, sources)
+		t.Fatalf("checkGroupCall alive = %v, want all of %v (a missing one triggers a loop rebuilding the screen instance)", alive, sources)
 	}
 
-	// presentation_paused。
+	// presentation_paused.
 	pauseReq := &tg.PhoneEditGroupCallParticipantRequest{Call: &inputCall, Participant: &tg.InputPeerSelf{}}
 	pauseReq.SetPresentationPaused(true)
 	pauseRes, err := f.router.onPhoneEditGroupCallParticipant(memberCtx, pauseReq)
@@ -288,7 +290,7 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 		t.Fatalf("presentation must be paused")
 	}
 
-	// leaveGroupCallPresentation：字段消失。
+	// leaveGroupCallPresentation: the field disappears.
 	leaveRes, err := f.router.onPhoneLeaveGroupCallPresentation(memberCtx, &inputCall)
 	if err != nil {
 		t.Fatalf("leaveGroupCallPresentation: %v", err)
@@ -297,12 +299,13 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 	if _, has := leaveRow.GetPresentation(); has {
 		t.Fatalf("presentation field must disappear after leave")
 	}
-	// 重复 leave 幂等。
+	// Duplicate leave is idempotent.
 	if _, err := f.router.onPhoneLeaveGroupCallPresentation(memberCtx, &inputCall); err != nil {
 		t.Fatalf("double leave presentation: %v", err)
 	}
 
-	// rejoin 主连接 ⇒ 旧 presentation 作废（客户端会重发 joinGroupCallPresentation）。
+	// Rejoining the main connection => the old presentation is invalidated (the client re-sends
+	// joinGroupCallPresentation).
 	if _, err := f.router.onPhoneJoinGroupCallPresentation(memberCtx, &tg.PhoneJoinGroupCallPresentationRequest{
 		Call:   &inputCall,
 		Params: groupCallVideoJoinParams(t, screenSSRC, screenGroups),
@@ -323,9 +326,10 @@ func TestGroupCallPresentationLifecycle(t *testing.T) {
 	}
 }
 
-// raceLeavePresentationStore 包一层 GroupCallsService，把 UpdateParticipant 强制返回
-// 注入的错误，用来模拟 leaveGroupCallPresentation 读到 presentation 仍在、但写阶段与
-// 并发 leaveGroupCall/discard 撞车的竞态（其它方法照常委派，Participant 仍返回真实行）。
+// raceLeavePresentationStore wraps a GroupCallsService and forces UpdateParticipant to return an
+// injected error, to simulate the race where leaveGroupCallPresentation reads that presentation is
+// still present but the write stage collides with a concurrent leaveGroupCall/discard (other methods
+// delegate as usual, and Participant still returns the real row).
 type raceLeavePresentationStore struct {
 	GroupCallsService
 	updateErr error
@@ -338,10 +342,12 @@ func (s *raceLeavePresentationStore) UpdateParticipant(ctx context.Context, call
 	return s.GroupCallsService.UpdateParticipant(ctx, callID, userID, update)
 }
 
-// TestLeaveGroupCallPresentationIdempotentOnConcurrentLeave 回归：屏幕共享结束与整体离会
-// 同时发生时，leaveGroupCallPresentation 在写阶段撞 ErrGroupCallNotJoined（participant 已被
-// 并发 leave 置 Left，presentation 随主连接离会级联清掉）或 ErrGroupCallDiscarded（主叫同时
-// discard），必须按幂等成功返回而非 GROUPCALL_JOIN_MISSING 400（真双机 16:48 撞到过）。
+// TestLeaveGroupCallPresentationIdempotentOnConcurrentLeave regression: when ending screen sharing
+// and a full leave happen at the same time, leaveGroupCallPresentation collides at the write stage
+// with ErrGroupCallNotJoined (the participant was set Left by the concurrent leave, and presentation
+// is cascade-cleared with the main connection's departure) or ErrGroupCallDiscarded (the caller
+// discards at the same time); it must return an idempotent success rather than GROUPCALL_JOIN_MISSING
+// 400 (hit on real dual devices at 16:48).
 func TestLeaveGroupCallPresentationIdempotentOnConcurrentLeave(t *testing.T) {
 	f := newGroupCallFixture(t)
 	memberCtx := f.userCtx(f.member, 22)
@@ -372,21 +378,23 @@ func TestLeaveGroupCallPresentationIdempotentOnConcurrentLeave(t *testing.T) {
 		t.Fatalf("joinGroupCallPresentation: %v", err)
 	}
 
-	// 注入竞态：Participant() 仍返回带 presentation 的真实行（过早期幂等检查），
-	// UpdateParticipant() 撞错误（模拟并发 leave 已置 Left / 并发 discard）。
+	// Inject the race: Participant() still returns the real row with presentation (passing the early
+	// idempotency check), while UpdateParticipant() hits an error (simulating a concurrent leave that
+	// already set Left / a concurrent discard).
 	race := &raceLeavePresentationStore{GroupCallsService: f.router.deps.GroupCalls}
 	f.router.deps.GroupCalls = race
 
 	for _, injected := range []error{domain.ErrGroupCallNotJoined, domain.ErrGroupCallDiscarded} {
 		race.updateErr = injected
 		if _, err := f.router.onPhoneLeaveGroupCallPresentation(memberCtx, &inputCall); err != nil {
-			t.Fatalf("leaveGroupCallPresentation 撞并发 %v 必须幂等成功，got %v（修复前=GROUPCALL_JOIN_MISSING 400）", injected, err)
+			t.Fatalf("leaveGroupCallPresentation with concurrent %v must succeed idempotently, got %v (before the fix = GROUPCALL_JOIN_MISSING 400)", injected, err)
 		}
 	}
 
-	// 反向保险：非竞态类错误仍须如实抛出（不被幂等吞掉）。
+	// Reverse safety: non-race errors must still be returned faithfully (not swallowed by the
+	// idempotency).
 	race.updateErr = domain.ErrGroupCallInvalid
 	if _, err := f.router.onPhoneLeaveGroupCallPresentation(memberCtx, &inputCall); err == nil {
-		t.Fatalf("非竞态错误必须传播，却被幂等吞掉")
+		t.Fatalf("a non-race error must propagate but was swallowed by the idempotency")
 	}
 }

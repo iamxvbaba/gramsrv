@@ -8,10 +8,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSetMessageReactionsPeerViewpoint 回归：chosen/My 是 per-viewer 字段，
-// SetMessageReactions 返回的双方 owner 副本必须各按自己的视角解析——
-// 修复前统一用发起者视角，对端推送会把发起者的 reaction 标成"对端自己选的"
-// （TDesktop 非 min 更新用 chosen_order 直接覆盖本地 my 状态）。
+// TestSetMessageReactionsPeerViewpoint regresses: chosen/My are per-viewer fields, and the two
+// owner copies returned by SetMessageReactions must each be resolved from their own viewpoint —
+// before the fix the initiator's viewpoint was used uniformly, so the peer's push marked the
+// initiator's reaction as "chosen by the peer itself" (TDesktop non-min updates overwrite the local
+// my state directly with chosen_order).
 func TestSetMessageReactionsPeerViewpoint(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -53,7 +54,7 @@ func TestSetMessageReactionsPeerViewpoint(t *testing.T) {
 		t.Fatal("recipient box id missing")
 	}
 
-	// friend 给 owner 的消息点 👍（用 friend 自己视角的 box id 与 peer）。
+	// friend reacts 👍 to owner's message (using friend's own viewpoint box id and peer).
 	res, err := messages.SetMessageReactions(ctx, domain.SetPrivateMessageReactionsRequest{
 		UserID:    friend.ID,
 		Peer:      domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID},

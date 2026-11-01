@@ -10,13 +10,14 @@ import (
 	"telesrv/deploy"
 )
 
-// knownMigrationGaps 是历史遗留的空号：0123 从来没有存在过。golang-migrate 只保存一个
-// schema_migrations.version，凡是低于它的迁移都不会再被执行，所以新开一个空号等于把
-// 那条迁移永久丢在门外——除这份明示清单以外的任何空号都是事故。
+// knownMigrationGaps are the legacy empty slots: 0123 never existed. golang-migrate stores only
+// a single schema_migrations.version, and any migration below it is never executed again, so
+// opening a new empty slot means permanently locking that migration out -- any empty slot other
+// than the ones in this explicit list is an incident.
 var knownMigrationGaps = map[uint]struct{}{123: {}}
 
-// embeddedMigrationVersions 以 deploy.Migrations 为唯一事实来源，按后缀取出版本号到文
-// 件名的映射，顺手钉住重号。
+// embeddedMigrationVersions uses deploy.Migrations as the single source of truth, builds the
+// version-to-filename mapping by suffix, and pins down duplicate versions while it is at it.
 func embeddedMigrationVersions(t *testing.T, suffix string) map[uint]string {
 	t.Helper()
 
@@ -56,8 +57,9 @@ func embeddedMigrationVersions(t *testing.T, suffix string) map[uint]string {
 	return out
 }
 
-// headMigrationVersion 从嵌入的迁移脚本推导期望版本号。硬编码版本号每加一条迁移
-// 就会失效（本用例曾长期停留在 185），因此以 deploy.Migrations 为唯一事实来源。
+// headMigrationVersion derives the expected version number from the embedded migration scripts.
+// A hard-coded version number breaks with every added migration (this test case long sat at 185),
+// so deploy.Migrations is the single source of truth.
 func headMigrationVersion(t *testing.T) uint {
 	t.Helper()
 
@@ -71,9 +73,11 @@ func headMigrationVersion(t *testing.T) uint {
 	return head
 }
 
-// 只看最大文件名的检查会漏掉真正危险的形态：中间留一个空号，等着以后补。真实部署一
-// 旦跑到后面的版本，补进来的那条就永远低于 schema_migrations.version，既不会执行也不
-// 会报错。所以这里钉的是整条序列——不重号、每条 up 都有 down、逐一递增。
+// A check that only looks at the largest file name would miss the genuinely dangerous shape: an
+// empty slot left in the middle, waiting to be filled in later. Once a real deployment has reached
+// a later version, the migration filled in afterward is forever below schema_migrations.version;
+// it will neither execute nor error. So this pins the entire sequence: no duplicate versions,
+// every up has a down, and they increase one by one.
 func TestEmbeddedMigrationsAreContiguousAndReversible(t *testing.T) {
 	ups := embeddedMigrationVersions(t, ".up.sql")
 	downs := embeddedMigrationVersions(t, ".down.sql")

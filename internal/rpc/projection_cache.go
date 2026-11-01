@@ -6,13 +6,19 @@ import (
 	"telesrv/internal/readmodelcache"
 )
 
-// projectionCache 是 RPC 层 per-viewer TTL 投影缓存的统一核心,基于 readmodelcache.Cache。
-// 4 个结构同形的投影缓存(userFull/peerSettings/channelFull/channelFullBot)收敛到它,
-// 仅在键类型、值类型、clone、失效维度上不同;TTL 与时钟、LRU 单条驱逐、epoch 守卫均由原语承载。
+// projectionCache is the shared core of the RPC layer's per-viewer TTL projection
+// caches, built on readmodelcache.Cache. Four structurally identical projection
+// caches (userFull/peerSettings/channelFull/channelFullBot) converge onto it,
+// differing only in key type, value type, clone and invalidation dimension; TTL
+// and clock, LRU single-entry eviction and the epoch guard are all carried by the
+// primitive.
 //
-// 这些投影走「外部构建再写回」模式(LoadEpoch → 在 handler 内构建 → StoreIfEpoch),而非
-// GetOrLoad:投影需要 ctx、多次往返与富化,无法塞进单个 load 回调。epoch 守卫确保构建期间
-// 到达的失效不会被 pre-invalidation 快照覆盖(避免陈旧 per-viewer 投影留满一个 TTL)。
+// These projections use the "build externally, then write back" pattern
+// (LoadEpoch -> build inside the handler -> StoreIfEpoch) rather than GetOrLoad:
+// projections need ctx, multiple round-trips and enrichment, and cannot be packed
+// into a single load callback. The epoch guard ensures an invalidation that arrives
+// during a build is not overwritten by a pre-invalidation snapshot (avoiding a
+// stale per-viewer projection lingering for a full TTL).
 type projectionCache[K comparable, V any] struct {
 	cache *readmodelcache.Cache[K, V]
 }
@@ -28,7 +34,8 @@ func newProjectionCache[K comparable, V any](max int, ttl time.Duration, clock f
 	}
 }
 
-// Lookup 返回缓存项(TTL 过期视为 miss);clone 由原语在返回边界完成。
+// lookup returns the cache entry (TTL expiry counts as a miss); clone is done by
+// the primitive at the return boundary.
 func (c *projectionCache[K, V]) lookup(key K) (V, bool) {
 	if c == nil {
 		var zero V
@@ -37,7 +44,8 @@ func (c *projectionCache[K, V]) lookup(key K) (V, bool) {
 	return c.cache.Peek(key)
 }
 
-// storeIfEpoch 仅在 epoch 自 loadEpoch 以来未变时写回外部构建的值。
+// storeIfEpoch writes back an externally built value only if the epoch has not
+// changed since loadEpoch.
 func (c *projectionCache[K, V]) storeIfEpoch(key K, v V, loadEpoch uint64) {
 	if c == nil {
 		return
@@ -45,7 +53,8 @@ func (c *projectionCache[K, V]) storeIfEpoch(key K, v V, loadEpoch uint64) {
 	c.cache.StoreIfEpoch(key, v, loadEpoch)
 }
 
-// LoadEpoch 在构建前快照 epoch,与 storeIfEpoch 配对实现外部构建路径的 epoch 守卫。
+// LoadEpoch snapshots the epoch before building; paired with storeIfEpoch it
+// implements the epoch guard for the external-build path.
 func (c *projectionCache[K, V]) LoadEpoch() uint64 {
 	if c == nil {
 		return 0
@@ -67,7 +76,7 @@ func (c *projectionCache[K, V]) deleteWhere(pred func(K) bool) {
 	c.cache.InvalidateWhere(pred)
 }
 
-// Clear 清空缓存并自增 epoch(listener 重连兜底)。
+// Clear empties the cache and bumps the epoch (fallback for a listener reconnect).
 func (c *projectionCache[K, V]) Clear() {
 	if c == nil {
 		return

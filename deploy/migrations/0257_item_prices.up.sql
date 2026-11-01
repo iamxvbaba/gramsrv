@@ -1,4 +1,4 @@
--- v2 编号 0257；移植自 main 0230_item_prices（main 3a84827a，B7g），见 docs/main-v2-sync.md。
+-- v2 number 0257; ported from main 0230_item_prices (main 3a84827a, B7g), see docs/main-v2-sync.md.
 -- Per-item price overrides for admin-configurable catalog pricing.
 -- Falls back to catalog defaults when no override exists.
 

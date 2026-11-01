@@ -9,14 +9,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// registry 是单测专用的进程内 active call backing store。生产 Core 必须使用
-// RedisActiveCallStore，确保 request/accept/confirm/discard/signaling 在多 Core 间
-// 共享同一份短命状态。
+// registry is an in-process active call backing store for unit tests only. Production Core must
+// use RedisActiveCallStore so request/accept/confirm/discard/signaling share one short-lived state
+// across Cores.
 type registry struct {
 	mu       sync.Mutex
 	byID     map[int64]*entry
-	byRandom map[randomKey]int64 // (callerID, randomID) → callID，吸收客户端 RPC 重试
-	active   map[int64]int       // userID → 非终态通话数（并发上限依据）
+	byRandom map[randomKey]int64 // (callerID, randomID) → callID, absorbing client RPC retries
+	active   map[int64]int       // userID → number of non-terminal calls (basis for the concurrency cap)
 }
 
 type randomKey struct {
@@ -24,9 +24,10 @@ type randomKey struct {
 	randomID int64
 }
 
-// entry 持有一通通话；call 字段由 registry.mu 保护。
-// sigMu 单独串行化该通话的信令转发（锁内做推送入队），与状态锁分离，
-// 保证 discard 等状态迁移不被对端出站队列堵塞拖住。
+// entry holds one call; the call field is protected by registry.mu. sigMu separately
+// serializes that call's signaling forwarding (enqueueing pushes inside the lock), decoupled
+// from the state lock, so state transitions such as discard are not stalled by a peer's
+// outbound queue congestion.
 type entry struct {
 	call domain.PhoneCall
 
@@ -43,11 +44,12 @@ func newRegistry() *registry {
 	}
 }
 
-// sweepTombstonesLocked 只回收超过保留期的终态 tombstone（调用方持有 r.mu）。
+// sweepTombstonesLocked reclaims only terminal tombstones past their retention (the caller holds r.mu).
 //
-// 非终态绝不能在 GC 中按 Date 直接删除：Requested/Ringing/Accepted 的超时必须由
-// Service.ExpireDue 完成状态迁移、双端推送和历史落库；Confirmed 没有服务端时长
-// 上限，必须一直可供 signaling/discard 寻址，直到显式挂断。
+// Non-terminal states must never be deleted by Date in GC: Requested/Ringing/Accepted timeouts
+// must go through Service.ExpireDue for the state transition, pushes to both sides and history;
+// Confirmed has no server-side duration limit and must stay addressable for signaling/discard
+// until an explicit hang-up.
 func (r *registry) sweepTombstonesLocked(nowUnix, tombstoneTTLSec int64) {
 	for id, e := range r.byID {
 		if e.call.Terminal() && nowUnix-int64(e.call.DiscardedAt) > tombstoneTTLSec {
@@ -59,8 +61,9 @@ func (r *registry) sweepTombstonesLocked(nowUnix, tombstoneTTLSec int64) {
 func (r *registry) removeLocked(id int64, e *entry, wasActive bool) {
 	delete(r.byID, id)
 	key := randomKey{callerID: e.call.AdminID, randomID: e.call.RandomID}
-	// 终态后允许客户端复用 random_id 创建新通话；旧 tombstone 到期时不能
-	// 把已指向新 call 的幂等索引一并删掉。
+	// After a terminal state the client may reuse random_id to create a new call; when the
+	// old tombstone expires, the idempotency index already pointing to the new call must not
+	// be deleted along with it.
 	if indexedID, ok := r.byRandom[key]; ok && indexedID == id {
 		delete(r.byRandom, key)
 	}
@@ -77,7 +80,7 @@ func (r *registry) decActiveLocked(userID int64) {
 	}
 }
 
-// markDiscardedLocked 把非终态 entry 迁入终态并更新并发计数。
+// markDiscardedLocked moves a non-terminal entry to a terminal state and updates the concurrency count.
 func (r *registry) markDiscardedLocked(e *entry, reason domain.PhoneCallDiscardReason, duration, nowUnix int) {
 	r.markDiscardedWithSlugLocked(e, reason, "", duration, nowUnix)
 }
@@ -94,7 +97,7 @@ func (r *registry) markDiscardedWithSlugLocked(e *entry, reason domain.PhoneCall
 	r.decActiveLocked(e.call.AdminID)
 }
 
-// newID 生成 registry 内唯一的正 int64（调用方持有 r.mu）。
+// newID generates a unique positive int64 within the registry (the caller holds r.mu).
 func (r *registry) newIDLocked() (int64, error) {
 	for i := 0; i < 32; i++ {
 		id, err := randomPositiveInt64()

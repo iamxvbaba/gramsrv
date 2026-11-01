@@ -777,9 +777,11 @@ func (r *Router) forwardAuthorDisplayName(ctx context.Context, viewerUserID, aut
 	return name
 }
 
-// applyForwardAuthorPrivacy 在首次生成 forward header 时按原作者的
-// forwards 隐私规则降级：不允许链接回账号时只保留展示名 from_name。
-// 已有 header 的再转发沿用原 header，不重新评估。
+// applyForwardAuthorPrivacy downgrades the forward header when it is first
+// generated according to the original author's forwards privacy rule: when
+// linking back to the account is not allowed, only the display name from_name is
+// kept. Re-forwarding an existing header reuses the original header without
+// re-evaluating.
 func (r *Router) applyForwardAuthorPrivacy(ctx context.Context, forwarderUserID int64, forward *domain.MessageForward) {
 	if forward == nil || forward.From.Type != domain.PeerTypeUser || forward.From.ID == 0 || forward.FromName != "" {
 		return

@@ -7,7 +7,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// LocalProvider 是默认开发 provider：不出网、不记录内容，做确定性轻量整理。
+// LocalProvider is the default development provider: no network access, no content logging, and deterministic lightweight cleanup.
 type LocalProvider struct{}
 
 func (LocalProvider) Name() string { return "local" }

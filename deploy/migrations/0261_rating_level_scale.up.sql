@@ -1,4 +1,4 @@
--- v2 编号 0261；移植自 main 0237_rating_level_scale（main c34bc584，B9），见 docs/main-v2-sync.md。
+-- v2 number 0261; ported from main 0237_rating_level_scale (main c34bc584, B9), see docs/main-v2-sync.md.
 -- Retune the local composite rating from a 50-level ladder to a 100-level one.
 --
 -- The score -> level mapping is a server-side policy curve, but account_rating

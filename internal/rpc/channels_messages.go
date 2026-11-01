@@ -205,7 +205,7 @@ func tgChannelSearchPostsMessages(viewerUserID int64, history domain.ChannelHist
 		}
 	}
 	chats := tgChannels(viewerUserID, history.Channels)
-	users := tgUsersForViewer(viewerUserID, history.Users) // viewer 自己的帖子作者须带 self 标志
+	users := tgUsersForViewer(viewerUserID, history.Users) // the viewer's own post author needs the self flag
 	if history.Count > len(messages) {
 		out := &tg.MessagesMessagesSlice{
 			Count:    history.Count,
@@ -295,7 +295,7 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 	result := &tg.MessagesMessages{
 		Messages: messages,
 		Chats:    tgChannels(userID, []domain.Channel{history.Channel}),
-		Users:    r.tgUsersForViewer(userID, history.Users), // viewer 补拉自己的消息（含置顶）须带 self
+		Users:    r.tgUsersForViewer(userID, history.Users), // the viewer re-fetching its own messages (including pinned) needs self
 	}
 	r.applyPeerReadModelsToMessages(ctx, userID, result)
 	r.logChannelGetMessagesTrace(ctx, channelID, trace, history.Messages, result)
@@ -377,10 +377,12 @@ func (r *Router) onChannelsDeleteHistory(ctx context.Context, req *tg.ChannelsDe
 		return r.channelDeleteMessagesUpdates(userID, batch.Channel, batch.Event)
 	}
 	updates := pushBatch(res)
-	// channels.deleteHistory 返回 Updates，TL 层没有 affectedHistory.offset
-	// 续删协议，客户端只发一次请求；超过单批上限的剩余历史必须由服务端
-	// 在本次请求内删完，否则"清空"后旧消息会残留。每批独立事务推进 pts
-	// 并立即推送，中途失败时已删批次保持有效，返回最后成功批次的结果。
+	// channels.deleteHistory returns Updates, and the TL layer has no affectedHistory.offset
+	// continuation protocol, so the client sends only one request; the remaining history beyond
+	// the single-batch cap must be deleted by the server within this request, otherwise old
+	// messages would remain after a "clear". Each batch advances pts in its own transaction and
+	// pushes immediately; on a mid-way failure the already-deleted batches stay effective and the
+	// last successful batch's result is returned.
 	for res.Offset != 0 && ctx.Err() == nil {
 		next, err := r.deps.Channels.DeleteHistory(ctx, userID, domain.DeleteChannelHistoryRequest{
 			UserID:      userID,

@@ -50,13 +50,13 @@ func TestTgUserEmojiStatusHydration(t *testing.T) {
 		t.Fatalf("emoji status until = %d ok=%v", until, ok)
 	}
 
-	// 会员到期后 emoji status 残值不得内联进 user TL。
+	// After Premium expires, a residual emoji status must not be inlined into the user TL.
 	u.PremiumUntil = int(now - 1)
 	if _, ok := tgUser(u).GetEmojiStatus(); ok {
 		t.Fatal("expired premium must not inline emoji_status")
 	}
 
-	// updateUserEmojiStatus 清除语义返回 emojiStatusEmpty。
+	// updateUserEmojiStatus clear semantics return emojiStatusEmpty.
 	if _, ok := tgUserEmojiStatus(u, now).(*tg.EmojiStatusEmpty); !ok {
 		t.Fatalf("tgUserEmojiStatus expired = %#v, want EmojiStatusEmpty", tgUserEmojiStatus(u, now))
 	}

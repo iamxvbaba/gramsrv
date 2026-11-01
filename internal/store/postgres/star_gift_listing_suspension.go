@@ -12,24 +12,21 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// Заморозка аккаунта и маркет подарков связаны напрямую: замороженный продавец
-// не торгует. Его листинги не удаляются, а помечаются suspended — цена и время
-// выставления обязаны пережить цикл заморозки, иначе разморозка уже не смогла бы
-// вернуть подарок на витрину. Все чтения маркета (ListResaleStarGifts,
-// UniqueStarGiftValueInfo, resell_amount уникального подарка, проекции каталога)
-// отфильтровывают suspended, а guard-триггер не даёт замороженному создать
-// листинг.
+// An account freeze and the gift market are directly linked: a frozen seller does not trade. Their
+// listings are not deleted but marked suspended -- the price and listing time must survive the
+// freeze cycle, otherwise unfreezing could no longer return the gift to the storefront. All market
+// reads (ListResaleStarGifts, UniqueStarGiftValueInfo, a unique gift's resell_amount, catalog
+// projections) filter out suspended entries, and a guard trigger prevents a frozen seller from
+// creating a listing.
 
-// syncStarGiftListingsForAccountFreeze переключает витрину замороженного
-// аккаунта и пересчитывает затронутые проекции каталога. Вызывается из той же
-// транзакции, что и запись заморозки, поэтому «аккаунт frozen, но листинг ещё
-// продаётся» не наблюдаемо ни из одного читателя.
+// syncStarGiftListingsForAccountFreeze toggles the storefront of a frozen account and recomputes
+// the affected catalog projections. It is called from the same transaction as the freeze write, so
+// "account frozen but listing still on sale" is not observable by any reader.
 //
-// updated_at намеренно не трогается: сортировка витрины опирается на него, и
-// возвращение к продаже с прежним updated_at восстанавливает исходный порядок
-// выставления. Версионный счётчик листинга, наоборот, инкрементируется — версия
-// входит в id платёжной формы, поэтому покупка по форме, выданной до заморозки,
-// после разморозки не проходит как реплей старой цены.
+// updated_at is deliberately left untouched: the storefront sort relies on it, and returning to
+// sale with the previous updated_at restores the original listing order. The listing's version
+// counter, by contrast, is incremented -- the version is part of the payment form id, so a purchase
+// with a form issued before the freeze does not go through as a replay of the old price after unfreezing.
 func syncStarGiftListingsForAccountFreeze(ctx context.Context, db sqlcgen.DBTX, userID int64, frozen bool) error {
 	if db == nil || userID <= 0 {
 		return nil
@@ -71,11 +68,10 @@ RETURNING u.gift_id`, userID, frozen)
 	})
 }
 
-// rejectFrozenStarGiftSeller закрывает выставление подарка на маркет, пока
-// аккаунт продавца заморожен. FOR SHARE сериализуется с записью заморозки
-// (account_restrictions.user_id — его PK): пересекающаяся заморозка разрешается
-// до нашего коммита, а не после. Никогда не замораживавшиеся аккаунты строки не
-// имеют и проходят.
+// rejectFrozenStarGiftSeller blocks listing a gift on the market while the seller's account is
+// frozen. FOR SHARE serializes with the freeze write (account_restrictions.user_id is its PK): an
+// overlapping freeze resolves before our commit, not after. Accounts that were never frozen have no
+// row and pass through.
 func rejectFrozenStarGiftSeller(ctx context.Context, db sqlcgen.DBTX, userID int64) error {
 	var frozen bool
 	err := db.QueryRow(ctx, `SELECT frozen FROM account_restrictions WHERE user_id=$1 FOR SHARE`, userID).Scan(&frozen)

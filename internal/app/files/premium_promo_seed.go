@@ -210,7 +210,7 @@ func (s *Service) warnPremiumPromoMissing(root string, err error) {
 		return
 	}
 	s.log.Warn(
-		"Premium promo seed 目录不存在，help.getPremiumPromo 将返回无视频兼容响应",
+		"Premium promo seed directory does not exist; help.getPremiumPromo will return a video-less compatibility response",
 		zap.String("dir", root),
 		zap.Error(err),
 	)

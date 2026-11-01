@@ -43,8 +43,9 @@ func LoginCodeChannelTakeable(channel string) bool {
 // on read and accidentally authorizing a different phone owner.
 const PhoneCodeVersionCurrent = 2
 
-// PhoneCode 是一条验证码记录（与某次 sendCode 的 phone_code_hash 或邮箱验证键关联）。
-// Purpose/UserID/AuthKeyID/SessionID 为已登录敏感操作提供作用域；登录验证码保持零值。
+// PhoneCode is one verification code record (associated with a sendCode phone_code_hash
+// or an email verification key). Purpose/UserID/AuthKeyID/SessionID scope logged-in
+// sensitive operations; login codes keep zero values.
 type PhoneCode struct {
 	Version int
 	// Revision is an opaque store-managed CAS token. Callers must pass it back
@@ -117,9 +118,10 @@ type LoginCodeVerifyResult struct {
 	Record PhoneCode
 }
 
-// PhoneCodeScope 标识已登录敏感操作的一次性验证码作用域。SessionID 故意不在
-// 作用域内：同一 perm auth key 等待验证码期间允许重建 MTProto session。
-// 登录/注册验证码没有 Purpose/UserID/AuthKeyID，保持非 scoped 行为。
+// PhoneCodeScope identifies the one-time code scope of a logged-in sensitive operation.
+// SessionID is deliberately not part of the scope: an MTProto session may be rebuilt while
+// the same perm auth key waits for a code. Login/sign-up codes have no
+// Purpose/UserID/AuthKeyID and keep unscoped behavior.
 type PhoneCodeScope struct {
 	Purpose   string
 	UserID    int64
@@ -140,16 +142,16 @@ func (s PhoneCodeScope) Valid() bool {
 	return s.Purpose != "" && s.UserID != 0 && s.AuthKeyID != ([8]byte{}) && s.Phone != ""
 }
 
-// CodeStore 暂存验证码：phone_code_hash → 作用域 + 手机号 + 验证码，带 TTL。
-// 实现见 store/memory（测试替身）、store/redisstore。
+// CodeStore temporarily stores verification codes: phone_code_hash -> scope + phone number
+// + code, with a TTL. See store/memory (test double) and store/redisstore for implementations.
 type CodeStore interface {
-	// Set 对 scoped code 必须原子替换同作用域旧 hash，保证单作用域至多一个
-	// 活跃验证码；普通登录码仍按 hash 独立保存。
+	// Set must atomically replace the old hash of the same scope for scoped codes, ensuring
+	// at most one active code per scope; plain login codes are still stored independently by hash.
 	Set(ctx context.Context, phoneCodeHash string, code PhoneCode, ttl time.Duration) error
 	Get(ctx context.Context, phoneCodeHash string) (PhoneCode, bool, error)
 	Del(ctx context.Context, phoneCodeHash string) error
-	// ConsumeScoped 仅当 hash 仍是 scope 的当前活跃 hash 时原子读取并删除；
-	// 并发调用至多一个返回 found=true。
+	// ConsumeScoped atomically reads and deletes only while hash is still the scope's active
+	// hash; at most one concurrent call returns found=true.
 	ConsumeScoped(ctx context.Context, phoneCodeHash string, scope PhoneCodeScope) (PhoneCode, bool, error)
 	// VerifyScoped atomically verifies a current-version code only while hash is
 	// still the active value for scope. A wrong code increments Attempts and, at

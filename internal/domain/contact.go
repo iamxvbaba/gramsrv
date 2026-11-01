@@ -1,9 +1,9 @@
 package domain
 
-// Contact 是当前账号通讯录中的一个已注册联系人。
+// Contact is a registered contact in the current account's address book.
 //
-// FirstName/LastName/Phone/Note 是 owner 视角数据：同一个 target user 在不同
-// owner 的通讯录里可以有不同备注，这些字段不回写 users 全局资料。
+// FirstName/LastName/Phone/Note are owner-perspective data: the same target user can have different
+// notes in different owners' address books, and these fields are not written back to the global users profile.
 type Contact struct {
 	User         User
 	FirstName    string
@@ -15,7 +15,7 @@ type Contact struct {
 	CloseFriend  bool
 }
 
-// ContactList 是通讯录查询结果。
+// ContactList is an address book query result.
 type ContactList struct {
 	Contacts []Contact
 	Hash     int64
@@ -48,7 +48,7 @@ type BlockedContactList struct {
 	Count   int
 }
 
-// ContactInput 描述一次 owner 视角联系人写入。
+// ContactInput describes one owner-perspective contact write.
 type ContactInput struct {
 	ContactUserID            int64
 	ClientID                 int64
@@ -60,22 +60,22 @@ type ContactInput struct {
 	AddPhonePrivacyException bool
 }
 
-// ImportedContact 是 contacts.importContacts 成功导入项。
+// ImportedContact is a successfully imported item of contacts.importContacts.
 type ImportedContact struct {
 	UserID   int64
 	ClientID int64
 }
 
-// ImportContactsResult 是 contacts.importContacts 的业务结果。
+// ImportContactsResult is the business result of contacts.importContacts.
 type ImportContactsResult struct {
 	Imported      []ImportedContact
 	Contacts      []Contact
 	RetryContacts []int64
 }
 
-// UserSearchResult 是 contacts.search 的业务结果。
-// MyResults 放当前账号通讯录内命中的用户；Results 放其他全局命中用户。
-// ChannelResults 放未加入的公开 channel/supergroup 命中；已加入频道由 dialogs/resolve 路径呈现。
+// UserSearchResult is the business result of contacts.search.
+// MyResults holds users matched within the current account's address book; Results holds other global matches.
+// ChannelResults holds matches for public channels/supergroups not joined; joined channels are surfaced via the dialogs/resolve path.
 type UserSearchResult struct {
 	MyResults        []User
 	Results          []User
@@ -83,7 +83,7 @@ type UserSearchResult struct {
 	ChannelResults   []Channel
 }
 
-// PeerSettings 是当前 owner 看某个 peer 的可操作状态。
+// PeerSettings is the actionable state of a peer as seen by the current owner.
 type PeerSettings struct {
 	AddContact            bool
 	BlockContact          bool

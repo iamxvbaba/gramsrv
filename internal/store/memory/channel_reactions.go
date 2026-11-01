@@ -68,16 +68,18 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 		!channelMessageVisibleToViewerLocked(channel, member, req.UserID, msg) {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid
 	}
-	// 仅新增/替换受策略约束；空向量是撤销，策略收紧后也必须允许撤销存量 reaction。
+	// Only adding/replacing is subject to policy; an empty vector is a revocation, and even after the policy is tightened revoking an existing reaction must still be allowed.
 	for _, reaction := range req.Reactions {
 		if !channel.ReactionPolicy.AllowsReaction(reaction) {
 			return domain.ChannelMessageReactionsResult{}, domain.ErrReactionInvalid
 		}
 	}
 	if len(req.Reactions) > 0 {
-		// 官方 REACTIONS_TOO_MANY 只挡「引入消息上尚不存在的新种类」：存量已超限
-		//（管理员调低 reactions_limit / 部署前数据）时，重发自己的 reaction 或给
-		// 已有种类投票必须放行，否则客户端点击合法 chip 也会收到 400。
+		// The official REACTIONS_TOO_MANY only blocks "introducing a new kind not already on
+		// the message": when the existing set is already over the limit (an admin lowered
+		// reactions_limit / pre-deployment data), re-sending one's own reaction or voting for
+		// an existing kind must be allowed, otherwise the client gets a 400 for tapping a
+		// legitimate chip.
 		existing := make(map[string]struct{})
 		final := make(map[string]struct{})
 		for userID, rows := range s.reactions[req.ChannelID][req.MessageID] {
@@ -107,7 +109,7 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	if s.reactions[req.ChannelID][req.MessageID] == nil {
 		s.reactions[req.ChannelID][req.MessageID] = make(map[int64][]domain.ChannelMessagePeerReaction)
 	}
-	// 广播频道 reaction 匿名（官方语义），作者不收 unread 角标，不写 unread 簿记。
+	// Reactions in a broadcast channel are anonymous (official semantics); the author gets no unread badge and no unread bookkeeping is written.
 	unreadEligible := !channel.Broadcast || channel.Megagroup
 	if len(req.Reactions) == 0 {
 		delete(s.reactions[req.ChannelID][req.MessageID], req.UserID)
@@ -158,7 +160,7 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	reactions := s.channelMessageReactionsLocked(req.UserID, channel, req.MessageID)
 	msg = cloneChannelMessage(msg)
 	msg.Reactions = cloneChannelMessageReactionsPtr(&reactions)
-	// sendReaction 实时推送走在线 viewer scope（rpc 层封顶），不预热全量成员列表。
+	// sendReaction real-time push goes to the online-viewer scope (capped in the rpc layer) and does not pre-warm the full member list.
 	return domain.ChannelMessageReactionsResult{
 		Channel:    cloneChannel(channel),
 		Message:    msg,
@@ -961,7 +963,7 @@ func (s *ChannelStore) populateChannelMessageReactionsLocked(viewerUserID int64,
 		if messages[i].ChannelID != channel.ID || messages[i].ID <= 0 {
 			continue
 		}
-		// poll 与 reaction 同点位 enrich：所有频道消息读路径经此填充 viewer 态。
+		// Polls and reactions are enriched at the same point: every channel message read path fills viewer state here.
 		messages[i].Media = enrichPollMediaForViewer(s.polls, messages[i].Media, viewerUserID, now)
 		reactions := s.channelMessageReactionsLocked(viewerUserID, channel, messages[i].ID)
 		if len(reactions.Results) == 0 && len(reactions.Recent) == 0 {
@@ -1015,7 +1017,7 @@ func (s *ChannelStore) channelMessageReactionsLocked(viewerUserID int64, channel
 		Results:    []domain.ChannelMessageReactionCount{},
 		Recent:     []domain.ChannelMessagePeerReaction{},
 	}
-	// 付费 reaction 与普通 reaction 分表：即便无普通 reaction 也要回显 ReactionPaid。
+	// Paid reactions and ordinary reactions are stored separately: ReactionPaid must be echoed even when there is no ordinary reaction.
 	if paid := s.aggregatePaidReactionsLocked(channel.ID, messageID, viewerUserID); paid.TotalStars > 0 {
 		out.Paid = &paid
 	}
@@ -1064,7 +1066,7 @@ func (s *ChannelStore) channelMessageReactionsLocked(viewerUserID int64, channel
 			ChosenOrder: item.chosenOrder,
 		})
 	}
-	// 广播频道 reaction 匿名：与官方一致只下发计数，不暴露 recent 反应者身份。
+	// Reactions in a broadcast channel are anonymous: consistent with official behaviour, only counts are sent and recent reactor identities are not exposed.
 	if channel.Broadcast && !channel.Megagroup {
 		return out
 	}

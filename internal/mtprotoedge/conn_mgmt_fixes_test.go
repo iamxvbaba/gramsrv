@@ -12,9 +12,12 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
-// TestPushSkipsConnReboundToOtherUser 锁定跨账号投递窗口的修复：pushToUserWithSender 在锁外
-// 发送前复查 c.userID。模拟「收集 conns 后、send 前」连接被并发换绑（atomic userID 改了但
-// byUser 索引尚未更新）的窗口，验证本属于 userA 的 update 不会投递到已易主为 userB 的连接。
+// TestPushSkipsConnReboundToOtherUser locks in the fix for the cross-account
+// delivery window: pushToUserWithSender rechecks c.userID outside the lock
+// before sending. It simulates the window where a connection is concurrently
+// rebound between "collect conns" and "send" (the atomic userID changed but the
+// byUser index is not yet updated), verifying that an update belonging to userA
+// is not delivered to a connection that has changed hands to userB.
 func TestPushSkipsConnReboundToOtherUser(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	const userA, userB = int64(100), int64(200)
@@ -35,14 +38,17 @@ func TestPushSkipsConnReboundToOtherUser(t *testing.T) {
 		sm.Register(c)
 		return c
 	}
-	stale := mk(1, 1) // 注册为 userA 后被换绑到 userB
-	live := mk(2, 2)  // 始终 userA
+	stale := mk(1, 1) // registered as userA then rebound to userB
+	live := mk(2, 2)  // always userA
 
-	// 直接改 atomic userID、不动 byUser 索引：复现锁释放后到 send 前的换绑窗口。
+	// Change the atomic userID directly without touching the byUser index:
+	// reproduce the rebound window between lock release and send.
 	stale.userID.Store(userB)
 
-	// 走 best-effort 推送：与普通推送共用 pushToUserWithSender（含 userID 复查），但只入队
-	// 不等 op.done，故无需起 outbound actor 即可观察「投递 vs 跳过」（op 进 buffered c.outbound）。
+	// Use the best-effort push: it shares pushToUserWithSender (including the
+	// userID recheck) with the normal push, but only enqueues without waiting for
+	// op.done, so we can observe "delivered vs skipped" without starting an
+	// outbound actor (ops go into the buffered c.outbound).
 	if _, err := sm.PushToUserExceptSessionBestEffort(context.Background(), userA, 0, proto.MessageFromServer, &tg.UpdatesTooLong{}, time.Second); err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -54,13 +60,15 @@ func TestPushSkipsConnReboundToOtherUser(t *testing.T) {
 	}
 }
 
-// TestRegisterEvictsAtSessionCap 锁定单 auth_key 的 session 数上限：超出 maxSessionsPerAuthKey
-// 的新 session 注册会驱逐一个现有 session，防对抗客户端用海量 session_id 撑爆索引。
+// TestRegisterEvictsAtSessionCap locks in the per-auth_key session count cap:
+// registering a new session beyond maxSessionsPerAuthKey evicts an existing
+// session, preventing an adversarial client from blowing up the index with a
+// flood of session_ids.
 func TestRegisterEvictsAtSessionCap(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	authKey := [8]byte{7}
 	for i := 1; i <= maxSessionsPerAuthKey+5; i++ {
-		// 裸 Conn（无 outbound/rpc 通道）：被驱逐时 Close() 为安全 no-op。
+		// Naked Conn (no outbound/rpc channels): on eviction Close() is a safe no-op.
 		sm.Register(&Conn{sessionID: int64(i), authKeyID: authKey})
 	}
 	sm.mu.RLock()

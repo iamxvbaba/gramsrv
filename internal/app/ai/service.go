@@ -1,4 +1,4 @@
-// Package ai 实现客户端输入框 AI 改写/润色能力。
+// Package ai implements the client input-box AI rewrite/polish capability.
 package ai
 
 import (

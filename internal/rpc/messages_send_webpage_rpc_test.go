@@ -10,7 +10,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// "see https://example.com/x" 的 URL 在 UTF-16 偏移 4、长度 21。
+// The URL in "see https://example.com/x" is at UTF-16 offset 4, length 21.
 const (
 	wpTestMessage  = "see https://example.com/x"
 	wpTestURL      = "https://example.com/x"
@@ -22,8 +22,9 @@ func wpURLEntities() []tg.MessageEntityClass {
 	return []tg.MessageEntityClass{&tg.MessageEntityURL{Offset: wpURLEntityOff, Length: wpURLEntityLen}}
 }
 
-// TestSendMessageAttachesWebPagePending 验证启用预览时,带 URL 的文本消息挂上 pending 占位
-// (id==url_hash 保证与 done 解析关联),并投影 invert_media。
+// TestSendMessageAttachesWebPagePending verifies that with previews enabled a text message with a
+// URL gets a pending placeholder (id==url_hash links it to the done resolution) and projects
+// invert_media.
 func TestSendMessageAttachesWebPagePending(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -70,13 +71,14 @@ func TestSendMessageAttachesWebPagePending(t *testing.T) {
 	}
 }
 
-// TestSendChannelMessageUsesSameFutureWebPageDeadline 锁定频道发送也经过同一 pending
-// 截止时间构造路径，避免只修私聊 echo 而频道仍被客户端立即判定过期。
+// TestSendChannelMessageUsesSameFutureWebPageDeadline locks in that channel sends go through the
+// same pending-deadline construction path, so fixing only the private-chat echo does not leave
+// channels immediately deemed expired by the client.
 func TestSendChannelMessageUsesSameFutureWebPageDeadline(t *testing.T) {
 	ctx := context.Background()
 	r, owner, channel := newRichChannelTestRouter(t)
 	r.deps.Files.(*fakeFiles).webPagePreviewOn = true
-	// 本测试只验证发送投影，不启动异步解析 goroutine。
+	// This test only verifies the send projection; it does not start the async resolver goroutine.
 	r.webPageResolveSem = nil
 	now := time.Date(2030, time.February, 3, 4, 5, 6, 0, time.UTC)
 	r.clock = fixedClock{now: now}
@@ -166,8 +168,9 @@ func TestSendChannelMessageAllowsBareDomainAtPathSegmentURL(t *testing.T) {
 	}
 }
 
-// TestSendMessageAttachesCachedDoneCard 验证：URL 已缓存解析时，发送 echo 直接带 done 卡片
-// （非 pending）——官方行为，TDesktop 据此立即渲染、不依赖异步换卡。
+// TestSendMessageAttachesCachedDoneCard verifies: when the URL is already cached/resolved, the
+// send echo carries the done card directly (not pending) — official behavior; TDesktop renders it
+// immediately without waiting for the async card swap.
 func TestSendMessageAttachesCachedDoneCard(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -196,7 +199,7 @@ func TestSendMessageAttachesCachedDoneCard(t *testing.T) {
 	}
 }
 
-// TestSendMessageNoWebpageSuppressesPreview 验证 no_webpage 抑制占位。
+// TestSendMessageNoWebpageSuppressesPreview verifies no_webpage suppresses the placeholder.
 func TestSendMessageNoWebpageSuppressesPreview(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -217,11 +220,12 @@ func TestSendMessageNoWebpageSuppressesPreview(t *testing.T) {
 	}
 }
 
-// TestSendMessagePreviewDisabledNoPlaceholder 验证未启用预览时不挂占位(否则永久 pending)。
+// TestSendMessagePreviewDisabledNoPlaceholder verifies no placeholder is attached when previews
+// are disabled (otherwise it would stay pending forever).
 func TestSendMessagePreviewDisabledNoPlaceholder(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
-	// webPagePreviewOn 默认 false。
+	// webPagePreviewOn defaults to false.
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
@@ -237,8 +241,9 @@ func TestSendMessagePreviewDisabledNoPlaceholder(t *testing.T) {
 	}
 }
 
-// TestSendMediaInputWebPageAttachesPending 验证 sendMedia 的 InputMediaWebPage 经降级到
-// sendMessage 后,仍从文本 URL 挂上 pending 占位(启用预览时)。
+// TestSendMediaInputWebPageAttachesPending verifies that when sendMedia's InputMediaWebPage is
+// downgraded to sendMessage, it still attaches a pending placeholder from the text URL (with
+// previews enabled).
 func TestSendMediaInputWebPageAttachesPending(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
@@ -264,15 +269,16 @@ func TestSendMediaInputWebPageAttachesPending(t *testing.T) {
 	}
 }
 
-// TestSendMessageHighlightsBareURL 验证服务端为不带 url 实体的消息（如 TDesktop 发的）补
-// MessageEntityURL，使链接高亮——独立于预览是否启用。
+// TestSendMessageHighlightsBareURL verifies the server fills in MessageEntityURL for messages
+// without a url entity (such as those sent by TDesktop), highlighting the link — independent of
+// whether previews are enabled.
 func TestSendMessageHighlightsBareURL(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
 		Message:  "see https://example.com/x",
-		RandomID: 5301, // 无 entities，模拟 TDesktop
+		RandomID: 5301, // no entities, mimicking TDesktop
 	})
 	if err != nil {
 		t.Fatalf("sendMessage: %v", err)
@@ -393,7 +399,7 @@ func TestAutoEntityDerivationDoesNotMutateSendRequests(t *testing.T) {
 	})
 }
 
-// TestSendMessageNoURLNoPlaceholder 验证无 URL 实体时不挂占位。
+// TestSendMessageNoURLNoPlaceholder verifies no placeholder is attached when there is no URL entity.
 func TestSendMessageNoURLNoPlaceholder(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)

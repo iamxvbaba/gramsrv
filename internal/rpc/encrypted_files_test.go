@@ -9,8 +9,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendEncryptedFileFlow：sendEncryptedFile 铸造 EncryptedFile、随消息投递、返回
-// SentEncryptedFile{date,file}，且 InputEncryptedFile 复用路径能回查同一文件。
+// TestSendEncryptedFileFlow: sendEncryptedFile mints an EncryptedFile, delivers it
+// with the message, returns SentEncryptedFile{date,file}, and the
+// InputEncryptedFile reuse path can look up the same file.
 func TestSendEncryptedFileFlow(t *testing.T) {
 	f := newEncryptedFixture(t)
 	chatID, _ := f.acceptChat(t)
@@ -35,7 +36,7 @@ func TestSendEncryptedFileFlow(t *testing.T) {
 		t.Fatalf("response file = %T, want non-empty EncryptedFile", sf.File)
 	}
 
-	// 推送给 participant 的 updateNewEncryptedMessage 携带 file。
+	// The updateNewEncryptedMessage pushed to the participant carries the file.
 	recs := f.sessions.records()
 	if len(recs) != 1 {
 		t.Fatalf("send push = %d, want 1", len(recs))
@@ -48,14 +49,14 @@ func TestSendEncryptedFileFlow(t *testing.T) {
 		t.Fatalf("pushed message file = %T, want EncryptedFile", em.File)
 	}
 
-	// InputEncryptedFile 复用：按 id+access_hash 回查到同一文件。
+	// InputEncryptedFile reuse: look up the same file by id+access_hash.
 	ref, found, err := f.router.deps.SecretChats.GetEncryptedFile(f.ctx, ef.ID, ef.AccessHash)
 	if err != nil || !found || ref.ID != ef.ID {
 		t.Fatalf("GetEncryptedFile reuse = found %v id %d err %v", found, ref.ID, err)
 	}
 }
 
-// TestUploadEncryptedFile：uploadEncryptedFile 铸造并返回 EncryptedFile。
+// TestUploadEncryptedFile: uploadEncryptedFile mints and returns an EncryptedFile.
 func TestUploadEncryptedFile(t *testing.T) {
 	f := newEncryptedFixture(t)
 	chatID, _ := f.acceptChat(t)

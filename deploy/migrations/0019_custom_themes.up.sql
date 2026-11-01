@@ -1,7 +1,9 @@
--- 自定义云主题(account.createTheme/uploadTheme 等)。themes = 用户创建的主题目录,
--- document_id 软引用 documents(无硬外键,避免与媒体表耦合;主题可能比 blob 长存,
--- getTheme 时若 blob 缺失则退化为无 document)。settings = []domain.ThemeSettingsSpec 的
--- JSONB(仅 accent 主题非空)。theme_user_installs = 每用户已安装/已存主题列表。
+-- Custom cloud themes (account.createTheme/uploadTheme, etc.). themes = the catalog
+-- of user-created themes; document_id softly references documents (no hard foreign
+-- key, to avoid coupling with the media table; a theme may outlive its blob, in
+-- which case getTheme degrades to no document). settings = JSONB of
+-- []domain.ThemeSettingsSpec (non-empty only for accent themes).
+-- theme_user_installs = each user's installed/saved theme list.
 CREATE TABLE public.themes (
     id bigint NOT NULL,
     access_hash bigint DEFAULT 0 NOT NULL,

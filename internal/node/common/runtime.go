@@ -134,10 +134,10 @@ func startDebugServer(ctx context.Context, addr string, metricsHandler http.Hand
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
-		logger.Info("pprof 调试端点已启用", zap.String("addr", addr),
+		logger.Info("pprof debug endpoint enabled", zap.String("addr", addr),
 			zap.String("hint", "go tool pprof http://"+addr+"/debug/pprof/profile?seconds=30"))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Warn("pprof 端点退出", zap.Error(err))
+			logger.Warn("pprof endpoint exiting", zap.Error(err))
 		}
 	}()
 	go func() {

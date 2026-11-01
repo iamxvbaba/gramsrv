@@ -72,10 +72,10 @@ func (s *ChannelStore) listChannelDialogs(ctx context.Context, viewerUserID int6
 JOIN channels c ON c.id = m.channel_id AND c.id = ANY($2::bigint[]) AND NOT c.deleted
 LEFT JOIN channel_messages top_msg ON top_msg.channel_id = m.channel_id AND top_msg.channel_id = ANY($2::bigint[]) AND top_msg.id = c.top_message_id AND NOT top_msg.deleted
 LEFT JOIN channel_dialogs d ON d.user_id = m.user_id AND d.channel_id = m.channel_id`
-	// archive 与 pinned 集合必然有显式 channel_dialogs 行。以该 owner 索引为入口，
-	// 避免 archive summary(limit=1) 和 getPinnedDialogs 为一个通常为空/很小的集合
-	// 仍扫描账号全部 active memberships。保留 $2 的 typed no-op，后续动态条件的
-	// placeholder 编号无需分叉；monoforum 仍在主查询后按原权限路径合并。
+	// The archive and pinned sets always have explicit channel_dialogs rows. Use that owner index as the entry
+	// to avoid archive summary(limit=1) and getPinnedDialogs scanning all of the account's active memberships
+	// for a collection that is usually empty/tiny. Keep the $2 typed no-op so placeholder numbering for later
+	// dynamic conditions needs no branching; monoforum is still merged after the main query via the original permission path.
 	if (filter.HasFolderID && filter.FolderID == domain.DialogArchiveFolderID) || filter.PinnedOnly {
 		from = `FROM channel_dialogs d
 JOIN channel_members m ON m.user_id = d.user_id AND m.channel_id = d.channel_id AND m.status = 'active'
@@ -87,7 +87,7 @@ LEFT JOIN channel_messages top_msg ON top_msg.channel_id = d.channel_id AND top_
 		args = append(args, filter.FolderID)
 		where = append(where, fmt.Sprintf("COALESCE(d.folder_id, 0) = $%d", len(args)))
 	} else if !filter.HasFolderID {
-		// 不带 folder_id 视为主列表（folder 0），与私聊侧/官方语义一致。
+		// No folder_id is treated as the main list (folder 0), consistent with the private-chat side / official semantics.
 		where = append(where, "COALESCE(d.folder_id, 0) = 0")
 	}
 	if filter.PinnedOnly {
@@ -156,22 +156,22 @@ LEFT JOIN channel_messages top_msg ON top_msg.channel_id = d.channel_id AND top_
 		if len(include) > 0 {
 			where = append(where, "("+strings.Join(include, " OR ")+")")
 		} else {
-			// 自定义 filter 未声明任何频道维度正向条件（仅 Contacts/NonContacts/Bots
-			// 这类私聊类别开关）时，不纳入任何群/频道——与 channelDialogMatchesFilter
-			// 末尾的 return false 对齐，避免把用户加入的全部群/频道灌进该文件夹。
+			// When a custom filter declares no positive channel-dimension condition (only private-chat
+			// category switches like Contacts/NonContacts/Bots), include no groups/channels—matching the
+			// final return false of channelDialogMatchesFilter, to avoid pouring all groups/channels the user joined into that folder.
 			where = append(where, "false")
 		}
 	}
-	// 只多取一行作为 has-more 证据。旧实现无视 RPC limit 固定读取 500 个完整
-	// channel + viewer dialog，并对每行动态派生 unread；getDialogs(limit=100)
-	// 因而最多水合 5 倍对象，archive summary(limit=1) 最坏放大 500 倍。
-	// 所有 folder/offset 条件已经在 SQL LIMIT 前完成，monoforum 结果也会在下方
-	// 合并排序，所以每个来源取 limit+1 足以构造正确的合并页和继续分页信号。
+	// Fetch only one extra row as has-more evidence. The old implementation ignored the RPC limit and always read 500 full
+	// channel + viewer dialogs, deriving unread dynamically per row; getDialogs(limit=100)
+	// therefore hydrated up to 5x the objects, and archive summary(limit=1) was amplified up to 500x.
+	// All folder/offset conditions are already applied before the SQL LIMIT, and monoforum results are also
+	// merged and sorted below, so taking limit+1 per source is enough to build the correct merged page and continue-pagination signal.
 	queryLimit := limit + 1
 	args = append(args, queryLimit)
 	limitArg := fmt.Sprintf("$%d", len(args))
-	// 暖写回的 epoch 守卫:在加载前快照,写回时若期间收到失效(epoch 变更)则拒绝陈旧投影,
-	// 避免 scan→put 窗口内的并发失效被裸 Store 覆盖回(@角标/未读 lost-update)。
+	// Warm write-back epoch guard: snapshot before loading; on write-back, reject the stale projection if an
+	// invalidation arrived meanwhile (epoch changed), preventing a concurrent invalidation in the scan→put window from being overwritten by a bare Store (@ badge/unread lost-update).
 	dialogCacheActive := s.dialogCacheActive(s.db)
 	var dialogCacheEpoch uint64
 	if dialogCacheActive {
@@ -220,11 +220,11 @@ LIMIT `+limitArg, args...)
 	if err := rows.Err(); err != nil {
 		return domain.ChannelDialogList{}, err
 	}
-	// hasBroadcastAdmin 是页无关的超集门:只有「在某广播频道任 creator/admin」的用户才可能拥有
-	// monoforum 私信会话(linked_monoforum_id<>0 是该集合的子集)。绝大多数 getDialogs 调用者命不中,
-	// 据此跳过 listMonoforumAdminDialogItems 这条多表 JOIN 的额外往返(此前对每次 getDialogs 无条件执行)。
-	// 不用主扫描循环里的行级标志,因为主查询带 offset 游标:翻到后续页时母广播频道可能已被上一页消费、
-	// 不再被扫到,而其私信会话(独立排序位)仍属于本页——行级标志会漏发。超集门只读全量候选集,页无关。
+	// hasBroadcastAdmin is a page-independent superset gate: only a user who is creator/admin in some
+	// broadcast channel can have a monoforum direct-messages dialog (linked_monoforum_id<>0 is a subset of that set). Most getDialogs callers do not match,
+	// so this skips the extra multi-table JOIN round trip of listMonoforumAdminDialogItems (previously run unconditionally on every getDialogs).
+	// It does not use a row-level flag in the main scan loop, because the main query carries an offset cursor: when paging to later pages the parent broadcast channel may already have been consumed by the
+	// previous page and no longer scanned, while its direct-messages dialog (independent sort position) still belongs to this page—a row-level flag would miss it. The superset gate reads the full candidate set and is page-independent.
 	if hasBroadcastAdmin {
 		monoItems, err := s.listMonoforumAdminDialogItems(ctx, viewerUserID, channelIDs, filter, seenChannels)
 		if err != nil {
@@ -266,8 +266,8 @@ LIMIT `+limitArg, args...)
 			out.Messages = append(out.Messages, msg)
 		}
 		if dialogCacheActive {
-			// 列表暖缓存的值必须与单频道全量读路径等价：补上仅存于 channel_dialogs 的
-			// default_send_as，否则 getFullChannel/getSendAs 命中暖缓存会丢失「以频道发言」默认值。
+			// The list warm-cache value must be equivalent to the single-channel full read path: add the
+			// default_send_as that exists only in channel_dialogs, otherwise getFullChannel/getSendAs hitting the warm cache would lose the "send as channel" default.
 			cd := channelDialogFromDialog(viewerUserID, item.dialog)
 			cd.DefaultSendAs = item.defaultSendAs
 			s.dialogCache.putListProjectionIfEpoch(cd, false, false, false, dialogCacheEpoch)
@@ -275,9 +275,9 @@ LIMIT `+limitArg, args...)
 		out.Dialogs = append(out.Dialogs, item.dialog)
 		out.Channels = append(out.Channels, item.channel)
 	}
-	// getDialogs 的 top message 必须按 viewer 补 mentioned/media_unread 与
-	// reactions：TDesktop 把它先入缓存且不被后续 difference/getHistory 的
-	// 完整版覆盖，缺标志会让客户端永不上报 contents-read，@ 角标重启回潮。
+	// getDialogs' top message must be augmented per viewer with mentioned/media_unread and
+	// reactions: TDesktop caches it first and it is not overwritten by the
+	// full version from later difference/getHistory, so missing flags keep the client from ever reporting contents-read, and the @ badge returns after restart.
 	if err := s.populateChannelDialogTopMessageReactions(ctx, s.db, viewerUserID, out.Channels, out.Messages, false); err != nil {
 		return domain.ChannelDialogList{}, err
 	}
@@ -860,10 +860,10 @@ func (s *ChannelStore) GetChannelDialogs(ctx context.Context, viewerUserID int64
 				channel = ch
 				member = syntheticMember
 				synthetic = true
-				// 与 mono 同批下发母广播频道。TDesktop 的 applyMonoforumLinkedId 仅在父对象已加载时
-				// 才调 setMonoforumLink 派生 MonoforumAdmin(Direct-Messages 容器渲染所需);父对象缺失
-				// 会让 mono 退化成普通 megagroup("You created a group")。tgChannelsForDialogs 按 id
-				// 去重,重复下发无害;此分支已 gate 于 isChannelAdmin(parentMember),不泄漏给非管理员。
+				// Send the parent broadcast channel in the same batch as the mono. TDesktop's applyMonoforumLinkedId
+				// only calls setMonoforumLink to derive MonoforumAdmin (needed for Direct-Messages container rendering) when the parent object is already loaded; a missing parent
+				// degrades the mono into an ordinary megagroup ("You created a group"). tgChannelsForDialogs dedups
+				// by id, so sending it twice is harmless; this branch is already gated on isChannelAdmin(parentMember) and does not leak to non-admins.
 				if parentChannel.ID != 0 {
 					out.Channels = append(out.Channels, parentChannel)
 				}
@@ -937,7 +937,7 @@ func (s *ChannelStore) GetChannelDialogs(ctx context.Context, viewerUserID int64
 		out.Channels = append(out.Channels, item.channel)
 	}
 	out.Count = len(out.Dialogs)
-	// 与 ListChannelDialogs 同因：top message 按 viewer 补未读标志与 reactions。
+	// Same reason as ListChannelDialogs: augment the top message per viewer with unread flags and reactions.
 	if err := s.populateChannelDialogTopMessageReactions(ctx, s.db, viewerUserID, out.Channels, out.Messages, allTopUnreadProjected); err != nil {
 		return domain.ChannelDialogList{}, err
 	}
@@ -1373,10 +1373,10 @@ LIMIT $3`, userID, channelIDs, limit)
 	return out, nil
 }
 
-// listActiveChannelDialogCandidateIDs 返回候选频道 id,并附带 hasBroadcastAdmin:该用户是否在任一
-// 广播频道任 creator/admin。后者是 monoforum 私信会话存在性的页无关超集判定,供 getDialogs 热路径据此
-// 跳过额外的 monoforum 管理员会话查询(见 ListChannelDialogs)。只读 user_channel_member_index 表
-// 既有的 broadcast/role 列,零额外往返。
+// listActiveChannelDialogCandidateIDs returns candidate channel ids, along with hasBroadcastAdmin: whether the user is
+// creator/admin in any broadcast channel. The latter is the page-independent superset test for the existence of a monoforum direct-messages dialog, letting the getDialogs hot path
+// skip the extra monoforum admin dialog query (see ListChannelDialogs). It reads only the existing broadcast/role columns of the
+// user_channel_member_index table, with zero extra round trips.
 func (s *ChannelStore) listActiveChannelDialogCandidateIDs(ctx context.Context, userID int64, channelLikeOnly bool) ([]int64, bool, error) {
 	if userID == 0 {
 		return nil, false, nil
@@ -1430,8 +1430,8 @@ WITH target AS (
     WHERE c.id = $2 AND m.user_id = $1 AND m.status = 'active' AND NOT c.deleted
 ),
 ensured AS (
-    -- 惰性建行必须带 member 真实水位与未读数：0 值缓存行一旦存在就会
-    -- 遮蔽真值（小群读取信缓存列）。
+    -- A lazily created row must carry the member's real watermark and unread count: once a zero-value cached row exists it would
+    -- mask the true value (small groups read the cached column).
     INSERT INTO channel_dialogs (user_id, channel_id, top_message_id, top_message_date,
                                  read_inbox_max_id, read_outbox_max_id, unread_count)
     SELECT $1, channel_id, top_message_id, top_message_date,
@@ -1446,8 +1446,8 @@ ensured AS (
     FROM target
     ON CONFLICT (user_id, channel_id) DO NOTHING
 ),
--- 置顶顺序跨 dialogs/channel_dialogs 两表、但仅在该会话当前 folder 内分配，
--- 与私聊 SetDialogPinned 共用同一个 (user, folder) order 空间。
+-- The pin order spans the dialogs/channel_dialogs tables but is allocated only within the dialog's current folder,
+-- sharing the same (user, folder) order space as private-chat SetDialogPinned.
 self_folder AS (
     SELECT COALESCE(d.folder_id, 0)::int AS folder_id
     FROM channel_dialogs d
@@ -1574,9 +1574,9 @@ func (s *ChannelStore) EditChannelPeerFolders(ctx context.Context, userID int64,
 	if len(peerIDs) == 0 {
 		return nil
 	}
-	// 归档必须 ensure-INSERT：从未读过/置顶过的频道还没有 dialog 行，
-	// 只 UPDATE 会让归档静默丢失；新行同时带上 member 真实水位，
-	// 避免 0 水位缓存行遮蔽未读/已读状态。
+	// Archiving must ensure-INSERT: a channel never read/pinned has no dialog row yet, so
+	// UPDATE alone would silently lose the archive; the new row also carries the member's real watermark,
+	// avoiding a zero-watermark cached row masking unread/read state.
 	visibleTopID := channelDialogVisibleTopIDSQL()
 	if _, err := s.db.Exec(ctx, `
 WITH requested AS (
@@ -1607,8 +1607,8 @@ FROM deduped
 JOIN channel_members m ON m.user_id = $1 AND m.channel_id = deduped.channel_id AND m.status = 'active'
 JOIN channels c ON c.id = m.channel_id AND NOT c.deleted
 ON CONFLICT (user_id, channel_id) DO UPDATE
--- 换 folder 时清 pinned：与私聊 EditDialogPeerFolders 一致，TDesktop
--- 在归档/还原时本地无条件 unpin，服务端保留旧 pin 会造成状态漂移。
+-- Clear pinned when changing folder: consistent with private-chat EditDialogPeerFolders, TDesktop
+-- unconditionally unpins locally on archive/restore, so keeping the old pin on the server would cause state drift.
 SET folder_id = EXCLUDED.folder_id,
     pinned = CASE WHEN COALESCE(channel_dialogs.folder_id, 0) <> EXCLUDED.folder_id THEN false ELSE channel_dialogs.pinned END,
     pinned_order = CASE WHEN COALESCE(channel_dialogs.folder_id, 0) <> EXCLUDED.folder_id THEN 0 ELSE channel_dialogs.pinned_order END,
@@ -1623,9 +1623,9 @@ func (s *ChannelStore) CountChannelArchiveUnread(ctx context.Context, userID int
 		return 0, 0, nil
 	}
 	var peers, messages int32
-	// JOIN active member：退群残留的 channel_dialogs 行不计入归档徽章。
-	// unread 读时动态派生（H4a）：不再消费 channel_dialogs.unread_count 缓存列；归档集合
-	// 有界（需显式归档建行），每行动态 COUNT 已被 cap 钳制。
+	// JOIN active member: leftover channel_dialogs rows from members who left are not counted in the archive badge.
+	// unread is derived dynamically at read time (H4a): no longer consuming the channel_dialogs.unread_count cached column; the archive set is
+	// bounded (an explicit archive creates the row), and the per-row dynamic COUNT is already clamped by the cap.
 	visibleTopID := channelDialogVisibleTopIDSQL()
 	visibleReadInbox := "GREATEST(COALESCE(d.read_inbox_max_id, 0), m.read_inbox_max_id)"
 	if err := s.db.QueryRow(ctx, `
@@ -1662,12 +1662,12 @@ func (s *ChannelStore) getChannelDialogUncached(ctx context.Context, db sqlcgen.
 	visibleTopID := channelDialogVisibleTopIDSQL()
 	visibleReadInbox := "GREATEST(COALESCE(d.read_inbox_max_id, 0), m.read_inbox_max_id)"
 	visibleUnreadCount := channelDialogVisibleUnreadCountSQL(visibleReadInbox, visibleTopID)
-	// 单频道 TopMessageDate 用 LEFT JOIN top_msg 直接取,替代此前对每个频道再单查一次
-	// getChannelMessage 的额外往返(chf-3,实测 pg_stat "频道消息按id" 来源之一)。严格
-	// 保持原语义:仅当 top 可见(top_message_id > available_min_id)且消息行存在时取其
-	// message_date(不过滤 deleted,与原 getChannelMessage 一致),否则回退
-	// COALESCE(d.top_message_date, c.date)。注意:与批量版 getChannelDialogs 的隐藏态
-	// (ELSE 0)刻意保持各自既有差异,本改动只去往返、不改单频道输出。
+	// Single-channel TopMessageDate is taken directly via LEFT JOIN top_msg, replacing the previous extra
+	// round trip of a separate getChannelMessage per channel (chf-3, one of the measured pg_stat "channel message by id" sources). Strictly
+	// preserving the original semantics: take message_date only when the top is visible (top_message_id > available_min_id) and the message row exists
+	// (not filtering deleted, same as the original getChannelMessage), otherwise fall back to
+	// COALESCE(d.top_message_date, c.date). Note: this deliberately keeps the existing difference from the batch getChannelDialogs hidden state
+	// (ELSE 0); this change only removes the round trip and does not alter single-channel output.
 	visibleTopDate := channelDialogVisibleTopDateSQL(
 		"CASE WHEN top_msg.id IS NOT NULL THEN top_msg.message_date ELSE COALESCE(d.top_message_date, c.date) END",
 		"COALESCE(d.top_message_date, c.date)",
@@ -1747,7 +1747,7 @@ func (s *ChannelStore) getChannelDialogs(ctx context.Context, db sqlcgen.DBTX, u
 		if len(misses) == 0 {
 			return out, nil
 		}
-		// 暖写回前快照 epoch:miss-load 期间若收到失效则拒绝陈旧投影写回(同 ListChannelDialogs)。
+		// Snapshot the epoch before the warm write-back: reject the stale projection write-back if an invalidation arrived during the miss-load (same as ListChannelDialogs).
 		loadEpoch := s.dialogCache.cacheEpoch()
 		loaded, err := s.getChannelDialogsUncached(ctx, db, userID, misses)
 		if err != nil {
@@ -1837,11 +1837,11 @@ WHERE c.id = ANY($2::bigint[])`, userID, channelIDs)
 	return out, nil
 }
 
-// cappedChannelUnreadCount 生成把扫描行数钳到 MaxDialogUnreadCount 的未读 COUNT 子查询，
-// 与读路径 channelDialogDynamicUnreadCountSQL 口径一致。写 fan-out 路径此前是裸 COUNT 无
-// LIMIT，久未读成员（read 远低于 top）会退化为 O(未读积压) 全扫；用 LIMIT 内层子查询封顶
-// 单成员扫描工作量，写出的缓存列与读路径下发角标同为 min(实际, MaxDialogUnreadCount)。
-// whereBody 是 channel_messages 别名 msg 上的完整 WHERE 子句。
+// cappedChannelUnreadCount generates an unread COUNT subquery that clamps the scanned row count to MaxDialogUnreadCount,
+// consistent with the read path's channelDialogDynamicUnreadCountSQL. The write fan-out path previously used a bare COUNT without
+// LIMIT, so a member who has not read for a long time (read far below top) degraded to an O(unread backlog) full scan; the inner LIMIT subquery caps
+// the per-member scan work, so the written cached column and the read path's badge are both min(actual, MaxDialogUnreadCount).
+// whereBody is the full WHERE clause on the channel_messages alias msg.
 func cappedChannelUnreadCount(whereBody string) string {
 	return fmt.Sprintf(`(
         SELECT COUNT(*)::int
@@ -1886,18 +1886,18 @@ ON CONFLICT (user_id, channel_id) DO UPDATE SET
 	return nil
 }
 
-// upsertChannelDialogsForMessageTx 在发送事务内处理消息的收件人侧读边界副作用。
+// upsertChannelDialogsForMessageTx handles the recipient-side read-boundary side effects of a message within the send transaction.
 //
-// 性能审计 H4a：不再对全员（旧闸门为 megagroup ≤ MaxSynchronousChannelDialogFanout）
-// upsert channel_dialogs——发送事务 O(成员) 行写 + 行锁是放开大群的阻断项（P1-u 残余）。
-// 所有频道（broadcast / megagroup 不分大小）统一读时派生：unread 由可见 incoming 消息
-// 重算（channelDialogDynamicUnreadCountSQL，capped），top 由 channels.top_message_id 提供，
-// read boundary 真值在 channel_members，dialog 行仅承载 pin/folder/unread_mark/draft 等
-// 用户显式状态并按需惰性建行。
+// Performance audit H4a: no longer upsert channel_dialogs for all members (the old gate was megagroup ≤ MaxSynchronousChannelDialogFanout)—
+// the O(members) row writes + row locks in the send transaction were the blocker to opening up large groups (P1-u remnant).
+// All channels (broadcast / megagroup regardless of size) uniformly derive at read time: unread is recomputed from visible incoming messages
+// (channelDialogDynamicUnreadCountSQL, capped), top is provided by channels.top_message_id,
+// the read-boundary truth lives in channel_members, and the dialog row carries only pin/folder/unread_mark/draft and other
+// explicit user state, creating rows lazily as needed.
 //
-// 保留的唯一逐收件人写：skipDelivery（privacy bot）成员的 read_inbox 边界推进——这些
-// 成员被排除投递，必须同步抬边界避免其未读派生把被隐藏消息计成 unread；集合有界
-// （bot-only 候选）。
+// The only per-recipient write kept: advancing the read_inbox boundary of skipDelivery (privacy bot) members—these
+// members are excluded from delivery and their boundary must be raised in sync to keep their unread derivation from counting hidden messages as unread; the set is bounded
+// (bot-only candidates).
 func upsertChannelDialogsForMessageTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, top domain.ChannelMessage, selfReadUserID int64, skipDeliveryUserIDs ...[]int64) error {
 	if channel.ID == 0 || top.ID == 0 {
 		return nil
@@ -1920,8 +1920,8 @@ WHERE channel_id = $1
 			return fmt.Errorf("advance skipped channel delivery boundary: %w", err)
 		}
 	}
-	// skipDelivery 成员可能已有 channel_dialogs 行（pin/归档等惰性建行），其 read_inbox
-	// 经 GREATEST(d, m) 读取——member 行已推进即可，dialog 行无需同步。
+	// A skipDelivery member may already have a channel_dialogs row (lazily created by pin/archive etc.), whose read_inbox
+	// is read via GREATEST(d, m)—advancing the member row is enough, the dialog row needs no sync.
 	return nil
 }
 
@@ -2166,8 +2166,8 @@ func channelDialogMatchesFilter(dialog domain.Dialog, channel domain.Channel, fi
 	if channel.Broadcast && folder.Broadcasts {
 		return true
 	}
-	// 群/频道只能经 Groups/Broadcasts 类别开关或显式 include/pinned 进入自定义
-	// 文件夹；仅勾 Contacts/NonContacts/Bots（私聊类别）的文件夹不含任何群/频道。
+	// Groups/channels can only enter a custom folder via the Groups/Broadcasts category switches or an explicit
+	// include/pinned; a folder that only checks Contacts/NonContacts/Bots (private-chat categories) contains no groups/channels.
 	return false
 }
 

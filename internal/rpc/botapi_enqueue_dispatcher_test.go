@@ -9,8 +9,9 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-// TestBotAPIEnqueueDispatcherCallerPathBeforeRun 锁定未启动 worker 时的 caller-path
-// durable insert：bot_api_updates 是投递真值，不能因为后台 worker 未开始而丢行。
+// TestBotAPIEnqueueDispatcherCallerPathBeforeRun pins the caller-path durable insert before the
+// worker starts: bot_api_updates is the delivery source of truth, so a row must not be lost just
+// because the background worker has not started.
 func TestBotAPIEnqueueDispatcherCallerPathBeforeRun(t *testing.T) {
 	d := newBotAPIEnqueueDispatcher(zaptest.NewLogger(t), 4)
 	ran := false
@@ -20,8 +21,9 @@ func TestBotAPIEnqueueDispatcherCallerPathBeforeRun(t *testing.T) {
 	}
 }
 
-// TestBotAPIEnqueueDispatcherFIFOOrder 锁定启动后单 worker FIFO：同一 bot 的
-// update_id 顺序必须与 enqueue 顺序一致（乱序会让 bot 侧 getUpdates 看到错序消息）。
+// TestBotAPIEnqueueDispatcherFIFOOrder locks in the single-worker FIFO after start: the update_id
+// order for the same bot must match the enqueue order (out-of-order would let the bot side's
+// getUpdates see out-of-sequence messages).
 func TestBotAPIEnqueueDispatcherFIFOOrder(t *testing.T) {
 	d := newBotAPIEnqueueDispatcher(zaptest.NewLogger(t), 16)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,13 +61,14 @@ func TestBotAPIEnqueueDispatcherFIFOOrder(t *testing.T) {
 	}
 }
 
-// TestBotAPIEnqueueDispatcherUsesCallerPathWhenFull 锁定队列满时的 caller-path durable
-// insert：Bot API 队列行是投递真值，满时发送者多等一次 INSERT，绝不丢。
+// TestBotAPIEnqueueDispatcherUsesCallerPathWhenFull pins the caller-path durable insert when the
+// queue is full: the Bot API queue row is the delivery source of truth, so when full the sender
+// waits for one more INSERT and nothing is dropped.
 func TestBotAPIEnqueueDispatcherUsesCallerPathWhenFull(t *testing.T) {
 	d := newBotAPIEnqueueDispatcher(zaptest.NewLogger(t), 1)
-	d.started.Store(true) // 模拟已启动但 worker 不消费（阻塞场景）
+	d.started.Store(true) // simulate started but the worker does not consume (blocked scenario)
 
-	// 塞满容量 1 的队列。
+	// Fill the queue of capacity 1.
 	d.Enqueue(context.Background(), func(context.Context) {})
 
 	ran := false

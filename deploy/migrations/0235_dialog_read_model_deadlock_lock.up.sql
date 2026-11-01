@@ -1,5 +1,6 @@
--- v2 编号 0235；移植自 main 0206_dialog_read_model_deadlock_lock（main 0009095c / 4cedb93e）。函数体与 v2 0221
--- 的 telesrv_bump_dialog_light 一致后加锁；v2 批量成员路径（0222/0223）不经过本函数。见 docs/main-v2-sync.md。
+-- v2 number 0235; ported from main 0206_dialog_read_model_deadlock_lock (main 0009095c / 4cedb93e). The function
+-- body matches v2 0221's telesrv_bump_dialog_light, then takes the lock; the v2 batch member paths (0222/0223) do
+-- not go through this function. See docs/main-v2-sync.md.
 -- Concurrent channel/private dialog mutations (mark-mentions-read, reaction
 -- read receipts, dialog upserts) fire the dialog read-model triggers. Each
 -- transaction bumps read_model_versions rows for 'dialog_light' and then

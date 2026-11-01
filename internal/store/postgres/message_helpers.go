@@ -128,8 +128,8 @@ type messageMetadataParams struct {
 	FwdSavedFromPeerType string
 	FwdSavedFromPeerID   int64
 	FwdSavedFromMsgID    int32
-	// SavedPeerType/SavedPeerID 由发送路径按 self-chat 语义填充，
-	// 不属于 forward header 本身。
+	// SavedPeerType/SavedPeerID are filled in by the send path per self-chat semantics and are
+	// not part of the forward header itself.
 	SavedPeerType string
 	SavedPeerID   int64
 }
@@ -216,7 +216,7 @@ func messageMetadataFromFields(silent, noforwards bool, replyToMsgID int32, repl
 	return silent, noforwards, reply, forward, nil
 }
 
-// savedPeerFromFields 还原 self-chat box 行的 saved 子会话分组键。
+// savedPeerFromFields restores the saved sub-conversation grouping key of a self-chat box row.
 func savedPeerFromFields(savedPeerType string, savedPeerID int64) domain.Peer {
 	if savedPeerType == "" || savedPeerID == 0 {
 		return domain.Peer{}

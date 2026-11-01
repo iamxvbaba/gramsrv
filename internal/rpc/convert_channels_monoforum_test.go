@@ -6,11 +6,15 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestTgChannelMonoforumSuppressesCreatorChrome 锁定频道私信(monoforum)渲染修复的核心不变量:
-// monoforum 虚拟频道在 TDesktop 必须呈现为 Direct-Messages 容器而非普通群。真机 bug 的根因是
-// mono 自身被投影了 Creator=true —— TDesktop 的 NeedAboutGroup 对 megagroup 看 amCreator() 决定
-// 画 "You created a group" 群聊空状态,Leave/订阅数 chrome 也 key off amCreator/asMegagroup。
-// DM 容器身份(本地 MonoforumAdmin 标志)由客户端从母频道 canAccessMonoforum 派生,与 mono 自身无关。
+// TestTgChannelMonoforumSuppressesCreatorChrome locks the core invariant of the
+// channel-direct-messages (monoforum) rendering fix: the monoforum virtual channel
+// must present as a Direct-Messages container in TDesktop, not a normal group. The
+// root cause of the real-device bug was that mono itself was projected with
+// Creator=true -- TDesktop's NeedAboutGroup checks amCreator() for megagroup to
+// decide whether to paint the "You created a group" group empty state, and the
+// Leave/subscriber-count chrome also keys off amCreator/asMegagroup. The DM
+// container identity (local MonoforumAdmin flag) is derived client-side from the
+// parent channel's canAccessMonoforum, independent of mono itself.
 func TestTgChannelMonoforumSuppressesCreatorChrome(t *testing.T) {
 	const owner = int64(1001)
 	const parentID = int64(5001)
@@ -19,10 +23,10 @@ func TestTgChannelMonoforumSuppressesCreatorChrome(t *testing.T) {
 	mono := domain.Channel{
 		ID: monoID, CreatorUserID: owner, Title: "Parent",
 		Megagroup: true, Monoforum: true, LinkedMonoforumID: parentID,
-		// monoforum 镜像母频道 DM 启用状态;启用时才下发 linked_monoforum_id。
+		// The monoforum mirrors the parent channel's DM enabled state; linked_monoforum_id is only sent when enabled.
 		BroadcastMessagesAllowed: true,
 	}
-	// 即便带 creator 角色的 synthetic self(admin 预览),mono 自身对象也必须 Creator=false / 无 admin_rights。
+	// Even with a synthetic self carrying the creator role (admin preview), the mono object itself must be Creator=false / carry no admin_rights.
 	syntheticSelf := &domain.ChannelMember{ChannelID: monoID, UserID: owner, Status: domain.ChannelMemberActive, Role: domain.ChannelRoleCreator}
 	monoTg := tgChannel(owner, mono, syntheticSelf)
 	if !monoTg.Megagroup || !monoTg.Monoforum {
@@ -41,8 +45,10 @@ func TestTgChannelMonoforumSuppressesCreatorChrome(t *testing.T) {
 		t.Fatalf("mono linked_monoforum_id = %d ok=%v, want parent %d", id, ok, parentID)
 	}
 
-	// 母广播频道对 owner 投影:broadcast-only + Creator=true(canAccessMonoforum 走 amCreator 旁路)
-	// + broadcast_messages_allowed + 反向 linked_monoforum_id。三者共同让客户端派生 MonoforumAdmin。
+	// Projection of the parent broadcast channel for the owner: broadcast-only +
+	// Creator=true (canAccessMonoforum goes through the amCreator bypass) +
+	// broadcast_messages_allowed + reverse linked_monoforum_id. Together the three
+	// let the client derive MonoforumAdmin.
 	parent := domain.Channel{
 		ID: parentID, CreatorUserID: owner, Title: "Parent",
 		Broadcast: true, BroadcastMessagesAllowed: true, LinkedMonoforumID: monoID,
@@ -61,7 +67,7 @@ func TestTgChannelMonoforumSuppressesCreatorChrome(t *testing.T) {
 		t.Fatalf("parent linked_monoforum_id = %d ok=%v, want mono %d", id, ok, monoID)
 	}
 
-	// 普通频道(Monoforum=false)不受影响:creator self 仍投影 Creator=true。
+	// Normal channels (Monoforum=false) are unaffected: creator self is still projected Creator=true.
 	normal := domain.Channel{ID: 6001, CreatorUserID: owner, Title: "Normal", Megagroup: true}
 	normalTg := tgChannel(owner, normal, &domain.ChannelMember{ChannelID: 6001, UserID: owner, Status: domain.ChannelMemberActive, Role: domain.ChannelRoleCreator})
 	if !normalTg.Creator {
@@ -69,8 +75,9 @@ func TestTgChannelMonoforumSuppressesCreatorChrome(t *testing.T) {
 	}
 }
 
-// TestChannelAdminRightsManageDirectMessagesRoundTrip 证明新映射的 manage_direct_messages(flags.17)
-// 双向无损,且对未设置该权限的普通管理员保持惰性(不污染线格式)。
+// TestChannelAdminRightsManageDirectMessagesRoundTrip proves the newly mapped
+// manage_direct_messages(flags.17) is bidirectionally lossless and stays inert
+// (does not pollute the wire format) for plain admins that do not set the right.
 func TestChannelAdminRightsManageDirectMessagesRoundTrip(t *testing.T) {
 	tgRights := tgChatAdminRights(domain.ChannelAdminRights{ManageDirectMessages: true, PostMessages: true})
 	if !tgRights.ManageDirectMessages {
@@ -84,11 +91,15 @@ func TestChannelAdminRightsManageDirectMessagesRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTgChannelMonoforumDisabledHidesLink 锁定关闭 Direct Messages 时的投影:母频道与 monoforum
-// **双方都**隐藏 linked_monoforum_id(都以 BroadcastMessagesAllowed 表示 DM 启用,关闭时为 false)。
-// monoforum 必须也隐藏 —— 否则用户打开 monoforum 重新拉取频道对象时,mono 仍带 link →
-// setMonoforumLink(parent) 触发 link&&monoforumDisabled 分支把 MonoforumDisabled 清掉,「已停用私信」
-// 停用页脚消失。monoforum 自身绝不投影 broadcast_messages_allowed(它是 megagroup)。
+// TestTgChannelMonoforumDisabledHidesLink locks the projection when Direct Messages
+// is disabled: both the parent channel and the monoforum **hide**
+// linked_monoforum_id (both represent DM-enabled via BroadcastMessagesAllowed,
+// which is false when disabled). The monoforum must hide it too -- otherwise, when
+// the user opens the monoforum and re-fetches the channel object, the mono still
+// carries the link → setMonoforumLink(parent) triggers the link&&monoforumDisabled
+// branch that clears MonoforumDisabled, and the "direct messages disabled" footer
+// disappears. The monoforum itself never projects broadcast_messages_allowed (it is
+// a megagroup).
 func TestTgChannelMonoforumDisabledHidesLink(t *testing.T) {
 	const owner = int64(1001)
 	const parentID = int64(5001)

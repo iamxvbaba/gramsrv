@@ -16,7 +16,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// factCheckTestRouter 建一个带广播频道与一条频道消息的 router。
+// factCheckTestRouter builds a router with a broadcast channel and one channel message.
 func factCheckTestRouter(t *testing.T) (*Router, *memory.ChannelStore, domain.User, domain.Channel, domain.ChannelMessage) {
 	t.Helper()
 	ctx := context.Background()
@@ -46,8 +46,8 @@ func factCheckTestRouter(t *testing.T) (*Router, *memory.ChannelStore, domain.Us
 	return r, channelStore, owner, created.Channel, post.Message
 }
 
-// TestMessagesEditFactCheckStoresVerdict 验证作者可以写事实核查，
-// 并且标签随消息下发（客户端据此渲染）。
+// TestMessagesEditFactCheckStoresVerdict verifies an author can write a fact
+// check and the tag is delivered with the message (clients render from it).
 func TestMessagesEditFactCheckStoresVerdict(t *testing.T) {
 	r, _, owner, channel, post := factCheckTestRouter(t)
 	ctx := WithUserID(context.Background(), owner.ID)
@@ -72,7 +72,7 @@ func TestMessagesEditFactCheckStoresVerdict(t *testing.T) {
 
 }
 
-// TestMessagesGetFactCheckReturnsStoredVerdict 验证 messages.getFactCheck 返回已写入的标签。
+// TestMessagesGetFactCheckReturnsStoredVerdict verifies messages.getFactCheck returns the written tag.
 func TestMessagesGetFactCheckReturnsStoredVerdict(t *testing.T) {
 	r, channelStore, owner, channel, post := factCheckTestRouter(t)
 	ctx := WithUserID(context.Background(), owner.ID)
@@ -101,7 +101,7 @@ func TestMessagesGetFactCheckReturnsStoredVerdict(t *testing.T) {
 		t.Fatal("fact check hash is zero")
 	}
 
-	// 频道消息读取路径必须带上标签，客户端才会渲染。
+	// The channel message read path must carry the tag for clients to render it.
 	msg := factCheckChannelMessage(t, channelStore, owner.ID, channel.ID, post.ID)
 	if msg.FactCheck == nil {
 		t.Fatal("channel message has no fact check")
@@ -111,7 +111,7 @@ func TestMessagesGetFactCheckReturnsStoredVerdict(t *testing.T) {
 	}
 }
 
-// TestMessagesDeleteFactCheckRemovesVerdict 验证删除标签。
+// TestMessagesDeleteFactCheckRemovesVerdict verifies removing the tag.
 func TestMessagesDeleteFactCheckRemovesVerdict(t *testing.T) {
 	r, channelStore, owner, channel, post := factCheckTestRouter(t)
 	ctx := WithUserID(context.Background(), owner.ID)
@@ -135,7 +135,7 @@ func TestMessagesDeleteFactCheckRemovesVerdict(t *testing.T) {
 	}
 }
 
-// TestMessagesEditFactCheckRejectsNonChannelPeer 验证事实核查只存在于广播频道。
+// TestMessagesEditFactCheckRejectsNonChannelPeer verifies fact checks exist only in broadcast channels.
 func TestMessagesEditFactCheckRejectsNonChannelPeer(t *testing.T) {
 	r, _, owner, _, post := factCheckTestRouter(t)
 	ctx := WithUserID(context.Background(), owner.ID)
@@ -150,7 +150,7 @@ func TestMessagesEditFactCheckRejectsNonChannelPeer(t *testing.T) {
 	}
 }
 
-// factCheckChannelMessage 读取一条频道消息（验证事实核查随消息下发）。
+// factCheckChannelMessage reads one channel message (verifying the fact check is delivered with it).
 func factCheckChannelMessage(t *testing.T, channelStore *memory.ChannelStore, viewerUserID, channelID int64, messageID int) domain.ChannelMessage {
 	t.Helper()
 	history, err := channelStore.GetChannelMessages(context.Background(), viewerUserID, channelID, []int{messageID})
@@ -163,8 +163,9 @@ func factCheckChannelMessage(t *testing.T, channelStore *memory.ChannelStore, vi
 	return history.Messages[0]
 }
 
-// TestMessagesFactCheckMethodsDispatchThroughRouter 验证三个事实核查方法
-// 都在 exact-profile 分发路径上注册并可达（注册表/语义 ID 拼错会在此暴露）。
+// TestMessagesFactCheckMethodsDispatchThroughRouter verifies all three
+// fact-check methods are registered on the exact-profile dispatch path and are
+// reachable (a misspelled registry/semantic ID would surface here).
 func TestMessagesFactCheckMethodsDispatchThroughRouter(t *testing.T) {
 	r, _, owner, channel, post := factCheckTestRouter(t)
 	ctx := WithUserID(context.Background(), owner.ID)

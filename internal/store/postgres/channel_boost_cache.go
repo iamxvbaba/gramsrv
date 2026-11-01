@@ -19,25 +19,25 @@ type channelBoostPeerTotalCacheKey struct {
 	peerID   int64
 }
 
-// ChannelBoostCache 缓存 boost 读投影,由统一缓存原语 readmodelcache.Cache 承载
-// (LRU 单条驱逐 / epoch 守卫 / singleflight 内建,TTL 由原语时钟驱动)。
+// ChannelBoostCache caches the boost read projection, backed by the common cache primitive
+// readmodelcache.Cache (single-entry LRU eviction / epoch guard / built-in singleflight, TTL driven by the primitive's clock).
 //
-// 它刻意只在非事务读路径使用;发送权限校验与 boost apply 事务内仍实时查
-// channel_boost_slots。selfBoosts 缓存 viewer 作用域的 SelfBoostsApplied,
-// peerTotals 缓存 premium.getBoostsStatus 的频道总 active boost 数。
-// boost 自身的到期由 load 时的 SQL(expires_at > now)过滤,本缓存的 TTL 只是新鲜度兜底,
-// 与调用方传入的墙钟 now 等价(运行时 now=nowUnix()),故迁移到原语内部时钟行为不变。
+// It is deliberately used only on non-transactional read paths; send permission checks and the boost apply transaction still query
+// channel_boost_slots live. selfBoosts caches the viewer-scoped SelfBoostsApplied;
+// peerTotals caches the channel's total active boost count for premium.getBoostsStatus.
+// A boost's own expiry is filtered by SQL at load time (expires_at > now); this cache's TTL is only a freshness fallback,
+// equivalent to the wall-clock now passed by the caller (at runtime now=nowUnix()), so migrating to the primitive's internal clock does not change behavior.
 type ChannelBoostCache struct {
 	selfBoosts *readmodelcache.Cache[channelBoostCacheKey, int]
 	peerTotals *readmodelcache.Cache[channelBoostPeerTotalCacheKey, int]
 }
 
-// NewChannelBoostCache 创建容量 max、新鲜度 ttl 的 boost 缓存;max<=0 或 ttl<=0 返回 nil(禁用)。
+// NewChannelBoostCache creates a boost cache with capacity max and freshness ttl; max<=0 or ttl<=0 returns nil (disabled).
 func NewChannelBoostCache(max int, ttl time.Duration) *ChannelBoostCache {
 	return newChannelBoostCache(max, ttl, nil)
 }
 
-// newChannelBoostCache 允许注入时钟,仅供测试确定地推进 TTL;now=nil 用真实时钟。
+// newChannelBoostCache allows injecting a clock, only for tests to advance the TTL deterministically; now=nil uses the real clock.
 func newChannelBoostCache(max int, ttl time.Duration, now func() time.Time) *ChannelBoostCache {
 	if ttl <= 0 {
 		return nil

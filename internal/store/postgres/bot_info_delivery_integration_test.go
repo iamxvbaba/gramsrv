@@ -75,12 +75,12 @@ ON CONFLICT (user_id, peer_type, peer_id) DO NOTHING`, viewer.ID, bot.ID); err !
 	}
 	assertBotInfoDeliveryPayloadRows(t, ctx, pool, payloads[0], []int64{owner.ID, viewer.ID})
 
-	version, changed, err = bots.UpdateBotInfoWithDelivery(ctx, bot.ID, domain.BotInfoUpdate{LangCode: "zh-hans", SetName: true, Name: "本地名称"}, effects)
+	version, changed, err = bots.UpdateBotInfoWithDelivery(ctx, bot.ID, domain.BotInfoUpdate{LangCode: "zh-hans", SetName: true, Name: "Localized Name"}, effects)
 	if err != nil || !changed || version != before.BotInfoVersion+2 {
 		t.Fatalf("localized update = version:%d changed:%v err:%v", version, changed, err)
 	}
 	localized, found, err := bots.GetBotInfo(ctx, bot.ID, "zh-hans")
-	if err != nil || !found || localized.Name != "本地名称" || localized.About != defaults.About || localized.Description != defaults.Description {
+	if err != nil || !found || localized.Name != "Localized Name" || localized.About != defaults.About || localized.Description != defaults.Description {
 		t.Fatalf("localized info = %+v found=%v err=%v", localized, found, err)
 	}
 	global, _, _ := bots.GetBotInfo(ctx, bot.ID, "")

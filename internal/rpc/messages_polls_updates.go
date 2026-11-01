@@ -16,7 +16,7 @@ import (
 // multi-session delivery belongs to the owning aggregate and delivery lane;
 // Core never runs a post-commit online viewer fan-out.
 
-// pollMutationErr 把 poll/消息域错误映射为 RPC error。
+// pollMutationErr maps poll/message domain errors to RPC errors.
 func pollMutationErr(err error) error {
 	switch {
 	case err == nil:
@@ -36,7 +36,7 @@ func pollMutationErr(err error) error {
 	}
 }
 
-// loadMessagePoll 按 viewer 视角加载消息上的 poll（已 enrich）。
+// loadMessagePoll loads the poll on a message from the viewer's perspective (already enriched).
 func (r *Router) loadMessagePoll(ctx context.Context, userID int64, peer domain.Peer, msgID int) (*domain.MessagePoll, domain.Peer, bool) {
 	switch peer.Type {
 	case domain.PeerTypeChannel:
@@ -69,8 +69,9 @@ func (r *Router) loadMessagePoll(ctx context.Context, userID int64, peer domain.
 	return nil, peer, false
 }
 
-// pollUpdateRefs 收集当前 viewer 的 updateMessagePoll 响应需要的 users/chats
-// （recent voters 头像 + channel 实体）。频道 mutation 已携带 res.Channel，因此无需再次查询。
+// pollUpdateRefs collects the users/chats the current viewer's updateMessagePoll response needs
+// (recent voter avatars + the channel entity). A channel mutation already carries res.Channel, so
+// no second query is needed.
 func (r *Router) pollUpdateRefs(ctx context.Context, viewerUserID int64, peer domain.Peer, poll *domain.MessagePoll, channel domain.Channel) ([]tg.UserClass, []tg.ChatClass) {
 	userIDs := make([]int64, 0, domain.MaxPollRecentVoters)
 	if poll != nil && poll.Results != nil {
@@ -80,10 +81,10 @@ func (r *Router) pollUpdateRefs(ctx context.Context, viewerUserID int64, peer do
 	chats := []tg.ChatClass{}
 	if peer.Type == domain.PeerTypeChannel {
 		if channel.ID != 0 {
-			// Mutation result 已带 channel，直接用于当前调用者投影。
+			// The mutation result already carries the channel; use it directly for the caller's projection.
 			chats = tgChannels(viewerUserID, []domain.Channel{channel})
 		} else if r.deps.Channels != nil {
-			// getPollResults 是只读单-viewer 路径，需要加载 channel 投影。
+			// getPollResults is a read-only single-viewer path and has to load the channel projection.
 			if view, err := r.deps.Channels.GetChannel(ctx, viewerUserID, peer.ID); err == nil && view.Channel.ID != 0 {
 				chats = []tg.ChatClass{tgChannelChatForView(viewerUserID, view)}
 			}
@@ -92,8 +93,9 @@ func (r *Router) pollUpdateRefs(ctx context.Context, viewerUserID int64, peer do
 	return users, chats
 }
 
-// privatePollUpdates 只构造当前 RPC 响应。其它 session 的非 PTS
-// absolute delivery 已由 privatePollDeliveryEffects 在 poll mutation 事务内写入。
+// privatePollUpdates builds only the current RPC response. The non-PTS absolute delivery for
+// other sessions is already written by privatePollDeliveryEffects inside the poll mutation
+// transaction.
 func (r *Router) privatePollUpdates(ctx context.Context, requestUserID int64, res domain.PrivateMessagePollResult) (tg.UpdatesClass, error) {
 	for _, msg := range res.Messages {
 		if msg.OwnerUserID == requestUserID {
@@ -183,8 +185,9 @@ func (r *Router) privatePollDeliveryEffects(ctx context.Context, requestUserID i
 	}
 }
 
-// onEditMessageClosePoll 处理 editMessage + InputMediaPoll：当前唯一支持的 poll 编辑是
-// 关闭（closed=true，仅 poll 创建者）；改题/改选项无官方客户端路径，显式拒绝。
+// onEditMessageClosePoll handles editMessage + InputMediaPoll: the only poll edit
+// supported today is closing (closed=true, poll creator only); changing the
+// question/options has no official client path and is explicitly rejected.
 func (r *Router) onEditMessageClosePoll(ctx context.Context, req *tg.MessagesEditMessageRequest, media *tg.InputMediaPoll) (tg.UpdatesClass, error) {
 	if req.ID <= 0 || req.ID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()

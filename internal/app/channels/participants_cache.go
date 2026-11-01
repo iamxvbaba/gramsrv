@@ -27,8 +27,10 @@ type participantsCacheKey struct {
 	limit     int
 }
 
-// participantsReadModelCache 由统一缓存原语承载(版本闸门 / epoch 守卫 / LRU 单条驱逐 / clone)。
-// LRU 终于给 (query,offset,limit) 维度的 page-key 上界,消掉原先无界 query-string 基数增长。
+// participantsReadModelCache is backed by the shared cache primitive
+// (version gate / epoch guard / single-entry LRU eviction / clone).
+// The LRU finally bounds the (query,offset,limit) page-key dimension, removing
+// the previously unbounded query-string cardinality growth.
 type participantsReadModelCache struct {
 	cache *readmodelcache.Cache[participantsCacheKey, domain.ChannelParticipantList]
 }

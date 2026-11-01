@@ -14,11 +14,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件集中富文本消息（richMessage）的 tg.* ↔ domain 转换。
-// inputRichMessage 的 blocks、HTML 与 Markdown 三种输入均在 RPC 边界归一为 PageBlock；
-// blocks 以 TL 向量序列化为不透明字节存 domain（详见 domain.MessageRichMessage）。
+// This file centralizes the tg.* <-> domain conversion for rich text messages
+// (richMessage). All three input forms of inputRichMessage -- blocks, HTML and
+// Markdown -- are normalized into PageBlock at the RPC boundary; blocks are
+// serialized as a TL vector into opaque bytes and stored in domain (see
+// domain.MessageRichMessage).
 
-// encodeRichBlocks 把 []tg.PageBlockClass 按明确的存储 profile 序列化为 TL 向量字节。
+// encodeRichBlocks serializes []tg.PageBlockClass into TL vector bytes using the explicit storage profile.
 func encodeRichBlocks(profile tlprofile.Profile, blocks []tg.PageBlockClass) ([]byte, error) {
 	var b bin.Buffer
 	if err := tlprofile.EncodePageBlockVector(profile, blocks, &b); err != nil {
@@ -27,8 +29,9 @@ func encodeRichBlocks(profile tlprofile.Profile, blocks []tg.PageBlockClass) ([]
 	return b.Buf, nil
 }
 
-// decodeRichBlocks 按写入时的 exact profile 还原完整 PageBlock 向量。调用方必须提供
-// 持久化元数据确定的 profile，不允许失败后换 profile 重试。
+// decodeRichBlocks restores the full PageBlock vector using the exact profile it
+// was written with. The caller must provide the profile determined by the persisted
+// metadata; retrying with a different profile on failure is not allowed.
 func decodeRichBlocks(profile tlprofile.Profile, data []byte) ([]tg.PageBlockClass, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -298,10 +301,11 @@ func normalizeOrderedListForClients(list *tg.PageBlockOrderedList) {
 	}
 }
 
-// domainRichMessageFromInput 把入站 tg.InputRichMessageClass 解析为 domain 快照：
-// HTML/Markdown 先在服务端解析为 PageBlock，再与 blocks 形态共用限额校验、
-// 序列化和 Bot API 输出投影；内嵌 photos/documents 复用 sendMedia 同款媒体解析。
-// 返回 nil 表示无富文本载荷。
+// domainRichMessageFromInput parses the inbound tg.InputRichMessageClass into a
+// domain snapshot: HTML/Markdown is first parsed server-side into PageBlock, then
+// shares limit validation, serialization and Bot API output projection with the
+// blocks form; embedded photos/documents reuse the same media resolution as
+// sendMedia. A nil return means there is no rich text payload.
 func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputRichMessageClass) (*domain.MessageRichMessage, error) {
 	if input == nil {
 		return nil, nil
@@ -393,8 +397,9 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 	return rich, nil
 }
 
-// tgRichMessage 把 domain 富文本快照投影为 tg.RichMessage（反序列化 blocks + 复用
-// tgPhoto/tgDocument 投影内嵌媒体）。空载荷或 blocks 解码失败返回 (nil, err)。
+// tgRichMessage projects the domain rich text snapshot into tg.RichMessage
+// (deserialize blocks + project embedded media via tgPhoto/tgDocument). Returns
+// (nil, err) for an empty payload or a blocks decode failure.
 func tgRichMessage(m *domain.MessageRichMessage) (*tg.RichMessage, error) {
 	if m.IsZero() {
 		return nil, nil

@@ -14,7 +14,7 @@ func TestSendMediaPrivateGeoPoint(t *testing.T) {
 	r, owner, friend := newMediaTestRouter(t)
 
 	point := &tg.InputGeoPoint{Lat: 39.9042, Long: 116.4074}
-	point.SetAccuracyRadius(30) // gotd flag 字段必须 Set*() 置 flag 位，直接赋字段 getter 读不到
+	point.SetAccuracyRadius(30) // gotd flag fields must be set via Set*() to set the flag bit; assigning the field directly is invisible to the getter
 	updates, err := r.onMessagesSendMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMediaRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
 		Media:    &tg.InputMediaGeoPoint{GeoPoint: point},
@@ -143,13 +143,14 @@ func TestSendMediaPrivateDiceValueRanges(t *testing.T) {
 		{"\U0001F3AF", "\U0001F3AF", 6},  // 🎯
 		{"\U0001F3B3", "\U0001F3B3", 6},  // 🎳
 		{"\U0001F3C0", "\U0001F3C0", 5},  // 🏀
-		{"⚽", "⚽", 5},                    // 裸足球
-		{"⚽️", "⚽", 5},                   // 带 U+FE0F 变体，须归一
+		{"⚽", "⚽", 5},                    // bare soccer ball
+		{"⚽️", "⚽", 5},                   // with U+FE0F variation, must be normalized
 		{"\U0001F3B0", "\U0001F3B0", 64}, // 🎰
 	}
 	randomID := int64(3000)
 	for _, tc := range cases {
-		// 多抽几次覆盖取值边界；value 必须始终落在 [1, max]。
+		// Roll several times to cover the value boundaries; value must always be in
+		// [1, max].
 		for i := 0; i < 8; i++ {
 			randomID++
 			updates, err := r.onMessagesSendMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMediaRequest{
@@ -213,7 +214,7 @@ func TestUploadGetWebFileGeoTile(t *testing.T) {
 		t.Errorf("mime = %q, want image/png", file.MimeType)
 	}
 
-	// offset 续传按字节切片，size 始终是全量大小。
+	// offset resume slices by byte, and size is always the full size.
 	req.Offset = 4
 	req.Limit = 4
 	chunk, err := r.onUploadGetWebFile(WithUserID(ctx, owner.ID), req)
@@ -224,7 +225,8 @@ func TestUploadGetWebFileGeoTile(t *testing.T) {
 		t.Fatalf("offset chunk = %v (size %d), want bytes 4..8 of tile", chunk.Bytes, chunk.Size)
 	}
 
-	// URL 形态当前无来源，必须显式拒绝而非静默。
+	// The URL form currently has no source, so it must be explicitly rejected
+	// rather than silently ignored.
 	if _, err := r.onUploadGetWebFile(WithUserID(ctx, owner.ID), &tg.UploadGetWebFileRequest{
 		Location: &tg.InputWebFileLocation{URL: "https://example.com/a.png", AccessHash: 1},
 		Limit:    4096,

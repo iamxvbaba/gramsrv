@@ -1,8 +1,10 @@
--- per-(user, channel, topic) 独立已读水位。
--- 背景：forum 话题已读此前被频道级单一水位 channel_members.read_inbox_max_id 承载，
--- 读一个 topic 会污染其它 topic 的未读现算（reply_to_top_id 过滤 + id > 频道级水位）。
--- channel_forum_topics 那几个 read_*_max_id 列无 user 维度（PK=channel_id,topic_id），
--- 无法承载 per-viewer 已读；故新建本表，topic_id=1 表示 General。
+-- Per-(user, channel, topic) independent read watermark.
+-- Background: forum topic read-state was previously carried by the single
+-- channel-level watermark channel_members.read_inbox_max_id, so reading one topic
+-- polluted the computed unread of other topics (reply_to_top_id filter + id >
+-- channel-level watermark). The read_*_max_id columns of channel_forum_topics have
+-- no user dimension (PK = channel_id,topic_id) and cannot carry per-viewer read
+-- state; hence this new table, where topic_id=1 means General.
 CREATE TABLE public.channel_topic_read (
     channel_id bigint NOT NULL,
     user_id bigint NOT NULL,
@@ -17,7 +19,9 @@ CREATE TABLE public.channel_topic_read (
         REFERENCES public.channels (id) ON DELETE CASCADE
 );
 
--- outbox 回执反查：某 topic 内某 viewer 自己消息被读到哪 = 该 topic 其他成员 read_inbox_max_id 的最大值。
--- (channel_id, topic_id, read_inbox_max_id DESC) 让 MAX 走 index-only，避免每帧全表聚合。
+-- Outbox read-receipt reverse lookup: how far a viewer's own messages in a topic
+-- have been read = the max read_inbox_max_id among the topic's other members.
+-- (channel_id, topic_id, read_inbox_max_id DESC) lets MAX use an index-only scan,
+-- avoiding a full-table aggregate per frame.
 CREATE INDEX channel_topic_read_outbox_idx
     ON public.channel_topic_read (channel_id, topic_id, read_inbox_max_id DESC);

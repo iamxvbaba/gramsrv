@@ -2,8 +2,10 @@ package catalog
 
 import "testing"
 
-// TestSeededCatalogsLoaded 验证 go:embed 的官方目录数据被正确解析、非空。
-// 内容由 cmd/catalogfetch 拉取;数字是下界,重拉变多不会让测试失败。
+// TestSeededCatalogsLoaded verifies that the official catalog data embedded via
+// go:embed is parsed correctly and non-empty. The content is fetched by
+// cmd/catalogfetch; the numbers are lower bounds, so a refetch yielding more does
+// not fail the test.
 func TestSeededCatalogsLoaded(t *testing.T) {
 	cs := Countries()
 	if len(cs.Countries) < 200 {

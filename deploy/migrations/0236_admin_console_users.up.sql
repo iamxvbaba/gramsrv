@@ -1,4 +1,4 @@
--- v2 编号 0236；移植自 main 0207_admin_console_users（main 0009095c），见 docs/main-v2-sync.md。
+-- v2 number 0236; ported from main 0207_admin_console_users (main 0009095c), see docs/main-v2-sync.md.
 -- Admin console accounts.
 --
 -- Until now the panel had exactly one operator: TELESRV_ADMIN_UI_PASSWORD /

@@ -26,8 +26,10 @@ type storyProjectionCacheKey struct {
 	peer         domain.Peer
 }
 
-// storyProjectionValue 含负缓存:hasRecent=false 表示「查过、该 peer 无 recent 故事」(仍带
-// hidden 状态)。tg.RecentStory 按值视为 copy-safe(与原实现一致,不深拷)。
+// storyProjectionValue includes a negative cache: hasRecent=false means "checked, this
+// peer has no recent story" (still carrying the hidden state). tg.RecentStory is
+// treated as copy-safe by value (consistent with the original implementation, no deep
+// copy).
 type storyProjectionValue struct {
 	recent    tg.RecentStory
 	hasRecent bool
@@ -39,10 +41,12 @@ type storyProjectionMaps struct {
 	hidden map[domain.Peer]bool
 }
 
-// storyProjectionCache 缓存 (viewer,peer)→{recent, hidden},由统一缓存原语承载,批量经
-// GetOrLoadBatch(per-peer 查 + 合批 load misses + per-key 写回;纯 TTL,无版本闸门)。
-// GetOrLoadBatch 无批量级 singleflight,故此处保留按 (viewer,peer 集) 维度的 sf,防止并发相同
-// 投影请求对昂贵的 story 后端形成 thundering herd。
+// storyProjectionCache caches (viewer,peer)->{recent, hidden}, carried by the shared
+// cache primitive, in batch via GetOrLoadBatch (per-peer lookup + batched load of
+// misses + per-key write-back; pure TTL, no version gate). GetOrLoadBatch has no
+// batch-level singleflight, so a sf keyed by (viewer, peer set) is kept here to keep
+// concurrent identical projection requests from forming a thundering herd against the
+// expensive story backend.
 type storyProjectionCache struct {
 	cache *readmodelcache.Cache[storyProjectionCacheKey, storyProjectionValue]
 	sf    singleflight.Group
@@ -58,9 +62,12 @@ func newStoryProjectionCache(now func() time.Time) *storyProjectionCache {
 	}
 }
 
-// getMany 批量解析 (viewer, peers) 的 recent/hidden 投影。loadMissing 为缺失 peer 计算两张图
-// (与 storyProjectionFreshMaps 同形);每个 miss peer 都被缓存(含「无 recent」负结果与 hidden 态)。
-// 整体按 (viewer, 排序去重 peer 集) 走 singleflight,并发相同请求只打一次后端。
+// getMany batch-resolves the recent/hidden projections for (viewer, peers).
+// loadMissing computes both maps for the missing peers (same shape as
+// storyProjectionFreshMaps); every miss peer is cached (including the "no recent"
+// negative result and the hidden state). The whole thing goes through singleflight
+// keyed by (viewer, sorted deduped peer set), so concurrent identical requests hit
+// the backend only once.
 func (c *storyProjectionCache) getMany(
 	ctx context.Context,
 	viewerUserID int64,
@@ -89,7 +96,7 @@ func (c *storyProjectionCache) getManyUncached(
 		keys = append(keys, storyProjectionCacheKey{viewerUserID: viewerUserID, peer: peer})
 	}
 	values, _ := c.cache.GetOrLoadBatch(ctx, keys,
-		func(storyProjectionCacheKey) (int64, bool) { return 0, true }, // 纯 TTL,无版本闸门
+		func(storyProjectionCacheKey) (int64, bool) { return 0, true }, // pure TTL, no version gate
 		func(ctx context.Context, missing []storyProjectionCacheKey) (map[storyProjectionCacheKey]storyProjectionValue, error) {
 			missPeers := make([]domain.Peer, len(missing))
 			for i, k := range missing {

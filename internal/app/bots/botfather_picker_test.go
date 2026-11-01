@@ -9,7 +9,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// lastBotFatherReply 取 owner 收件箱里 BotFather 的最新一条消息（不发新消息）。
+// lastBotFatherReply returns the latest message from BotFather in the owner's inbox (without sending a new message).
 func lastBotFatherReply(t *testing.T, messages *memory.MessageStore, userID int64) domain.Message {
 	t.Helper()
 	list, err := messages.ListByUser(context.Background(), userID, domain.MessageFilter{
@@ -32,7 +32,7 @@ func lastBotFatherReply(t *testing.T, messages *memory.MessageStore, userID int6
 	return latest
 }
 
-// botFatherPickerButtonTexts 返回 reply keyboard（输入框下方的 keyboard）里的按钮文本。
+// botFatherPickerButtonTexts returns the button texts in the reply keyboard (the keyboard below the input box).
 func botFatherPickerButtonTexts(t *testing.T, msg domain.Message) []string {
 	t.Helper()
 	if msg.ReplyMarkup == nil || msg.ReplyMarkup.Kind() != domain.MessageReplyMarkupKeyboard {
@@ -63,7 +63,7 @@ func containsString(list []string, want string) bool {
 	return false
 }
 
-// 选择 bot 的键盘是 reply keyboard：点按钮等于把 @username 当普通文本发给 BotFather。
+// The bot picker keyboard is a reply keyboard: tapping a button equals sending @username as plain text to BotFather.
 func TestBotFatherSetNameUsesReplyKeyboard(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2020")
@@ -78,7 +78,7 @@ func TestBotFatherSetNameUsesReplyKeyboard(t *testing.T) {
 		t.Fatalf("/setname keyboard = %v, want [@button_name_bot]", got)
 	}
 
-	// 点击 reply keyboard 按钮 = 客户端发送该按钮文本。
+	// Tapping a reply keyboard button = the client sends that button's text.
 	if reply := sendToBotFather(t, svc, messages, owner, "@button_name_bot"); reply != "OK. Send me the new name for your bot." {
 		t.Fatalf("after picking a bot reply = %q", reply)
 	}
@@ -90,7 +90,7 @@ func TestBotFatherSetNameUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /setdescription 与 /setname 同一套键盘选择，文案对齐官方 BotFather。
+// /setdescription uses the same keyboard picker as /setname, with text matching the official BotFather.
 func TestBotFatherSetDescriptionUsesReplyKeyboard(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2023")
@@ -118,7 +118,7 @@ func TestBotFatherSetDescriptionUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /setabouttext 与 /setname、/setdescription 同一套键盘选择，文案对齐官方 BotFather。
+// /setabouttext uses the same keyboard picker as /setname and /setdescription, with text matching the official BotFather.
 func TestBotFatherSetAboutUsesReplyKeyboard(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2024")
@@ -146,7 +146,7 @@ func TestBotFatherSetAboutUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /setcommands 的键盘选择与格式文案对齐官方 BotFather。
+// /setcommands' keyboard picker and format text match the official BotFather.
 func TestBotFatherSetCommandsUsesReplyKeyboard(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2025")
@@ -177,7 +177,7 @@ func TestBotFatherSetCommandsUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /token 也是键盘选择；token 以 code entity 返回，客户端里点一下就复制。
+// /token is also a keyboard picker; the token is returned as a code entity, so the client copies it with one tap.
 func TestBotFatherTokenUsesReplyKeyboard(t *testing.T) {
 	svc, users, bots, messages := newTestService(t)
 	owner := newOwner(t, users, "+2026")
@@ -215,7 +215,7 @@ func TestBotFatherTokenUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// 键盘两列：3 个 bot 排成 2 + 1。
+// Keyboard has two columns: 3 bots are laid out as 2 + 1.
 func TestBotFatherPickerLaysOutTwoButtonsPerRow(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2027")
@@ -224,7 +224,7 @@ func TestBotFatherPickerLaysOutTwoButtonsPerRow(t *testing.T) {
 	}
 
 	picker := latestBotFatherMessage(t, svc, messages, owner, "/setname")
-	botFatherPickerButtonTexts(t, picker) // 校验类型与 resize/single_use
+	botFatherPickerButtonTexts(t, picker) // validate the type and resize/single_use
 	rows := picker.ReplyMarkup.Keyboard
 	if len(rows) != 2 || len(rows[0]) != 2 || len(rows[1]) != 1 {
 		t.Fatalf("keyboard rows = %+v, want [2 1]", rows)
@@ -234,7 +234,7 @@ func TestBotFatherPickerLaysOutTwoButtonsPerRow(t *testing.T) {
 	}
 }
 
-// /setinline：键盘选择 + 官方 placeholder 提示。
+// /setinline: keyboard picker + the official placeholder prompt.
 func TestBotFatherSetInlineUsesReplyKeyboard(t *testing.T) {
 	svc, users, bots, messages := newTestService(t)
 	owner := newOwner(t, users, "+2028")
@@ -260,7 +260,7 @@ func TestBotFatherSetInlineUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /setinlinegeo：只列 inline mode 已开启的 bot，显示当前值，Enable/Disable 键盘。
+// /setinlinegeo: lists only bots with inline mode enabled, shows the current value, and an Enable/Disable keyboard.
 func TestBotFatherSetInlineGeoUsesReplyKeyboard(t *testing.T) {
 	svc, users, bots, messages := newTestService(t)
 	owner := newOwner(t, users, "+2029")
@@ -299,7 +299,7 @@ func TestBotFatherSetInlineGeoUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /setjoingroups：显示当前状态 + Enable/Disable 键盘。
+// /setjoingroups: shows the current status + an Enable/Disable keyboard.
 func TestBotFatherSetJoinGroupsUsesReplyKeyboard(t *testing.T) {
 	svc, users, bots, messages := newTestService(t)
 	owner := newOwner(t, users, "+2030")
@@ -344,7 +344,7 @@ func TestBotFatherSetJoinGroupsUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// /setprivacy：显示当前状态 + Enable/Disable 键盘。
+// /setprivacy: shows the current status + an Enable/Disable keyboard.
 func TestBotFatherSetPrivacyUsesReplyKeyboard(t *testing.T) {
 	svc, users, bots, messages := newTestService(t)
 	owner := newOwner(t, users, "+2031")
@@ -389,7 +389,7 @@ func TestBotFatherSetPrivacyUsesReplyKeyboard(t *testing.T) {
 	}
 }
 
-// 键盘里只能出现 owner 自己的 bot；手输别人的用户名也选不中。
+// The keyboard may only contain the owner's own bots; manually typing someone else's username cannot select it either.
 func TestBotFatherPickerKeyboardOnlyListsOwnBots(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2021")
@@ -406,9 +406,9 @@ func TestBotFatherPickerKeyboardOnlyListsOwnBots(t *testing.T) {
 	}
 }
 
-// /setinlinegeo 选不出 bot 时必须清掉上一条命令的步骤：否则用户看到「没有 inline
-// bot」后随手发的下一条文本，会被旧步骤当成自己的输入（曾把 /setname 的收值文本
-// 直接写成 bot 名字）。
+// When /setinlinegeo cannot pick any bot, the previous command's step must be cleared: otherwise, after the user
+// sees "no inline bot", the next text they casually send would be treated by the old step as their own input (it
+// once wrote the /setname value text directly as the bot name).
 func TestBotFatherInlineGeoPickerDropsStaleStep(t *testing.T) {
 	svc, users, _, messages := newTestService(t)
 	owner := newOwner(t, users, "+2032")
@@ -416,7 +416,7 @@ func TestBotFatherInlineGeoPickerDropsStaleStep(t *testing.T) {
 	ctx := context.Background()
 
 	sendToBotFather(t, svc, messages, owner, "/setname")
-	sendToBotFather(t, svc, messages, owner, "@stale_step_bot") // 进入 /setname 收值步骤
+	sendToBotFather(t, svc, messages, owner, "@stale_step_bot") // enter the /setname value step
 
 	if reply := sendToBotFather(t, svc, messages, owner, "/setinlinegeo"); reply != "You don't have any bots with inline mode enabled. Use /setinline to enable it first." {
 		t.Fatalf("/setinlinegeo reply = %q", reply)

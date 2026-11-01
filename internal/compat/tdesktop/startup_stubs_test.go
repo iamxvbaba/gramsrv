@@ -88,7 +88,7 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 		t.Fatalf("AppConfig purchase flags = stars_blocked:%v giveaway_available:%v", bools["stars_purchase_blocked"], bools["giveaway_gifts_purchase_available"])
 	}
 	if !boolSeen["settings_display_passkeys"] || !bools["settings_display_passkeys"] {
-		t.Fatalf("AppConfig[settings_display_passkeys] = %v seen=%v, want true (passkey 注册入口 gate)", bools["settings_display_passkeys"], boolSeen["settings_display_passkeys"])
+		t.Fatalf("AppConfig[settings_display_passkeys] = %v seen=%v, want true (passkey registration entry gate)", bools["settings_display_passkeys"], boolSeen["settings_display_passkeys"])
 	}
 	fragmentPrefixes := arrays["fragment_prefixes"]
 	if fragmentPrefixes == nil || len(fragmentPrefixes.Value) != 1 {
@@ -205,8 +205,9 @@ func TestChatThemesCatalogIsNonEmptyHashableAndHasQRBackgroundColors(t *testing.
 			case *tg.BaseThemeNight:
 				hasNight = true
 			}
-			// 官方聊天主题用文档型主题背景墙纸(非旧的纯渐变 WallPaperNoFile),
-			// 这里只要求每组设置带一个墙纸。
+			// Official chat themes use document-based theme background wallpapers (not the
+			// old pure-gradient WallPaperNoFile); here we only require each settings group
+			// to carry one wallpaper.
 			if wallpaper, ok := setting.GetWallpaper(); !ok || wallpaper == nil {
 				t.Fatalf("theme[%d].settings[%d].wallpaper = %#v ok=%v, want wallpaper", i, j, wallpaper, ok)
 			}

@@ -2,10 +2,10 @@ package domain
 
 import "strings"
 
-// LoginMethod 区分登录欢迎消息模板可按渠道定制的两种登录方式：手机号
-// （短信/App 码）与邮箱（邮箱登录账号，见 SignInMethodLabel）。没有第三维
-// 区分——注册与否、2FA 与否都不影响，因为 recordWelcomeMessage 的调用方
-// 不会携带更多信息。
+// LoginMethod distinguishes the two login methods for which the welcome message template can be customized per channel: phone
+// (SMS/app code) and email (email-login account, see SignInMethodLabel). There is no third dimension
+// — signup or not, 2FA or not, both make no difference, because recordWelcomeMessage's caller
+// carries no more information.
 type LoginMethod string
 
 const (
@@ -13,9 +13,9 @@ const (
 	LoginMethodEmail LoginMethod = "email"
 )
 
-// LoginMethodFromLabel 把 SignInMethodLabel 的人类可读字符串映射回
-// LoginMethod，这样已经算出 label 的调用方（{{...}} 模板历史 "via %s"
-// 措辞）不必二次从 User 计算。
+// LoginMethodFromLabel maps the human-readable SignInMethodLabel string back to
+// LoginMethod, so callers that already computed the label (the {{...}} template's historical "via %s"
+// wording) need not recompute it from User.
 func LoginMethodFromLabel(label string) LoginMethod {
 	if label == "email" {
 		return LoginMethodEmail
@@ -23,23 +23,23 @@ func LoginMethodFromLabel(label string) LoginMethod {
 	return LoginMethodPhone
 }
 
-// DefaultWelcomeMessagePhoneTemplate / DefaultWelcomeMessageEmailTemplate 是
-// 登录欢迎消息（每次完成登录后由官方系统账号 777000 发送）的内置最终兜底文案。
-// 两条消息刻意分开（而非一份带方法名替换的模板），让各自渠道读起来自然。
+// DefaultWelcomeMessagePhoneTemplate / DefaultWelcomeMessageEmailTemplate are
+// the built-in final fallback text for the login welcome message (sent by the official system account 777000 after each completed login).
+// The two messages are deliberately separate (rather than one template with a method-name substitution) so each channel reads naturally.
 //
-// {{server_name}} 会被替换为服务器当前生效的展示名
-// （见 ResolveWelcomeMessageTemplate / RenderWelcomeMessageTemplate）。
+// {{server_name}} is replaced with the server's currently effective display name
+// (see ResolveWelcomeMessageTemplate / RenderWelcomeMessageTemplate).
 const (
 	DefaultWelcomeMessagePhoneTemplate = "👋 Welcome to {{server_name}}!\n\nA new sign-in to your account was just completed using your phone number.\n\nIf this was you, no action is needed. If it wasn't, please revoke this session immediately from Settings → Privacy and Security → Active Sessions."
 
 	DefaultWelcomeMessageEmailTemplate = "👋 Welcome to {{server_name}}!\n\nA new sign-in to your account was just completed using your email address.\n\nIf this was you, no action is needed. If it wasn't, please revoke this session immediately from Settings → Privacy and Security → Active Sessions."
 )
 
-// ResolveWelcomeMessageTemplate 按优先级挑选指定登录方式的消息模板正文：
-// 显式管理面板覆盖（panelOverride，identity.Info 中按原样存储，空表示未配置）
-// → 显式环境变量默认值（envDefault，空表示未配置）→ 该方式的编译期内置文案。
-// 纯函数，便于无依赖地单测优先级。调用方（internal/app/auth）每次
-// recordWelcomeMessage 都实时调用（绝不缓存），使管理面板修改立即生效。
+// ResolveWelcomeMessageTemplate picks the message template body for the given login method by priority:
+// an explicit admin-panel override (panelOverride, stored verbatim in identity.Info, empty means unset)
+// → an explicit environment-variable default (envDefault, empty means unset) → that method's compile-time built-in text.
+// A pure function, for dependency-free testing of the priority. The caller (internal/app/auth) invokes it
+// live on every recordWelcomeMessage (never cached) so admin-panel edits take effect immediately.
 func ResolveWelcomeMessageTemplate(method LoginMethod, panelOverride, envDefault string) string {
 	if t := strings.TrimSpace(panelOverride); t != "" {
 		return panelOverride
@@ -53,9 +53,9 @@ func ResolveWelcomeMessageTemplate(method LoginMethod, panelOverride, envDefault
 	return DefaultWelcomeMessagePhoneTemplate
 }
 
-// RenderWelcomeMessageTemplate 把 template 中的 {{server_name}} 占位符替换为
-// 服务器当前生效的展示名。是字面量、单占位符替换——不引入模板引擎，因为
-// 只有这一处替换要做。
+// RenderWelcomeMessageTemplate replaces the {{server_name}} placeholder in template with
+// the server's currently effective display name. It is a literal, single-placeholder replacement — no template engine,
+// because this is the only replacement needed.
 func RenderWelcomeMessageTemplate(template string) string {
 	return strings.ReplaceAll(template, "{{server_name}}", officialSystemDisplayName())
 }

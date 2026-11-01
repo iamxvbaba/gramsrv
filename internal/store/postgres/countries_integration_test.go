@@ -7,9 +7,9 @@ import (
 	"telesrv/internal/seed/catalog"
 )
 
-// TestUpsertCountriesFullCatalog 验证整本国家目录能一次写入（jsonb recordset），
-// 并且 catalog 里省略 prefixes/patterns 的号码（如 AD）落成空数组而不是 NULL。
-// 这条路径每次启动都会走，过去逐行 upsert 要 ~15 秒。
+// TestUpsertCountriesFullCatalog verifies the whole country catalog can be written in one go (jsonb recordset),
+// and that entries whose prefixes/patterns are omitted in the catalog (e.g. AD) land as empty arrays rather than NULL.
+// This path runs on every startup; the previous row-by-row upsert took ~15 seconds.
 func TestUpsertCountriesFullCatalog(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -22,7 +22,7 @@ func TestUpsertCountriesFullCatalog(t *testing.T) {
 	if err := help.UpsertCountries(ctx, countries); err != nil {
 		t.Fatalf("upsert countries: %v", err)
 	}
-	// 再写一次：服务每次启动都执行，必须幂等。
+	// Write once more: it runs on every service startup, so it must be idempotent.
 	if err := help.UpsertCountries(ctx, countries); err != nil {
 		t.Fatalf("upsert countries again: %v", err)
 	}

@@ -1,4 +1,4 @@
--- v2 编号 0243；移植自 main 0214_scheduled_delivery_fencing（main e5971805），见 docs/main-v2-sync.md。
+-- v2 number 0243; ported from main 0214_scheduled_delivery_fencing (main e5971805), see docs/main-v2-sync.md.
 ALTER TABLE scheduled_messages ADD COLUMN generation bigint NOT NULL DEFAULT 0;
 CREATE INDEX scheduled_messages_online_idx ON scheduled_messages (peer_id, owner_user_id, scheduled_id)
 WHERE schedule_date = 2147483646 AND state IN ('pending', 'dispatching');

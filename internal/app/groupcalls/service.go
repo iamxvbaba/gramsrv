@@ -1,6 +1,7 @@
-// Package groupcalls 实现超级群语音聊天（group call）的信令业务层：
-// ID/access_hash 分配与 store 编排。权限（admin/成员资格）由 rpc 层校验，
-// version 单调性与并发串行化由 store 层事务保证。
+// Package groupcalls implements the signaling business layer for supergroup voice
+// chats (group calls): ID/access_hash allocation and store orchestration. Permissions
+// (admin/membership) are checked by the rpc layer; version monotonicity and concurrent
+// serialization are guaranteed by store-layer transactions.
 package groupcalls
 
 import (
@@ -19,7 +20,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// Service 是群通话业务服务。
+// Service is the group call business service.
 type Service struct {
 	store         store.GroupCallStore
 	publicBaseURL string
@@ -33,7 +34,7 @@ func WithPublicBaseURL(baseURL string) Option {
 	}
 }
 
-// NewService 创建群通话服务。
+// NewService creates the group call service.
 func NewService(st store.GroupCallStore, opts ...Option) *Service {
 	s := &Service{store: st, publicBaseURL: links.DefaultPublicBaseURL}
 	for _, opt := range opts {
@@ -42,9 +43,10 @@ func NewService(st store.GroupCallStore, opts ...Option) *Service {
 	return s
 }
 
-// Create 分配 id/access_hash 并建会。rtmpStream=true 创建 RTMP 直播房间；
-// joinMuted=true（广播频道直播）让非管理员入会即被静音且不可自解；
-// scheduleDate>0 创建定时通话（客户端倒计时等待 startScheduled）。
+// Create allocates id/access_hash and creates the call. rtmpStream=true creates an RTMP
+// live room; joinMuted=true (broadcast channel live) makes non-admins muted on join and
+// unable to unmute themselves; scheduleDate>0 creates a scheduled call (the client counts
+// down and waits for startScheduled).
 func (s *Service) Create(ctx context.Context, channelID, creatorUserID int64, title string, rtmpStream, joinMuted bool, scheduleDate, now int) (domain.GroupCall, error) {
 	id, err := randomPositiveInt64()
 	if err != nil {
@@ -68,24 +70,25 @@ func (s *Service) Create(ctx context.Context, channelID, creatorUserID int64, ti
 	})
 }
 
-// StartScheduled 把定时通话转为进行中（清 schedule_date）；changed=false 幂等。
+// StartScheduled turns a scheduled call into an ongoing one (clears schedule_date); changed=false for idempotent.
 func (s *Service) StartScheduled(ctx context.Context, callID int64) (domain.GroupCall, bool, error) {
 	return s.store.StartScheduledGroupCall(ctx, callID)
 }
 
-// SetScheduleSubscription 写入/清除开播提醒订阅。
+// SetScheduleSubscription writes/clears the go-live reminder subscription.
 func (s *Service) SetScheduleSubscription(ctx context.Context, callID, userID int64, subscribed bool) error {
 	return s.store.SetScheduleStartSubscription(ctx, callID, userID, subscribed)
 }
 
-// ScheduleSubscriberIDs 返回订阅开播提醒的 userID。
+// ScheduleSubscriberIDs returns the userIDs subscribed to the go-live reminder.
 func (s *Service) ScheduleSubscriberIDs(ctx context.Context, callID int64) ([]int64, error) {
 	return s.store.ListScheduleSubscriberIDs(ctx, callID)
 }
 
-// RtmpStreamKey 返回 channel 的持久 RTMP 推流密钥；不存在或 rotate=true 时生成
-// 新 key（覆盖写入，旧 key 即刻失效）。key 形如 "<channelID>_<hex>"，ingest 端
-// 据前缀定位 channel、再整串比对鉴权。
+// RtmpStreamKey returns the channel's persistent RTMP stream key; when absent or
+// rotate=true it generates a new key (overwrite, the old key is immediately invalid).
+// The key looks like "<channelID>_<hex>"; the ingest side locates the channel by the
+// prefix and then authenticates by comparing the whole string.
 func (s *Service) RtmpStreamKey(ctx context.Context, channelID int64, rotate bool, now int) (string, error) {
 	if !rotate {
 		key, found, err := s.store.GetRtmpStreamKey(ctx, channelID)
@@ -107,7 +110,7 @@ func (s *Service) RtmpStreamKey(ctx context.Context, channelID int64, rotate boo
 	return key, nil
 }
 
-// VerifyRtmpStreamKey 校验推流密钥并返回其所属 channelID（RTMP ingest 鉴权入口）。
+// VerifyRtmpStreamKey validates the stream key and returns the channelID it belongs to (RTMP ingest auth entry point).
 func (s *Service) VerifyRtmpStreamKey(ctx context.Context, key string) (int64, bool, error) {
 	sep := strings.IndexByte(key, '_')
 	if sep <= 0 {
@@ -127,7 +130,7 @@ func (s *Service) VerifyRtmpStreamKey(ctx context.Context, key string) (int64, b
 	return channelID, true, nil
 }
 
-// CreateConference 分配 id/access_hash/slug 并创建 ad-hoc conference call。
+// CreateConference allocates id/access_hash/slug and creates an ad-hoc conference call.
 func (s *Service) CreateConference(ctx context.Context, creatorUserID, randomID, migratedFromPhoneCallID int64, now int) (domain.GroupCall, error) {
 	for i := 0; i < 8; i++ {
 		id, err := randomPositiveInt64()

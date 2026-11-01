@@ -1,4 +1,4 @@
--- v2 编号 0248；移植自 main 0219_bot_invoices（main 3a84827a，B7b–7e），见 docs/main-v2-sync.md。
+-- v2 number 0248; ported from main 0219_bot_invoices (main 3a84827a, B7b–7e), see docs/main-v2-sync.md.
 -- XTR invoices sent by a bot as a chat message.
 --
 -- payments.sendPaymentForm carries no purpose in this layer, so the client only

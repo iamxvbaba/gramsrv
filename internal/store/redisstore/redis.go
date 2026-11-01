@@ -1,6 +1,8 @@
-// Package redisstore 用 Redis 实现高频、易失且可重建的短状态、缓存、计数器与限流。
+// Package redisstore implements high-frequency, ephemeral, rebuildable short-lived state,
+// caches, counters and rate limits with Redis.
 //
-// 职责边界见 docs/persistence-layer.md §1：Redis 存「态与计数」，丢失可由 PG/协议恢复。
+// See docs/persistence-layer.md §1 for the boundary of responsibility: Redis stores "state and
+// counts" whose loss can be recovered from PG/the protocol.
 package redisstore
 
 import (
@@ -13,7 +15,7 @@ import (
 
 const defaultOpenPingTimeout = 5 * time.Second
 
-// Open 按地址建立 Redis 连接并用有界 PING 验证；返回的客户端继续保留 go-redis 默认重试策略。
+// Open establishes a Redis connection at addr and verifies it with a bounded PING; the returned client keeps go-redis's default retry policy.
 func Open(ctx context.Context, addr, password string, db int) (*redis.Client, error) {
 	return open(ctx, addr, password, db, defaultOpenPingTimeout)
 }

@@ -1,4 +1,4 @@
--- v2 编号 0247；移植自 main 0218_bot_stars_wallet（main 3a84827a，B7b–7e），见 docs/main-v2-sync.md。
+-- v2 number 0247; ported from main 0218_bot_stars_wallet (main 3a84827a, B7b–7e), see docs/main-v2-sync.md.
 -- Owner-scoped Stars revenue for bot accounts. A bot wallet is deliberately a
 -- separate bucket from the bot user identity's personal Stars balance: an
 -- operator sees incoming XTR invoice proceeds as the bot's current balance in

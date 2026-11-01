@@ -26,9 +26,11 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestTelegramClientEndToEnd 是连接层的最强端到端验证：用 iamxvbaba/td 的完整
-// telegram.Client（而非底层 cipher）连本地 mtprotoedge，client 自动经
-// invokeWithLayer(initConnection(help.getConfig)) 完成初始化，并取得含本地 DC 的 Config。
+// TestTelegramClientEndToEnd is the connection layer's strongest end-to-end
+// check: it uses iamxvbaba/td's full telegram.Client (rather than the low-level
+// cipher) to connect to a local mtprotoedge, and the client automatically
+// initializes via invokeWithLayer(initConnection(help.getConfig)) and obtains a
+// Config containing the local DC.
 func TestTelegramClientEndToEnd(t *testing.T) {
 	const dc = 2
 

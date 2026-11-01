@@ -51,7 +51,7 @@ func (s *MessageStore) DeleteMessages(ctx context.Context, req domain.DeleteMess
 		_ = tx.Rollback(ctx)
 	}()
 
-	// advisory lock 串行化 owner 以及 revoke 会影响的私聊对端；必须在任何行锁前获取。
+	// The advisory lock serializes the owner and the private peers affected by revoke; it must be acquired before any row lock.
 	if err := lockUsersForUpdate(ctx, tx, lockUserIDs...); err != nil {
 		return res, fmt.Errorf("lock delete messages user: %w", err)
 	}
@@ -201,13 +201,16 @@ func (s *MessageStore) finishDeleteMessagesTx(ctx context.Context, db sqlcgen.DB
 		}
 		peersByOwner[userID][anchor.peer] = struct{}{}
 		if !anchor.materialized {
-			// 首次物化锚点会用一条 max_id=anchor 的真实 read update 覆盖该
-			// peer 的全部已读校正；不能再为本批删除的 incoming prefix 重复推进。
+			// Materializing the anchor for the first time uses a real read update with max_id=anchor
+			// that overrides all read corrections for that peer; the incoming prefix deleted in this
+			// batch must not advance again.
 			delete(incomingDeletedByPeer, deletedOwnerPeerKey{userID: userID, peer: anchor.peer})
 		}
 	}
-	// 按 owner 升序重建 dialog，使两个反向 delete（X 删与 Y 的会话 / Y 删与 X 的会话）以一致顺序
-	// 获取 dialog 行锁，配合下方 watermark 的升序推进，彻底避免 delete-delete 之间的 AB-BA 死锁。
+	// Rebuild dialogs in ascending owner order, so that two reverse deletes (X deleting the
+	// conversation with Y / Y deleting the conversation with X) acquire dialog row locks in a
+	// consistent order, and together with the ascending watermark advance below, completely avoid
+	// the AB-BA deadlock between delete and delete.
 	rebuildOwners := make([]int64, 0, len(peersByOwner))
 	for userID := range peersByOwner {
 		rebuildOwners = append(rebuildOwners, userID)
@@ -216,8 +219,9 @@ func (s *MessageStore) finishDeleteMessagesTx(ctx context.Context, db sqlcgen.DB
 	for _, userID := range rebuildOwners {
 		for peer := range peersByOwner[userID] {
 			if anchor, ok := anchors[userID]; ok && anchor.peer == peer && !anchor.materialized {
-				// 先分配 edit PTS 并原位转换锚点，再按转换后的 outgoing
-				// 状态重算 dialog；否则会短暂把 incoming anchor 计为未读。
+				// Allocate the edit PTS and convert the anchor in place first, then recompute the
+				// dialog from the converted outgoing state; otherwise the incoming anchor would be
+				// briefly counted as unread.
 				continue
 			}
 			if err := rebuildDialogAfterMessageDelete(ctx, q, userID, peer); err != nil {
@@ -330,8 +334,9 @@ WHERE sender_user_id = $1
 			if err := appendUserUpdateEvent(ctx, db, q, userID, correction); err != nil {
 				return res, fmt.Errorf("append delete unread correction event: %w", err)
 			}
-			// dialog 快照必须与 update 流宣布的水位一致，否则后续
-			// readHistory 会以旧水位为基线重复发已读事件。
+			// The dialog snapshot must match the watermark announced by the update stream;
+			// otherwise a later readHistory would use the old watermark as its baseline and re-send
+			// read events.
 			if err := q.AdvanceDialogReadInboxFloor(ctx, sqlcgen.AdvanceDialogReadInboxFloorParams{
 				UserID:         userID,
 				PeerType:       string(correction.Peer.Type),

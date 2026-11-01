@@ -8,8 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// injectPaidReaction 请求者视角：ReactionPaid 置首、计数=总星、chosen 置位；
-// TopReactors 含本人带 My + PeerID。
+// injectPaidReaction requester view: ReactionPaid first, count = total stars,
+// chosen set; TopReactors includes the viewer with My + PeerID.
 func TestInjectPaidReactionRequesterView(t *testing.T) {
 	paid := domain.ChannelMessagePaidReactions{
 		TotalStars: 150,
@@ -38,7 +38,7 @@ func TestInjectPaidReactionRequesterView(t *testing.T) {
 	if !ok || len(reactors) != 2 {
 		t.Fatalf("top reactors = %d ok %v, want 2", len(reactors), ok)
 	}
-	// 第二条是本人。
+	// The second entry is the viewer.
 	me := reactors[1]
 	if !me.My || me.Count != 50 {
 		t.Fatalf("my reactor = %+v, want My count 50", me)
@@ -46,13 +46,13 @@ func TestInjectPaidReactionRequesterView(t *testing.T) {
 	if peer, ok := me.GetPeerID(); !ok {
 		t.Fatalf("my reactor peer = %v, want set", peer)
 	}
-	// 第一条是 top（非本人）。
+	// The first entry is top (not the viewer).
 	if !reactors[0].Top || reactors[0].My {
 		t.Fatalf("top reactor = %+v, want Top not My", reactors[0])
 	}
 }
 
-// 匿名 reactor（非本人）：Anonymous 置位、不暴露 PeerID。
+// Anonymous reactor (not the viewer): Anonymous set, PeerID not exposed.
 func TestInjectPaidReactionAnonymousHidesPeer(t *testing.T) {
 	paid := domain.ChannelMessagePaidReactions{
 		TotalStars:  100,
@@ -72,7 +72,7 @@ func TestInjectPaidReactionAnonymousHidesPeer(t *testing.T) {
 	}
 }
 
-// 空付费态：不注入任何 ReactionPaid。
+// Empty paid state: inject no ReactionPaid.
 func TestInjectPaidReactionEmpty(t *testing.T) {
 	mr := &tg.MessageReactions{Results: []tg.ReactionCount{}}
 	injectPaidReaction(mr, domain.ChannelMessagePaidReactions{})

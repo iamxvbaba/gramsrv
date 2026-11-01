@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestSignInWithEmailCompletesLogin 验证旧客户端把 phone channel 放进
-// email_verification 时仍可登录，但验证码必须精确匹配，不能用任意非空值绕过。
+// TestSignInWithEmailCompletesLogin verifies that legacy clients putting the phone channel in
+// email_verification can still log in, but the code must match exactly and cannot be bypassed with any non-empty value.
 func TestSignInWithEmailCompletesLogin(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
@@ -56,7 +56,7 @@ func TestSignInWithEmailCompletesLogin(t *testing.T) {
 	}
 }
 
-// TestSignInWithEmailRejectsEmptyCode 空邮箱验证码必须被拒。
+// TestSignInWithEmailRejectsEmptyCode: an empty email verification code must be rejected.
 func TestSignInWithEmailRejectsEmptyCode(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345")
@@ -69,8 +69,8 @@ func TestSignInWithEmailRejectsEmptyCode(t *testing.T) {
 	}
 }
 
-// TestSignInWithEmailStillHonorsTwoFactor 登录邮箱与 2FA 正交：即使走邮箱验证码，
-// 开启了两步验证的账号仍停在 SESSION_PASSWORD_NEEDED，不能绕过密码。
+// TestSignInWithEmailStillHonorsTwoFactor: login email and 2FA are orthogonal: even with an email code,
+// an account with two-step verification still stops at SESSION_PASSWORD_NEEDED and cannot bypass the password.
 func TestSignInWithEmailStillHonorsTwoFactor(t *testing.T) {
 	ctx := context.Background()
 	passwords := memory.NewPasswordStore()

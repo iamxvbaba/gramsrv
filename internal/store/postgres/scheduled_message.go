@@ -19,9 +19,10 @@ import (
 
 const maxScheduledMessagePage = 100
 
-// scheduledRetryBackoffSeconds 是后台派发投递失败后的最小重试间隔：投递失败的
-// pending 行（last_error 非空）在该退避窗口内不再被 ClaimDueScheduledMessages
-// 认领，避免对端注销等永久失败的到期消息每秒被反复 claim+send。
+// scheduledRetryBackoffSeconds is the minimum retry interval after a background dispatch delivery
+// fails: pending rows whose delivery failed (last_error non-empty) are no longer claimed by
+// ClaimDueScheduledMessages within this backoff window, avoiding a due message that fails
+// permanently (e.g. the peer deregistered) being claimed+sent every second.
 const scheduledRetryBackoffSeconds = 30
 
 func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.ScheduleMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error) {
@@ -429,11 +430,12 @@ func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit
 	if leaseSeconds <= 0 {
 		leaseSeconds = 60
 	}
-	// retryFloor 让上一次投递失败（last_error 非空）的 pending 行至少退避
-	// scheduledRetryBackoffSeconds 秒再被认领；同时回收 lease 已过期却仍卡在
-	// 'dispatching' 的行——派发器在 claim 之后、发送事务提交之前崩溃/部署/OOM
-	// 会留下这种行。重新认领会递增 generation，旧 claim 的发送事务因此在行锁
-	// 校验处失败；发送与 sent 状态同事务提交，已提交的行不会再被认领。
+	// retryFloor makes a pending row whose last delivery failed (non-empty last_error) back off at
+	// least scheduledRetryBackoffSeconds before it is claimed again; it also reclaims rows whose lease
+	// expired while still stuck in 'dispatching' -- a dispatcher crash/deploy/OOM after the claim and
+	// before the send transaction commits leaves such rows. Reclaiming increments generation, so the
+	// old claim's send transaction fails at the row-lock check; the send and the sent state commit in
+	// one transaction, so a committed row is never claimed again.
 	retryFloor := now - scheduledRetryBackoffSeconds
 	rows, err := s.db.Query(ctx, `
 WITH due AS (

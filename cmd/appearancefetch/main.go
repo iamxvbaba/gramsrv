@@ -1,12 +1,15 @@
-// Command appearancefetch 从官方 Telegram 拉取墙纸 + 聊天主题,下载文档/缩略图,
-// 生成 telesrv 外观 seed(default_appearance_seed.json + default_wallpapers/{documents,thumbs/m}/*.dat)。
-// 复用 internal/seed/appearance 的结构体保证 schema 完全一致。peer_colors 从现有 JSON 沿用。
+// Command appearancefetch pulls wallpapers + chat themes from official Telegram,
+// downloads documents/thumbnails, and generates a telesrv appearance seed
+// (default_appearance_seed.json + default_wallpapers/{documents,thumbs/m}/*.dat).
+// It reuses internal/seed/appearance structs so the schema is exactly consistent.
+// peer_colors are taken as-is from the existing JSON.
 //
-// 需登录(墙纸/主题接口非免登)。api 凭据用 TDesktop 开源公开的 id/hash。
-// 子命令:
+// Login is required (the wallpaper/theme endpoints are not login-free). The api
+// credentials use the public open-source id/hash from TDesktop.
+// Subcommands:
 //
-//	appearancefetch sendcode              env: PHONE              发送登录码,打印 CODE_HASH
-//	appearancefetch fetch <out> <carry>   env: PHONE CODE CODE_HASH PASSWORD   登录+拉取+生成
+//	appearancefetch sendcode              env: PHONE              send a login code, print CODE_HASH
+//	appearancefetch fetch <out> <carry>   env: PHONE CODE CODE_HASH PASSWORD   login+fetch+generate
 package main
 
 import (
@@ -137,7 +140,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 		}
 		return buf.Bytes(), nil
 	}
-	// 转一个 tg.Document → appearance.Document 并下载正文 + "m" 缩略图。
+	// Convert one tg.Document → appearance.Document and download the body + "m" thumbnail.
 	convDoc := func(dc tg.DocumentClass) (appearance.Document, error) {
 		doc, ok := dc.(*tg.Document)
 		if !ok || doc.ID == 0 {
@@ -159,7 +162,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 				out.Attributes = append(out.Attributes, appearance.DocumentAttribute{Kind: "filename", FileName: attr.FileName})
 			}
 		}
-		// 正文
+		// Body
 		data, err := download(doc, "")
 		if err != nil {
 			return appearance.Document{}, fmt.Errorf("download doc %d: %w", doc.ID, err)
@@ -171,7 +174,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 		sum := sha256.Sum256(data)
 		out.Path = "default_wallpapers/documents/" + name
 		out.SHA256 = hex.EncodeToString(sum[:])
-		// "m" 缩略图
+		// "m" thumbnail
 		for _, t := range doc.Thumbs {
 			ps, ok := t.(*tg.PhotoSize)
 			if !ok || ps.Type != "m" {
@@ -245,7 +248,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 		return appearance.Wallpaper{}, nil
 	}
 
-	// ---- 墙纸 ----
+	// ---- Wallpapers ----
 	wpRes, err := api.AccountGetWallPapers(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("getWallPapers: %w", err)
@@ -264,7 +267,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 	}
 	fmt.Printf("[wallpapers] %d\n", len(wallpapers))
 
-	// ---- 聊天主题 ----
+	// ---- Chat themes ----
 	baseThemeName := func(b tg.BaseThemeClass) string {
 		switch b.(type) {
 		case *tg.BaseThemeClassic:
@@ -316,7 +319,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 	}
 	fmt.Printf("[chat_themes] %d\n", len(chatThemes))
 
-	// ---- peer colors / profile colors 从官方拉 ----
+	// ---- Fetch peer colors / profile colors from official ----
 	mapColorSet := func(c tg.HelpPeerColorSetClass) *appearance.ColorSet {
 		switch s := c.(type) {
 		case *tg.HelpPeerColorSet:

@@ -13,7 +13,7 @@ func newTestService(grant int64) *Service {
 	return NewService(memory.NewStarsStore(), WithStartingGrant(grant))
 }
 
-// 起始授予幂等：多次 GetBalance 只授予一次。
+// The starting grant is idempotent: repeated GetBalance grants only once.
 func TestStartingGrantOnce(t *testing.T) {
 	svc := newTestService(1000)
 	ctx := context.Background()
@@ -24,7 +24,7 @@ func TestStartingGrantOnce(t *testing.T) {
 	if bal.Balance != 1000 || !bal.Granted {
 		t.Fatalf("first balance = %+v, want 1000 granted", bal)
 	}
-	// 再读不应重复授予。
+	// A second read must not grant again.
 	bal2, err := svc.GetBalance(ctx, 7)
 	if err != nil {
 		t.Fatalf("GetBalance#2: %v", err)
@@ -32,7 +32,7 @@ func TestStartingGrantOnce(t *testing.T) {
 	if bal2.Balance != 1000 {
 		t.Fatalf("second balance = %d, want 1000 (no double grant)", bal2.Balance)
 	}
-	// 流水里应恰有一条 grant。
+	// There should be exactly one grant in the transaction list.
 	page, err := svc.ListTransactions(ctx, 7, domain.StarsTransactionQuery{Limit: 100})
 	if err != nil {
 		t.Fatalf("ListTransactions: %v", err)
@@ -42,7 +42,7 @@ func TestStartingGrantOnce(t *testing.T) {
 	}
 }
 
-// 关闭授予（grant=0）时余额为 0、无 grant 流水。
+// With the grant disabled (grant=0) the balance is 0 and there is no grant transaction.
 func TestGrantDisabled(t *testing.T) {
 	svc := newTestService(0)
 	bal, err := svc.GetBalance(context.Background(), 9)
@@ -54,7 +54,7 @@ func TestGrantDisabled(t *testing.T) {
 	}
 }
 
-// 借记成功扣减余额并写负流水；余额不足返回 ErrStarsInsufficient 且不动账。
+// A successful debit reduces the balance and writes a negative transaction; an insufficient balance returns ErrStarsInsufficient and leaves the books untouched.
 func TestDebitAndInsufficient(t *testing.T) {
 	svc := newTestService(1000)
 	ctx := context.Background()
@@ -68,25 +68,25 @@ func TestDebitAndInsufficient(t *testing.T) {
 		t.Fatalf("after debit = %d, want 700", bal.Balance)
 	}
 
-	// 余额不足。
+	// Insufficient balance.
 	if _, err := svc.Debit(ctx, 7, 10_000, domain.StarsReasonReaction, peer, "", ""); !errors.Is(err, domain.ErrStarsInsufficient) {
 		t.Fatalf("over-debit err = %v, want ErrStarsInsufficient", err)
 	}
-	// 余额未被改动。
+	// The balance is unchanged.
 	after, _ := svc.GetBalance(ctx, 7)
 	if after.Balance != 700 {
 		t.Fatalf("balance after failed debit = %d, want 700 unchanged", after.Balance)
 	}
 
-	// 非法金额。
+	// Invalid amount.
 	if _, err := svc.Debit(ctx, 7, 0, domain.StarsReasonReaction, peer, "", ""); !errors.Is(err, domain.ErrStarsInvalidAmount) {
 		t.Fatalf("zero debit err = %v, want ErrStarsInvalidAmount", err)
 	}
 }
 
-// 贷记增加余额并写正流水。
+// A credit increases the balance and writes a positive transaction.
 func TestCredit(t *testing.T) {
-	svc := newTestService(0) // 关闭起始授予，单测贷记
+	svc := newTestService(0) // disable the starting grant to unit-test crediting
 	ctx := context.Background()
 	bal, err := svc.Credit(ctx, 7, 250, domain.StarsReasonTopup, domain.Peer{}, "topup", "")
 	if err != nil {
@@ -97,7 +97,7 @@ func TestCredit(t *testing.T) {
 	}
 }
 
-// keyset 分页：末页 NextOffset 必须为空（否则客户端死循环）。
+// keyset pagination: the last page's NextOffset must be empty (otherwise the client loops forever).
 func TestListTransactionsPagination(t *testing.T) {
 	svc := newTestService(0)
 	ctx := context.Background()
@@ -113,7 +113,7 @@ func TestListTransactionsPagination(t *testing.T) {
 	if len(page1.Transactions) != 2 || page1.NextOffset == "" {
 		t.Fatalf("page1 = %d txns next=%q, want 2 + nonempty next", len(page1.Transactions), page1.NextOffset)
 	}
-	// 倒序：最新（id 最大，amount=14）在前。
+	// Descending: the newest (largest id, amount=14) comes first.
 	if page1.Transactions[0].Amount != 14 {
 		t.Fatalf("page1[0].Amount = %d, want 14 (newest first)", page1.Transactions[0].Amount)
 	}

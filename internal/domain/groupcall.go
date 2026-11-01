@@ -2,11 +2,11 @@ package domain
 
 import "errors"
 
-// 群通话（超级群语音聊天）领域模型。信令真值在 GroupCallStore（memory/postgres
-// 双实现），版本协议要求 version 必须持久化：客户端忽略 version 小于本地缓存的
-// updateGroupCallParticipants，重启回卷会让整个房间静默失联。
+// Group call (supergroup voice chat) domain model. The signaling truth lives in GroupCallStore (memory/postgres
+// dual implementation), and the version protocol requires version to be persisted: the client ignores an
+// updateGroupCallParticipants with a version lower than its local cache, so a rollback on restart would silently disconnect the whole room.
 
-// GroupCallState 是群通话状态。
+// GroupCallState is the group call state.
 type GroupCallState string
 
 const (
@@ -35,7 +35,7 @@ const (
 	GroupCallInviteRevoked  GroupCallInviteStatus = "revoked"
 )
 
-// 群通话业务错误；rpc 层映射为 GROUPCALL_* RPC_ERROR。
+// Group call business errors; the rpc layer maps them to GROUPCALL_* RPC_ERROR.
 var (
 	ErrGroupCallInvalid        = errors.New("group call invalid")
 	ErrGroupCallDiscarded      = errors.New("group call already discarded")
@@ -45,7 +45,7 @@ var (
 	ErrConferenceChainInvalid  = errors.New("conference call chain invalid")
 )
 
-// GroupCall 是一场群通话的权威态。
+// GroupCall is the authoritative state of one group call.
 type GroupCall struct {
 	ID            int64
 	AccessHash    int64
@@ -55,35 +55,35 @@ type GroupCall struct {
 	State         GroupCallState
 	Title         string
 	JoinMuted     bool
-	// RtmpStream=true 表示这是 RTMP 直播房间（推流走外部 RTMP ingest，观众经
-	// broadcast 拉流），join 不建 SFU 连接、connection params 返回 stream JSON。
+	// RtmpStream=true means this is an RTMP live room (ingest goes through external RTMP, viewers pull
+	// via broadcast); join creates no SFU connection and connection params return stream JSON.
 	RtmpStream bool
-	// ScheduleDate>0 表示定时通话尚未开始（客户端显示倒计时面板、不入会）；
-	// startScheduledGroupCall 清零后客户端自动 initialJoin。持久列。
+	// ScheduleDate>0 means the scheduled call has not started (the client shows a countdown panel and does not join);
+	// after startScheduledGroupCall clears it, the client automatically initialJoins. Persisted column.
 	ScheduleDate int
-	// ScheduleStartSubscribed 是 per-viewer 投影字段（非持久列）：当前 viewer 是否
-	// 订阅了开播提醒。RPC/推送出站前按 viewer 回填（与 Creator flag 同类语义）。
+	// ScheduleStartSubscribed is a per-viewer projection field (not a persisted column): whether the current viewer
+	// subscribed to the start reminder. Filled per viewer before RPC/push egress (same kind of semantics as the Creator flag).
 	ScheduleStartSubscribed bool
-	// Version 是参与者协议版本：所有参与者变更事务内 +1，单调且持久。
+	// Version is the participant protocol version: +1 within the transaction on every participant change, monotonic and persisted.
 	Version           int
 	ParticipantsCount int
 	CreatedAt         int
 	DiscardedAt       int
 	Duration          int
-	// StartedMsgID 是 messageActionGroupCall(started) 的频道消息 id（discard 时
-	// 客户端用它定位起始服务消息，当前仅记录）。
+	// StartedMsgID is the channel message id of messageActionGroupCall(started) (on discard the
+	// client uses it to locate the starting service message; currently only recorded).
 	StartedMsgID int
-	// InviteSlug/InviteLink 仅 conference 使用。slug 必须在 migrate reason 与
-	// InputGroupCallSlug 中稳定可解析；link 是客户端 UI 复制/分享用完整 URL。
+	// InviteSlug/InviteLink are used only by conference. The slug must be stably parseable in the migrate reason and
+	// InputGroupCallSlug; the link is the full URL used by the client UI for copy/share.
 	InviteSlug string
 	InviteLink string
-	// RandomID 是 conference create 的幂等键（creator_user_id + random_id）。
+	// RandomID is the idempotency key of a conference create (creator_user_id + random_id).
 	RandomID int64
-	// MigratedFromPhoneCallID 记录由哪通 P2P call 升级而来；link-only create 为 0。
+	// MigratedFromPhoneCallID records which P2P call it was upgraded from; 0 for a link-only create.
 	MigratedFromPhoneCallID int64
 }
 
-// Active 报告通话是否仍在进行。
+// Active reports whether the call is still ongoing.
 func (c GroupCall) Active() bool {
 	return c.State == GroupCallStateActive
 }
@@ -92,41 +92,41 @@ func (c GroupCall) Conference() bool {
 	return c.Kind == GroupCallKindConference
 }
 
-// GroupCallParticipant 是房间内一名参与者。
+// GroupCallParticipant is one participant in the room.
 type GroupCallParticipant struct {
 	CallID int64
 	UserID int64
-	// JoinAsChannelID 非零表示以该频道/群身份入会（匿名管理员语义），TL 输出
-	// participant.peer=PeerChannel；0=以本人用户身份。身份唯一键仍是 UserID，
-	// 换身份 rejoin 是替换。
+	// A non-zero JoinAsChannelID means joining as that channel/group identity (anonymous-admin semantics), with TL output
+	// participant.peer=PeerChannel; 0 = join as the user's own identity. The identity's unique key is still UserID,
+	// so rejoining with a different identity is a replacement.
 	JoinAsChannelID int64
-	// SSRC 是客户端在 join JSON 里自报的 audio ssrc（uint32 值域，存 int64 防符号坑）。
+	// SSRC is the audio ssrc the client self-reports in the join JSON (uint32 range, stored as int64 to avoid sign pitfalls).
 	SSRC       int64
 	JoinDate   int
 	ActiveDate int
 	Muted      bool
-	// MutedByAdmin=true 时 can_self_unmute=false（管理员禁言/默认静音策略）。
+	// When MutedByAdmin=true, can_self_unmute=false (admin mute/default-mute policy).
 	MutedByAdmin bool
-	// VolumeByAdmin 是管理员设定的全局音量（1..20000），0=未设。
+	// VolumeByAdmin is the global volume set by an admin (1..20000); 0=unset.
 	VolumeByAdmin int
-	// RaiseHandRating 非零表示举手中，值单调递增用于排序。
+	// A non-zero RaiseHandRating means the hand is raised; the value increases monotonically for ordering.
 	RaiseHandRating int64
-	// VideoJSON / PresentationJSON 是 tg.GroupCallParticipantVideo 的原始 JSON
-	// 快照（M3/M4 启用；M0/M1 仅透明保存 self-edit，不转发）。
+	// VideoJSON / PresentationJSON are the raw JSON snapshots of tg.GroupCallParticipantVideo
+	// (enabled in M3/M4; in M0/M1 they only transparently store self-edits and are not forwarded).
 	VideoJSON        []byte
 	PresentationJSON []byte
-	// PublicKey/JoinBlock 仅 conference 使用。服务端不解析 E2E 内容，只持久化
-	//  opaque bytes 并供 chain block 补拉/转发。
+	// PublicKey/JoinBlock are used only by conference. The server does not parse E2E content; it only persists
+	// opaque bytes for chain block backfill/forwarding.
 	PublicKey []byte
 	JoinBlock []byte
 	Left      bool
-	// LastCheckDate 是 checkGroupCall 保活水位。注意：客户端只在 Connecting 态
-	// 发 checkGroupCall（媒体连通后心跳停止），掉线判定必须与 SFU 媒体面活性
-	// 取双过期（见 sweeper），绝不能单凭此字段。
+	// LastCheckDate is the checkGroupCall keepalive watermark. Note: the client sends checkGroupCall
+	// only in the Connecting state (the heartbeat stops once media is connected), so a disconnect decision must
+	// combine this with SFU media-plane liveness for a double expiry (see sweeper); never rely on this field alone.
 	LastCheckDate int
 }
 
-// CreateGroupCallRequest 创建群通话。
+// CreateGroupCallRequest creates a group call.
 type CreateGroupCallRequest struct {
 	ChannelID     int64
 	CreatorUserID int64
@@ -135,26 +135,26 @@ type CreateGroupCallRequest struct {
 	Now           int
 }
 
-// JoinGroupCallRequest 加入/重进群通话（rejoin 同主键换新 ssrc）。
+// JoinGroupCallRequest joins/rejoins a group call (rejoin keeps the same key but takes a new ssrc).
 type JoinGroupCallRequest struct {
 	CallID int64
 	UserID int64
-	// JoinAsChannelID 非零=以频道身份入会（调用方已完成权限校验）。
+	// Non-zero JoinAsChannelID = join as a channel identity (the caller has already checked permissions).
 	JoinAsChannelID int64
 	SSRC            int64
 	Muted           bool
 	IsAdmin         bool
 	PublicKey       []byte
 	JoinBlock       []byte
-	// VideoJSON 是本次 join 铸造的视频内部状态（endpoint+源组+active）；rejoin
-	// 整体替换并**清空旧 PresentationJSON**（客户端主连接 rejoin 后会重发
-	// joinGroupCallPresentation，旧屏幕登记必须作废）。
+	// VideoJSON is the video internal state minted by this join (endpoint+source group+active); a rejoin
+	// replaces it wholesale and **clears the old PresentationJSON** (after the client's main connection rejoins it re-sends
+	// joinGroupCallPresentation, so the old screen registration must be invalidated).
 	VideoJSON []byte
 	Now       int
 }
 
-// GroupCallMutation 是一次参与者维度变更的结果：变更后的 call 行（含新 version）
-// 与受影响的参与者行（推送 updateGroupCallParticipants 用）。
+// GroupCallMutation is the result of one participant-dimension change: the updated call row (with the new version)
+// and the affected participant row (for pushing updateGroupCallParticipants).
 type GroupCallMutation struct {
 	Call        GroupCall
 	Participant GroupCallParticipant
@@ -181,7 +181,7 @@ type RemoveConferenceCallParticipantsResult struct {
 	ChainBlockAppended  bool
 }
 
-// GroupCallParticipantUpdate 是 editGroupCallParticipant 的字段级更新（nil=不动）。
+// GroupCallParticipantUpdate is a field-level update of editGroupCallParticipant (nil=unchanged).
 type GroupCallParticipantUpdate struct {
 	Muted            *bool
 	MutedByAdmin     *bool
@@ -192,14 +192,14 @@ type GroupCallParticipantUpdate struct {
 	Now              int
 }
 
-// GroupCallParticipantOverride 是 per-viewer 视图覆盖（setter→target）：
-// 本地静音/本地音量，仅 setter 自己可见，不进全房间 version。
+// GroupCallParticipantOverride is a per-viewer view override (setter→target):
+// local mute/local volume, visible only to the setter, not entering the room-wide version.
 type GroupCallParticipantOverride struct {
 	MutedByYou bool
-	Volume     int // 0=未设
+	Volume     int // 0=unset
 }
 
-// GroupCallParticipantPage 是 getGroupParticipants 的分页结果。
+// GroupCallParticipantPage is the paginated result of getGroupParticipants.
 type GroupCallParticipantPage struct {
 	Count        int
 	Participants []GroupCallParticipant
@@ -207,7 +207,7 @@ type GroupCallParticipantPage struct {
 	Version      int
 }
 
-// GroupCallInvite 是 conference call 在私聊中发出的邀请服务消息索引。
+// GroupCallInvite is the index of an invite service message a conference call sent in a private chat.
 type GroupCallInvite struct {
 	CallID        int64
 	InviterUserID int64
@@ -219,10 +219,10 @@ type GroupCallInvite struct {
 	UpdatedAt     int
 }
 
-// GroupCallChainBlockLatestOffset 是客户端用来请求当前 sub-chain 最新 block 的哨兵值。
+// GroupCallChainBlockLatestOffset is the sentinel value clients use to request the current sub-chain's latest block.
 const GroupCallChainBlockLatestOffset = -1
 
-// GroupCallChainBlock 是 conference E2E chain 的 opaque block。
+// GroupCallChainBlock is an opaque block of the conference E2E chain.
 type GroupCallChainBlock struct {
 	CallID       int64
 	SubChainID   int

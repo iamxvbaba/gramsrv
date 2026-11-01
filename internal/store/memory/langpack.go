@@ -10,7 +10,7 @@ import (
 	"telesrv/internal/domain"
 )
 
-// LangPackStore 是 store.LangPackStore 的内存实现。
+// LangPackStore is the in-memory implementation of store.LangPackStore.
 type LangPackStore struct {
 	mu         sync.RWMutex
 	m          map[string]domain.LangPack
@@ -18,7 +18,7 @@ type LangPackStore struct {
 	catalogs   map[string]domain.LangPackSeedCatalog
 }
 
-// NewLangPackStore 创建内存 LangPackStore。
+// NewLangPackStore creates an in-memory LangPackStore.
 func NewLangPackStore() *LangPackStore {
 	return &LangPackStore{
 		m:          make(map[string]domain.LangPack),

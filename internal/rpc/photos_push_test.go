@@ -34,10 +34,12 @@ func lastProfilePhotoDelivery(t *testing.T, files *fakeFiles) (store.DeliveryOut
 	return item, updates
 }
 
-// TestUploadProfilePhotoPushesUpdateToOtherDevices 守护审计修复：换头像后必须向该账号其它在线
-// 设备推送（updateUser 信号 + Updates.Users 带新 self user），否则其它设备头像不刷新。
-// 原因：updateUserName 不含 photo 无法刷新头像，唯有带 user 对象最可靠（见 photos.go
-// pushSelfPhotoUpdate 注释）。曾完全不推送，本测试防回归。
+// TestUploadProfilePhotoPushesUpdateToOtherDevices guards the audit fix: after changing the avatar
+// it must push to the account's other online devices (an updateUser signal + Updates.Users with the
+// new self user), otherwise the other devices' avatars do not refresh. Rationale: updateUserName
+// carries no photo and cannot refresh an avatar, so including the user object is the most reliable
+// (see the photos.go pushSelfPhotoUpdate comment). Nothing was pushed at all before; this test
+// prevents regression.
 func TestUploadProfilePhotoPushesUpdateToOtherDevices(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -52,7 +54,7 @@ func TestUploadProfilePhotoPushesUpdateToOtherDevices(t *testing.T) {
 	}, zaptest.NewLogger(t), clock.System)
 
 	req := &tg.PhotosUploadProfilePhotoRequest{}
-	req.SetFile(&tg.InputFile{ID: 42, Parts: 1, Name: "a.jpg"}) // File 是 flags 可选字段，须 SetFile 置位
+	req.SetFile(&tg.InputFile{ID: 42, Parts: 1, Name: "a.jpg"}) // File is a flags-optional field, so SetFile must be used to set it
 	got, err := r.onPhotosUploadProfilePhoto(WithUserID(ctx, owner.ID), req)
 	if err != nil {
 		t.Fatalf("uploadProfilePhoto: %v", err)
@@ -88,11 +90,13 @@ func TestUploadProfilePhotoPushesUpdateToOtherDevices(t *testing.T) {
 	}
 }
 
-// TestUploadProfilePhotoEchoesUpdateToCurrentSession 守护 DrKLO Android emoji 头像回显修复：
-// 换头像后除其它设备外，当前 session 也必须收到 updateUser + Updates.Users（带 has_video 的
-// fresh self）。DrKLO 的 uploadProfilePhoto 响应回调不消费 photos.photo.users，手工重建的
-// userProfilePhoto 丢 has_video/stripped，缺该回显时 emoji/sticker markup 头像在设置设备上
-// 要重启才渲染（对齐参考实现 SyncPushUpdates 全 session 语义）。
+// TestUploadProfilePhotoEchoesUpdateToCurrentSession guards the DrKLO Android emoji-avatar echo
+// fix: after changing the avatar, besides other devices the current session must also receive
+// updateUser + Updates.Users (a fresh self with has_video). DrKLO's uploadProfilePhoto response
+// callback does not consume photos.photo.users, and the hand-rebuilt userProfilePhoto drops
+// has_video/stripped, so without this echo an emoji/sticker markup avatar renders on the setting
+// device only after a restart (matching the reference implementation SyncPushUpdates' all-session
+// semantics).
 func TestUploadProfilePhotoEchoesUpdateToCurrentSession(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -149,9 +153,10 @@ func TestUploadProfilePhotoEchoesUpdateToCurrentSession(t *testing.T) {
 	}
 }
 
-// TestDeletePhotosPushesSelfUpdate 守护 deletePhotos 推送：删除生效（含撤掉当前头像回落）后
-// 必须向全部在线 session 推 updateUser + fresh self（对齐参考实现 deletePhotos 的
-// SyncPushUpdates），否则其它设备/当前设备头像停留旧状态。
+// TestDeletePhotosPushesSelfUpdate guards the deletePhotos push: after a deletion takes effect
+// (including removing the current avatar with a fallback), it must push updateUser + a fresh self
+// to all online sessions (matching the reference implementation deletePhotos' SyncPushUpdates),
+// otherwise other devices/the current device leave the avatar in its old state.
 func TestDeletePhotosPushesSelfUpdate(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()

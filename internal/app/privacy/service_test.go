@@ -181,8 +181,9 @@ func TestExplicitDisallowUserWins(t *testing.T) {
 	}
 }
 
-// TestCanSeeBatchEquivalentToCanSee 锁定批量 privacy 评估与逐 CanSee 字节等价（projectBatch
-// fan-out N+1 优化的正确性前提）：覆盖默认规则/allow-all/disallow-all/allow-contacts(含联系人)/self。
+// TestCanSeeBatchEquivalentToCanSee locks in that batch privacy evaluation is byte-equivalent
+// to per-call CanSee (the correctness premise of the projectBatch fan-out N+1 optimization):
+// covers default rules/allow-all/disallow-all/allow-contacts (with a contact)/self.
 func TestCanSeeBatchEquivalentToCanSee(t *testing.T) {
 	ctx := context.Background()
 	contacts := memory.NewContactStore()
@@ -199,7 +200,7 @@ func TestCanSeeBatchEquivalentToCanSee(t *testing.T) {
 	if _, err := svc.SetRules(ctx, 1005, domain.PrivacyKeyPhoneNumber, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowContacts}}); err != nil {
 		t.Fatalf("set 1005 phone: %v", err)
 	}
-	// owner 1005 把 viewer 加为联系人（GetReverseContacts(viewer,[1005]) 命中 → allow-contacts 可见）。
+	// owner 1005 adds the viewer as a contact (GetReverseContacts(viewer,[1005]) hits → allow-contacts is visible).
 	if _, err := contacts.Upsert(ctx, 1005, domain.ContactInput{ContactUserID: viewer}); err != nil {
 		t.Fatalf("upsert contact: %v", err)
 	}
@@ -226,15 +227,17 @@ func TestCanSeeBatchEquivalentToCanSee(t *testing.T) {
 	}
 }
 
-// TestCanSeeMatrixEquivalentToCanSee 锁定 owners×viewers×keys 矩阵评估与逐 CanSee 字节等价
-// （ForViewers fan-out 模板化把 privacy 查询降到 O(owner) 的正确性前提）。覆盖多 owner 多 viewer：
-// 不同规则、联系人方向（owner 把 viewer 加为联系人才命中 allow-contacts）、self（owner==viewer）。
+// TestCanSeeMatrixEquivalentToCanSee locks in that the owners×viewers×keys matrix evaluation
+// is byte-equivalent to per-call CanSee (the correctness premise of the ForViewers fan-out
+// templating reducing privacy queries to O(owner)). Covers multiple owners and viewers:
+// different rules, contact direction (allow-contacts hits only when the owner has added the
+// viewer), self (owner==viewer).
 func TestCanSeeMatrixEquivalentToCanSee(t *testing.T) {
 	ctx := context.Background()
 	contacts := memory.NewContactStore()
 	svc := NewService(memory.NewPrivacyStore(), contacts)
 	owners := []int64{6001, 6002, 6003, 6004}
-	viewers := []int64{7001, 7002, 6002} // 6002 既是 owner 又是 viewer → 命中 self 分支
+	viewers := []int64{7001, 7002, 6002} // 6002 is both an owner and a viewer → hits the self branch
 
 	if _, err := svc.SetRules(ctx, 6002, domain.PrivacyKeyPhoneNumber, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowAll}}); err != nil {
 		t.Fatalf("set 6002 phone: %v", err)
@@ -245,7 +248,7 @@ func TestCanSeeMatrixEquivalentToCanSee(t *testing.T) {
 	if _, err := svc.SetRules(ctx, 6004, domain.PrivacyKeyPhoneNumber, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowContacts}}); err != nil {
 		t.Fatalf("set 6004 phone: %v", err)
 	}
-	// owner 6004 把 viewer 7001 加为联系人（owner→viewer 方向 = privacy 的 ViewerIsContact）。
+	// owner 6004 adds viewer 7001 as a contact (owner→viewer direction = privacy's ViewerIsContact).
 	if _, err := contacts.Upsert(ctx, 6004, domain.ContactInput{ContactUserID: 7001}); err != nil {
 		t.Fatalf("upsert contact: %v", err)
 	}

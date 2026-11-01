@@ -10,13 +10,14 @@ import (
 	"telesrv/internal/store"
 )
 
-// 本文件实现 app/bots 的 rpc 回调：token revoke 后的 session 失效闭环，
-// bot commands / sticker-set 的 durable non-PTS effects，以及 @ChatBot
-// 流式草稿 transient 推送。Router 创建后经
-// botsService.SetRouterHooks / SetTextDraftPusher 装配（见 internal/node/core/runtime.go）。
+// This file implements the rpc callbacks for app/bots: closing out sessions after a token
+// revoke, the durable non-PTS effects for bot commands / sticker sets, and @ChatBot's transient
+// streaming-draft pushes. They are wired after the Router is created through
+// botsService.SetRouterHooks / SetTextDraftPusher (see internal/node/core/runtime.go).
 
-// RevokeBotSessions 撤销 bot 的全部已登录 session：删除全部 authorization 行并
-// 强制断开在线连接（与 account.resetAuthorization 被踢闭环同款顺序）。
+// RevokeBotSessions revokes all of the bot's logged-in sessions: it deletes every authorization
+// row and force-disconnects online connections (the same ordering as the
+// account.resetAuthorization kick loop).
 func (r *Router) RevokeBotSessions(ctx context.Context, botUserID int64) error {
 	if r.deps.Auth == nil || botUserID == 0 {
 		return nil
@@ -117,9 +118,9 @@ func (r *Router) InvalidateStickerSetCatalog(kind domain.StickerSetKind) {
 	r.invalidateStickerCatalog(kind)
 }
 
-// PushBotTextDraft 推送内置 service bot 的流式文本草稿。草稿是 TDesktop 专用的
-// transient typing action，不写 message/dialog/pts/outbox；最终可恢复事实仍由随后
-// 入库的普通 bot message 承担。
+// PushBotTextDraft pushes the built-in service bot's streaming text draft. The draft is a
+// TDesktop-specific transient typing action, writing no message/dialog/pts/outbox; the ultimately
+// recoverable fact is still carried by the ordinary bot message stored afterwards.
 func (r *Router) PushBotTextDraft(ctx context.Context, botUserID, userID, randomID int64, text string) {
 	if botUserID == 0 || userID == 0 || randomID == 0 || text == "" {
 		return

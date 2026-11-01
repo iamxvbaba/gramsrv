@@ -247,11 +247,13 @@ func TestOnlineChannelIDsSnapshotAndDiagnosticPagesStableAscending(t *testing.T)
 	}
 }
 
-// TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates 验证分页
-// membership 同步的丢失更新防护：同步方在读持久成员列表前采样修订号，读取窗口内
-// 若发生增量 join/leave（另一设备操作经 Add/RemoveUserChannelMembership 落索引），
-// 携带过期修订号的全量替换必须改走并集合并（不得覆盖增量），并保持
-// membershipsSynced=false 促使下一条 RPC 重试全量同步收敛。
+// TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates verifies the
+// lost-update protection of paged membership sync: the syncer samples the revision number before
+// reading the persisted member list; if an incremental join/leave happens inside the read window
+// (another device's action lands in the index through Add/RemoveUserChannelMembership), a full
+// replacement carrying the stale revision must switch to a union merge (never overwriting the
+// increment) and keep membershipsSynced=false so the next RPC retries the full sync until it
+// converges.
 func TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{1, 2, 3}
@@ -264,7 +266,7 @@ func TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates(t 
 	sm.SetReceivesUpdatesForAuthKey(raw, 42, true)
 
 	ctx := context.Background()
-	// Begin 在 Edge 采样修订号后、分页列表提交前，用户在另一台设备加入了频道 7。
+	// After Begin samples the revision on the Edge and before the paged list commits, the user joins channel 7 on another device.
 	syncID, disposition, err := sm.BeginSessionChannelMembershipSync(ctx, raw, 42, 100)
 	if err != nil || disposition != edgecontrol.ChannelMembershipSyncAcquired {
 		t.Fatalf("begin raced sync id=%d disposition=%q err=%v", syncID, disposition, err)
@@ -287,7 +289,7 @@ func TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates(t 
 		t.Fatal("session fully ready despite raced membership sync; retry would never happen")
 	}
 
-	// 重试：新修订号下的全量同步正常替换并置就绪。
+	// Retry: under the new revision number the full sync replaces normally and sets ready.
 	if !syncTestSessionChannelMemberships(t, sm, raw, 42, 100, []int64{5, 7}) {
 		t.Fatal("clean resync did not commit")
 	}
@@ -295,8 +297,9 @@ func TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates(t 
 		t.Fatal("session not ready after clean resync")
 	}
 
-	// 反方向：窗口内被移出频道 5，stale 全量含 5 → 合并会短暂保留 stale 条目
-	// （fan-out 前的 PG active 复核兜底），但必须保持未就绪等待重试。
+	// The other direction: removed from channel 5 within the window, and the stale
+	// full list still contains 5 → the merge briefly retains the stale entry
+	// (caught by the pre-fan-out PG active recheck), but must stay not-ready awaiting retry.
 	c.membershipsSynced.Store(false)
 	c.receivesUpdates.Store(false)
 	syncID, disposition, err = sm.BeginSessionChannelMembershipSync(ctx, raw, 42, 100)
@@ -324,8 +327,10 @@ func TestPagedSessionChannelMembershipSyncDetectsConcurrentIncrementalUpdates(t 
 	}
 }
 
-// TestRegisterEvictsOldestSessionAtCap 验证同 raw auth_key session 数触顶时驱逐的是
-// 建连最早的连接，而不是 map 迭代顺序下的随机一个（随机可能误杀刚建立的活跃连接）。
+// TestRegisterEvictsOldestSessionAtCap verifies that when the session count for the
+// same raw auth_key hits the cap, the connection established earliest is evicted,
+// not a random one under map iteration order (which could wrongly kill a
+// just-established active connection).
 func TestRegisterEvictsOldestSessionAtCap(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{9}
@@ -337,7 +342,7 @@ func TestRegisterEvictsOldestSessionAtCap(t *testing.T) {
 		sid := int64(i + 1)
 		created := base.Add(time.Duration(i+1) * time.Second)
 		if sid == oldestSession {
-			created = base // 唯一早于所有其它连接的时间戳，且故意不在注册顺序首位。
+			created = base // the only timestamp earlier than all other connections, and deliberately not first in registration order.
 		}
 		c := &Conn{sessionID: sid, authKeyID: raw, createdAt: created}
 		if sid == oldestSession {

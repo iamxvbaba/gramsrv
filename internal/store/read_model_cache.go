@@ -157,9 +157,10 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 			}
 			expireAt := s.now().Add(s.ttl)
 			s.finishReadModelHashInflight(owned, ownedGeneration, loaded, nil, expireAt, loadFlushGeneration)
-			// 失效可能在 load 期间到达并写入更新的 hash；优先返回缓存里的当前值
-			// (可能是 NOTIFY 刚写入的新 hash)。精确 invalidation/flush 后若没有
-			// 当前值则不返回旧 load，而是在下一轮重新 claim/load。
+			// Invalidation may arrive during load and write a newer hash; prefer returning the
+			// cache's current value (possibly the new hash NOTIFY just wrote). After a precise
+			// invalidation/flush, if there is no current value, do not return the stale load;
+			// instead re-claim/load on the next round.
 			effNow := s.now()
 			s.mu.Lock()
 			for _, key := range owned {
@@ -261,8 +262,8 @@ func (s *CachedReadModelVersionStore) UpdateReadModelHash(key ReadModelKey, hash
 	}
 	s.mu.Lock()
 	s.storeHashLocked(key, hash, s.now().Add(s.ttl))
-	// 写入权威新 hash 后只推进该 exact key 的 generation；其它 key 的
-	// inflight refill 仍可正常完成。
+	// After writing an authoritative new hash, advance only that exact key's generation;
+	// other keys' inflight refills can still complete normally.
 	s.bumpReadModelKeyGenerationLocked(key)
 	s.mu.Unlock()
 }

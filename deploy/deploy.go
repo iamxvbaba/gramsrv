@@ -1,10 +1,12 @@
-// Package deploy 提供部署期资源（迁移脚本）的嵌入访问。
+// Package deploy provides embedded access to deployment-time resources
+// (migration scripts).
 package deploy
 
 import "embed"
 
-// Migrations 是嵌入的 golang-migrate 迁移脚本（deploy/migrations/*.sql）。
-// 供 store/postgres 的迁移 runner 在启动时执行，避免运行时依赖外部文件路径。
+// Migrations is the embedded set of golang-migrate migration scripts
+// (deploy/migrations/*.sql). It is executed at startup by store/postgres's
+// migration runner, avoiding a runtime dependency on external file paths.
 //
 //go:embed migrations/*.sql
 var Migrations embed.FS

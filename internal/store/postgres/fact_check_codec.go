@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// factCheckJSON 是 channel_messages.factcheck 列的 JSON 形态。
-// 空对象表示这条消息没有事实核查标签。
+// factCheckJSON is the JSON form of the channel_messages.factcheck column.
+// An empty object means this message has no fact-check label.
 type factCheckJSON struct {
 	NeedCheck bool                   `json:"need_check"`
 	Country   string                 `json:"country"`

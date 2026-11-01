@@ -1,2 +1,2 @@
-// Package account 是账号安全与设置应用服务。
+// Package account implements the account security and settings application service.
 package account

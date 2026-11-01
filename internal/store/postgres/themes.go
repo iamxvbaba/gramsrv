@@ -14,12 +14,12 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// ThemeStore 用 PostgreSQL 实现 store.ThemeStore(裸 pgx,与近期功能一致,不走 sqlc)。
+// ThemeStore implements store.ThemeStore with PostgreSQL (raw pgx, consistent with recent features, not via sqlc).
 type ThemeStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewThemeStore 基于 pgx 连接池(或事务)创建 ThemeStore。
+// NewThemeStore creates a ThemeStore on top of a pgx pool (or transaction).
 func NewThemeStore(db sqlcgen.DBTX) *ThemeStore {
 	return &ThemeStore{db: db}
 }
@@ -155,7 +155,7 @@ ON CONFLICT (user_id, theme_id) DO UPDATE SET dark = EXCLUDED.dark`,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return domain.ErrThemeNotFound // FK 缺失等同主题不存在
+			return domain.ErrThemeNotFound // a missing FK is equivalent to the theme not existing
 		}
 		return fmt.Errorf("set theme installed: %w", err)
 	}

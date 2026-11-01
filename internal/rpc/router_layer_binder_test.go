@@ -18,7 +18,8 @@ type layerBinderCall struct {
 	layer        int
 }
 
-// layerCaptureSessions 在 captureSessions 基础上实现可选的 ClientLayerBinder。
+// layerCaptureSessions implements the optional ClientLayerBinder on top of
+// captureSessions.
 type layerCaptureSessions struct {
 	captureSessions
 	layerMu    sync.Mutex
@@ -68,7 +69,7 @@ func TestLegacyDispatchInvokeWithLayerAppliesOrderedSessionCorrection(t *testing
 		t.Fatalf("layer binder call = %+v", calls[0])
 	}
 
-	// 同 layer 重复 wrapper：不再下推。
+	// A repeated wrapper with the same layer: no longer pushed down.
 	dispatchWithLayer(225)
 	if calls := sessions.layerCallsSnapshot(); len(calls) != 1 {
 		t.Fatalf("layer binder calls after repeat = %d, want 1", len(calls))

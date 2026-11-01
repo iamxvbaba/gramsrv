@@ -8,9 +8,10 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
-// rpcRequestFingerprint 在任何自动实体补全、链接预览解析或上传媒体落库之前，
-// 对客户端原始 TL request 取稳定指纹。这样 lost-response 重放不会因服务端派生
-// photo/document id、pending webpage 状态等变化而被误判为另一条消息。
+// rpcRequestFingerprint takes a stable fingerprint of the client's raw TL request
+// before any auto-entity augmentation, link-preview resolution or uploaded-media
+// persistence. This way a lost-response replay is not misjudged as a different
+// message because of server-derived photo/document ids or pending webpage state.
 func rpcRequestFingerprint(req bin.Encoder) ([]byte, error) {
 	if req == nil {
 		return nil, fmt.Errorf("fingerprint rpc request: nil request")

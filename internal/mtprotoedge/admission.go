@@ -15,9 +15,10 @@ const (
 	acceptRetryMaxDelay            = time.Second
 )
 
-// admissionController 把 raw socket 与昂贵的 RSA/DH exchange 分开限流。
-// raw 配额覆盖连接从 Accept 到物理 Close 的完整生命周期；handshake 配额只覆盖
-// auth_key_id=0 的 exchange（包括 TDesktop 每条候选连接的 fake req_pq 探活）。
+// admissionController rate-limits raw sockets and the expensive RSA/DH exchange
+// separately. The raw quota covers a connection's whole lifetime from Accept to
+// physical Close; the handshake quota only covers the auth_key_id=0 exchange
+// (including each TDesktop candidate connection's fake req_pq liveness probe).
 type admissionController struct {
 	mu             sync.Mutex
 	maxConnections int
@@ -103,8 +104,9 @@ func remoteAdmissionKey(addr net.Addr) string {
 	return addr.Network() + ":" + addr.String()
 }
 
-// admissionListener 在最早的原始 Accept 边界记账，因此 mixed TCP/WebSocket 的
-// sniff/upgrade 阶段也受 raw cap 保护。admittedConn.Close 负责幂等归还配额。
+// admissionListener accounts at the earliest raw Accept boundary, so the
+// sniff/upgrade phase of mixed TCP/WebSocket is also protected by the raw cap.
+// admittedConn.Close is responsible for idempotently returning the quota.
 type admissionListener struct {
 	net.Listener
 	admission *admissionController

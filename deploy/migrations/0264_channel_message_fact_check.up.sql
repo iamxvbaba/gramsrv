@@ -1,4 +1,4 @@
--- v2 编号 0264；移植自 main 0240_channel_message_fact_check（main 6446194d，B11b），见 docs/main-v2-sync.md。
+-- v2 number 0264; ported from main 0240_channel_message_fact_check (main 6446194d, B11b), see docs/main-v2-sync.md.
 -- Fact checks: the protocol has carried factCheck and messages.editFactCheck /
 -- messages.deleteFactCheck / messages.getFactCheck since Layer 225; the server only
 -- now implements them. The label is attached to the message itself, so

@@ -33,8 +33,9 @@ func newSavedDialogsTestRouter(t *testing.T) (*Router, *memory.MessageStore, *me
 	return r, messageStore, userStore
 }
 
-// savedDialogsFixture 构造收藏夹两个子会话：直发笔记（saved=self）+
-// 从 bob 私聊转发（saved=bob，转发更晚 top 更新）。
+// savedDialogsFixture builds two Saved Messages sub-dialogs: a directly-sent note
+// (saved=self) + a forward from a bob private chat (saved=bob, whose top updates
+// later due to the forward).
 func savedDialogsFixture(t *testing.T) (*Router, *memory.MessageStore, domain.User, domain.User, int, int) {
 	t.Helper()
 	ctx := context.Background()
@@ -139,8 +140,8 @@ func savedDialogPeerID(t *testing.T, d *tg.SavedDialog) int64 {
 	}
 }
 
-// TestMessagesGetSavedDialogsGroupsBySource 验证直发/转发分组、排序、
-// saved_peer_id 下发与 users 投影。
+// TestMessagesGetSavedDialogsGroupsBySource verifies direct/forward grouping,
+// ordering, saved_peer_id delivery and users projection.
 func TestMessagesGetSavedDialogsGroupsBySource(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, bob, noteID, fwdID := savedDialogsFixture(t)
@@ -153,7 +154,7 @@ func TestMessagesGetSavedDialogsGroupsBySource(t *testing.T) {
 	if !full || len(dialogs) != 2 {
 		t.Fatalf("dialogs = %d full %v, want 2 full", len(dialogs), full)
 	}
-	// 转发更晚，bob 子会话在前。
+	// The forward is later, so the bob sub-dialog comes first.
 	if savedDialogPeerID(t, dialogs[0]) != bob.ID || dialogs[0].TopMessage != fwdID {
 		t.Fatalf("first dialog = peer %d top %d, want bob %d top %d", savedDialogPeerID(t, dialogs[0]), dialogs[0].TopMessage, bob.ID, fwdID)
 	}
@@ -214,8 +215,9 @@ func TestMessagesGetSavedDialogsGroupsBySource(t *testing.T) {
 	}
 }
 
-// TestMessagesGetSavedDialogsPagination 验证分页：limit 截断 → slice+count，
-// offset 翻页 → 尾页 savedDialogs；Android 首页 offset_id=int32 max 等价首页。
+// TestMessagesGetSavedDialogsPagination verifies pagination: a truncated limit ->
+// slice+count, offset paging -> the final page as savedDialogs; Android's first
+// page with offset_id=int32 max is equivalent to the first page.
 func TestMessagesGetSavedDialogsPagination(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, bob, noteID, fwdID := savedDialogsFixture(t)
@@ -253,10 +255,11 @@ func TestMessagesGetSavedDialogsPagination(t *testing.T) {
 	}
 }
 
-// TestMessagesGetSavedDialogsNegativePendingOffset 验证 DrKLO Android self Saved
-// Messages 分组里出现本地 pending 负消息 id 时，下一页请求不会被误判为
-// LIMIT_INVALID。服务端持久化 top_message 仍保持正数；负 offset 仅是客户端本地
-// 游标噪声，按首页/无 offset 处理。
+// TestMessagesGetSavedDialogsNegativePendingOffset verifies that when a local
+// pending negative message id appears in DrKLO Android's self Saved Messages
+// grouping, the next-page request is not misjudged as LIMIT_INVALID. The
+// server-persisted top_message stays positive; a negative offset is only local
+// client cursor noise and is treated as first page/no offset.
 func TestMessagesGetSavedDialogsNegativePendingOffset(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, _, _, _ := savedDialogsFixture(t)
@@ -281,8 +284,8 @@ func TestMessagesGetSavedDialogsNegativePendingOffset(t *testing.T) {
 	}
 }
 
-// TestMessagesGetSavedDialogsHashNotModified 验证 Android calcHash 序列命中
-// 返回 savedDialogsNotModified{count}。
+// TestMessagesGetSavedDialogsHashNotModified verifies that an Android calcHash
+// sequence hit returns savedDialogsNotModified{count}.
 func TestMessagesGetSavedDialogsHashNotModified(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, _, _, _ := savedDialogsFixture(t)
@@ -322,9 +325,10 @@ func TestMessagesGetSavedDialogsHashNotModified(t *testing.T) {
 	}
 }
 
-// TestMessagesSavedDialogPinLifecycle 验证置顶翻转/排序/排除全链路：
-// updateSavedDialogPinned 推送、首页 pinned 在前、getPinnedSavedDialogs、
-// exclude_pinned 口径、reorder 推 updatePinnedSavedDialogs。
+// TestMessagesSavedDialogPinLifecycle verifies the full pin toggle/order/exclude
+// chain: updateSavedDialogPinned push, pinned first on the first page,
+// getPinnedSavedDialogs, the exclude_pinned semantics, and reorder pushing
+// updatePinnedSavedDialogs.
 func TestMessagesSavedDialogPinLifecycle(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, bob, noteID, _ := savedDialogsFixture(t)
@@ -378,7 +382,7 @@ func TestMessagesSavedDialogPinLifecycle(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("pin bob sublist = %v err %v", ok, err)
 	}
-	// 新置顶插到最前。
+	// A new pin is inserted at the front.
 	pinnedRes, err = r.onMessagesGetPinnedSavedDialogs(WithUserID(ctx, alice.ID))
 	if err != nil {
 		t.Fatalf("getPinnedSavedDialogs: %v", err)
@@ -422,7 +426,7 @@ func TestMessagesSavedDialogPinLifecycle(t *testing.T) {
 	}
 }
 
-// TestMessagesGetSavedDialogsByID 验证指定查询：命中返回、未知 peer 静默缺席。
+// TestMessagesGetSavedDialogsByID verifies an explicit lookup: hits are returned, unknown peers are silently absent.
 func TestMessagesGetSavedDialogsByID(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, bob, _, fwdID := savedDialogsFixture(t)
@@ -442,8 +446,7 @@ func TestMessagesGetSavedDialogsByID(t *testing.T) {
 	}
 }
 
-// TestMessagesGetSavedHistoryFiltersBySavedPeer 验证子会话历史过滤、
-// count 与 hash notModified。
+// TestMessagesGetSavedHistoryFiltersBySavedPeer verifies sub-dialog history filtering, count and hash notModified.
 func TestMessagesGetSavedHistoryFiltersBySavedPeer(t *testing.T) {
 	ctx := context.Background()
 	r, _, alice, bob, noteID, fwdID := savedDialogsFixture(t)
@@ -483,7 +486,7 @@ func TestMessagesGetSavedHistoryFiltersBySavedPeer(t *testing.T) {
 		t.Fatalf("self saved history = %+v, want note only", selfMsgs)
 	}
 
-	// max_id 边界：低于转发 id 时空。
+	// max_id boundary: below the forward id it is empty.
 	empty, err := r.onMessagesGetSavedHistory(WithUserID(ctx, alice.ID), &tg.MessagesGetSavedHistoryRequest{
 		Peer:  &tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash},
 		MaxID: fwdID,
@@ -519,8 +522,9 @@ func savedHistoryMessages(t *testing.T, res tg.MessagesMessagesClass) []*tg.Mess
 	return out
 }
 
-// TestMessagesDeleteSavedHistoryRemovesSublist 验证删除子会话：带 pts 的
-// affectedHistory、子会话从列表消失、置顶清理、self-chat 历史同步消失。
+// TestMessagesDeleteSavedHistoryRemovesSublist verifies deleting a sub-dialog: a
+// pts-bearing affectedHistory, the sub-dialog disappearing from the list, pin
+// cleanup, and the self-chat history disappearing in sync.
 func TestMessagesDeleteSavedHistoryRemovesSublist(t *testing.T) {
 	ctx := context.Background()
 	r, messageStore, alice, bob, noteID, fwdID := savedDialogsFixture(t)
@@ -572,10 +576,11 @@ func TestMessagesDeleteSavedHistoryRemovesSublist(t *testing.T) {
 	}
 }
 
-// TestModernForwardMessagesConstructorSavesToSelf 复现 Android「保存到收藏夹」
-// 路径：DrKLO 12.7.x 发晚于 Layer 225 的 messages.forwardMessages#41d41ade，
-// 服务端 500 时 tgnet 无限重试（UI 永久转圈）。compat 解码后必须等价于
-// #13704a7c：转发成功、收藏夹出现来源子会话。
+// TestModernForwardMessagesConstructorSavesToSelf reproduces Android's "Save to
+// Saved Messages" path: DrKLO 12.7.x sends messages.forwardMessages#41d41ade,
+// which is later than Layer 225; on a server 500 tgnet retries infinitely (the UI
+// spins forever). After compat decoding it must be equivalent to #13704a7c: the
+// forward succeeds and the source sub-dialog appears in Saved Messages.
 func TestModernForwardMessagesConstructorSavesToSelf(t *testing.T) {
 	ctx := context.Background()
 	r, messageStore, userStore := newSavedDialogsTestRouter(t)
@@ -591,11 +596,11 @@ func TestModernForwardMessagesConstructorSavesToSelf(t *testing.T) {
 	}
 	bobMsgID := privateTopMessageID(t, messageStore, alice.ID, bob.ID)
 
-	// 按 DrKLO TL_messages_forwardMessages.serializeToStream 的线格式手工编码：
-	// constructor + flags + from_peer + Vector<int> id + Vector<long> random_id + to_peer。
+	// Hand-encode the wire format per DrKLO TL_messages_forwardMessages.serializeToStream:
+	// constructor + flags + from_peer + Vector<int> id + Vector<long> random_id + to_peer.
 	var raw bin.Buffer
 	raw.PutID(0x41d41ade)
-	raw.PutInt(0) // flags：保存到收藏夹不带任何可选字段
+	raw.PutInt(0) // flags: saving to Saved Messages carries no optional fields
 	if err := (&tg.InputPeerUser{UserID: bob.ID, AccessHash: bob.AccessHash}).Encode(&raw); err != nil {
 		t.Fatalf("encode from_peer: %v", err)
 	}
@@ -635,7 +640,7 @@ func TestModernForwardMessagesConstructorSavesToSelf(t *testing.T) {
 	}
 }
 
-// TestSavedPeerForSelfChat 验证子会话分组键计算与 TDLib 语义对齐。
+// TestSavedPeerForSelfChat verifies the sub-dialog grouping-key computation aligns with TDLib semantics.
 func TestSavedPeerForSelfChat(t *testing.T) {
 	self := int64(1000000001)
 	bobPeer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}

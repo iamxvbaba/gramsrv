@@ -42,8 +42,9 @@ func TestUsersGetUsersUsesSingleBatchLookupAndPreservesInputOrder(t *testing.T) 
 	if len(got) != 5 {
 		t.Fatalf("users = %+v, want bad access_hash skipped and duplicate inputs preserved", got)
 	}
-	// 显式自己 ID（InputUser{UserID: currentID}，index 3）也必须带 self 标志——
-	// 否则 self=false 的自己 user 会污染 DrKLO 账号缓存（Saved Messages 变身）。
+	// The explicit own ID (InputUser{UserID: currentID}, index 3) must also carry the
+	// self flag - otherwise a self=false own user would pollute the DrKLO account cache
+	// (turning Saved Messages into a normal chat).
 	wantIDs := []int64{currentID, peerID, peerID, currentID, currentID}
 	wantSelf := []bool{true, false, false, true, true}
 	for i, item := range got {

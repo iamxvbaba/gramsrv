@@ -45,7 +45,7 @@ func TestWebPageURLHashStableAndPositive(t *testing.T) {
 	}
 }
 
-// TestNormalizeThenHashDedupes 验证规范化后等价的 URL 哈希一致（去重键稳定）。
+// TestNormalizeThenHashDedupes verifies that URLs equivalent after normalization hash identically (a stable dedup key).
 func TestNormalizeThenHashDedupes(t *testing.T) {
 	a, _ := NormalizeWebPageURL("https://Example.com:443/x")
 	b, _ := NormalizeWebPageURL("https://example.com/x")

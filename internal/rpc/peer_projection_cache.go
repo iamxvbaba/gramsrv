@@ -50,8 +50,9 @@ func (b *userProjectionRecoveryBudget) consume(items int) error {
 	return nil
 }
 
-// viewerPeerCache 是一次 outbox/fanout 构建内的短生命周期缓存。
-// 用户资料含联系人、隐私、头像和在线状态，必须按 viewerUserID 隔离，不能跨视角复用。
+// viewerPeerCache is a short-lived cache within a single outbox/fanout build. User profiles carry
+// contacts, privacy, avatars, and online status, so they must be isolated by viewerUserID and never
+// reused across perspectives.
 type viewerPeerCache struct {
 	r *Router
 

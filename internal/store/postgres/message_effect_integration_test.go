@@ -8,9 +8,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendPrivateEffectSurvivesReadPaths 回归迁移 0023：消息特效 effect 经私聊全部读路径
-// 保真——发送结果双盒、history、GetByIDs、以及更新事件重建路径（离线 difference / 在线推送
-// 共用）。漏一处读站点 = 特效静默丢失（发送方播了、接收方/重载看不到）。
+// TestSendPrivateEffectSurvivesReadPaths regresses migration 0023: the message effect stays
+// faithful through all private read paths — the send result's two boxes, history, GetByIDs, and the
+// update-event rebuild path (shared by offline difference / online push). Missing one read site =
+// the effect is silently lost (the sender plays it, but the recipient/reload does not see it).
 func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -49,12 +50,12 @@ func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send effect message: %v", err)
 	}
-	// 发送结果双盒：发送方与接收方各自的副本都带特效。
+	// Send result two boxes: both the sender's and the recipient's copies carry the effect.
 	if res.SenderMessage.Effect != effect || res.RecipientMessage.Effect != effect {
 		t.Fatalf("send result effect = sender %d recipient %d, want %d", res.SenderMessage.Effect, res.RecipientMessage.Effect, effect)
 	}
 
-	// history：接收方拉取携带 effect。
+	// history: the recipient's fetch carries the effect.
 	hist, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("recipient history: %v", err)
@@ -72,7 +73,7 @@ func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 		t.Fatal("recipient history missing the effect message")
 	}
 
-	// GetByIDs 带 effect。
+	// GetByIDs carries the effect.
 	byID, err := messages.GetByIDs(ctx, sender.ID, []int{res.SenderMessage.ID})
 	if err != nil {
 		t.Fatalf("sender get by ids: %v", err)
@@ -84,7 +85,7 @@ func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 		t.Fatalf("get-by-id effect = %d, want %d", byID.Messages[0].Effect, effect)
 	}
 
-	// 更新事件重建路径（关键：getDifference/推送共用）带 effect。
+	// The update-event rebuild path (key: shared by getDifference/push) carries the effect.
 	events := NewUpdateEventStore(pool)
 	got, err := events.ListAfter(ctx, recipient.ID, 0, 20)
 	if err != nil {
@@ -94,7 +95,7 @@ func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 	for _, ev := range got {
 		if ev.Type == domain.UpdateEventNewMessage && ev.Message.ID == res.RecipientMessage.ID {
 			if ev.Message.Effect != effect {
-				t.Fatalf("update-event effect = %d, want %d（重建路径丢失特效）", ev.Message.Effect, effect)
+				t.Fatalf("update-event effect = %d, want %d (rebuild path lost the effect)", ev.Message.Effect, effect)
 			}
 			rebuilt = true
 		}
@@ -103,9 +104,10 @@ func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 		t.Fatal("recipient new_message event missing effect rebuild")
 	}
 
-	// getDialogs 的 top message 必须带 effect：TDesktop 把 getDialogs 返回的消息入缓存
-	// 且不被后续 getHistory 覆盖，dialog top message 漏 effect = 最新那条特效消息永久按
-	// 「无特效」渲染（真机实测的 bug：getDialogs 返回的最新消息没有消息特效）。
+	// The getDialogs top message must carry the effect: TDesktop caches getDialogs messages and
+	// does not overwrite them with later getHistory, so a dialog top message missing the effect =
+	// the latest effect message renders permanently as "no effect" (a real-device bug: the latest
+	// message returned by getDialogs had no message effect).
 	dialogs := NewDialogStore(pool)
 	for _, owner := range []struct {
 		id    int64
@@ -124,7 +126,7 @@ func TestSendPrivateEffectSurvivesReadPaths(t *testing.T) {
 			if m.ID == owner.boxID {
 				top = true
 				if m.Effect != effect {
-					t.Fatalf("%s dialog top message effect = %d, want %d（getDialogs 漏 effect）", owner.label, m.Effect, effect)
+					t.Fatalf("%s dialog top message effect = %d, want %d (getDialogs dropped the effect)", owner.label, m.Effect, effect)
 				}
 			}
 		}

@@ -1,33 +1,37 @@
-// Command botdemo 是一个「定时向群/用户主动发消息」的 bot 参考示例（开发/教学用）。
+// Command botdemo is a reference example of a bot that proactively sends
+// messages to a group or user on a timer (for development/teaching).
 //
-// 它演示一个外部 bot 程序如何：
-//  1. 用 BotFather 发的 token 经 auth.importBotAuthorization 登录 telesrv；
-//  2. 解析目标 peer（超级群 channel 或用户 user）；
-//  3. 在一个定时循环里，按设定间隔【主动】发送三种内容：
-//     - 纯文本   （messages.sendMessage）
-//     - 图片     （upload 文件 + messages.sendMedia(inputMediaUploadedPhoto)）
-//     - 图文     （同上，但带 caption）
+// It demonstrates how an external bot program can:
+//  1. Log in to telesrv through auth.importBotAuthorization with a BotFather token;
+//  2. Resolve a target peer (supergroup channel or user);
+//  3. In a timed loop, proactively send three kinds of content at a set interval:
+//     - plain text (messages.sendMessage)
+//     - photo      (upload a file + messages.sendMedia(inputMediaUploadedPhoto))
+//     - photo+caption (same, but with a caption)
 //
-// bot 在群里发消息和任何普通成员一样走 messages.sendMessage/sendMedia，无需被「@/命令」
-// 触发——这里的定时器就是「主动发」的触发源；换成业务事件/cron 也是同一套调用。隐私模式
-// （bot_chat_history）只影响 bot 能【收到】哪些消息，不限制它【发送】。
+// A bot sending a message in a group goes through messages.sendMessage/sendMedia
+// just like any ordinary member, with no need to be triggered by "@/command" -- the
+// timer here is the trigger for "proactive send"; swapping in a business event/cron
+// is the same set of calls. Privacy mode (bot_chat_history) only affects which
+// messages the bot can receive; it does not restrict what it can send.
 //
-// 用法示例（向超级群定时轮流发文本/图片/图文，每 15s 一条）：
+// Usage example (send text/photo/photo+caption in rotation to a supergroup, one per 15s):
 //
 //	go run ./cmd/bots/botdemo \
 //	    -token "<bot_id>:<secret>" \
 //	    -chat <channel_id> -chat-hash <access_hash> \
 //	    -interval 15s -mode rotate
 //
-// 其它常用参数：
+// Other common parameters:
 //
-//	-to <user_id> -to-hash <hash>   # 改为给某个用户私聊发（需用户先与 bot 交互过）
-//	-mode text|photo|caption|rotate # 只发文本 / 只发图片 / 只发图文 / 三者轮流（默认 rotate）
-//	-image path/to/pic.jpg          # 指定图片文件；不指定则程序自动生成一张 PNG
-//	-text "..."  -caption "..."     # 自定义文本与图文说明（程序会自动追加序号+时间使每条不同）
-//	-count 5                        # 发 5 条后退出（默认 0 = 一直发到 Ctrl+C）
+//	-to <user_id> -to-hash <hash>   # instead, send private messages to a user (the user must have interacted with the bot first)
+//	-mode text|photo|caption|rotate # text only / photo only / photo+caption only / all three in rotation (default rotate)
+//	-image path/to/pic.jpg          # specify an image file; if omitted the program generates a PNG automatically
+//	-text "..."  -caption "..."     # custom text and caption (the program appends a sequence number+time to make each one different)
+//	-count 5                        # exit after sending 5 (default 0 = keep sending until Ctrl+C)
 //
-// 连接 telesrv 用标准无-secret MTProto TCP obfuscation（obfuscated2），与生产 server 一致。
+// Connecting to telesrv uses standard no-secret MTProto TCP obfuscation
+// (obfuscated2), same as the production server.
 package main
 
 import (
@@ -63,9 +67,11 @@ import (
 	"telesrv/internal/mtprotoedge"
 )
 
-// obfuscatedResolver 用标准无-secret MTProto TCP obfuscation（obfuscated2）连接 telesrv，
-// 匹配生产 server 自动检测后的 obfuscated2 路径。gotd 内置 dcs.Plain 的
-// TCPObfuscatedOnly 路径走 MTProxy（强制 secret），不适用这里，所以自定义 Resolver。
+// obfuscatedResolver connects to telesrv with standard no-secret MTProto TCP
+// obfuscation (obfuscated2), matching the obfuscated2 path the production server
+// auto-detects. gotd's built-in dcs.Plain TCPObfuscatedOnly path goes through
+// MTProxy (which forces a secret), which does not apply here, hence the custom
+// Resolver.
 type obfuscatedResolver struct {
 	host string
 	port int
@@ -112,38 +118,38 @@ type config struct {
 }
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:2398", "telesrv MTProto 地址")
+	addr := flag.String("addr", "127.0.0.1:2398", "telesrv MTProto address")
 	dcID := flag.Int("dc", 2, "DC id")
-	token := flag.String("token", os.Getenv("TELESRV_BOT_TOKEN"), "bot token <bot_id>:<secret>（默认取 env TELESRV_BOT_TOKEN）")
-	rsaPath := flag.String("rsa", "data/server_rsa.pem", "server RSA 公钥路径")
+	token := flag.String("token", os.Getenv("TELESRV_BOT_TOKEN"), "bot token <bot_id>:<secret> (defaults to env TELESRV_BOT_TOKEN)")
+	rsaPath := flag.String("rsa", "data/server_rsa.pem", "server RSA public key path")
 	apiID := flag.Int("api-id", 1, "api_id")
 	apiHash := flag.String("api-hash", "hash", "api_hash")
 
-	chatID := flag.Int64("chat", 0, "目标超级群 channel id（非 0 即发到群）")
-	chatHash := flag.Int64("chat-hash", 0, "目标群 access_hash（telesrv 下可留 0）")
-	toID := flag.Int64("to", 0, "目标用户 id（-chat 为 0 时改为私聊该用户）")
-	toHash := flag.Int64("to-hash", 0, "目标用户 access_hash（telesrv 下可留 0）")
+	chatID := flag.Int64("chat", 0, "target supergroup channel id (non-zero sends to the group)")
+	chatHash := flag.Int64("chat-hash", 0, "target group access_hash (may be left 0 under telesrv)")
+	toID := flag.Int64("to", 0, "target user id (when -chat is 0, send a private message to this user)")
+	toHash := flag.Int64("to-hash", 0, "target user access_hash (may be left 0 under telesrv)")
 
-	interval := flag.Duration("interval", 15*time.Second, "定时发送间隔")
-	count := flag.Int("count", 0, "发送条数上限（0 = 一直发到 Ctrl+C）")
-	mode := flag.String("mode", "rotate", "发送内容：text | photo | caption | rotate")
-	text := flag.String("text", "telesrv bot demo · 定时主动消息", "文本内容（会自动追加 #序号+时间）")
-	caption := flag.String("caption", "telesrv bot demo · 图文消息", "图文说明（会自动追加 #序号+时间）")
-	imagePath := flag.String("image", "", "图片文件路径（留空则程序自动生成一张 PNG）")
+	interval := flag.Duration("interval", 15*time.Second, "timed send interval")
+	count := flag.Int("count", 0, "maximum number of sends (0 = keep sending until Ctrl+C)")
+	mode := flag.String("mode", "rotate", "content to send: text | photo | caption | rotate")
+	text := flag.String("text", "telesrv bot demo · timed proactive message", "text content (a sequence number+time is appended automatically)")
+	caption := flag.String("caption", "telesrv bot demo · photo+caption message", "caption text (a sequence number+time is appended automatically)")
+	imagePath := flag.String("image", "", "image file path (if empty the program generates a PNG automatically)")
 	flag.Parse()
 
 	if *token == "" {
-		fmt.Fprintln(os.Stderr, "缺少 -token（或设环境变量 TELESRV_BOT_TOKEN）")
+		fmt.Fprintln(os.Stderr, "missing -token (or set the TELESRV_BOT_TOKEN environment variable)")
 		os.Exit(2)
 	}
 	if *chatID == 0 && *toID == 0 {
-		fmt.Fprintln(os.Stderr, "需指定目标：-chat <群id>（或 -to <用户id>）")
+		fmt.Fprintln(os.Stderr, "target required: -chat <group id> (or -to <user id>)")
 		os.Exit(2)
 	}
 	switch *mode {
 	case "text", "photo", "caption", "rotate":
 	default:
-		fmt.Fprintf(os.Stderr, "未知 -mode=%q（text|photo|caption|rotate）\n", *mode)
+		fmt.Fprintf(os.Stderr, "unknown -mode=%q (text|photo|caption|rotate)\n", *mode)
 		os.Exit(2)
 	}
 
@@ -158,11 +164,11 @@ func main() {
 
 	priv, err := mtprotoedge.LoadOrGenerateRSAKey(*rsaPath)
 	if err != nil {
-		logger.Fatal("加载 RSA key 失败", zap.Error(err))
+		logger.Fatal("failed to load RSA key", zap.Error(err))
 	}
 	host, portStr, err := net.SplitHostPort(*addr)
 	if err != nil {
-		logger.Fatal("解析地址失败", zap.Error(err))
+		logger.Fatal("failed to parse address", zap.Error(err))
 	}
 	port, _ := strconv.Atoi(portStr)
 
@@ -179,29 +185,29 @@ func main() {
 	if err := client.Run(ctx, func(ctx context.Context) error {
 		api := tg.NewClient(client)
 
-		// 1) 登录为 bot。
+		// 1) Log in as the bot.
 		self, err := loginBot(ctx, api, *apiID, *apiHash, *token)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("==== bot 登录成功：@%s (id=%d) ====\n", self.Username, self.ID)
+		fmt.Printf("==== bot logged in: @%s (id=%d) ====\n", self.Username, self.ID)
 
-		// 2) 解析目标 peer。
+		// 2) Resolve the target peer.
 		peer, label, err := resolveTarget(ctx, api, cfg)
 		if err != nil {
 			return err
 		}
-		fmt.Printf(">> 目标：%s\n>> 间隔：%s，模式：%s，上限：%s\n", label, cfg.interval, cfg.mode, countLabel(cfg.count))
+		fmt.Printf(">> target: %s\n>> interval: %s, mode: %s, limit: %s\n", label, cfg.interval, cfg.mode, countLabel(cfg.count))
 
-		// 3) 定时主动发送。
+		// 3) Timed proactive sending.
 		return runLoop(ctx, api, uploader.NewUploader(api), peer, cfg, logger)
 	}); err != nil {
-		logger.Fatal("运行失败", zap.Error(err))
+		logger.Fatal("run failed", zap.Error(err))
 	}
-	fmt.Println("已退出")
+	fmt.Println("exited")
 }
 
-// loginBot 用 token 登录并返回 self 用户。
+// loginBot logs in with the token and returns the self user.
 func loginBot(ctx context.Context, api *tg.Client, apiID int, apiHash, token string) (*tg.User, error) {
 	authz, err := api.AuthImportBotAuthorization(ctx, &tg.AuthImportBotAuthorizationRequest{
 		APIID: apiID, APIHash: apiHash, BotAuthToken: token,
@@ -211,17 +217,19 @@ func loginBot(ctx context.Context, api *tg.Client, apiID int, apiHash, token str
 	}
 	a, ok := authz.(*tg.AuthAuthorization)
 	if !ok {
-		return nil, fmt.Errorf("authorization 类型 = %T", authz)
+		return nil, fmt.Errorf("authorization type = %T", authz)
 	}
 	self, ok := a.User.(*tg.User)
 	if !ok || !self.Bot {
-		return nil, fmt.Errorf("登录账号不是 bot：%T", a.User)
+		return nil, fmt.Errorf("login account is not a bot: %T", a.User)
 	}
 	return self, nil
 }
 
-// resolveTarget 把命令行目标解析成 InputPeer。群优先；access_hash 给 0 时尝试经
-// getChannels/getUsers 解析出真实 hash（telesrv 允许 hash=0 旁路，但解析更稳、也更贴近真实客户端）。
+// resolveTarget resolves the command-line target into an InputPeer. The group takes
+// priority; when access_hash is 0 it tries to resolve the real hash via
+// getChannels/getUsers (telesrv allows the hash=0 bypass, but resolving is more
+// robust and closer to a real client).
 func resolveTarget(ctx context.Context, api *tg.Client, cfg config) (tg.InputPeerClass, string, error) {
 	if cfg.chatID != 0 {
 		hash := cfg.chatHash
@@ -236,7 +244,7 @@ func resolveTarget(ctx context.Context, api *tg.Client, cfg config) (tg.InputPee
 			}
 		}
 		return &tg.InputPeerChannel{ChannelID: cfg.chatID, AccessHash: hash},
-			fmt.Sprintf("超级群 %q (id=%d)", title, cfg.chatID), nil
+			fmt.Sprintf("supergroup %q (id=%d)", title, cfg.chatID), nil
 	}
 
 	hash := cfg.toHash
@@ -249,10 +257,11 @@ func resolveTarget(ctx context.Context, api *tg.Client, cfg config) (tg.InputPee
 		}
 	}
 	return &tg.InputPeerUser{UserID: cfg.toID, AccessHash: hash},
-		fmt.Sprintf("用户 %q (id=%d)", name, cfg.toID), nil
+		fmt.Sprintf("user %q (id=%d)", name, cfg.toID), nil
 }
 
-// runLoop 是定时主动发送的核心：每 interval 发一条，按 mode 选内容；count>0 时发够即停。
+// runLoop is the core of timed proactive sending: it sends one message per interval,
+// picking the content by mode; when count>0 it stops once enough have been sent.
 func runLoop(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer tg.InputPeerClass, cfg config, logger *zap.Logger) error {
 	ticker := time.NewTicker(cfg.interval)
 	defer ticker.Stop()
@@ -268,25 +277,26 @@ func runLoop(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer tg
 			if err := sendText(ctx, api, peer, msg); err != nil {
 				return err
 			}
-			fmt.Printf("[%d] 文本已发：%q\n", seq, msg)
+			fmt.Printf("[%d] text sent: %q\n", seq, msg)
 		case "photo":
 			if err := sendPhoto(ctx, api, up, peer, seq, "", cfg.imagePath); err != nil {
 				return err
 			}
-			fmt.Printf("[%d] 图片已发\n", seq)
+			fmt.Printf("[%d] photo sent\n", seq)
 		case "caption":
 			captionText := fmt.Sprintf("%s · #%d · %s", cfg.caption, seq, stamp)
 			if err := sendPhoto(ctx, api, up, peer, seq, captionText, cfg.imagePath); err != nil {
 				return err
 			}
-			fmt.Printf("[%d] 图文已发：%q\n", seq, captionText)
+			fmt.Printf("[%d] photo+caption sent: %q\n", seq, captionText)
 		}
 		return nil
 	}
 
-	// 立即发第一条（不必等满一个 interval），随后按 ticker 周期发。
+	// Send the first one immediately (no need to wait a full interval),
+	// then send on the ticker period.
 	if err := send(); err != nil {
-		logger.Warn("发送失败", zap.Error(err))
+		logger.Warn("send failed", zap.Error(err))
 	}
 	if cfg.count > 0 && seq >= cfg.count {
 		return nil
@@ -297,7 +307,7 @@ func runLoop(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer tg
 			return nil
 		case <-ticker.C:
 			if err := send(); err != nil {
-				logger.Warn("发送失败", zap.Error(err))
+				logger.Warn("send failed", zap.Error(err))
 				continue
 			}
 			if cfg.count > 0 && seq >= cfg.count {
@@ -307,7 +317,8 @@ func runLoop(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer tg
 	}
 }
 
-// pickKind 决定本次发什么：固定模式直接返回；rotate 模式按序号轮流 text→photo→caption。
+// pickKind decides what to send this time: a fixed mode returns directly; rotate
+// cycles text→photo→caption by sequence number.
 func pickKind(mode string, seq int) string {
 	if mode != "rotate" {
 		return mode
@@ -322,7 +333,7 @@ func pickKind(mode string, seq int) string {
 	}
 }
 
-// sendText 发一条纯文本消息。
+// sendText sends a single plain-text message.
 func sendText(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, message string) error {
 	rid, _ := randInt64()
 	_, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
@@ -336,24 +347,27 @@ func sendText(ctx context.Context, api *tg.Client, peer tg.InputPeerClass, messa
 	return nil
 }
 
-// sendPhoto 上传一张图片并发出；caption 非空即「图文」，为空即纯图片。
-// 图片来源：cfg.imagePath 指定的文件，或程序按序号生成的 PNG（保证每条都不一样）。
+// sendPhoto uploads and sends an image; a non-empty caption makes it a
+// photo+caption, an empty one makes it a plain photo. Image source: the file
+// named by cfg.imagePath, or a PNG generated by the program from the sequence
+// number (guaranteeing each one differs).
 func sendPhoto(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer tg.InputPeerClass, seq int, caption, imagePath string) error {
 	var (
 		file tg.InputFileClass
 		err  error
 	)
 	if imagePath != "" {
-		// uploader 会自动分片 upload.saveFilePart（大文件走 big-file 路径）。
+		// uploader splits into parts automatically via upload.saveFilePart
+		// (large files take the big-file path).
 		file, err = up.FromPath(ctx, imagePath)
 		if err != nil {
-			return fmt.Errorf("上传图片文件 %q: %w", imagePath, err)
+			return fmt.Errorf("upload image file %q: %w", imagePath, err)
 		}
 	} else {
 		data := generatePNG(seq)
 		file, err = up.FromBytes(ctx, fmt.Sprintf("botdemo-%d.png", seq), data)
 		if err != nil {
-			return fmt.Errorf("上传生成图片: %w", err)
+			return fmt.Errorf("upload generated image: %w", err)
 		}
 	}
 
@@ -361,7 +375,7 @@ func sendPhoto(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer 
 	_, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
 		Peer:     peer,
 		Media:    &tg.InputMediaUploadedPhoto{File: file},
-		Message:  caption, // 空 = 纯图片；非空 = 图文（图片 + 说明文字）
+		Message:  caption, // empty = plain photo; non-empty = photo+caption (photo + caption text)
 		RandomID: rid,
 	})
 	if err != nil {
@@ -370,13 +384,15 @@ func sendPhoto(ctx context.Context, api *tg.Client, up *uploader.Uploader, peer 
 	return nil
 }
 
-// generatePNG 程序化生成一张 600x400 的 PNG，颜色随序号变化、并画一个随序号移动的方块，
-// 让连发的每张图肉眼可区分。纯标准库实现，无需外部图片文件，方便直接跑 demo。
+// generatePNG programmatically generates a 600x400 PNG whose colors vary with the
+// sequence number, drawing a block that moves with the sequence number, so
+// consecutively sent images are visually distinguishable. Pure standard library,
+// no external image file needed, so the demo runs directly.
 func generatePNG(seq int) []byte {
 	const w, h = 600, 400
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 
-	// 背景：按序号轮转色相的横向渐变。
+	// Background: a horizontal gradient whose hue rotates with the sequence number.
 	bg := hsv(float64((seq*37)%360), 0.55, 0.95)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -389,7 +405,8 @@ func generatePNG(seq int) []byte {
 			})
 		}
 	}
-	// 一个随序号横向移动的对比色方块——直观体现「这是第几条」。
+	// A contrasting-color block that moves horizontally with the sequence
+	// number -- visually showing "which message this is".
 	block := hsv(float64((seq*37+180)%360), 0.8, 0.9)
 	bx := 30 + (seq*45)%(w-130)
 	for y := 150; y < 250; y++ {
@@ -403,7 +420,7 @@ func generatePNG(seq int) []byte {
 	return buf.Bytes()
 }
 
-// hsv 把 HSV(h∈[0,360), s,v∈[0,1]) 转成 RGBA（标准库无 HSV，简单实现一个）。
+// hsv converts HSV(h∈[0,360), s,v∈[0,1]) to RGBA (the standard library has no HSV, so a simple one is implemented).
 func hsv(hDeg, s, v float64) color.RGBA {
 	c := v * s
 	x := c * (1 - absf(modf(hDeg/60, 2)-1))
@@ -460,12 +477,12 @@ func clamp(v int) uint8 {
 
 func countLabel(count int) string {
 	if count <= 0 {
-		return "无限"
+		return "unlimited"
 	}
 	return strconv.Itoa(count)
 }
 
-// randInt64 生成非零随机 random_id（防 (sender,random_id) 幂等键碰撞）。
+// randInt64 generates a non-zero random random_id (to prevent (sender,random_id) idempotency-key collisions).
 func randInt64() (int64, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {

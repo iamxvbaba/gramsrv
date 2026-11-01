@@ -1,8 +1,10 @@
-// Package secretchat 实现私聊端对端加密（Secret Chat / EncryptedChat）的握手
-// 状态机。服务端是盲中继：g_a/g_b/key_fingerprint/加密 bytes 全部不透明存储与
-// 原样转发，唯一参与密码学的点是对 g_a/g_b 做 DH 范围边界校验（防弱 DH/MITM）。
-// 共享密钥与明文是 E2E 客户端职责，服务端不知道也无法计算。
-// 设计见 docs/secret-chat-module.md。
+// Package secretchat implements the handshake state machine for private end-to-end
+// encrypted chats (Secret Chat / EncryptedChat). The server is a blind relay:
+// g_a/g_b/key_fingerprint/encrypted bytes are all stored opaquely and forwarded
+// verbatim; the only point involved in cryptography is the DH range boundary check on
+// g_a/g_b (to prevent weak DH/MITM). The shared key and plaintext are the E2E client's
+// responsibility; the server neither knows nor can compute them.
+// See docs/secret-chat-module.md for the design.
 package secretchat
 
 import (
@@ -12,29 +14,31 @@ import (
 	appphone "telesrv/internal/app/phone"
 )
 
-// dhPubSize 是 g_a/g_b 的规范字节长度（2048-bit）。
+// dhPubSize is the canonical byte length of g_a/g_b (2048-bit).
 const dhPubSize = 256
 
-// ErrGAInvalid：g_a/g_b 不在合法 DH 区间 → rpc 层映射为 DH_G_A_INVALID。
+// ErrGAInvalid: g_a/g_b is outside the valid DH range → the rpc layer maps it to DH_G_A_INVALID.
 var ErrGAInvalid = errors.New("secretchat: dh parameter invalid")
 
 var (
-	// dhPrimeMinusOne/边界值复用 phone 域官方 2048-bit safe prime（与 getDhConfig 下发的 p 同源）。
+	// dhPrimeMinusOne/boundary values reuse the phone domain's official 2048-bit safe prime (same source as the p sent by getDhConfig).
 	dhPrimeMinusOne = new(big.Int).Sub(new(big.Int).SetBytes(appphone.DHPrime()), big.NewInt(1))
-	// 2^(2048-64) 下界与 p-2^(2048-64) 上界（官方 isGoodPrime 同款边界）。
+	// 2^(2048-64) lower bound and p-2^(2048-64) upper bound (same bounds as the official isGoodPrime).
 	dhLowerBound = new(big.Int).Lsh(big.NewInt(1), 2048-64)
 	dhUpperBound = new(big.Int).Sub(new(big.Int).SetBytes(appphone.DHPrime()), new(big.Int).Lsh(big.NewInt(1), 2048-64))
 	dhOne        = big.NewInt(1)
 )
 
-// validateDHParam 对 g_a/g_b 做范围校验，通过后左补零到 256 字节返回（规范线格式；
-// 首字节为 0 被裁的合法 g_a 不能误拒）。校验用的是 big.Int 值，与补零无关。
+// validateDHParam performs range validation on g_a/g_b and, on success, returns it
+// left-padded with zeros to 256 bytes (canonical wire format; a valid g_a whose leading
+// zero byte was trimmed must not be wrongly rejected). Validation uses the big.Int value,
+// independent of the zero padding.
 func validateDHParam(g []byte) ([]byte, error) {
 	if len(g) == 0 || len(g) > dhPubSize {
 		return nil, ErrGAInvalid
 	}
 	x := new(big.Int).SetBytes(g)
-	// 1 < x < p-1 且 2^(2048-64) < x < p-2^(2048-64)
+	// 1 < x < p-1 and 2^(2048-64) < x < p-2^(2048-64)
 	if x.Cmp(dhOne) <= 0 || x.Cmp(dhPrimeMinusOne) >= 0 {
 		return nil, ErrGAInvalid
 	}
@@ -44,7 +48,7 @@ func validateDHParam(g []byte) ([]byte, error) {
 	return leftPad256(g), nil
 }
 
-// leftPad256 左补零到 256 字节（输入已保证 ≤256）。
+// leftPad256 left-pads with zeros to 256 bytes (the input is guaranteed ≤256).
 func leftPad256(b []byte) []byte {
 	if len(b) == dhPubSize {
 		return append([]byte(nil), b...)

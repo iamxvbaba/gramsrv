@@ -11,11 +11,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// registerLangpack 注册 langpack.* RPC handler。
+// registerLangpack registers the langpack.* RPC handlers.
 //
-// 老客户端（DrKLO）发的是不带 lang_pack 参数的旧构造器，已由 gotdgen client overlay 入站升级为 canonical
-// 形态并把 lang_pack 置空；故这里 lang_pack 为空时回退到按 client 信息派生（langPackFromClient），
-// 与历史 handleLegacyLangpack* 的行为一致。
+// Old clients (DrKLO) send the legacy constructor without the lang_pack argument;
+// the gotdgen client overlay upgrades them inbound to the canonical form with
+// lang_pack emptied. So when lang_pack is empty here we fall back to deriving it
+// from client info (langPackFromClient), matching the historical
+// handleLegacyLangpack* behavior.
 func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.LangpackGetLanguagesRequest](d, tlprofile.SemanticMethodLangpackGetLanguages, func(ctx context.Context, layerRequest *tg.LangpackGetLanguagesRequest) (any, error) {
 		langPack := layerRequest.
@@ -72,7 +74,8 @@ func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 
 }
 
-// langPackOrClient 返回请求里的 lang_pack；为空（老客户端经生成 overlay 升级而来）时按 client 派生。
+// langPackOrClient returns the request's lang_pack; when empty (old clients
+// upgraded via the generated overlay) it is derived from the client.
 func langPackOrClient(ctx context.Context, langPack string) string {
 	if langPack != "" {
 		return langPack

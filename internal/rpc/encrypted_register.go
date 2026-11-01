@@ -5,27 +5,31 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tlprofile"
-	// registerEncrypted 注册私聊端对端加密（Secret Chat）域 RPC。
+	// registerEncrypted registers the private end-to-end encrypted (Secret Chat)
+	// domain RPCs.
 	//
-	// 归属约定：messages.getDhConfig 属通话域（DH 参数下发），由 registerPhone 注册、
-	// 密聊复用，**本处绝不重复注册 messages.getDhConfig**（tlprofile.Dispatcher 同一
-	// RPC 重复 On* 是静默 last-wins，会覆盖 phone 域真实现）。
+	// Ownership convention: messages.getDhConfig belongs to the call domain (DH
+	// parameter distribution), is registered by registerPhone and reused by secret
+	// chat; **messages.getDhConfig is never re-registered here** (a duplicate On*
+	// for the same RPC in tlprofile.Dispatcher is silently last-wins and would
+	// override the real phone-domain implementation).
 	//
-	// P0 落地握手三件套；sendEncrypted / sendEncryptedFile / sendEncryptedService /
-	// readEncryptedHistory / setEncryptedTyping / receivedQueue / reportEncryptedSpam /
-	// uploadEncryptedFile 暂未注册，落 fallback → NOT_IMPLEMENTED + compatibility trace，
-	// 属 P1/P2（qts 引擎 + 消息投递）。设计 docs/secret-chat-module.md。
+	// P0 lands the handshake trio; sendEncrypted / sendEncryptedFile /
+	// sendEncryptedService / readEncryptedHistory / setEncryptedTyping /
+	// receivedQueue / reportEncryptedSpam / uploadEncryptedFile are not registered
+	// yet, falling back → NOT_IMPLEMENTED + compatibility trace, belonging to
+	// P1/P2 (qts engine + message delivery). Design: docs/secret-chat-module.md.
 )
 
 func (r *Router) registerEncrypted(d *tlprofile.Dispatcher) {
 	registerRPC[
-	// P0：握手三件套。
+	// P0: the handshake trio.
 	*tg.MessagesRequestEncryptionRequest](d, tlprofile.SemanticMethodMessagesRequestEncryption, func(ctx context.Context, layerRequest *tg.MessagesRequestEncryptionRequest) (any, error) {
 		return r.onMessagesRequestEncryption(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesAcceptEncryptionRequest](d, tlprofile.SemanticMethodMessagesAcceptEncryption, func(ctx context.Context, layerRequest *tg.MessagesAcceptEncryptionRequest) (
 
-		// P1：qts 消息收发 + 已读/typing + 队列确认。
+		// P1: qts message send/receive + read/typing + queue acknowledgement.
 		any, error) {
 		return r.onMessagesAcceptEncryption(ctx, layerRequest)
 	})
@@ -46,7 +50,7 @@ func (r *Router) registerEncrypted(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.MessagesReceivedQueueRequest](d, tlprofile.SemanticMethodMessagesReceivedQueue, func(ctx context.Context, layerRequest *tg.MessagesReceivedQueueRequest) (any,
 
-		// P2：密聊文件。
+		// P2: secret chat files.
 		error) {
 		return r.onMessagesReceivedQueue(ctx, layerRequest.
 			MaxQts)

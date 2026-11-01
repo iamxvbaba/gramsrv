@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// cacheEntry 是一条缓存记录。resolved=false 是负缓存:后端确实被问过了,
-// 但没有给出可用结果(查无此 IP、限流、超时、网络错误)。
+// cacheEntry is one cache record. resolved=false is a negative entry: the
+// backends were actually queried but produced no usable result (IP not found,
+// rate limit, timeout, network error).
 type cacheEntry struct {
 	location Location
 	resolved bool
@@ -20,11 +21,13 @@ type cacheConfig struct {
 	maxSize int
 }
 
-// cache 是带 TTL 的定容 IP 缓存,命中和未命中都会记。
+// cache is a fixed-size IP cache with TTLs that records both hits and misses.
 //
-// 负缓存是这个后端能不能用的关键:限流窗口内 reallyfreegeoip.org 对同一个查不到的
-// IP 会反复返回同样的空结果,不缓存就等于每打开一次会话列表都重付一遍 0.7s,而
-// 这些请求又会把 429 窗口续得更久——负反馈会把限流从偶发变成常态。
+// The negative cache is the key to whether this backend is usable: within its
+// rate-limit window reallyfreegeoip.org repeatedly returns the same empty result
+// for an IP it cannot find, so without caching every session-list open re-pays
+// ~0.7s, and those requests extend the 429 window even further -- a negative
+// feedback loop that turns occasional rate limiting into the norm.
 type cache struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -44,7 +47,8 @@ func newCache(cfg cacheConfig) *cache {
 	}
 }
 
-// get 返回未过期的条目。第二个值表示"缓存里有这条记录",即使它是一条负缓存。
+// get returns an unexpired entry. The second value means "the cache has this
+// record", even if it is a negative entry.
 func (c *cache) get(addr netip.Addr) (cacheEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -59,13 +63,14 @@ func (c *cache) get(addr netip.Addr) (cacheEntry, bool) {
 	return entry, true
 }
 
-// put 记录一次成功解析。正文有效期用长 TTL——单个 IP 的地理归属基本不变,
-// 没必要为了时效性反复去换一个本来也不会变的结果。
+// put records a successful resolution. Positive entries use a long TTL -- a
+// single IP's geographic identity barely changes, and there is no point
+// repeatedly re-fetching a result that will not change for freshness' sake.
 func (c *cache) put(addr netip.Addr, loc Location) {
 	c.set(addr, cacheEntry{location: loc, resolved: true, expires: c.now().Add(c.ttl)})
 }
 
-// putMiss 记录一次没有结果。有效期用短 TTL,否则一次限流会把该 IP 锁到第二天。
+// putMiss records a miss. It uses a short TTL, otherwise one rate limit locks the IP out until the next day.
 func (c *cache) putMiss(addr netip.Addr) {
 	c.set(addr, cacheEntry{resolved: false, expires: c.now().Add(c.negTTL)})
 }
@@ -73,8 +78,9 @@ func (c *cache) putMiss(addr netip.Addr) {
 func (c *cache) set(addr netip.Addr, entry cacheEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// 覆盖已有条目时先摘掉过期项,否则一个高频轮换的地址集合会把过期项一直
-	// 挤在 map 里,提前触发下面的整体清空。
+	// When overwriting an existing entry, drop it first if it is expired;
+	// otherwise a rapidly rotating set of addresses would keep expired entries
+	// packed in the map and prematurely trigger the full clear below.
 	if existing, ok := c.entries[addr]; ok && !c.now().Before(existing.expires) {
 		delete(c.entries, addr)
 	}
@@ -82,11 +88,13 @@ func (c *cache) set(addr netip.Addr, entry cacheEntry) {
 	c.evictLocked()
 }
 
-// evictLocked 保证条目数不超过 maxSize。
+// evictLocked keeps the entry count within maxSize.
 //
-// 先清过期项;仍然超限就整体清空。会话 IP 的基数本来就随在线用户增长,而一次
-// 清理最多让下一批请求重查一次(约 0.7s),换来的是一个不需要维护 LRU 链表的
-// 确定性内存上界——对一个展示用途的缓存,这个取舍是划算的。
+// It clears expired entries first; if still over the limit it clears everything.
+// The cardinality of session IPs grows with online users anyway, and a clear
+// costs at most one re-query of the next batch (~0.7s) in exchange for a
+// deterministic memory bound that needs no LRU list to maintain -- a worthwhile
+// trade for a display-only cache.
 func (c *cache) evictLocked() {
 	if len(c.entries) <= c.maxSize {
 		return

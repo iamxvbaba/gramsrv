@@ -158,9 +158,10 @@ func tgReadHistoryInbox(event domain.UpdateEvent) *tg.UpdateReadHistoryInbox {
 
 func tgReadHistoryInboxUpdate(event domain.UpdateEvent) tg.UpdateClass {
 	if event.Peer.Type == domain.PeerTypeChannel && event.Peer.ID != 0 {
-		// updateReadChannelInbox.pts 只能是 channel pts；账号 pts 在这里
-		// 是错误语义（TDesktop 拿它与本地 channel pts 比较），缺失时宁可
-		// 填 0 让客户端回退本地估算。
+		// updateReadChannelInbox.pts may only be channel pts; an account pts here
+		// is wrong semantics (TDesktop compares it with its local channel pts), so
+		// when missing it is better to fill 0 and let the client fall back to its
+		// local estimate.
 		update := &tg.UpdateReadChannelInbox{
 			ChannelID:        event.Peer.ID,
 			MaxID:            event.MaxID,

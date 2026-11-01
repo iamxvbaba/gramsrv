@@ -17,22 +17,23 @@ In a group with BotFather privacy enabled, send a command such as:
 /ping hello from group
 ```
 
-## Ephemeral echo（Bot API 10.2）
+## Ephemeral echo (Bot API 10.2)
 
-先通过 `setMyCommands` 把 `private` 注册为 `is_ephemeral=true`，然后保持本示例轮询。
-在 TDesktop Layer 228 的群组里发送：
+First register `private` as `is_ephemeral=true` via `setMyCommands`, then keep
+this example polling. Send in a group on TDesktop Layer 228:
 
 ```text
-/private@你的Bot用户名
+/private@your_bot_username
 ```
 
-本示例从 PTB 的 `Message.api_kwargs` 读取 `ephemeral_message_id`，并在 15 秒 action
-窗口内用 `receiver_user_id` 与 `reply_parameters.ephemeral_message_id` 回复
-`ephemeral echo: ...`。请求失败时不会降级成普通群消息。Alice 应看到两条带
-可见性提示的消息：自己发出的命令显示“Only visible to @Bot”，bot 回复显示
-“Only visible to you”；Bob 不应看到其中任何一条。
+This example reads `ephemeral_message_id` from PTB's `Message.api_kwargs`, and
+within the 15-second action window replies `ephemeral echo: ...` with
+`receiver_user_id` and `reply_parameters.ephemeral_message_id`. On request
+failure it does not degrade into an ordinary group message. Alice should see two
+messages with a visibility hint: the command she sent shows "Only visible to
+@Bot", the bot reply shows "Only visible to you"; Bob should see neither.
 
-主动发送一条消息并退出：
+Send one message proactively and exit:
 
 ```powershell
 python .\cmd\bots\ptbecho\echo.py `
@@ -41,7 +42,7 @@ python .\cmd\bots\ptbecho\echo.py `
   --send-text "hello from python-telegram-bot"
 ```
 
-长轮询 echo 启动后立即主动发送一条消息：
+Send one message proactively right after the long-polling echo starts:
 
 ```powershell
 python .\cmd\bots\ptbecho\echo.py `
@@ -49,27 +50,29 @@ python .\cmd\bots\ptbecho\echo.py `
   --send-text "ptbecho is online"
 ```
 
-发送 reply keyboard 与 inline callback 两条验证消息并保持 polling：
+Send the two verification messages, a reply keyboard and an inline callback, and
+keep polling:
 
 ```powershell
 python .\cmd\bots\ptbecho\echo.py `
   --buttons-chat-id 1780243200
 ```
 
-reply keyboard 与 inline keyboard 都会各显示蓝/绿/红三种语义色；点击 reply
-button 会按普通文本消息进入 echo 链，点击 inline button 会由 `callback_query` handler 调用
-`answerCallbackQuery` 并显示 `telesrv inline callback OK`。也可以在私聊中发送
-`/buttons` 生成同样的两条消息。
+Both the reply keyboard and the inline keyboard show the three semantic colors
+blue/green/red; tapping a reply button enters the echo chain as an ordinary text
+message, and tapping an inline button makes the `callback_query` handler call
+`answerCallbackQuery` and show `telesrv inline callback OK`. You can also send
+`/buttons` in a private chat to generate the same two messages.
 
-可选参数：
+Optional arguments:
 
-- `--send-count N`：连续主动发送 N 条。
-- `--send-interval SEC`：连续发送之间的间隔。
-- `TELESRV_BOT_DEMO_CHAT_ID` / `TELESRV_BOT_DEMO_SEND_TEXT`：主动发送参数的环境变量形式。
-- `--buttons-chat-id` / `TELESRV_BOT_DEMO_BUTTONS_CHAT_ID`：发送两类键盘验证消息并监听 callback。
+- `--send-count N`: send N messages proactively in a row.
+- `--send-interval SEC`: the interval between consecutive sends.
+- `TELESRV_BOT_DEMO_CHAT_ID` / `TELESRV_BOT_DEMO_SEND_TEXT`: environment-variable forms of the proactive send arguments.
+- `--buttons-chat-id` / `TELESRV_BOT_DEMO_BUTTONS_CHAT_ID`: send the two keyboard verification messages and listen for callbacks.
 
-本地超级群 chat id 使用 Bot API 形式 `-100<channel_id>`；例如 channel id 为
-`2` 时是 `-1000000000002`。
+The local supergroup chat id uses the Bot API form `-100<channel_id>`; for
+example, channel id `2` is `-1000000000002`.
 
 Implemented telesrv Bot API surface for this demo: `getMe`, `getUpdates`,
 `deleteWebhook`, `sendMessage`, and file URL configuration. The wider gateway

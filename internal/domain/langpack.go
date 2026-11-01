@@ -3,13 +3,13 @@ package domain
 import "errors"
 
 var (
-	// ErrLangPackInvalid 表示客户端请求的语言包目录不存在。
+	// ErrLangPackInvalid means the language pack catalog requested by the client does not exist.
 	ErrLangPackInvalid = errors.New("lang pack invalid")
-	// ErrLangCodeNotSupported 表示语言包目录存在，但其中没有请求的语言码。
+	// ErrLangCodeNotSupported means the language pack catalog exists but contains no entry for the requested language code.
 	ErrLangCodeNotSupported = errors.New("lang code not supported")
 )
 
-// LangPack 是一份客户端语言包的查询结果。
+// LangPack is a client language pack query result.
 type LangPack struct {
 	LangPack    string
 	LangCode    string
@@ -18,7 +18,7 @@ type LangPack struct {
 	Strings     []LangPackString
 }
 
-// LangPackSeed 是一次启动扫描得到的完整语言包文件清单。
+// LangPackSeed is the full language pack file inventory obtained from one startup scan.
 type LangPackSeed struct {
 	Catalog           string
 	SourceFingerprint string
@@ -26,7 +26,7 @@ type LangPackSeed struct {
 	Packs             []LangPackSeedEntry
 }
 
-// LangPackSeedEntry 记录一个语言包文件、源文件 hash 与规范化内容 hash。
+// LangPackSeedEntry records one language pack file, its source hash and normalized content hash.
 type LangPackSeedEntry struct {
 	Pack          LangPack
 	SourceHash    string
@@ -35,7 +35,7 @@ type LangPackSeedEntry struct {
 	ContentLoaded bool
 }
 
-// LangPackSeedCatalog 是上次成功对账后可用于跳过未变文件解析的清单快照。
+// LangPackSeedCatalog is the inventory snapshot from the last successful reconciliation, usable to skip parsing unchanged files.
 type LangPackSeedCatalog struct {
 	Catalog           string                     `json:"catalog"`
 	SourceFingerprint string                     `json:"source_fingerprint,omitempty"`
@@ -43,7 +43,7 @@ type LangPackSeedCatalog struct {
 	Packs             []LangPackSeedCatalogEntry `json:"packs"`
 }
 
-// LangPackSeedCatalogEntry 只保存判断源文件是否变化所需的有界元数据。
+// LangPackSeedCatalogEntry stores only the bounded metadata needed to tell whether the source file changed.
 type LangPackSeedCatalogEntry struct {
 	LangPack     string `json:"lang_pack"`
 	LangCode     string `json:"lang_code"`
@@ -53,7 +53,7 @@ type LangPackSeedCatalogEntry struct {
 	StringsCount int    `json:"strings_count"`
 }
 
-// LangPackLanguage 是 langpack.getLanguages/getLanguage 返回的语言元数据。
+// LangPackLanguage is the language metadata returned by langpack.getLanguages/getLanguage.
 type LangPackLanguage struct {
 	LangPack        string
 	LangCode        string
@@ -69,7 +69,7 @@ type LangPackLanguage struct {
 	TranslationsURL string
 }
 
-// LangPackString 是语言包中的一个普通或复数形式字符串。
+// LangPackString is a normal or plural-form string in a language pack.
 type LangPackString struct {
 	Key        string
 	Value      string

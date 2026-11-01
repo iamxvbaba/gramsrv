@@ -28,7 +28,7 @@ func (missingBoxIDAllocator) CurrentBoxID(context.Context, int64) (int, error) {
 	return 0, ErrBoxIDAllocatorMissing
 }
 
-// MessageStore 用 PostgreSQL 实现 store.MessageStore。
+// MessageStore implements store.MessageStore with PostgreSQL.
 type MessageStore struct {
 	db                     sqlcgen.DBTX
 	q                      *sqlcgen.Queries
@@ -48,17 +48,17 @@ type txBeginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-// MessageStoreOption 调整 PostgreSQL MessageStore 依赖。
+// MessageStoreOption adjusts the PostgreSQL MessageStore dependencies.
 type MessageStoreOption func(*MessageStore)
 
-// WithMessageAllocators 注入 Redis-backed box_id allocator。
+// WithMessageAllocators injects the Redis-backed box_id allocator.
 func WithMessageAllocators(boxIDs store.BoxIDAllocator) MessageStoreOption {
 	return func(s *MessageStore) {
 		s.boxIDs = boxIDs
 	}
 }
 
-// WithMessageLogger 注入消息 store 日志器，用于追踪消息与 pts 原子写入。
+// WithMessageLogger injects the message store logger used to trace atomic message and pts writes.
 func WithMessageLogger(log *zap.Logger) MessageStoreOption {
 	return func(s *MessageStore) {
 		s.log = log
@@ -83,7 +83,7 @@ func WithPlainPrivateSendBatchObserver(observer PlainPrivateSendBatchObserver) M
 	}
 }
 
-// NewMessageStore 基于 pgx 连接池（或事务）创建 MessageStore。
+// NewMessageStore creates a MessageStore on top of a pgx pool (or transaction).
 func NewMessageStore(db sqlcgen.DBTX, opts ...MessageStoreOption) *MessageStore {
 	s := &MessageStore{db: db, q: sqlcgen.New(db)}
 	for _, opt := range opts {

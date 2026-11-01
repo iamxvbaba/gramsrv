@@ -129,15 +129,18 @@ func (s *ChannelStore) GetChannel(_ context.Context, viewerUserID, channelID int
 		SelfBoostsApplied: s.selfBoostsAppliedLocked(viewerUserID, channelID, int(time.Now().Unix())),
 		ExportedInvite:    exportedInvite,
 	}
-	// 与 postgres 同口径:linked_chat_id 只在讨论频道真实可用时才下发,避免悬空 id
-	// 让客户端渲染"讨论"入口却打开空频道。
+	// Same convention as postgres: linked_chat_id is only sent when the discussion
+	// channel is genuinely usable, so a dangling id cannot make the client render a
+	// "Discussion" entry that opens an empty channel.
 	view.LinkedChatUsable = s.linkedChatUsable(channel)
 	return view, nil
 }
 
-// linkedChatUsable 校验 Channel.LinkedChatID 指向的对端真实可用。linked_chat_id 双向下发:
-// broadcast 指向讨论组(须为 megagroup),megagroup 指向母频道(须为 broadcast)。任一方向
-// 悬空都会让客户端渲染"讨论"入口,点进去却是空频道。
+// linkedChatUsable verifies that the peer pointed to by Channel.LinkedChatID is
+// genuinely usable. linked_chat_id is sent in both directions: a broadcast points to
+// its discussion group (must be a megagroup), a megagroup points to its parent channel
+// (must be a broadcast). A dangling id in either direction makes the client render a
+// "Discussion" entry that opens an empty channel.
 func (s *ChannelStore) linkedChatUsable(ch domain.Channel) bool {
 	if ch.LinkedChatID == 0 {
 		return false
@@ -187,8 +190,9 @@ func (s *ChannelStore) GetLinkedDiscussionChannel(_ context.Context, viewerUserI
 	return domain.ChannelView{Channel: cloneChannel(linked), Self: self}, nil
 }
 
-// ResolveChannel 是 GetChannel 的轻量版：只做访问校验并返回 Channel+Self，跳过 dialog/boost。
-// 与 postgres 实现语义一致（内存侧 dialog/boost 本就便宜，但保持接口行为对齐）。
+// ResolveChannel is a lightweight version of GetChannel: it only does the access check
+// and returns Channel+Self, skipping dialog/boost. Semantics match the postgres
+// implementation (dialog/boost are cheap in memory, but interface behavior is kept aligned).
 func (s *ChannelStore) ResolveChannel(_ context.Context, viewerUserID, channelID int64) (domain.ChannelView, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

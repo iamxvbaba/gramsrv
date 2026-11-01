@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// channelPaidReactionService 是 r.deps.Channels 的可选扩展（app/channels.Service 实现），
-// 用类型断言接入，避免在 ChannelsService 接口上为付费 reaction 单加方法。
+// channelPaidReactionService is an optional extension of r.deps.Channels
+// (implemented by app/channels.Service), wired in via type assertion to avoid
+// adding a paid-reaction-only method to the ChannelsService interface.
 type channelPaidReactionService interface {
 	SendPaidReaction(ctx context.Context, userID int64, req domain.SendChannelPaidReactionRequest) (domain.ChannelMessagePaidReactionResult, error)
 }
@@ -68,15 +69,17 @@ func (r *Router) channelPaidReactionResponseUpdates(ctx context.Context, viewerU
 	}
 }
 
-// injectPaidReaction 把付费 reaction 注入 MessageReactions：ReactionPaid 计数置首位、填充
-// top reactors 排行。My/chosen 完全由调用者视角的 paid 数据驱动。
+// injectPaidReaction injects the paid reaction into MessageReactions: the ReactionPaid count goes
+// first and the top reactors ranking is filled. My/chosen are driven entirely by the paid data from
+// the caller's view.
 func injectPaidReaction(mr *tg.MessageReactions, paid domain.ChannelMessagePaidReactions) {
 	if paid.TotalStars <= 0 {
 		return
 	}
 	paidCount := tg.ReactionCount{Reaction: &tg.ReactionPaid{}, Count: int(paid.TotalStars)}
 	if paid.MyStars > 0 {
-		// chosen_order 仅标记「本人已投」，具体序值不关键，置正。
+		// chosen_order only marks "this viewer has reacted"; the exact ordinal
+		// does not matter, so set it positive.
 		paidCount.SetChosenOrder(int(paid.MyStars))
 	}
 	mr.Results = append([]tg.ReactionCount{paidCount}, mr.Results...)
@@ -92,7 +95,9 @@ func injectPaidReaction(mr *tg.MessageReactions, paid domain.ChannelMessagePaidR
 		if rr.Anonymous {
 			item.Anonymous = true
 		}
-		// PeerID：非匿名给出；匿名仅本人给出（TL 语义：匿名本人 anonymous+peer 都置）。
+		// PeerID: given for non-anonymous reactors; for anonymous ones only to the
+		// reactor itself (TL semantics: for the anonymous self both anonymous and
+		// peer are set).
 		if (!rr.Anonymous || rr.My) && rr.DisplayPeer().ID != 0 {
 			if peer := tgPeer(rr.DisplayPeer()); peer != nil {
 				item.SetPeerID(peer)

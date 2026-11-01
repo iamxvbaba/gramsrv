@@ -8,11 +8,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendPrivateMediaSurvivesUpdateEvent 验证带 media 的私聊消息：
-//   - 发送后 message_boxes 持久化 media 快照；
-//   - 接收方经 UpdateEventStore.ListAfter（在线 outbox / 离线 getDifference 共用的重建路径）
-//     能拿回 media（曾因 update event 查询漏选 m.media 导致收件人/离线丢媒体，本测试守护该修复）；
-//   - history（ListByUser）读取也带 media。
+// TestSendPrivateMediaSurvivesUpdateEvent verifies a private message with media:
+//   - after sending, message_boxes persists the media snapshot;
+//   - the recipient gets the media back via UpdateEventStore.ListAfter (the rebuild path shared by
+//     online outbox / offline getDifference) (the update event query once omitted m.media, losing
+//     media for the recipient/offline; this test guards that fix);
+//   - history (ListByUser) also reads back with media.
 func TestSendPrivateMediaSurvivesUpdateEvent(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -53,7 +54,7 @@ func TestSendPrivateMediaSurvivesUpdateEvent(t *testing.T) {
 		SenderUserID:    sender.ID,
 		RecipientUserID: recipient.ID,
 		RandomID:        time.Now().UnixNano(),
-		Message:         "", // 仅媒体（无 caption）
+		Message:         "", // media only (no caption)
 		Media:           media,
 		Date:            int(time.Now().Unix()),
 	})
@@ -61,14 +62,14 @@ func TestSendPrivateMediaSurvivesUpdateEvent(t *testing.T) {
 		t.Fatalf("send private media: %v", err)
 	}
 
-	// 发送结果双端均带 media。
+	// The send result carries media on both ends.
 	for name, msg := range map[string]domain.Message{"sender": res.SenderMessage, "recipient": res.RecipientMessage} {
 		if msg.Media == nil || msg.Media.Kind != domain.MessageMediaKindDocument || msg.Media.Document == nil || msg.Media.Document.ID != media.Document.ID {
 			t.Fatalf("%s message media lost: %+v", name, msg.Media)
 		}
 	}
 
-	// 关键：接收方经更新事件重建（在线推送 / 离线 difference 共用路径）仍带 media。
+	// Key: the recipient still gets media via the update-event rebuild (the path shared by online push / offline difference).
 	events := NewUpdateEventStore(pool)
 	got, err := events.ListAfter(ctx, recipient.ID, 0, 10)
 	if err != nil {
@@ -87,7 +88,7 @@ func TestSendPrivateMediaSurvivesUpdateEvent(t *testing.T) {
 		t.Fatal("no new_message event for recipient")
 	}
 
-	// history 读取也带 media。
+	// history also reads back with media.
 	list, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("list by user: %v", err)

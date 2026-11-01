@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestDialogDraftGetRoundTrip 回归：GetDraft（draft_message 事件重放按 peer 重载权威态）
-// 与 SaveDraft/DeleteDraft 的键语义一致（user, peer, top_message_id）。
+// TestDialogDraftGetRoundTrip regresses: GetDraft (draft_message event replay reloading the
+// authoritative state per peer) has the same key semantics as SaveDraft/DeleteDraft
+// (user, peer, top_message_id).
 func TestDialogDraftGetRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -18,20 +18,23 @@ import (
 	"telesrv/internal/store"
 )
 
-// emptyAuthKeyID 是未加密消息（密钥交换）的 auth_key_id（全零）。
+// emptyAuthKeyID is the auth_key_id (all zero) of unencrypted messages (key exchange).
 var emptyAuthKeyID [8]byte
 
-// peekAuthKeyID 读取消息前 8 字节的 auth_key_id，不消费 buffer。
+// peekAuthKeyID reads the auth_key_id from the first 8 bytes of the message
+// without consuming the buffer.
 func peekAuthKeyID(b *bin.Buffer) (id [8]byte, err error) {
 	err = b.PeekN(id[:], len(id))
 	return id, err
 }
 
-// handleExchange 在收到 auth_key_id==0 的首帧后执行服务端 MTProto 密钥交换。
+// handleExchange performs the server-side MTProto key exchange after receiving
+// the first frame with auth_key_id==0.
 //
-// first 是已读取的首帧（req_pq*），通过 bufferedConn 交还给 exchange 流程，
-// 使其能从头读取握手消息。auth key + server salt 会在 DhGenOk 发出前落入
-// AuthKeyStore；持久化失败时不向客户端确认握手成功。
+// first is the already-read first frame (req_pq*), handed back to the exchange
+// flow via bufferedConn so it can read the handshake messages from the start.
+// The auth key + server salt are persisted to AuthKeyStore before DhGenOk is
+// sent; on persistence failure the handshake is not confirmed to the client.
 func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first *bin.Buffer) (*bin.Buffer, error) {
 	if s.key.Zero() {
 		s.log.Error("Key exchange requested but server RSA key is not configured")
@@ -41,10 +44,13 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 	buffered := newBufferedConn(conn)
 	buffered.push(first)
 
-	// 给整个密钥交换设总时长上界。HandshakeIdleTimeout 只约束单次读 idle，对一个持续发包的
-	// 客户端无效——若客户端陷入「ResPQ→nonce 失步→重发 req_pq」的握手重启死循环，无界的
-	// serverExchange 会对每个 req_pq 盲回 ResPQ、永不收敛地空转刷日志/占 CPU。超时即放弃本次
-	// 握手并断开，客户端重连发起全新握手（无残留相位差）即恢复。
+	// Put an overall duration bound on the whole key exchange. HandshakeIdleTimeout
+	// only constrains a single read idle and is useless against a client that keeps
+	// sending—if a client falls into a "ResPQ→nonce desync→resent req_pq" handshake
+	// restart loop, an unbounded serverExchange would blindly reply ResPQ to every
+	// req_pq, spinning forever and flushing logs/burning CPU. On timeout this
+	// handshake is abandoned and the connection closed; the client reconnects with
+	// a fresh handshake (no residual phase offset) and recovers.
 	runCtx := ctx
 	if s.handshakeMaxDur > 0 {
 		var cancel context.CancelFunc
@@ -55,10 +61,13 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 	start := s.clock.Now()
 	res, err := s.runServerExchange(runCtx, buffered)
 	if err != nil {
-		// gotd v0.158：握手中读到非零 auth_key_id 帧（客户端用既有 auth key 而非重新交换）
-		// 经类型化 UnexpectedEncryptedError 暴露并随附原始帧（旧版仅靠错误文案匹配，升级后失效）。
-		// 把该帧当既有会话首帧 replay，切勿回 -404——TDesktop 会判定 temp key 被销毁、丢弃并
-		// 重跑密钥交换，引发重连/重交换风暴。
+		// gotd v0.158: reading a non-zero auth_key_id frame mid-handshake (client uses
+		// an existing auth key instead of re-exchanging) is surfaced via a typed
+		// UnexpectedEncryptedError with the original frame attached (older versions
+		// only matched on error text, which broke after the upgrade). Replay that
+		// frame as the first frame of an existing session; never reply -404—TDesktop
+		// would decide the temp key was destroyed, discard it and rerun the key
+		// exchange, triggering a reconnect/re-exchange storm.
 		var encErr *exchange.UnexpectedEncryptedError
 		if errors.As(err, &encErr) {
 			replay := encErr.Frame
@@ -67,13 +76,15 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 				return &bin.Buffer{Buf: replay}, nil
 			}
 		}
-		// req_pq 帧数超界（客户端握手重启死循环）：瞬断，促客户端重连发起全新握手。
+		// req_pq frame count over the bound (client handshake restart loop): drop the
+		// connection immediately, prompting the client to reconnect with a fresh handshake.
 		if errors.Is(err, errTooManyHandshakeReqPQ) {
 			s.log.Info("Key exchange aborted: too many req_pq retries (client handshake restart loop)",
 				zap.Int("max", maxHandshakeReqPQ))
 			return nil, err
 		}
-		// 仅本握手的总时长上界到点（ctx 自身未取消）：放弃并断开，促客户端重连。
+		// Only this handshake's overall duration bound expired (ctx itself is not
+		// canceled): abandon and close, prompting the client to reconnect.
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			s.log.Info("Key exchange aborted: exceeded max duration (possible client req_pq restart loop)",
 				zap.Duration("max", s.handshakeMaxDur))
@@ -100,7 +111,7 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 	return nil, nil
 }
 
-// authKeyData 把握手结果转换为 store 记录。
+// authKeyData converts a handshake result into a store record.
 func authKeyData(key crypto.AuthKey, salt, createdAt int64, expiresAt int) store.AuthKeyData {
 	return store.AuthKeyData{
 		ID:         key.ID,
@@ -111,7 +122,7 @@ func authKeyData(key crypto.AuthKey, salt, createdAt int64, expiresAt int) store
 	}
 }
 
-// sendProtoError 向客户端发送 transport 级协议错误（-code）。
+// sendProtoError sends a transport-level protocol error (-code) to the client.
 func (s *Server) sendProtoError(ctx context.Context, conn transport.Conn, code int32) error {
 	var buf bin.Buffer
 	buf.PutInt32(-code)
@@ -142,25 +153,35 @@ func (s *Server) sendTerminalProtoError(ctx context.Context, c *Conn, code int32
 	return s.sendProtoError(ctx, c.transport, code)
 }
 
-// maxHandshakeReqPQ 是一次密钥交换内允许的 req_pq(_multi) 帧数上界。正常握手只发 1 个
-// req_pq（含个别客户端的「fake+真」也就 2 个）；客户端因 nonce 失步陷入「收到 ResPQ→立刻
-// 重启握手换 nonce 重发 req_pq」死循环时，会在同一连接上无限发 req_pq，而委托给 gotd 的
-// serverExchange 会对每个都盲回 ResPQ、永不收敛（见 docs/client-compat-notes.md 的握手风暴）。
-// 超过此上界即在 telesrv 传输层瞬断该连接，促客户端重连发起全新握手（无残留相位差）即恢复。
-// 留足余量（8）容纳少量正常重连重启。它与 HandshakeMaxDuration 总时长上界互补（按次/按时）。
+// maxHandshakeReqPQ is the upper bound on the number of req_pq(_multi) frames
+// allowed within one key exchange. A normal handshake sends only 1 req_pq (even
+// the "fake + real" of some clients is only 2); when a client falls into a
+// "receive ResPQ→immediately restart the handshake with a new nonce and resend
+// req_pq" loop due to nonce desync, it sends req_pq infinitely on the same
+// connection, and the gotd-delegated serverExchange blindly replies ResPQ to
+// every one, never converging (see the handshake storm in
+// docs/client-compat-notes.md). Exceeding this bound immediately drops the
+// connection at the telesrv transport layer, prompting the client to reconnect
+// with a fresh handshake (no residual phase offset) and recover. (8) leaves ample
+// headroom for a few normal reconnect restarts. It complements the overall
+// HandshakeMaxDuration bound (per-count / per-time).
 const maxHandshakeReqPQ = 8
 
-// errTooManyHandshakeReqPQ 表示一次握手内 req_pq 帧数超过 maxHandshakeReqPQ（疑似客户端握手
-// 重启死循环）。从 bufferedConn.Recv 抛出，经 serverExchange 透传回 handleExchange 断开连接。
+// errTooManyHandshakeReqPQ means the number of req_pq frames in one handshake
+// exceeded maxHandshakeReqPQ (suspected client handshake restart loop). It is
+// raised from bufferedConn.Recv and propagated through serverExchange back to
+// handleExchange to close the connection.
 var errTooManyHandshakeReqPQ = errors.New("too many req_pq frames in one handshake (client restart loop)")
 
-// bufferedConn 包装 transport.Conn，可把已读取的帧重新交给后续 Recv。
+// bufferedConn wraps transport.Conn and can hand already-read frames back to a
+// subsequent Recv.
 //
-// 用于密钥交换：serveConn 已读首帧用于 peek auth_key_id，再 push 回来交给 exchange。
+// Used for the key exchange: serveConn already read the first frame to peek the
+// auth_key_id, then pushes it back for the exchange.
 type bufferedConn struct {
 	transport.Conn
 	pending    []bin.Buffer
-	reqPQCount int // 本次握手已见 req_pq(_multi) 帧数；只在握手期访问（Recv 单 goroutine）
+	reqPQCount int // req_pq(_multi) frames seen in this handshake; accessed only during the handshake (single Recv goroutine)
 }
 
 func newBufferedConn(conn transport.Conn) *bufferedConn {
@@ -179,7 +200,7 @@ func (c *bufferedConn) push(b *bin.Buffer) {
 	c.pending = append(c.pending, bin.Buffer{Buf: buf})
 }
 
-// Recv 优先返回已 push 的帧（FIFO），耗尽后读取底层连接。
+// Recv returns pushed frames first (FIFO), reading the underlying connection once exhausted.
 func (c *bufferedConn) Recv(ctx context.Context, b *bin.Buffer) error {
 	for {
 		if len(c.pending) > 0 {
@@ -202,8 +223,10 @@ func (c *bufferedConn) Recv(ctx context.Context, b *bin.Buffer) error {
 			retainInboundFrameBackings(c.Conn, b)
 			continue
 		}
-		// req_pq 计数上界：仅在握手期生效（bufferedConn 只用于密钥交换），且 payload id 探测
-		// 与上面的 msgs_ack 跳过同量级开销，不碰加密消息热路径。超界即瞬断，止住握手死循环。
+		// req_pq count bound: only in effect during the handshake (bufferedConn is
+		// used only for the key exchange), and the payload id probe costs the same
+		// order as the msgs_ack skip above, not touching the encrypted-message hot
+		// path. Over the bound means an immediate drop, stopping the handshake loop.
 		if isUnencryptedReqPQFrame(b) {
 			c.reqPQCount++
 			if c.reqPQCount > maxHandshakeReqPQ {
@@ -214,8 +237,9 @@ func (c *bufferedConn) Recv(ctx context.Context, b *bin.Buffer) error {
 	}
 }
 
-// unencryptedPayloadID 返回未加密消息（auth_key_id==0）内层 TL payload 的 type id。
-// 非未加密消息 / 解码失败时 ok=false。
+// unencryptedPayloadID returns the type id of the inner TL payload of an
+// unencrypted message (auth_key_id==0). ok=false for a non-unencrypted message or
+// on decode failure.
 func unencryptedPayloadID(frame *bin.Buffer) (uint32, bool) {
 	if frame == nil || len(frame.Buf) < 24 {
 		return 0, false

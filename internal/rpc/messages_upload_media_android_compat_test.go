@@ -14,10 +14,11 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestLegacyAndroidMessagesUploadMediaDispatch 验证 DrKLO Android 仍发出的旧版
-// messages.uploadMedia 构造器 #519bc2b1 被 compat 分发到真实 onMessagesUploadMedia
-// （而非落到 fallback 的 NOT_IMPLEMENTED）。这是「单附件发送正常、多附件发送失败」的
-// 根因修复——相册在 sendMultiMedia 前会对每个附件先 uploadMedia，任一失败即整组 markAsError。
+// TestLegacyAndroidMessagesUploadMediaDispatch verifies that the legacy messages.uploadMedia
+// constructor #519bc2b1 that DrKLO Android still sends is dispatched by compat to the real
+// onMessagesUploadMedia (rather than falling through to NOT_IMPLEMENTED). This is the root-cause
+// fix for "single-attachment sends work, multi-attachment sends fail" — the album calls uploadMedia
+// for every attachment before sendMultiMedia, and any failure marks the whole group as failed.
 func TestLegacyAndroidMessagesUploadMediaDispatch(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -30,7 +31,8 @@ func TestLegacyAndroidMessagesUploadMediaDispatch(t *testing.T) {
 		Files: &fakeFiles{},
 	}, zaptest.NewLogger(t), clock.System)
 
-	// 按 DrKLO 字段序构造原始 wire：constructor + peer:InputPeer + media:InputMedia（均为 boxed）。
+	// Build the raw wire in DrKLO field order: constructor + peer:InputPeer + media:InputMedia
+	// (all boxed).
 	var in bin.Buffer
 	in.PutID(0x519bc2b1)
 	if err := (&tg.InputPeerSelf{}).Encode(&in); err != nil {

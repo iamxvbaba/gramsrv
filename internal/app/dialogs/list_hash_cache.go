@@ -27,9 +27,11 @@ type dialogListHashValue struct {
 	count int
 }
 
-// dialogListHashCache 由统一缓存原语承载,走「外部构建再写回」(GetDialogs 在加载前 cacheEpoch
-// 快照 epoch → rememberDialogListHash 经 putIfEpoch 写回)。原语的 epoch 仅在 Invalidate/Flush
-// (写驱动失效)自增,被动 TTL 过期纯 per-key 不动 epoch——正是本缓存所需(避免误返 NotModified)。
+// dialogListHashCache is backed by the shared cache primitive using "build externally then
+// write back" (GetDialogs snapshots cacheEpoch before loading → rememberDialogListHash writes
+// back via putIfEpoch). The primitive's epoch only increments on Invalidate/Flush (write-driven
+// invalidation); a passive TTL expiry touches only the key and does not move the epoch — exactly
+// what this cache needs (to avoid wrongly returning NotModified).
 type dialogListHashCache struct {
 	cache *readmodelcache.Cache[dialogListHashCacheKey, dialogListHashValue]
 }
@@ -102,7 +104,8 @@ func (c *dialogListHashCache) lookup(key dialogListHashCacheKey) (dialogListHash
 	return c.cache.Peek(key)
 }
 
-// putIfEpoch 仅在 epoch 未变(加载期间没有写驱动失效)时写入，堵住 stale write-back race。
+// putIfEpoch writes only when the epoch is unchanged (no write-driven invalidation during the
+// load), closing the stale write-back race.
 func (c *dialogListHashCache) putIfEpoch(key dialogListHashCacheKey, hash int64, count int, loadEpoch uint64) {
 	if c == nil || key.userID == 0 || hash == 0 {
 		return

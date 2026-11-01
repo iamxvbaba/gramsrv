@@ -1,2 +1,2 @@
-// Package help 提供 help.* RPC 背后的数据目录服务。
+// Package help provides the data catalog service behind the help.* RPCs.
 package help

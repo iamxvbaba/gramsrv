@@ -26,7 +26,7 @@ func TestLocalFSPutGetRoundTrip(t *testing.T) {
 		t.Fatal("empty object key")
 	}
 
-	// 内容寻址：相同内容应得到相同 key（去重）。
+	// Content-addressed: identical content should get the same key (dedup).
 	key2, err := fs.Put(ctx, data)
 	if err != nil {
 		t.Fatalf("put again: %v", err)

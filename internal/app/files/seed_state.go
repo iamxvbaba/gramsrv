@@ -112,8 +112,9 @@ func seedDocumentJSONLocationKeys(dj seedDocumentJSON, index seedDirIndex) []str
 	return keys
 }
 
-// seedDocumentJSONsReady 校验文档是否已完整落库，并返回本次读取到的文档，供调用方
-// 复用（effects 目录每次启动都要据此重算 hash，别为同一批文档读两遍）。
+// seedDocumentJSONsReady verifies that documents are fully persisted and returns the documents
+// read this time for the caller to reuse (the effects catalog recomputes its hash from this on
+// every startup — don't read the same batch of documents twice).
 func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumentJSON, index seedDirIndex) ([]domain.Document, bool, error) {
 	expected := make(map[int64]seedDocumentJSON, len(docs))
 	ids := make([]int64, 0, len(docs))

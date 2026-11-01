@@ -11,8 +11,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestMessagesGetAvailableEffects 验证消息特效 handler:effects 引用的文档去重进独立
-// Documents 数组、optional 字段(static/anim/premium)正确编码、hash 命中回 NotModified。
+// TestMessagesGetAvailableEffects verifies the message-effect handler: documents
+// referenced by effects are deduplicated into a separate Documents array, optional
+// fields (static/anim/premium) are encoded correctly, and a hash hit returns
+// NotModified.
 func TestMessagesGetAvailableEffects(t *testing.T) {
 	doc := func(id int64) domain.Document {
 		return domain.Document{
@@ -52,7 +54,7 @@ func TestMessagesGetAvailableEffects(t *testing.T) {
 	if full.Hash == 0 {
 		t.Fatalf("hash = 0, want stable nonzero")
 	}
-	// 文档去重:effect 引用 1/2/3 + 2 → 3 个唯一文档。
+	// Document dedup: effect references 1/2/3 + 2 → 3 unique documents.
 	if len(full.Documents) != 3 {
 		t.Fatalf("documents = %d, want 3 deduped", len(full.Documents))
 	}
@@ -104,7 +106,8 @@ func TestMessagesGetAvailableEffects(t *testing.T) {
 	}
 }
 
-// TestMessagesGetAvailableEffectsEmpty 验证无 effects 时回空(非 NotModified),不让客户端卡住。
+// TestMessagesGetAvailableEffectsEmpty verifies an empty (non-NotModified) reply
+// when there are no effects, so the client does not get stuck.
 func TestMessagesGetAvailableEffectsEmpty(t *testing.T) {
 	r := New(Config{}, Deps{Files: &fakeFiles{}}, zaptest.NewLogger(t), clock.System)
 	res, err := r.onMessagesGetAvailableEffects(context.Background(), 0)

@@ -17,8 +17,10 @@ type storyPinnedStoriesCacheKey struct {
 	limit        int
 }
 
-// storyPinnedStoriesCache 缓存某 viewer 对某 peer 的置顶故事分页结果,由统一缓存原语承载。
-// key 含 (offsetID,limit) 分页维度——LRU 单条驱逐终于给这个 page-key 上界,消掉原先无界增长。
+// storyPinnedStoriesCache caches a viewer's paginated pinned-stories result for a
+// peer, carried by the shared cache primitive. The key includes the (offsetID,limit)
+// pagination dimension - LRU single-entry eviction finally gives this page-key an
+// upper bound, eliminating its previous unbounded growth.
 type storyPinnedStoriesCache struct {
 	cache *readmodelcache.Cache[storyPinnedStoriesCacheKey, domain.StoryList]
 }

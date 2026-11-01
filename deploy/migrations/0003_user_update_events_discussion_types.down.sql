@@ -1,4 +1,4 @@
--- 回滚：恢复不含 forum 话题已读两种事件类型的原始白名单（与 0001 一致）。
+-- Rollback: restore the original allowlist that omits the two forum topic read-state event types (matching 0001).
 ALTER TABLE public.user_update_events DROP CONSTRAINT IF EXISTS user_update_events_type_check;
 ALTER TABLE public.user_update_events ADD CONSTRAINT user_update_events_type_check CHECK (
     (event_type)::text = ANY (ARRAY[

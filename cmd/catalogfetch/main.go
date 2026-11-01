@@ -1,14 +1,16 @@
-// Command catalogfetch 从官方 Telegram 拉取「目录/参考数据」并写成 telesrv
-// internal/seed/catalog 的 JSON 种子:
-//   - 国家区号   help.getCountriesList     (免登)
-//   - 时区       help.getTimezonesList     (免登)
-//   - emoji 分组 messages.getEmojiGroups   (需登录)
-//   - emoji 关键词 messages.getEmojiKeywords (需登录)
+// Command catalogfetch pulls "catalog/reference data" from official Telegram and
+// writes it as telesrv internal/seed/catalog JSON seeds:
+//   - country dialing codes  help.getCountriesList     (login-free)
+//   - timezones              help.getTimezonesList     (login-free)
+//   - emoji groups           messages.getEmojiGroups   (login required)
+//   - emoji keywords         messages.getEmojiKeywords (login required)
 //
-// 免登项即使会话未授权也能拉;emoji 两项需要授权会话,故复用 appearancefetch 建立的
-// 已登录会话(SESSION env,默认 /tmp/appearance.session)。api 凭据用 TDesktop 开源公开 id/hash。
+// The login-free items can be pulled even if the session is unauthorized; the two
+// emoji items need an authorized session, so they reuse the logged-in session
+// established by appearancefetch (SESSION env, default /tmp/appearance.session).
+// The api credentials use the public open-source id/hash from TDesktop.
 //
-// 用法: SESSION=/tmp/appearance.session catalogfetch <out_dir> [langCode=en]
+// Usage: SESSION=/tmp/appearance.session catalogfetch <out_dir> [langCode=en]
 package main
 
 import (
@@ -114,7 +116,7 @@ func main() {
 			fmt.Printf("[session %s authorized=%v]\n", sessionPath(), status.Authorized)
 		}
 
-		// 国家区号(免登)
+		// Country dialing codes (login-free)
 		if cl, err := api.HelpGetCountriesList(ctx, &tg.HelpGetCountriesListRequest{LangCode: lang, Hash: 0}); err != nil {
 			fmt.Fprintln(os.Stderr, "skip countries:", err)
 		} else if full, ok := cl.(*tg.HelpCountriesList); ok {
@@ -132,7 +134,7 @@ func main() {
 			fmt.Printf("[countries] %d\n", len(f.Countries))
 		}
 
-		// 时区(免登)
+		// Timezones (login-free)
 		if tl, err := api.HelpGetTimezonesList(ctx, 0); err != nil {
 			fmt.Fprintln(os.Stderr, "skip timezones:", err)
 		} else if full, ok := tl.(*tg.HelpTimezonesList); ok {
@@ -146,7 +148,7 @@ func main() {
 			fmt.Printf("[timezones] %d\n", len(f.Timezones))
 		}
 
-		// emoji 分组(需登录)
+		// Emoji groups (login required)
 		if eg, err := api.MessagesGetEmojiGroups(ctx, 0); err != nil {
 			fmt.Fprintln(os.Stderr, "skip emoji_groups:", err)
 		} else if full, ok := eg.(*tg.MessagesEmojiGroups); ok {
@@ -162,7 +164,7 @@ func main() {
 			fmt.Printf("[emoji_groups] %d\n", len(f.Groups))
 		}
 
-		// emoji 关键词(需登录)
+		// Emoji keywords (login required)
 		if kw, err := api.MessagesGetEmojiKeywords(ctx, lang); err != nil {
 			fmt.Fprintln(os.Stderr, "skip emoji_keywords:", err)
 		} else {

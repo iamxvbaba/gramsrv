@@ -252,8 +252,8 @@ func TestChannelPaidReactionPostgresOwnerSendAsAndOrderedCrossSettlement(t *test
 	}
 }
 
-// TestChannelPaidReactionPostgres 回归迁移 0010：广播频道付费 reaction 对真实 PG 的累计 +
-// 聚合（总星数 / viewer 自身 / top reactors 降序 / 同 reactor 多次累加）。
+// TestChannelPaidReactionPostgres regresses migration 0010: accumulation and aggregation of broadcast
+// channel paid reactions against a real PG (total stars / viewer's own / top reactors descending / same reactor accumulating across multiple calls).
 func TestChannelPaidReactionPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -370,7 +370,7 @@ SET cutover_at=$1,reject_random_id_through=$2 WHERE singleton`, originalCutover,
 		t.Fatalf("fresh owner balance rows=%d err=%v, want none before atomic first-use grant", freshBalanceRows, err)
 	}
 
-	// owner 投 100。
+	// The owner gives 100.
 	res, err := channels.AddChannelMessagePaidReaction(ctx, domain.SendChannelPaidReactionRequest{
 		UserID: owner.ID, ChannelID: channelID, MessageID: msgID, Stars: 100, RandomID: postgresPaidReactionRandomID(1700000402, 81001), Date: 1700000402,
 	})
@@ -384,7 +384,7 @@ SET cutover_at=$1,reject_random_id_through=$2 WHERE singleton`, originalCutover,
 		t.Fatalf("first atomic balances payer/channel=%d/%d", res.PayerBalance.Balance, res.ChannelBalance)
 	}
 
-	// member 投 250 → 总 350，member 视角 my=250，top reactors 降序 member(250)/owner(100)。
+	// The member gives 250 -> total 350, member's own my=250, top reactors descending member(250)/owner(100).
 	memberReq := domain.SendChannelPaidReactionRequest{
 		UserID: member.ID, ChannelID: channelID, MessageID: msgID, Stars: 250, RandomID: postgresPaidReactionRandomID(1700000403, 81002), Date: 1700000403,
 	}
@@ -399,7 +399,7 @@ SET cutover_at=$1,reject_random_id_through=$2 WHERE singleton`, originalCutover,
 		t.Fatalf("top reactors = %+v, want member(250,My)/owner(100)", res.Paid.TopReactors)
 	}
 
-	// owner 再投 50 → 累加到 150，总 400。
+	// The owner gives another 50 -> accumulates to 150, total 400.
 	ownerAgain := domain.SendChannelPaidReactionRequest{
 		UserID: owner.ID, ChannelID: channelID, MessageID: msgID, Stars: 50, RandomID: postgresPaidReactionRandomID(1700000404, 81003), Date: 1700000404,
 	}
@@ -439,8 +439,8 @@ SET cutover_at=$1,reject_random_id_through=$2 WHERE singleton`, originalCutover,
 		t.Fatalf("channel reaction credits=%d err=%v", channelCredits, err)
 	}
 
-	// 关键回归（读路径修复）：fresh 读回该消息必须携带付费 reaction（不止实时推送）。
-	// owner 视角：Paid.TotalStars=400, MyStars=150。
+	// Key regression (read-path fix): a fresh read of the message must carry the paid reaction (not just the live push).
+	// Owner's view: Paid.TotalStars=400, MyStars=150.
 	read, err := channels.GetChannelMessageReactions(ctx, domain.ChannelMessageReactionsRequest{
 		UserID: owner.ID, ChannelID: channelID, IDs: []int{msgID},
 	})
@@ -452,9 +452,9 @@ SET cutover_at=$1,reject_random_id_through=$2 WHERE singleton`, originalCutover,
 	}
 	paid := read.Messages[0].Reactions.Paid
 	if paid.TotalStars != 400 || paid.MyStars != 150 {
-		t.Fatalf("fresh read paid = total %d my %d, want 400/150 (读路径须回显付费 reaction)", paid.TotalStars, paid.MyStars)
+		t.Fatalf("fresh read paid = total %d my %d, want 400/150 (the read path must echo the paid reaction)", paid.TotalStars, paid.MyStars)
 	}
-	// member 视角读同一条：MyStars=250、TopReactors 含 member 自己带 My。
+	// The member reading the same message: MyStars=250, TopReactors includes the member with My set.
 	readMember, err := channels.GetChannelMessageReactions(ctx, domain.ChannelMessageReactionsRequest{
 		UserID: member.ID, ChannelID: channelID, IDs: []int{msgID},
 	})
@@ -591,7 +591,7 @@ SET cutover_at=$1,reject_random_id_through=$2 WHERE singleton`, originalCutover,
 		t.Fatalf("preflight replay after target delete/payer kick=%+v found=%v err=%v", replay, found, err)
 	}
 
-	// 非法星数被拒。
+	// An invalid star count is rejected.
 	if _, err := channels.AddChannelMessagePaidReaction(ctx, domain.SendChannelPaidReactionRequest{
 		UserID: owner.ID, ChannelID: channelID, MessageID: msgID, Stars: 0, RandomID: postgresPaidReactionRandomID(1700000405, 81004), Date: 1700000405,
 	}); !errors.Is(err, domain.ErrChannelInvalid) {

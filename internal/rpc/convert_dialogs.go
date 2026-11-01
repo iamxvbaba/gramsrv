@@ -53,8 +53,9 @@ func appendCommunityDialogObjects(viewerUserID int64, list domain.DialogList, ch
 
 func tgMessagesDialogs(viewerUserID int64, list domain.DialogList) tg.MessagesDialogsClass {
 	dialogs := make([]tg.DialogClass, 0, len(list.Dialogs)+1)
-	// dialogFolder 条目排在最前：TDesktop 据它发现 archive folder 并渲染
-	// 归档行的未读徽章（Folder::applyDialog / MainList::updateCloudUnread）。
+	// The dialogFolder entry goes first: TDesktop uses it to discover the archive
+	// folder and render the unread badge on the archived row
+	// (Folder::applyDialog / MainList::updateCloudUnread).
 	if folder := tgDialogFolder(list.ArchiveSummary); folder != nil {
 		dialogs = append(dialogs, folder)
 	}
@@ -98,9 +99,10 @@ func tgPeerDialogs(viewerUserID int64, list domain.DialogList, st domain.UpdateS
 		Chats:    make([]tg.ChatClass, 0, len(list.Channels)),
 		State:    tgUpdateState(st),
 	}
-	// getPinnedDialogs(folder_id=0) 必须带 dialogFolder 条目：DrKLO 主列表
-	// getDialogs 一律 exclude_pinned，archive 行只能从 pinned 响应发现
-	// （fetchFolderInLoadedPinnedDialogs，且要求 top_message/peer 非零）。
+	// getPinnedDialogs(folder_id=0) must carry a dialogFolder entry: the DrKLO main
+	// list getDialogs always sets exclude_pinned, so the archive row can only be
+	// discovered from the pinned response (fetchFolderInLoadedPinnedDialogs, which
+	// requires top_message/peer to be nonzero).
 	if folder := tgDialogFolder(list.ArchiveSummary); folder != nil {
 		out.Dialogs = append(out.Dialogs, folder)
 	}
@@ -127,9 +129,11 @@ func tgPeerDialogs(viewerUserID int64, list domain.DialogList, st domain.UpdateS
 	return out
 }
 
-// tgDialogFolder 把归档摘要转成 dialogFolder#71bd134c 条目。当前未接
-// per-peer mute 状态，未读计数全部归入 unmuted 桶（TDesktop 用 unmuted
-// 桶渲染亮色徽章，muted 桶渲染灰色，全归 unmuted 只影响徽章颜色不丢计数）。
+// tgDialogFolder converts an archive summary into a dialogFolder#71bd134c entry.
+// Per-peer mute state is not wired up yet, so all unread counts fall into the
+// unmuted bucket (TDesktop renders the unmuted bucket as a bright badge and the
+// muted bucket as gray; routing everything to unmuted only affects badge color,
+// not the count).
 func tgDialogFolder(summary *domain.DialogArchiveSummary) tg.DialogClass {
 	if summary == nil {
 		return nil
@@ -176,8 +180,9 @@ func tgDialog(d domain.Dialog) *tg.Dialog {
 		out.SetTTLPeriod(d.TTLPeriod)
 	}
 	if d.Peer.Type == domain.PeerTypeChannel && d.Pts > 0 {
-		// 客户端用 dialog.pts 初始化 channel 本地序列；缺失会让
-		// getChannelDifference 起点失效（冷启动 gap 不被发现）。
+		// The client initializes its local channel sequence from dialog.pts; a
+		// missing value invalidates the getChannelDifference start point (a cold
+		// start gap goes undetected).
 		out.SetPts(d.Pts)
 	}
 	if d.Draft != nil {

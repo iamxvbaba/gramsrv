@@ -12,7 +12,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// Service 提供客户端语言包查询。
+// Service provides client langpack queries.
 type Service struct {
 	packs         store.LangPackStore
 	packCache     *langPackCache
@@ -35,7 +35,7 @@ func WithPublicBaseURL(value string) Option {
 	}
 }
 
-// NewService 创建 langpack 服务。
+// NewService creates the langpack service.
 func NewService(packs store.LangPackStore, opts ...Option) *Service {
 	s := newServiceWithCacheLimits(
 		packs,
@@ -58,12 +58,12 @@ func newServiceWithCacheLimits(packs store.LangPackStore, maxBytes int64, maxEnt
 	}
 }
 
-// GetLangPack 返回完整语言包。
+// GetLangPack returns the complete langpack.
 func (s *Service) GetLangPack(ctx context.Context, langPack, langCode string) (domain.LangPack, error) {
 	return s.GetDifference(ctx, langPack, langCode, 0)
 }
 
-// GetDifference 返回从 fromVersion 到当前版本的语言包差异。
+// GetDifference returns the langpack diff from fromVersion to the current version.
 func (s *Service) GetDifference(ctx context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error) {
 	packName := normalizePack(langPack)
 	code := normalizeCode(langCode)
@@ -92,7 +92,7 @@ func (s *Service) GetDifference(ctx context.Context, langPack, langCode string, 
 	return pack, nil
 }
 
-// GetStrings 返回指定 key 的语言包字符串。
+// GetStrings returns the langpack strings for the specified keys.
 func (s *Service) GetStrings(ctx context.Context, langPack, langCode string, keys []string) (domain.LangPack, error) {
 	packName := normalizePack(langPack)
 	code := normalizeCode(langCode)
@@ -123,7 +123,7 @@ func (s *Service) GetStrings(ctx context.Context, langPack, langCode string, key
 	return selected, nil
 }
 
-// ListLanguages 返回已 seed 的语言包语言列表。
+// ListLanguages returns the list of seeded langpack languages.
 func (s *Service) ListLanguages(ctx context.Context, langPack string) ([]domain.LangPackLanguage, error) {
 	packName := normalizePack(langPack)
 	if s == nil || s.packs == nil {

@@ -1,6 +1,8 @@
--- Claim 只需要查看每个用户当前未完成 head。把 head 持久化后，领取复杂度由
--- “扫描全部 outbox 积压并 DISTINCT ON”降为“扫描有积压的用户 lane”。
--- 迁移期间阻止并发写，保证 backfill 与随后安装的触发器之间没有缺口。
+-- Claim only needs to look at each user's current unfinished head. Persisting the
+-- head lowers claim complexity from "scan the entire outbox backlog and DISTINCT ON"
+-- to "scan the user lanes that have a backlog".
+-- Concurrent writes are blocked during the migration, so there is no gap between
+-- the backfill and the trigger installed afterwards.
 LOCK TABLE dispatch_outbox IN SHARE ROW EXCLUSIVE MODE;
 
 CREATE TABLE dispatch_outbox_user_heads (
@@ -42,8 +44,9 @@ BEGIN
         RETURN NULL;
     END IF;
 
-    -- 删除非 head 不需要重算。删除 head 时用 (target_user_id, pts, id)
-    -- 索引找下一条；failed head 同样会一直阻塞，直到被显式删除。
+    -- Deleting a non-head needs no recompute. Deleting a head uses the
+    -- (target_user_id, pts, id) index to find the next one; a failed head also
+    -- blocks until it is explicitly deleted.
     DELETE FROM dispatch_outbox_user_heads
     WHERE target_user_id = OLD.target_user_id
       AND head_id = OLD.id
@@ -76,5 +79,5 @@ AFTER DELETE ON dispatch_outbox
 FOR EACH ROW
 EXECUTE FUNCTION dispatch_outbox_maintain_user_head();
 
--- Claim 已不再读取表达式 shard 索引；移除它避免每次 enqueue 的重复写放大。
+-- Claim no longer reads the expression shard index; remove it to avoid duplicate write amplification on every enqueue.
 DROP INDEX IF EXISTS dispatch_outbox_logical_shard_head_idx;

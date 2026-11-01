@@ -67,7 +67,8 @@ func (s *Service) SeedAppearance(ctx context.Context) (AppearanceSeedStats, erro
 		}
 		stats.Wallpapers++
 	}
-	// 聊天主题的主题背景墙纸文档也要进媒体库,否则客户端取主题背景会 404。
+	// The wallpaper documents backing chat theme backgrounds must also enter the media library,
+	// otherwise the client gets a 404 when fetching a theme background.
 	for _, ct := range catalog.ChatThemes {
 		for _, setting := range ct.Settings {
 			if err := seedDoc(setting.Wallpaper.Document, "chat theme wallpaper"); err != nil {

@@ -15,17 +15,20 @@ import (
 	"telesrv/internal/domain"
 )
 
-// segmentDurationMs 是 broadcast part 的固定时长。tgcalls StreamingMediaContext
-// 写死 _segmentDuration=1000（scale 0），时间轴推进按 +1000 走，segment 必须严格
-// 1 秒切齐（转码强制每秒关键帧保证切点）。
+// segmentDurationMs is the fixed duration of a broadcast part. tgcalls
+// StreamingMediaContext hardcodes _segmentDuration=1000 (scale 0); the timeline advances in
+// steps of +1000, and segments must be cut exactly every 1 second (transcoding forces a
+// keyframe every second to guarantee the cut point).
 const segmentDurationMs = 1000
 
-// minSegmentsBeforeAnnounce：客户端拿到 last_timestamp_ms 后从 last-2000 开始拉，
-// 至少积 3 段再对外公布时间轴，避免起播即请求不存在的负偏移段。
+// minSegmentsBeforeAnnounce: after receiving last_timestamp_ms the client pulls starting
+// from last-2000, so accumulate at least 3 segments before announcing the timeline, avoiding
+// a playback start that requests a nonexistent negative-offset segment.
 const minSegmentsBeforeAnnounce = 3
 
-// stream 是一路活跃 RTMP 推流：FLV 入 ffmpeg（转码+按秒切 MPEG-TS）→ 打包 part
-// 入内存 ring。时间轴：T0 取首段完成时刻向下取整秒，第 i 段的 time_ms = T0+i*1000。
+// stream is one active RTMP publish: FLV into ffmpeg (transcode + one-second MPEG-TS
+// splits) → packed parts into the in-memory ring. Timeline: T0 is the first segment's
+// completion time floored to the second; segment i's time_ms = T0+i*1000.
 type stream struct {
 	channelID int64
 	log       *zap.Logger
@@ -34,32 +37,37 @@ type stream struct {
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	closer io.Closer // RTMP 连接，DropChannel 时踢掉推流端
+	closer io.Closer // RTMP connection; the publisher is kicked on DropChannel
 
 	mu          sync.Mutex
 	flvStarted  bool
-	baseMs      int64            // T0；0=尚未产出任何 segment
+	baseMs      int64            // T0; 0 = no segment produced yet
 	segments    map[int64][]byte // time_ms → packed part
-	order       []int64          // 按 time_ms 升序（ring 淘汰用）
-	lastMs      int64            // 最新 segment 的 time_ms
-	segmentSeq  int64            // 已完成 segment 计数
+	order       []int64          // ascending by time_ms (for ring eviction)
+	lastMs      int64            // time_ms of the newest segment
+	segmentSeq  int64            // count of completed segments
 	ended       bool
 	oversizeWas bool
 
 	nowMs func() int64
 }
 
-// ffmpegArgs 组装转码+切段命令。要点：
-//   - 强制每秒关键帧（-force_key_frames）保证 -f segment 严格按 1s 切；
-//   - 严格码率上限：TDesktop 拉 part 单次 `upload.getFile(offset=0,limit=128KiB)`
-//     且**不续读**，单段（视频+音频+TS 开销）>128KiB 会被静默截断致花屏。
-//     故 unified 单质量必须压在 ~1Mbps 以下——这里目标 ~640kbps：视频
-//     480k（maxrate/bufsize=480k 收紧到每秒 VBV，杜绝关键帧段爆量）+ 音频 64k，
-//     并降到 640x360/24fps 进一步留余量；
-//   - 输出自包含 mp4（每段独立 moov，可单独 avformat_open_input）。⚠ 不能用
-//     MPEG-TS：TDesktop 裁剪版 ffmpeg 的 demuxer 白名单只有 mov/mp4 系
-//     （prepare.py --enable-demuxer），mpegts 会让 tgcalls 打不开容器 → 黑屏；
-//   - -segment_list pipe:1 每完成一段输出一行文件名，作为完成事件。
+// ffmpegArgs assembles the transcode + segment command. Key points:
+//   - Force a keyframe every second (-force_key_frames) to keep -f segment cutting strictly
+//     at 1s;
+//   - Strict bitrate cap: TDesktop pulls a part with a single
+//     `upload.getFile(offset=0,limit=128KiB)` and **does not continue reading**; a single
+//     segment (video+audio+TS overhead) >128KiB is silently truncated, causing artifacts.
+//     So the unified single quality must stay under ~1Mbps — target ~640kbps here: video 480k
+//     (maxrate/bufsize=480k tightened to per-second VBV, preventing keyframe-segment bursts)
+//     plus audio 64k, and lower to 640x360/24fps for extra headroom;
+//   - Output a self-contained mp4 (each segment has its own moov and can be
+//     avformat_open_input'd independently). ⚠ MPEG-TS cannot be used: TDesktop's trimmed
+//     ffmpeg demuxer whitelist only has mov/mp4-family demuxers
+//     (prepare.py --enable-demuxer), and mpegts makes tgcalls fail to open the container →
+//     black screen;
+//   - -segment_list pipe:1 prints one filename line per completed segment, serving as the
+//     completion event.
 func ffmpegArgs(outDir string) []string {
 	return []string{
 		"-hide_banner", "-nostats", "-loglevel", "warning",
@@ -126,7 +134,7 @@ func newStream(channelID int64, ffmpegPath, workDir string, keep int, closer io.
 	return s, nil
 }
 
-// readSegmentList 消费 ffmpeg 的 segment 完成事件流。
+// readSegmentList consumes ffmpeg's segment-completion event stream.
 func (s *stream) readSegmentList(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -140,7 +148,7 @@ func (s *stream) readSegmentList(r io.Reader) {
 			s.log.Warn("live stream read segment", zap.String("path", path), zap.Error(err))
 			continue
 		}
-		// 诊断：TELESRV_LIVESTREAM_DUMP_DIR 非空时把原始 TS 切片留档供 ffprobe 检查。
+		// Diagnostics: when TELESRV_LIVESTREAM_DUMP_DIR is non-empty, archive the raw TS segments for ffprobe inspection.
 		if dump := os.Getenv("TELESRV_LIVESTREAM_DUMP_DIR"); dump != "" {
 			_ = os.MkdirAll(dump, 0o755)
 			_ = os.WriteFile(filepath.Join(dump, fmt.Sprintf("ch%d_%s", s.channelID, filepath.Base(name))), data, 0o644)
@@ -184,7 +192,7 @@ func (s *stream) addSegment(tsData []byte) {
 	}
 }
 
-// channels 返回当前时间轴（不足 minSegmentsBeforeAnnounce 段时不公布）。
+// channels returns the current timeline (not announced until at least minSegmentsBeforeAnnounce segments).
 func (s *stream) channels() []domain.LiveStreamChannel {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,7 +202,7 @@ func (s *stream) channels() []domain.LiveStreamChannel {
 	return []domain.LiveStreamChannel{{Channel: 1, Scale: 0, LastTimestampMs: s.lastMs}}
 }
 
-// part 取指定 time_ms 的打包 part。
+// part fetches the packed part for the specified time_ms.
 func (s *stream) part(timeMs int64) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -223,7 +231,7 @@ func (s *stream) active() bool {
 	return !s.ended
 }
 
-// stop 结束推流：断 RTMP 连接、关 ffmpeg stdin（自然退出），清空缓冲目录。
+// stop ends publishing: cut the RTMP connection, close ffmpeg stdin (natural exit), and clear the buffer directory.
 func (s *stream) stop() {
 	s.mu.Lock()
 	if s.ended {
@@ -242,12 +250,12 @@ func (s *stream) stop() {
 	}()
 }
 
-// ---- FLV 写入（RTMP tag → ffmpeg stdin）----
+// ---- FLV writing (RTMP tag → ffmpeg stdin) ----
 
 var flvHeader = []byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00}
 
-// writeTag 把一条 RTMP media/data tag 以 FLV 封装写进 ffmpeg stdin。
-// tagType：8=audio 9=video 18=script data。
+// writeTag writes one RTMP media/data tag, FLV-framed, into ffmpeg stdin.
+// tagType: 8=audio 9=video 18=script data.
 func (s *stream) writeTag(tagType byte, timestampMs uint32, body []byte) error {
 	s.mu.Lock()
 	if s.ended {

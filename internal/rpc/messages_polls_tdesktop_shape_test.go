@@ -7,15 +7,18 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
-// 回归：TDesktop 创建 poll 的真实请求形状（kDefaultPollCreateFlags 默认带
-// public_voters/multiple_choice/open_answers/shuffle_answers，答案为无 option 的
-// inputPollAnswer——option 键由服务端分配）。修复前 open_answers 被一刀切
-// MEDIA_INVALID，inputPollAnswer 被 POLL_ANSWER_INVALID。
+// Regression: the real request shape of TDesktop creating a poll
+// (kDefaultPollCreateFlags carries
+// public_voters/multiple_choice/open_answers/shuffle_answers by default, and
+// answers are inputPollAnswer with no option -- option keys are assigned by the
+// server). Before the fix, open_answers was rejected outright with MEDIA_INVALID
+// and inputPollAnswer with POLL_ANSWER_INVALID.
 func TestSendMediaPollTDesktopShape(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
-	// 第一个答案带配图（实测 TDesktop 创建面板可给答案附 photo/document），
-	// 引用 newMediaTestRouter 预置的 document 555。
+	// The first answer carries media (TDesktop's create panel can attach
+	// photo/document to an answer in practice), referencing the document 555
+	// preset by newMediaTestRouter.
 	withMedia := &tg.InputPollAnswer{Text: tg.TextWithEntities{Text: "r", Entities: []tg.MessageEntityClass{}}}
 	withMedia.SetMedia(&tg.InputMediaDocument{ID: &tg.InputDocument{ID: 555, AccessHash: 5}})
 	media := &tg.InputMediaPoll{
@@ -70,7 +73,7 @@ func TestSendMediaPollTDesktopShape(t *testing.T) {
 		}
 		seen[string(answer.Option)] = struct{}{}
 	}
-	// 答案配图必须随快照回 echo。
+	// Answer media must be echoed back with the snapshot.
 	firstAnswer := poll.Answers[0].(*tg.PollAnswer)
 	answerMedia, hasAnswerMedia := firstAnswer.GetMedia()
 	if !hasAnswerMedia {
@@ -84,7 +87,7 @@ func TestSendMediaPollTDesktopShape(t *testing.T) {
 		t.Fatalf("answer media document = %#v, want id 555", docMedia.Document)
 	}
 
-	// 服务端分配的 option 必须能直接用于投票。
+	// The server-assigned option must be directly usable for voting.
 	firstOption := poll.Answers[0].(*tg.PollAnswer).Option
 	voteUpdates, err := r.onMessagesSendVote(WithUserID(ctx, friend.ID), &tg.MessagesSendVoteRequest{
 		Peer:    &tg.InputPeerUser{UserID: owner.ID, AccessHash: owner.AccessHash},
@@ -100,7 +103,8 @@ func TestSendMediaPollTDesktopShape(t *testing.T) {
 	}
 }
 
-// 回归：quiz 同样走 inputPollAnswer + 下标 correct_answers，服务端分配 option 后下标语义必须成立。
+// Regression: a quiz likewise goes through inputPollAnswer + index-based
+// correct_answers, and the index semantics must hold after the server assigns options.
 func TestSendMediaQuizTDesktopShape(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)

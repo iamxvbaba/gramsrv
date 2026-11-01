@@ -22,10 +22,12 @@ type dialogPeerCacheKey struct {
 	peer   domain.Peer
 }
 
-// dialogPeerReadModelCache 由统一缓存原语承载(epoch 守卫 / LRU / clone)。它走 per-peer
-// 外部构建:Service 按 peer 查缓存、把 miss 合批打一次后端、再 per-peer 写回。版本闸门用
-// 值自带的 DialogList.Hash 比对(原语存 hash=0,版本由值携带)。返回的是整批原始 list(非
-// per-peer 切片重组),故不用 GetOrLoadBatch——它返回 per-key 值会丢非 peer 归属的全局元素。
+// dialogPeerReadModelCache is backed by the shared cache primitive (epoch guard / LRU / clone).
+// It uses per-peer external building: the Service looks up the cache per peer, batches the misses
+// into one backend call, then writes back per peer. The version gate compares against the value's
+// own DialogList.Hash (the primitive stores hash=0, the version is carried by the value). It
+// returns the whole raw list (rather than reassembling per-peer slices), so it does not use
+// GetOrLoadBatch — that returns per-key values and would drop global elements not owned by a peer.
 type dialogPeerReadModelCache struct {
 	cache *readmodelcache.Cache[dialogPeerCacheKey, domain.DialogList]
 }
@@ -171,7 +173,8 @@ func (s *Service) dialogHashes(ctx context.Context, userID int64, peers []domain
 	return out, nil
 }
 
-// lookup 命中且版本(值自带 DialogList.Hash)匹配才返回;原语已在返回边界 clone。
+// lookup returns only on a hit whose version (the value's own DialogList.Hash) matches; the
+// primitive already clones at the return boundary.
 func (c *dialogPeerReadModelCache) lookup(key dialogPeerCacheKey, currentHash int64) (domain.DialogList, bool) {
 	if c == nil {
 		return domain.DialogList{}, false
@@ -373,9 +376,12 @@ func dialogListForPeer(list domain.DialogList, peer domain.Peer) domain.DialogLi
 		for _, channel := range list.Channels {
 			if channel.ID == peer.ID {
 				out.Channels = append(out.Channels, cloneDialogChannel(channel))
-				// monoforum 与母广播频道互为 linked_monoforum_id。per-peer 缓存必须把同批下发的关联频道
-				// 一并保留,否则缓存命中时 getPeerDialogs 只回该 peer 自身、丢掉关联频道,客户端无法
-				// resolve linked_monoforum_id(GetChannelDialogs 的同批下发在缓存层被抹掉)。
+				// A monoforum and its parent broadcast channel reference each other via
+				// linked_monoforum_id. The per-peer cache must preserve the associated channel
+				// delivered in the same batch, otherwise on a cache hit getPeerDialogs returns only
+				// the peer itself and drops the associated channel, so the client cannot resolve
+				// linked_monoforum_id (the same-batch delivery of GetChannelDialogs is erased at the
+				// cache layer).
 				if channel.LinkedMonoforumID != 0 && (channel.Monoforum || channel.BroadcastMessagesAllowed) {
 					linkedID = channel.LinkedMonoforumID
 				}

@@ -9,16 +9,17 @@ import (
 	"telesrv/internal/domain"
 )
 
-// PollStore 是 store.PollStore 的内存实现，同时充当 MessageStore/ChannelStore 投票与
-// 读路径 enrichment 的共享权威（postgres 侧对应 polls / poll_votes 两张表）。
-// 校验与门控复用 domain.ValidatePollVote / ResolvePollResults，保证与 postgres 行为一致。
+// PollStore is the in-memory implementation of store.PollStore and doubles as the shared
+// authority for poll voting and read-path enrichment in MessageStore/ChannelStore (corresponding
+// to the polls / poll_votes tables on the postgres side). Validation and gating reuse
+// domain.ValidatePollVote / ResolvePollResults to stay consistent with postgres behavior.
 type PollStore struct {
 	mu    sync.RWMutex
 	polls map[int64]domain.PollDefinition
 	votes map[int64]map[int64]domain.PollVote
 }
 
-// NewPollStore 创建内存 poll 权威存储。
+// NewPollStore creates the in-memory poll authority store.
 func NewPollStore() *PollStore {
 	return &PollStore{
 		polls: make(map[int64]domain.PollDefinition),
@@ -93,7 +94,7 @@ func (s *PollStore) ListPollVotes(_ context.Context, req domain.PollVotesListReq
 	return out, nil
 }
 
-// Vote 校验并落一票（options 为空 = 撤票）。校验逻辑全部来自 domain.ValidatePollVote。
+// Vote validates and records a vote (an empty options list retracts the vote). All validation logic comes from domain.ValidatePollVote.
 func (s *PollStore) Vote(pollID, userID int64, options [][]byte, date int) error {
 	if pollID == 0 || userID == 0 {
 		return domain.ErrPollNotFound
@@ -125,7 +126,7 @@ func (s *PollStore) Vote(pollID, userID int64, options [][]byte, date int) error
 	return nil
 }
 
-// Close 关闭 poll；仅创建者可关，重复关闭幂等。
+// Close closes the poll; only the creator can close it, and repeated closes are idempotent.
 func (s *PollStore) Close(pollID, byUserID int64) error {
 	if pollID == 0 || byUserID == 0 {
 		return domain.ErrPollNotFound
@@ -144,7 +145,7 @@ func (s *PollStore) Close(pollID, byUserID int64) error {
 	return nil
 }
 
-// EnrichPoll 把权威态 + viewer 视角聚合写回 media 定义快照；poll 不存在时保持快照原样。
+// EnrichPoll writes the authoritative state plus viewer-perspective aggregates back into the media definition snapshot; the snapshot is left unchanged when the poll does not exist.
 func (s *PollStore) EnrichPoll(poll *domain.MessagePoll, viewerUserID int64, now int) {
 	if s == nil || poll == nil || poll.ID == 0 {
 		return
@@ -183,10 +184,11 @@ func (s *PollStore) EnrichPoll(poll *domain.MessagePoll, viewerUserID int64, now
 	domain.ApplyPollState(poll, def, results, now)
 }
 
-// EnrichPollForViewers 批量为一组 viewer 返回 per-viewer enrich 的 poll（fan-out 模板化）：
-// viewer-invariant 聚合（counts/total/recent）只遍历一次 + per-viewer ViewerOptions，每 viewer 用与
-// 单 viewer EnrichPoll 完全相同的 ResolvePollResults/ApplyPollState 合成（字节同源）。返回 map[viewer]
-// 各自的 poll 克隆；def 不存在时返回空 map（与 EnrichPoll 的 no-op 一致）。
+// EnrichPollForViewers returns a per-viewer enriched poll for a batch of viewers (templated
+// fan-out): viewer-invariant aggregates (counts/total/recent) are iterated once plus per-viewer
+// ViewerOptions, and each viewer is composed with exactly the same ResolvePollResults/ApplyPollState
+// as the single-viewer EnrichPoll (byte-identical). It returns map[viewer] with each viewer's poll
+// clone; when def does not exist it returns an empty map (matching the no-op of EnrichPoll).
 func (s *PollStore) EnrichPollForViewers(basePoll *domain.MessagePoll, viewers []int64, now int) map[int64]*domain.MessagePoll {
 	out := make(map[int64]*domain.MessagePoll, len(viewers))
 	if s == nil || basePoll == nil || basePoll.ID == 0 || len(viewers) == 0 {
@@ -238,7 +240,7 @@ func (s *PollStore) EnrichPollForViewers(basePoll *domain.MessagePoll, viewers [
 	return out
 }
 
-// enrichPollMediaForViewer 克隆 media（避免共享指针把 viewer 态写进 store 本体）并 enrich。
+// enrichPollMediaForViewer clones the media (avoiding a shared pointer writing viewer state into the store itself) and enriches it.
 func enrichPollMediaForViewer(polls *PollStore, media *domain.MessageMedia, viewerUserID int64, now int) *domain.MessageMedia {
 	if polls == nil || media == nil || media.Kind != domain.MessageMediaKindPoll || media.Poll == nil {
 		return media

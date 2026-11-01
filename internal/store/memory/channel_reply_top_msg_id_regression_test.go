@@ -8,12 +8,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// Регрессия: ответ медиа (фото) в обычной группе раньше падал с
-// ErrReplyMessageIDInvalid. TDesktop в messages.sendMedia дополнительно
-// проставляет inputReplyToMessage.top_msg_id (наблюдалось значение 1), тогда как
-// messages.sendMessage его не шлёт. top_msg_id — подсказка топика, а не условие
-// валидности ответа, поэтому расхождение с серверным thread root не должно
-// отвергать reply_to_msg_id, который однозначно указывает на существующее сообщение.
+// Regression: replying to media (a photo) in an ordinary group used to fail with
+// ErrReplyMessageIDInvalid. TDesktop additionally sets inputReplyToMessage.top_msg_id in
+// messages.sendMedia (a value of 1 was observed), whereas messages.sendMessage does not
+// send it. top_msg_id is a topic hint, not a validity condition for the reply, so a
+// mismatch with the server's thread root must not reject a reply_to_msg_id that uniquely
+// points at an existing message.
 func TestChannelSendReplyIgnoresClientTopMsgIDMismatch(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()
@@ -52,7 +52,7 @@ func TestChannelSendReplyIgnoresClientTopMsgIDMismatch(t *testing.T) {
 		t.Fatalf("send photo: %v", err)
 	}
 
-	// top_msg_id=1 — как приходит от TDesktop в sendMedia.
+	// top_msg_id=1 -- as it arrives from TDesktop in sendMedia.
 	for name, topMsgID := range map[string]int{"top_msg_id=1": 1, "top_msg_id=target": root.Message.ID, "top_msg_id=0": 0} {
 		t.Run(name, func(t *testing.T) {
 			res, err := store.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
@@ -67,14 +67,14 @@ func TestChannelSendReplyIgnoresClientTopMsgIDMismatch(t *testing.T) {
 			if res.Message.ReplyTo == nil || res.Message.ReplyTo.MessageID != replyTarget.Message.ID {
 				t.Fatalf("reply projection = %+v, want message id %d", res.Message.ReplyTo, replyTarget.Message.ID)
 			}
-			// 线程根始终由服务端从目标消息推导,不采用客户端提示值。
+			// The thread root is always derived by the server from the target message, not taken from the client hint.
 			if want := replyTarget.Message.ID; res.Message.ReplyTo.TopMessageID != want {
 				t.Fatalf("computed top_msg_id = %d, want %d", res.Message.ReplyTo.TopMessageID, want)
 			}
 		})
 	}
 
-	// 回归护栏: 真正不存在的 reply 目标仍然必须被拒绝。
+	// Regression guard: a genuinely non-existent reply target must still be rejected.
 	if _, err := store.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
 		UserID: owner.ID, ChannelID: channel.Channel.ID, RandomID: 909, Date: 1700000004, Message: "bad",
 		ReplyTo: &domain.MessageReply{MessageID: 999999, Peer: channelPeer},

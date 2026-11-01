@@ -14,13 +14,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// HelpStore 用 PostgreSQL 实现 store.AppConfigStore 和 store.CountryStore。
+// HelpStore implements store.AppConfigStore and store.CountryStore with PostgreSQL.
 type HelpStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewHelpStore 基于 pgx 连接池（或事务）创建 HelpStore。
+// NewHelpStore creates a HelpStore backed by a pgx pool (or transaction).
 func NewHelpStore(db sqlcgen.DBTX) *HelpStore {
 	return &HelpStore{db: db, q: sqlcgen.New(db)}
 }
@@ -83,8 +83,9 @@ func (s *HelpStore) ListCountries(ctx context.Context, _ string) (domain.Countri
 	return out, nil
 }
 
-// 整本目录一次写入。过去每个国家/号码各一条自动提交语句（~600 次往返 + fsync），
-// 启动期占 15 秒；这里用 jsonb_to_recordset 把全部行并成两条语句。
+// Write the whole catalog in one go. Previously each country/number had its own auto-committed
+// statement (~600 round trips + fsync), costing 15 seconds at startup; here jsonb_to_recordset
+// merges all rows into two statements.
 const (
 	upsertCountriesSQL = `
 INSERT INTO countries (iso2, default_name, name, hidden, order_index)
@@ -143,8 +144,9 @@ func (s *HelpStore) UpsertCountries(ctx context.Context, countries []domain.Coun
 			OrderIndex:  int32(i + 1),
 		})
 		for j, code := range country.CountryCodes {
-			// prefixes/patterns 列 NOT NULL:无前缀/格式的国家(如 AD)catalog 里为 nil,
-			// 须规整为空数组,否则 jsonb null 取出来是 NULL。
+			// The prefixes/patterns columns are NOT NULL: for a country with no prefix/pattern
+			// (e.g. AD) the catalog value is nil, so it must be normalized to an empty array;
+			// otherwise jsonb null comes back as NULL.
 			prefixes := code.Prefixes
 			if prefixes == nil {
 				prefixes = []string{}
@@ -171,8 +173,8 @@ func (s *HelpStore) UpsertCountries(ctx context.Context, countries []domain.Coun
 		return fmt.Errorf("marshal country code seed rows: %w", err)
 	}
 
-	// 两条语句放一个事务里，避免中途失败留下半本目录。没有 Begin 的实现（例如
-	// 传入的已经是 tx）就直接执行。
+	// Put the two statements in one transaction to avoid leaving half a catalog on failure.
+	// An implementation without Begin (e.g. the passed handle is already a tx) executes directly.
 	if beginner, ok := s.db.(interface {
 		Begin(context.Context) (pgx.Tx, error)
 	}); ok {

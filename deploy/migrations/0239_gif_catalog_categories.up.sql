@@ -1,4 +1,4 @@
--- v2 编号 0239；移植自 main 0210_gif_catalog_categories（main 8ab819bc），见 docs/main-v2-sync.md。
+-- v2 number 0239; ported from main 0210_gif_catalog_categories (main 8ab819bc), see docs/main-v2-sync.md.
 ALTER TABLE public.gif_catalog
     ADD COLUMN file_name text NOT NULL DEFAULT '',
     ADD COLUMN category_override text,

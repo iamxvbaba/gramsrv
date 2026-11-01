@@ -12,8 +12,8 @@ import (
 	"telesrv/internal/store"
 )
 
-// TestChannelMemberCacheInvalidatesOnReadModelNotify 验证：channel_members 触发器(0120)
-// → 统一 read-model LISTEN/NOTIFY → ChannelMemberCache 失效 → 下一次读回填新成员态。
+// TestChannelMemberCacheInvalidatesOnReadModelNotify verifies: channel_members trigger (0120)
+// → unified read-model LISTEN/NOTIFY → ChannelMemberCache invalidation → the next read backfills the new member state.
 func TestChannelMemberCacheInvalidatesOnReadModelNotify(t *testing.T) {
 	pool := testPool(t)
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
@@ -59,10 +59,10 @@ func TestChannelMemberCacheInvalidatesOnReadModelNotify(t *testing.T) {
 		t.Fatalf("warm GetChannel: %v", err)
 	}
 	if _, ok := rowCache.get(channelID); !ok {
-		t.Fatalf("GetChannel 后频道行应已缓存")
+		t.Fatalf("the channel row should be cached after GetChannel")
 	}
 	if _, ok := memberCache.get(channelID, owner.ID); !ok {
-		t.Fatalf("GetChannel 后成员行应已缓存")
+		t.Fatalf("the member row should be cached after GetChannel")
 	}
 
 	lctx, cancel := context.WithCancel(ctx)
@@ -77,16 +77,16 @@ func TestChannelMemberCacheInvalidatesOnReadModelNotify(t *testing.T) {
 		_, memberOK := memberCache.get(channelID, owner.ID)
 		return !rowOK && !memberOK
 	}) {
-		t.Fatalf("read model listener 未在预期内连接并 flush 缓存")
+		t.Fatalf("the read model listener did not connect and flush the cache within the expected time")
 	}
 
 	if view, err := channels.GetChannel(ctx, owner.ID, channelID); err != nil {
 		t.Fatalf("re-warm GetChannel: %v", err)
 	} else if view.Self.Rank != "" {
-		t.Fatalf("初始 rank = %q, want empty", view.Self.Rank)
+		t.Fatalf("initial rank = %q, want empty", view.Self.Rank)
 	}
 	if _, ok := memberCache.get(channelID, owner.ID); !ok {
-		t.Fatalf("re-warm 后成员行应已缓存")
+		t.Fatalf("the member row should be cached after re-warm")
 	}
 
 	const newRank = "cache-rank"
@@ -101,7 +101,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, owner.ID, newRank); err != n
 		_, ok := memberCache.get(channelID, owner.ID)
 		return !ok
 	}) {
-		t.Fatalf("UPDATE channel_members 后成员缓存未在预期内被 read-model NOTIFY 失效")
+		t.Fatalf("the member cache was not invalidated by read-model NOTIFY within the expected time after UPDATE channel_members")
 	}
 
 	view, err := channels.GetChannel(ctx, owner.ID, channelID)
@@ -109,7 +109,7 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, owner.ID, newRank); err != n
 		t.Fatalf("post-invalidation GetChannel: %v", err)
 	}
 	if view.Self.Rank != newRank {
-		t.Fatalf("失效后 rank = %q, want %q", view.Self.Rank, newRank)
+		t.Fatalf("rank after invalidation = %q, want %q", view.Self.Rank, newRank)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestChannelDialogLightInvalidatesOnChannelMemberAndDialogNotify(t *testing.
 	listener := NewReadModelChangeListener(dsn, ReadModelCacheSet{Dialogs: dialogCache}, nil)
 	go listener.Run(lctx)
 	if !waitUntil(2*time.Second, func() bool { return dialogCache.flushCount() == 1 }) {
-		t.Fatalf("read model listener 未在预期内连接并 flush dialog cache")
+		t.Fatalf("the read model listener did not connect and flush the dialog cache within the expected time")
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -157,7 +157,7 @@ WHERE channel_id = $1 AND user_id = $2`, created.Channel.ID, owner.ID, "dialog-l
 		return countDialogInvalidation(dialogCache, owner.ID, peer) > 0
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("channel member 写入未触发 dialog_light 失效: owners=%v peers=%+v want owner=%d peer=%+v", owners, peers, owner.ID, peer)
+		t.Fatalf("a channel member write did not trigger dialog_light invalidation: owners=%v peers=%+v want owner=%d peer=%+v", owners, peers, owner.ID, peer)
 	}
 	versionAfterMember, hashAfterMember := readDialogLightVersionHash(t, ctx, pool, owner.ID, peer)
 	if versionAfterMember <= versionBeforeMember {
@@ -180,7 +180,7 @@ WHERE channel_id = $1 AND user_id = $2`, created.Channel.ID, owner.ID, "dialog-l
 		return countDialogInvalidation(dialogCache, owner.ID, peer) > beforeDialogInvalidation
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("channel dialog 写入未触发 dialog_light 失效: owners=%v peers=%+v want owner=%d peer=%+v", owners, peers, owner.ID, peer)
+		t.Fatalf("a channel dialog write did not trigger dialog_light invalidation: owners=%v peers=%+v want owner=%d peer=%+v", owners, peers, owner.ID, peer)
 	}
 	versionAfterDialog, hashAfterDialog := readDialogLightVersionHash(t, ctx, pool, owner.ID, peer)
 	if versionAfterDialog <= versionBeforeDialog {
@@ -191,8 +191,8 @@ WHERE channel_id = $1 AND user_id = $2`, created.Channel.ID, owner.ID, "dialog-l
 	}
 }
 
-// TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify 验证 0120/0121
-// 的 account/profile 投影触发器能穿过统一 listener 分发到对应缓存。
+// TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify verifies that the 0120/0121
+// account/profile projection triggers dispatch through the unified listener to the corresponding caches.
 func TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify(t *testing.T) {
 	pool := testPool(t)
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
@@ -241,7 +241,7 @@ func TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify(t *testing
 	if !waitUntil(2*time.Second, func() bool {
 		return contactsCache.flushCount() == 1 && dialogCache.flushCount() == 1 && privacyCache.flushCount() == 1 && photoCache.flushCount() == 1
 	}) {
-		t.Fatalf("read model listener 未在预期内连接并 flush account/dialog/photo caches")
+		t.Fatalf("the read model listener did not connect and flush account/dialog/photo caches within the expected time")
 	}
 
 	dialogs := NewDialogStore(pool)
@@ -253,7 +253,7 @@ func TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify(t *testing
 		return countDialogInvalidation(dialogCache, owner.ID, dialogPeer) > 0
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("dialog 写入未触发 dialog_light 失效: owners=%v peers=%+v want owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
+		t.Fatalf("a dialog write did not trigger dialog_light invalidation: owners=%v peers=%+v want owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
 	}
 	versionBeforeContactDialog, hashBeforeContactDialog := readDialogLightVersionHash(t, ctx, pool, owner.ID, dialogPeer)
 
@@ -265,7 +265,7 @@ func TestReadModelChangeListenerInvalidatesProjectionCachesFromNotify(t *testing
 	if !waitUntil(3*time.Second, func() bool {
 		return containsInt64(contactsCache.idsSnapshot(), owner.ID)
 	}) {
-		t.Fatalf("contacts 写入未触发 contact_account 失效: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
+		t.Fatalf("a contacts write did not trigger contact_account invalidation: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
 	}
 	var versionBeforeProfile, hashBeforeProfile int64
 	if err := pool.QueryRow(ctx, `
@@ -278,7 +278,7 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 		return countDialogInvalidation(dialogCache, owner.ID, dialogPeer) > beforeContactDialogFanout
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("contact 写入未 fan-out 到 dialog_light 失效: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
+		t.Fatalf("a contact write did not fan out to dialog_light invalidation: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
 	}
 	versionAfterContactDialog, hashAfterContactDialog := readDialogLightVersionHash(t, ctx, pool, owner.ID, dialogPeer)
 	if versionAfterContactDialog <= versionBeforeContactDialog {
@@ -296,13 +296,13 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 	if !waitUntil(3*time.Second, func() bool {
 		return countInt64(contactsCache.idsSnapshot(), owner.ID) > beforeUserFanout
 	}) {
-		t.Fatalf("users profile 写入未 fan-out 到 contact_account 失效: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
+		t.Fatalf("a users profile write did not fan out to contact_account invalidation: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
 	}
 	if !waitUntil(3*time.Second, func() bool {
 		return countDialogInvalidation(dialogCache, owner.ID, dialogPeer) > beforeUserDialogFanout
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("users profile 写入未 fan-out 到 dialog_light 失效: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
+		t.Fatalf("a users profile write did not fan out to dialog_light invalidation: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
 	}
 	versionAfterProfileDialog, hashAfterProfileDialog := readDialogLightVersionHash(t, ctx, pool, owner.ID, dialogPeer)
 	if versionAfterProfileDialog <= versionBeforeProfileDialog {
@@ -346,7 +346,7 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 	if !waitUntil(3*time.Second, func() bool {
 		return countInt64(contactsCache.idsSnapshot(), owner.ID) >= 2
 	}) {
-		t.Fatalf("block 写入未触发 contact_blocklist 失效: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
+		t.Fatalf("a block write did not trigger contact_blocklist invalidation: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
 	}
 
 	privacy := NewPrivacyStore(pool)
@@ -360,7 +360,7 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 	if !waitUntil(3*time.Second, func() bool {
 		return containsInt64(privacyCache.idsSnapshot(), owner.ID)
 	}) {
-		t.Fatalf("privacy 写入未触发 privacy_rules 失效: ids=%v owner=%d", privacyCache.idsSnapshot(), owner.ID)
+		t.Fatalf("a privacy write did not trigger privacy_rules invalidation: ids=%v owner=%d", privacyCache.idsSnapshot(), owner.ID)
 	}
 
 	media := NewMediaStore(pool)
@@ -378,13 +378,13 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 	if !waitUntil(3*time.Second, func() bool {
 		return countInt64(contactsCache.idsSnapshot(), owner.ID) > beforeTargetPrivacyFanout
 	}) {
-		t.Fatalf("target privacy 写入未 fan-out 到 contact_account 失效: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
+		t.Fatalf("a target privacy write did not fan out to contact_account invalidation: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
 	}
 	if !waitUntil(3*time.Second, func() bool {
 		return countDialogInvalidation(dialogCache, owner.ID, dialogPeer) > beforeTargetPrivacyDialogFanout
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("target privacy 写入未 fan-out 到 dialog_light 失效: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
+		t.Fatalf("a target privacy write did not fan out to dialog_light invalidation: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
 	}
 	versionAfterTargetPrivacy, hashAfterTargetPrivacy := readContactAccountVersionHash(t, ctx, pool, owner.ID)
 	if versionAfterTargetPrivacy <= versionBeforeTargetPrivacy {
@@ -414,13 +414,13 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 	if !waitUntil(3*time.Second, func() bool {
 		return countInt64(contactsCache.idsSnapshot(), owner.ID) > beforeTargetPhotoFanout
 	}) {
-		t.Fatalf("target profile photo 写入未 fan-out 到 contact_account 失效: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
+		t.Fatalf("a target profile photo write did not fan out to contact_account invalidation: ids=%v owner=%d", contactsCache.idsSnapshot(), owner.ID)
 	}
 	if !waitUntil(3*time.Second, func() bool {
 		return countDialogInvalidation(dialogCache, owner.ID, dialogPeer) > beforeTargetPhotoDialogFanout
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("target profile photo 写入未 fan-out 到 dialog_light 失效: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
+		t.Fatalf("a target profile photo write did not fan out to dialog_light invalidation: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
 	}
 	versionAfterTargetPhoto, hashAfterTargetPhoto := readContactAccountVersionHash(t, ctx, pool, owner.ID)
 	if versionAfterTargetPhoto <= versionBeforeTargetPhoto {
@@ -446,7 +446,7 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 		return countDialogInvalidation(dialogCache, owner.ID, dialogPeer) > beforeDraftDialogFanout
 	}) {
 		owners, peers := dialogCache.entriesSnapshot()
-		t.Fatalf("dialog draft 写入未触发 dialog_light 失效: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
+		t.Fatalf("a dialog draft write did not trigger dialog_light invalidation: owners=%v peers=%+v owner=%d peer=%+v", owners, peers, owner.ID, dialogPeer)
 	}
 	versionAfterDraftDialog, hashAfterDraftDialog := readDialogLightVersionHash(t, ctx, pool, owner.ID, dialogPeer)
 	if versionAfterDraftDialog <= versionBeforeDraftDialog {
@@ -470,7 +470,7 @@ WHERE model = 'contact_account' AND owner_user_id = $1 AND peer_type = 'user' AN
 		}
 		return false
 	}) {
-		t.Fatalf("profile photo 写入未触发 profile_photo 失效: owners=%+v want user %d", photoCache.ownersSnapshot(), owner.ID)
+		t.Fatalf("a profile photo write did not trigger profile_photo invalidation: owners=%+v want user %d", photoCache.ownersSnapshot(), owner.ID)
 	}
 }
 

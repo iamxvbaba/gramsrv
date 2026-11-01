@@ -13,15 +13,15 @@ const (
 	botProfileCacheTTL        = 24 * time.Hour
 )
 
-// botProfileValue 是缓存值,found=false 表示「查过但该 bot 不存在」(负缓存),
-// 避免未注册 bot 的 id 反复打后端。
+// botProfileValue is the cached value; found=false means "looked up but this bot does not exist"
+// (negative caching), preventing an unregistered bot's id from repeatedly hitting the backend.
 type botProfileValue struct {
 	profile domain.BotProfile
 	found   bool
 }
 
-// botProfileCache 由统一缓存原语承载(LRU 单条驱逐 / epoch 守卫 / clone 内建)。
-// 单个走 GetOrLoad,批量走 GetOrLoadBatch(一次 LoadEpoch + 合批 load + per-key epoch 写回)。
+// botProfileCache is backed by the unified cache primitive (LRU per-entry eviction / epoch guard / built-in clone).
+// Single lookups go through GetOrLoad, batches through GetOrLoadBatch (one LoadEpoch + batched load + per-key epoch write-back).
 type botProfileCache struct {
 	cache *readmodelcache.Cache[int64, botProfileValue]
 }
@@ -38,7 +38,7 @@ func newBotProfileCache(max int, ttl time.Duration) *botProfileCache {
 	return &botProfileCache{cache: cache}
 }
 
-// getOrLoad 解析单个 bot;load 返回 (profile, found, err)。
+// getOrLoad resolves a single bot; load returns (profile, found, err).
 func (c *botProfileCache) getOrLoad(ctx context.Context, botUserID int64, load func() (domain.BotProfile, bool, error)) (domain.BotProfile, bool, error) {
 	if c == nil || botUserID == 0 {
 		return load()
@@ -56,15 +56,15 @@ func (c *botProfileCache) getOrLoad(ctx context.Context, botUserID int64, load f
 	return v.profile, v.found, nil
 }
 
-// getMany 批量解析;loadMissing 返回 misses 的 profiles(仅存在的;缺失即视为负结果)。
-// 返回的 map 只含存在(found)的 bot,与旧 getMany 语义一致。
+// getMany resolves a batch; loadMissing returns the profiles for the misses (existing ones only; a miss is
+// treated as a negative result). The returned map contains only existing (found) bots, matching the old getMany semantics.
 func (c *botProfileCache) getMany(ctx context.Context, ids []int64, loadMissing func(context.Context, []int64) (map[int64]domain.BotProfile, error)) (map[int64]domain.BotProfile, error) {
 	unique := uniqueBotUserIDs(ids)
 	if c == nil {
 		return loadMissing(ctx, unique)
 	}
 	values, err := c.cache.GetOrLoadBatch(ctx, unique,
-		func(int64) (int64, bool) { return 0, true }, // 纯 TTL,无版本闸门
+		func(int64) (int64, bool) { return 0, true }, // pure TTL, no version gate
 		func(ctx context.Context, missing []int64) (map[int64]botProfileValue, error) {
 			loaded, err := loadMissing(ctx, missing)
 			if err != nil {

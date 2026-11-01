@@ -9,8 +9,8 @@ import (
 	"telesrv/internal/officialgifts"
 )
 
-// 官方礼物快照会随 Telegram 上新礼物而增长，这个下界只用来识别空快照或被截断的
-// 快照，不锁定任何一份具体归档。
+// The official gift snapshot grows as Telegram adds new gifts; this lower bound only
+// identifies an empty or truncated snapshot, and does not pin any specific archive.
 const minOfficialSnapshotDocuments = 1000
 
 // This opt-in test is run by the official import audit. It validates every distinct base,
@@ -54,9 +54,10 @@ func TestConfiguredOfficialSnapshotAnimations(t *testing.T) {
 			validate(pattern.Document)
 		}
 	}
-	// 每个礼物都至少贡献了它的 base 文档，所以这里按礼物数取下界；
-	// 再加一个绝对下界挡住被截断的快照。原先写死的 8333 只是某一份具体归档的数字，
-	// 官方目录每次上新都会变，与真正的动画校验失败混在一起。
+	// Every gift contributes at least its base document, so the lower bound is taken by
+	// gift count; an absolute lower bound then guards against a truncated snapshot. The old
+	// hard-coded 8333 was just the number for one specific archive; the official catalog
+	// changes with every addition, so it got tangled up with real animation validation failures.
 	if len(seen) < len(items) {
 		t.Fatalf("validated %d documents for %d gifts, want at least one per gift", len(seen), len(items))
 	}

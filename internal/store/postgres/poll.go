@@ -14,20 +14,20 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// 本文件实现 poll 权威态（polls / poll_votes 两张表，迁移 0089）：
-//   - PollStore：发送时建 poll、getPollVotes 列表；
-//   - 私聊/频道消息 store 的投票、关闭与读路径 enrichment 共用本文件 SQL 辅助；
-//   - 校验与 viewer 门控复用 domain.ValidatePollVote / ResolvePollResults，与 memory 实现一致。
+// This file implements the authoritative poll state (the polls / poll_votes tables, migration 0089):
+//   - PollStore: create a poll on send, list getPollVotes;
+//   - the private/channel message store's vote, close and read-path enrichment share this file's SQL helpers;
+//   - validation and the viewer gate reuse domain.ValidatePollVote / ResolvePollResults, consistent with the memory implementation.
 //
-// options/correct_options/votes.options JSONB 统一存 base64(option bytes) 数组
-//（即 json.Marshal([][]byte) 的天然形态）。
+// options/correct_options/votes.options JSONB uniformly store a base64(option bytes) array
+// (i.e. the natural form of json.Marshal([][]byte)).
 
-// PollStore 是 store.PollStore 的 PostgreSQL 实现。
+// PollStore is the PostgreSQL implementation of store.PollStore.
 type PollStore struct {
 	db sqlcgen.DBTX
 }
 
-// NewPollStore 基于 pgx 连接池（或事务）创建 PollStore。
+// NewPollStore creates a PollStore on top of a pgx pool (or transaction).
 func NewPollStore(db sqlcgen.DBTX) *PollStore {
 	return &PollStore{db: db}
 }
@@ -132,7 +132,7 @@ LIMIT $%d`, optionFilter, offsetFilter, len(args)), args...)
 	return out, nil
 }
 
-// loadPollDefinitions 批量加载权威定义；forUpdate 时锁行（投票/关闭事务用）。
+// loadPollDefinitions loads authoritative definitions in bulk; locks rows when forUpdate (used by the vote/close transactions).
 func loadPollDefinitions(ctx context.Context, db sqlcgen.DBTX, pollIDs []int64, forUpdate bool) (map[int64]domain.PollDefinition, error) {
 	if len(pollIDs) == 0 {
 		return map[int64]domain.PollDefinition{}, nil
@@ -178,8 +178,8 @@ WHERE poll_id = ANY($1)`+suffix, pollIDs)
 	return out, nil
 }
 
-// applyPollVote 在调用方事务里执行一次投票（校验 + upsert/撤票删除）。
-// 必须传入已 FOR UPDATE 锁定的 def，避免 quiz 并发双投。
+// applyPollVote performs one vote inside the caller's transaction (validation + upsert/vote-retraction delete).
+// The def passed in must already be locked with FOR UPDATE to avoid concurrent double voting in a quiz.
 func applyPollVote(ctx context.Context, db sqlcgen.DBTX, def domain.PollDefinition, userID int64, options [][]byte, date int) error {
 	var existingJSON *string
 	err := db.QueryRow(ctx, `
@@ -216,7 +216,7 @@ DO UPDATE SET options = EXCLUDED.options, vote_date = EXCLUDED.vote_date`, def.I
 	return nil
 }
 
-// closePollAsCreator 关闭 poll（幂等）；非创建者返回 ErrPollNotCreator。
+// closePollAsCreator closes a poll (idempotent); returns ErrPollNotCreator for non-creators.
 func closePollAsCreator(ctx context.Context, db sqlcgen.DBTX, def domain.PollDefinition, byUserID int64) error {
 	if def.CreatorUserID != byUserID {
 		return domain.ErrPollNotCreator
@@ -227,7 +227,7 @@ func closePollAsCreator(ctx context.Context, db sqlcgen.DBTX, def domain.PollDef
 	return nil
 }
 
-// pollViewerAggregates 批量计算 viewer 视角的原始聚合（counts/total/recent/viewer options）。
+// pollViewerAggregates computes the viewer's raw aggregates in bulk (counts/total/recent/viewer options).
 func pollViewerAggregates(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, pollIDs []int64) (map[int64]domain.PollAggregates, error) {
 	out := make(map[int64]domain.PollAggregates, len(pollIDs))
 	if len(pollIDs) == 0 {
@@ -353,14 +353,14 @@ SELECT poll_id, options::text FROM poll_votes WHERE poll_id = ANY($1) AND user_i
 	return out, nil
 }
 
-// pollMediaRef 标记一条待 enrich 的 poll media 及其 viewer（私聊按 box owner，频道按请求 viewer）。
+// pollMediaRef marks a poll media to enrich together with its viewer (box owner for private chats, request viewer for channels).
 type pollMediaRef struct {
 	media  *domain.MessageMedia
 	viewer int64
 }
 
-// enrichPollMediaRefs 是 postgres 读路径的统一 poll enrichment：
-// 按 (viewer) 分组加载 viewer options，counts/total/recent/定义只查一次。
+// enrichPollMediaRefs is the postgres read paths' unified poll enrichment:
+// viewer options are loaded grouped by (viewer), while counts/total/recent/definition are queried once.
 func enrichPollMediaRefs(ctx context.Context, db sqlcgen.DBTX, refs []pollMediaRef) error {
 	if len(refs) == 0 {
 		return nil

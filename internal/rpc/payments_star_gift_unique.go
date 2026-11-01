@@ -309,9 +309,11 @@ func (r *Router) onPaymentsGetUniqueStarGift(ctx context.Context, slug string) (
 	return out, nil
 }
 
-// resolveGiftOwnerDisplayName 取唯一礼物当前 owner 的展示名。隐藏（unsaved）
-// 的礼物被非 owner 通过链接查看时，投影只用纯文本名（无 peer），避免把资料链接、
-// 头像和 premium 徽章暴露给外部查看者。查不到任何用户信息时回退到落库的 owner_name。
+// resolveGiftOwnerDisplayName returns the display name of a unique gift's current
+// owner. When a non-owner views a hidden (unsaved) gift through a link, the
+// projection uses only the plain-text name (no peer), so the profile link, avatar
+// and Premium badge are not exposed to outside viewers. When no user info is
+// found it falls back to the stored owner_name.
 func (r *Router) resolveGiftOwnerDisplayName(ctx context.Context, viewerUserID int64, unique domain.UniqueStarGift) string {
 	switch unique.Owner.Type {
 	case domain.PeerTypeUser:

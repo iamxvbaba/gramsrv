@@ -81,8 +81,8 @@ func (s *MessageStore) ForwardPrivateMessages(ctx context.Context, req domain.Fo
 			if forward == nil {
 				forward = &domain.MessageForward{From: source.From, Date: source.Date}
 			}
-			// 转发进 Saved Messages 必须带 saved_from_peer/msg_id 成对字段，
-			// 客户端靠它提供"跳回原会话"。
+			// A forward into Saved Messages must carry the paired saved_from_peer/msg_id fields;
+			// the client relies on them to provide "jump back to the original conversation".
 			if req.ToUserID == req.OwnerUserID {
 				forward.SavedFrom = req.FromPeer
 				forward.SavedFromMsgID = req.MessageIDs[i]

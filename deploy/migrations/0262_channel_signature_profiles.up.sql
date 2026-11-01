@@ -1,4 +1,4 @@
--- v2 编号 0262；移植自 main 0238_channel_signature_profiles（main 6f54290f，B9），见 docs/main-v2-sync.md。
+-- v2 number 0262; ported from main 0238_channel_signature_profiles (main 6f54290f, B9), see docs/main-v2-sync.md.
 ALTER TABLE channels ADD COLUMN signature_profiles boolean NOT NULL DEFAULT false;
 ALTER TABLE channels ADD CONSTRAINT channel_signature_profiles_check CHECK (NOT signature_profiles OR (signatures AND broadcast AND NOT megagroup));
 -- Visibility is immutable per message; old anonymous posts must stay anonymous.

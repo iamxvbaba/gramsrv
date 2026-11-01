@@ -1,4 +1,4 @@
--- v2 编号 0250；移植自 main 0221_bot_api_pre_checkout_shape（main 3a84827a，B7b–7e），见 docs/main-v2-sync.md。
+-- v2 number 0250; ported from main 0221_bot_api_pre_checkout_shape (main 3a84827a, B7b–7e), see docs/main-v2-sync.md.
 -- ON CONFLICT DO NOTHING is what keeps a replayed question from queueing twice, and
 -- it needs a unique index just like callback_query has. The query id lives inside the
 -- payload, so the index reaches into it.

@@ -1,33 +1,33 @@
 package domain
 
-// MediaCategory 是共享媒体标签页的基础类别。一条消息可同时属于多个类别
-// （例如带链接的图片 = Photo + URL）。落库为媒体索引表的 category 列（SMALLINT）。
+// MediaCategory is the base category of a shared-media tab. A message can belong to several categories at once
+// (e.g. an image with a link = Photo + URL). It is stored in the media index table's category column (SMALLINT).
 //
-// 这里只存"基础类别";客户端的复合过滤器（PhotoVideo / RoundVoice）在查询期映射为
-// 多个基础类别的并集（见 MediaCategoriesForFilter 的调用方）。
+// Only "base categories" are stored here; the client's composite filters (PhotoVideo / RoundVoice) are mapped at query time to
+// the union of several base categories (see the callers of MediaCategoriesForFilter).
 type MediaCategory int16
 
 const (
 	MediaCategoryNone       MediaCategory = 0
 	MediaCategoryPhoto      MediaCategory = 1 // media.kind=photo
-	MediaCategoryVideo      MediaCategory = 2 // document 含 video 属性且非 round
-	MediaCategoryGif        MediaCategory = 3 // document 含 animated 属性
-	MediaCategoryFile       MediaCategory = 4 // 通用文档（无 video/audio/animated/sticker 属性）
-	MediaCategoryMusic      MediaCategory = 5 // document 含 audio 属性且 voice=false
-	MediaCategoryVoice      MediaCategory = 6 // document 含 audio 属性且 voice=true
-	MediaCategoryRoundVideo MediaCategory = 7 // document 含 video 属性且 round_message=true（视频消息）
-	MediaCategoryURL        MediaCategory = 8 // 文本含 url/text_url/email 实体或 messageMediaWebPage
+	MediaCategoryVideo      MediaCategory = 2 // document has the video attribute and is not round
+	MediaCategoryGif        MediaCategory = 3 // document has the animated attribute
+	MediaCategoryFile       MediaCategory = 4 // generic document (no video/audio/animated/sticker attributes)
+	MediaCategoryMusic      MediaCategory = 5 // document has the audio attribute and voice=false
+	MediaCategoryVoice      MediaCategory = 6 // document has the audio attribute and voice=true
+	MediaCategoryRoundVideo MediaCategory = 7 // document has the video attribute and round_message=true (video message)
+	MediaCategoryURL        MediaCategory = 8 // text has a url/text_url/email entity or messageMediaWebPage
 	MediaCategoryPoll       MediaCategory = 9 // media.kind=poll
-	// MediaCategoryGeoLive 是 messages.getRecentLocations 的内部索引类别。
-	// 它不映射到普通共享媒体筛选器，只用于按 peer 有界读取 live-location 消息。
+	// MediaCategoryGeoLive is the internal index category for messages.getRecentLocations.
+	// It does not map to an ordinary shared-media filter; it is only used to read live-location messages in a bounded way per peer.
 	MediaCategoryGeoLive MediaCategory = 10 // media.kind=geo_live
 )
 
-// MediaCategoryCounts 是共享媒体索引按基础类别聚合出的精确计数。
+// MediaCategoryCounts is the exact counts aggregated by base category from the shared-media index.
 type MediaCategoryCounts map[MediaCategory]int
 
-// CountAny 返回给定基础类别并集的计数。当前复合 filter 只由互斥类别组成
-// (PhotoVideo=Photo+Video, RoundVoice=Voice+RoundVideo)，因此可直接相加。
+// CountAny returns the count for the union of the given base categories. Current composite filters consist only of disjoint categories
+// (PhotoVideo=Photo+Video, RoundVoice=Voice+RoundVideo), so they can be summed directly.
 func (c MediaCategoryCounts) CountAny(categories []MediaCategory) int {
 	if len(categories) == 0 {
 		return 0
@@ -47,10 +47,10 @@ func (c MediaCategoryCounts) CountAny(categories []MediaCategory) int {
 	return total
 }
 
-// MediaSearchRequest 是共享媒体标签页分页查询的入参（messages.search 媒体过滤分支）。
-// Categories 是该标签页映射到的基础类别并集（PhotoVideo→[Photo,Video]、RoundVoice→[Voice,RoundVideo]）。
-// OffsetID 定位第一条严格更旧的消息；负 AddOffset 向更新侧取数（可含游标本身）。
-// MaxID/MinID、MaxDate/MinDate 均为开区间；计数忽略分页偏移。
+// MediaSearchRequest is the input of a shared-media tab paginated query (the media-filter branch of messages.search).
+// Categories is the union of base categories the tab maps to (PhotoVideo→[Photo,Video], RoundVoice→[Voice,RoundVideo]).
+// OffsetID locates the first strictly older message; a negative AddOffset fetches toward newer items (possibly including the cursor itself).
+// MaxID/MinID and MaxDate/MinDate are all open intervals; counts ignore the pagination offset.
 type MediaSearchRequest struct {
 	Categories     []MediaCategory
 	Query          string
@@ -69,9 +69,9 @@ type MediaSearchRequest struct {
 	HasKnownCount  bool
 }
 
-// ClassifyMediaCategories 返回一条消息所属的全部共享媒体类别（可为空：无媒体且无链接，
-// 或贴纸/地理/联系人等不进任何媒体标签页的载荷）。是媒体索引的唯一分类真值，写路径据此
-// 维护索引、迁移回填须与其语义一致。
+// ClassifyMediaCategories returns every shared-media category a message belongs to (possibly empty: no media and no link,
+// or payloads like stickers/geo/contacts that belong to no media tab). It is the single source of truth for media classification: the write path uses it
+// to maintain the index, and migration backfill must match its semantics.
 func ClassifyMediaCategories(media *MessageMedia, entities []MessageEntity) []MediaCategory {
 	cats := make([]MediaCategory, 0, 2)
 	add := func(category MediaCategory) {
@@ -107,9 +107,9 @@ func ClassifyMediaCategories(media *MessageMedia, entities []MessageEntity) []Me
 	return cats
 }
 
-// classifyDocumentCategory 按 TL DocumentAttribute 判定一个文档落入哪个媒体类别。
-// 客户端的标签页 UI 以 TL 属性和 GIFv MIME 共同判定。优先级：sticker（不入任何标签页）>
-// canonical animated MP4 (GIF) > audio(music/voice) > video(video/round) > 通用文件。
+// classifyDocumentCategory decides which media category a document falls into based on TL DocumentAttribute.
+// The client's tab UI decides using TL attributes together with the GIFv MIME. Priority: sticker (belongs to no tab) >
+// canonical animated MP4 (GIF) > audio (music/voice) > video (video/round) > generic file.
 func classifyDocumentCategory(doc *Document) (MediaCategory, bool) {
 	if doc == nil {
 		return MediaCategoryNone, false
@@ -142,7 +142,7 @@ func classifyDocumentCategory(doc *Document) (MediaCategory, bool) {
 	}
 	switch {
 	case hasSticker:
-		return MediaCategoryNone, false // 贴纸/自定义 emoji 不出现在共享媒体
+		return MediaCategoryNone, false // stickers/custom emoji do not appear in shared media
 	case hasAnimated && doc.IsGif():
 		return MediaCategoryGif, true
 	case hasAudio:

@@ -26,9 +26,11 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return nil, err
 	}
 	reactions = r.normalizeDefaultReactionDocuments(ctx, reactions)
-	// 官方语义（reactions_user_max_default/premium）：向量尾部是最新选择，
-	// 超出每用户上限丢弃旧的而非报错；premium viewer 用 premium 档（appConfig
-	// reactions_user_max_premium=3），否则客户端允许的多 reaction 会被静默裁剪。
+	// Official semantics (reactions_user_max_default/premium): the tail of the
+	// vector is the newest choice, and exceeding the per-user limit drops the old
+	// ones rather than erroring; a premium viewer uses the premium tier (appConfig
+	// reactions_user_max_premium=3), otherwise the multi-reaction the client allows
+	// would be silently trimmed.
 	perUserMax := domain.MessageReactionsUserMax(r.viewerPremium(ctx, userID))
 	reactions = domain.TrimMessageReactionsToUserMax(reactions, perUserMax)
 	if peer.Type == domain.PeerTypeUser && peer.ID == userID &&

@@ -2,7 +2,8 @@ package rpc
 
 import "time"
 
-// Metrics 接收 RPC 业务层指标。默认 NopMetrics，后续可对接 Prometheus。
+// Metrics receives RPC business-layer metrics. Defaults to NopMetrics; can later be wired to
+// Prometheus.
 type Metrics interface {
 	MessageSend(d time.Duration, duplicate bool, err error)
 	MessageRateLimited(retryAfterSeconds int)
@@ -16,7 +17,7 @@ type Metrics interface {
 	PresenceLastSeenDrainDropped(count int)
 }
 
-// NopMetrics 是 Metrics 的空实现。
+// NopMetrics is the no-op implementation of Metrics.
 type NopMetrics struct{}
 
 func (NopMetrics) MessageSend(time.Duration, bool, error) {}

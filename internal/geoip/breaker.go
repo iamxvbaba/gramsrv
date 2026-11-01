@@ -5,29 +5,34 @@ import (
 	"time"
 )
 
-// breaker 是单个地理后端的健康状态机。
+// breaker is the health state machine of a single geographic backend.
 //
-// 免费地理后端都会限流,而且会以完全不同的方式坏掉:
+// Free geographic backends all rate limit, and they fail in completely different ways:
 //
-//   - reallyfreegeoip.org 配额窗口内持续回 429(实测:连续约 5 次请求后开始 429,
-//     静默约 60s 恢复)。
-//   - geojs.io 只带 ASN 库,某些网段(实测 1.1.1.1)压根没有 country 字段——那是数据
-//     缺失,不是故障,必须让位给下一个后端而不是熔断。
-//   - hackmyip.com 会在服务端故障时直接回 400/5xx(实测 2026-09 间歇性 400)。
-//   - 任何后端都可能 DNS 解析失败或连接超时。
+//   - reallyfreegeoip.org keeps returning 429 within its quota window (measured:
+//     429 begins after about 5 consecutive requests, clears after about 60s of silence).
+//   - geojs.io only carries ASN data, and some ranges (measured: 1.1.1.1) have no
+//     country field at all -- that is missing data, not a fault, and must yield to
+//     the next backend rather than trip the breaker.
+//   - hackmyip.com returns 400/5xx outright when its server is failing (measured:
+//     intermittent 400 during 2026-09).
+//   - any backend may fail DNS resolution or time out on connect.
 //
-// 所以这里有两条独立的状态:限流窗口长(冷却久,继续打只会把窗口一直续着),不可达
-// 窗口短(一次网络抖动不该让后端离线太久)。两者打开时上层都整批跳过,不发任何请求。
+// So there are two independent states here: a long rate-limit window (a long
+// cooldown, since hammering on only extends it) and a short unreachable window
+// (one network hiccup should not keep a backend offline for long). While either is
+// open the caller skips the whole batch and sends no requests at all.
 type breaker struct {
 	mu sync.Mutex
-	// now 可注入,让测试能确定性地推进冷却,不必真等两分钟。
+	// now is injectable so tests can advance the cooldown deterministically without waiting two real minutes.
 	now               func() time.Time
 	rateLimitThreshod int
 	rateLimitCooldown time.Duration
 	downThreshold     int
 	downCooldown      time.Duration
-	// consecutiveRateLimited / consecutiveHardFailure 是自上次成功以来的连续计数。
-	// 两类失败互斥:一次成功把两个都清零,一次 429 只影响前者,一次超时只影响后者。
+	// consecutiveRateLimited / consecutiveHardFailure are the consecutive counts
+	// since the last success. The two failure classes are mutually exclusive: a
+	// success clears both, a 429 only affects the former, a timeout only the latter.
 	consecutiveRateLimited int
 	consecutiveHardFailure int
 	rateLimitUntil         time.Time
@@ -51,17 +56,17 @@ func newBreaker(cfg breakerConfig) *breaker {
 	}
 }
 
-// breakerState 描述当前为什么不能发请求。
+// breakerState describes why requests cannot currently be sent.
 type breakerState struct {
-	// Open 表示该后端此刻应当被整批跳过。
+	// Open means this backend should be skipped for the whole batch right now.
 	Open bool
-	// Remaining 是当前生效窗口的剩余时间。
+	// Remaining is the time left in the currently active window.
 	Remaining time.Duration
-	// Reason 是给日志用的短标签:rate_limit / down / ""。
+	// Reason is the short label used in logs: rate_limit / down / "".
 	Reason string
 }
 
-// state 返回当前状态。打开时上层应整批跳过,一个请求都不发。
+// state returns the current state. When open, the caller should skip the whole batch and send no requests.
 func (b *breaker) state() breakerState {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -70,7 +75,7 @@ func (b *breaker) state() breakerState {
 
 func (b *breaker) stateLocked() breakerState {
 	now := b.now()
-	// 窗口过期就顺带清零计数,给下一轮留出完整阈值。
+	// When a window expires, clear the counter along with it so the next round gets the full threshold.
 	if !b.rateLimitUntil.IsZero() && !now.Before(b.rateLimitUntil) {
 		b.rateLimitUntil = time.Time{}
 		b.consecutiveRateLimited = 0
@@ -89,16 +94,18 @@ func (b *breaker) stateLocked() breakerState {
 	}
 }
 
-// record 记录一次查询结果。
+// record records the result of one lookup.
 //
-// statusOK 把两个计数都清零:后端活着。statusNotFound 不动任何计数——那是后端给出的
-// 确定答复(数据缺失),上层会继续问下一个后端,不该因此熔断。statusRateLimited 只推高
-// 限流计数,超时和传输错误只推高不可达计数。
+// statusOK clears both counters: the backend is alive. statusNotFound touches no
+// counter -- it is a definite answer from the backend (missing data), the caller
+// continues to the next backend, and it must not trip the breaker.
+// statusRateLimited only advances the rate-limit counter; timeouts and transport
+// errors only advance the unreachable counter.
 func (b *breaker) record(status lookupStatus) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.stateLocked().Open {
-		// 已经在冷却里,延长的意义不大:冷却本身就是"这段时间别发请求"。
+		// Already cooling down; extending it is pointless: the cooldown itself means "send no requests for this while".
 		return
 	}
 	switch status {
@@ -116,7 +123,7 @@ func (b *breaker) record(status lookupStatus) {
 		b.consecutiveRateLimited = 0
 		b.consecutiveHardFailure++
 		if b.consecutiveHardFailure >= b.downThreshold {
-			// 短窗口:后端可能只是抖了一下,不能因为一次网络故障就离线几分钟。
+			// Short window: the backend may have only hiccuped, so one network failure must not take it offline for minutes.
 			b.downUntil = b.now().Add(b.downCooldown)
 			b.consecutiveHardFailure = 0
 		}

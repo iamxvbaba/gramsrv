@@ -1,20 +1,29 @@
-// Package geoip 把会话 IP 解析为 account.getAuthorizations 展示用的国家/地区文案。
+// Package geoip resolves session IPs into the country/region text shown by
+// account.getAuthorizations.
 //
-// 协议层没有 help.requestIpAddress 的对等实现,authorization.country / .region 过去
-// 只能回传字面量 "Unknown"。本包是可选增强:未配置后端时 New 返回 nil Resolver,
-// 调用方回落到原占位文案,默认行为与启用前完全一致。
+// The protocol layer has no equivalent of help.requestIpAddress, so
+// authorization.country / .region could only ever return the literal "Unknown".
+// This package is an optional enhancement: with no backend configured, New
+// returns a nil Resolver and the caller falls back to the original placeholder,
+// so the default behavior is identical to before the feature was enabled.
 //
-// 运维方可以按顺序配置多个免费后端(见 Config.Endpoints),解析按顺序 failover:
-// 上一个后端查不到或此刻不可用,自动落到下一个。实测 2026-09 各家都会时不时地不给
-// 完整数据——reallyfreegeoip.org 连续几次请求就 429;geojs.io 只有 ASN 库覆盖,
-// 1.1.1.1 那种地址压根没有 country 字段;hackmyip.com 会间歇性回 400;ipapi.is 对
-// 保留网段回 is_bogon。单后端必然会让一部分会话列表显示 Unknown,多后端才是可用解。
+// Operators may configure several free backends in order (see Config.Endpoints);
+// resolution fails over in order: when one backend cannot find the address or is
+// momentarily unavailable, the next one is tried automatically. As measured in
+// 2026-09, every provider intermittently fails to return complete data --
+// reallyfreegeoip.org returns 429 after a few consecutive requests; geojs.io
+// only covers ASN data and an address like 1.1.1.1 has no country field at all;
+// hackmyip.com intermittently returns 400; ipapi.is returns is_bogon for
+// reserved ranges. A single backend inevitably leaves part of the session list
+// showing Unknown; multiple backends are the workable answer.
 //
-// 每个后端有两条独立的健康状态(见 breaker):限流窗口长,不可达窗口短。上层按顺序
-// 逐个后端尝试,打开的窗口直接跳过,一个请求都不发。
+// Each backend has two independent health states (see breaker): a long
+// rate-limit window and a short unreachable window. The caller tries backends in
+// order and skips any with an open window outright, sending not a single request.
 //
-// 隐私约束:仅解析公网可路由地址。私网/回环/链路本地地址既没有地理归属,也不应
-// 被送到第三方服务。
+// Privacy constraint: only publicly routable addresses are resolved.
+// Private/loopback/link-local addresses have no geographic identity, and must not
+// be sent to third-party services.
 package geoip
 
 import (
@@ -29,53 +38,66 @@ import (
 	"go.uber.org/zap"
 )
 
-// Location 是 IP 的地理归属展示文案。
+// Location is the display text for an IP's geographic identity.
 //
-// Country 非空才表示解析成功。Region 是更细一级的位置(城市 → 州/省 → 时区),
-// 拿不到时留空,由调用方决定占位文案——本包不伪造地名。
+// A non-empty Country means the lookup succeeded. Region is a finer location
+// (city -> state/province -> timezone); it is left empty when unavailable, and
+// the caller decides the placeholder text -- this package never fabricates a
+// place name.
 type Location struct {
 	Country string
 	Region  string
 }
 
-// Resolver 批量解析 IP 到展示文案。
+// Resolver resolves IPs in bulk into display text.
 //
-// 返回的 map 以调用方原样传入的字符串为 key,未命中的 IP 不出现在 map 里。调用方
-// 用零值回落即可,不需要知道内部的 IP 归一化和 failover 规则。
+// The returned map is keyed by the exact strings the caller passed in; IPs with
+// no hit do not appear in the map. The caller can simply fall back on a zero
+// value and does not need to know the internal IP normalization or failover rules.
 type Resolver interface {
 	Resolve(ctx context.Context, ips []string) map[string]Location
-	// Close 释放后端持有的资源。Resolver 为 nil 时调用方不应调用。
+	// Close releases resources held by the backends. Callers must not call it on a nil Resolver.
 	Close() error
 }
 
-// Config 描述 geoip 后端链。零值不合法,未启用请直接不要调用 New。
+// Config describes the geoip backend chain. The zero value is invalid; when the
+// feature is disabled, simply do not call New.
 type Config struct {
-	// Endpoints 是按顺序尝试的后端 URL 模板列表,第一个是主力。元素必须含 {ip}
-	// 占位符,例如 "https://api.ipapi.is/?q={ip}"。空列表表示不启用地理归属。
+	// Endpoints is the ordered list of backend URL templates to try, the first
+	// being the primary. Every element must contain the {ip} placeholder, for
+	// example "https://api.ipapi.is/?q={ip}". An empty list disables geolocation.
 	//
-	// 顺序有意义:未解析的地址会依次交给后面的后端,主力越准,后面的后端就越少被
-	// 问到,配额消耗也越低。
+	// Order matters: unresolved addresses are handed to the later backends in
+	// turn, so the more accurate the primary the less often the others are
+	// queried and the lower the quota consumption.
 	Endpoints []string
-	// Timeout 是单个 HTTP 请求的上限。免费后端正常延迟 0.6~1.3s,2s 留足抖动余量;
-	// 超时按失败处理,计入该后端的不可达窗口。
+	// Timeout is the cap for a single HTTP request. Free backends normally take
+	// 0.6-1.3s, so 2s leaves ample jitter margin; a timeout is treated as a
+	// failure and counts toward that backend's unreachable window.
 	Timeout time.Duration
-	// Concurrency 是单次 Resolve 内跨所有后端的在途请求总数上限。批量并发是必须的:
-	// 串行查 N 台设备就是 N×延迟,客户端会直接感知到卡顿。
+	// Concurrency is the cap on in-flight requests across all backends within a
+	// single Resolve. Bulk concurrency is required: querying N devices serially
+	// costs N x latency, and the client would perceive the stall directly.
 	Concurrency int
-	// CacheTTL 是命中缓存的有效期。单个 IP 的地理归属几乎不变,默认给足一天。
+	// CacheTTL is the lifetime of a positive cache hit. A single IP's geographic
+	// identity barely changes, so the default grants a full day.
 	CacheTTL time.Duration
-	// NegativeTTL 是"所有后端都没给出结果"(限流/超时/网络错误/查无此 IP)的负缓存期。
-	// 必须远小于 CacheTTL,否则一次限流会把该 IP 锁死很久。
+	// NegativeTTL is the negative-cache lifetime for "no backend produced a
+	// result" (rate limit / timeout / network error / IP not found). It must be
+	// far shorter than CacheTTL, otherwise a single rate limit locks the IP out
+	// for a long time.
 	NegativeTTL time.Duration
-	// CacheSize 是缓存条目上限。
+	// CacheSize is the maximum number of cache entries.
 	CacheSize int
-	// RateLimitThreshold 是连续限流多少次后打开该后端的限流窗口。
+	// RateLimitThreshold is how many consecutive rate limits open that backend's rate-limit window.
 	RateLimitThreshold int
-	// RateLimitCooldown 是限流窗口时长,期间该后端一个请求都不发。
+	// RateLimitCooldown is the length of the rate-limit window; during it not a
+	// single request is sent to that backend.
 	RateLimitCooldown time.Duration
-	// DownThreshold 是连续多少次超时/网络错误后把该后端判定为不可达。
+	// DownThreshold is how many consecutive timeouts/network errors mark the backend unreachable.
 	DownThreshold int
-	// DownCooldown 是不可达窗口时长。比限流窗口短得多:后端可能只是抖了一下。
+	// DownCooldown is the length of the unreachable window. It is much shorter
+	// than the rate-limit window: the backend may have only hiccuped once.
 	DownCooldown time.Duration
 }
 
@@ -86,19 +108,23 @@ const (
 	defaultNegativeTTL        = 5 * time.Minute
 	defaultCacheSize          = 4096
 	defaultRateLimitThreshold = 3
-	// 实测 2026-09:连续约 5 次请求后开始 429,静默约 60s 恢复。限流冷却取 2min——
-	// 比实测窗口宽裕一倍,但不至于长到让用户看着 Unknown 干等。
+	// Measured 2026-09: 429 begins after about 5 consecutive requests and clears
+	// after about 60s of silence. The rate-limit cooldown is 2min -- twice the
+	// measured window, yet not so long that users stare at "Unknown" waiting.
 	defaultRateLimitCooldown = 2 * time.Minute
-	// 不可达只给 30s:一个后端挂掉不该让整条链离线几分钟,但每次都先撞满一遍
-	// 超时预算也不行——那正是 failover 要消灭的卡顿。
+	// Unreachable is given only 30s: one dead backend must not take the whole
+	// chain offline for minutes, but burning through the full timeout budget on
+	// every request is equally unacceptable -- that is exactly the stall failover
+	// exists to eliminate.
 	defaultDownThreshold = 2
 	defaultDownCooldown  = 30 * time.Second
 )
 
-// New 按 cfg 构造解析器。
+// New builds a resolver from cfg.
 //
-// Endpoints 为空时返回 (nil, nil)——那代表"没开地理归属",不是错误。调用方必须
-// 容忍 nil Resolver,那正是未配置时的预期路径。
+// With empty Endpoints it returns (nil, nil) -- that means "geolocation is off",
+// not an error. Callers must tolerate a nil Resolver; that is the expected path
+// when the feature is unconfigured.
 func New(cfg Config, log *zap.Logger) (Resolver, error) {
 	if log == nil {
 		log = zap.NewNop()
@@ -122,10 +148,12 @@ func New(cfg Config, log *zap.Logger) (Resolver, error) {
 	}, nil
 }
 
-// newBackendChain 按配置顺序构造后端链,并去掉重复的端点。
+// newBackendChain builds the backend chain in the configured order and drops
+// duplicate endpoints.
 //
-// 去重是必要的:同一个端点配两次不会提高成功率,只会让一次会话列表多打一遍请求,
-// 而免费后端的配额经不起这种浪费。
+// Dedup matters: configuring the same endpoint twice does not improve the
+// success rate, it only doubles the requests for one session list, and free
+// backends' quotas cannot afford that waste.
 func newBackendChain(cfg Config, log *zap.Logger) ([]backend, error) {
 	timeout := positiveDuration(cfg.Timeout, defaultTimeout)
 	breakerCfg := breakerConfig{
@@ -158,8 +186,9 @@ func newBackendChain(cfg Config, log *zap.Logger) ([]backend, error) {
 	return backends, nil
 }
 
-// cachedResolver 是唯一对外的 Resolver 实现。它负责 IP 归一、缓存、后端 failover 和
-// 熔断,让每个 backend 退化成"给我一个已归一的公网 IP,给我国家/地区"。
+// cachedResolver is the only exported Resolver implementation. It owns IP
+// normalization, caching, backend failover and circuit breaking, reducing each
+// backend to "give me a normalized public IP, give me its country/region".
 type cachedResolver struct {
 	backends    []backend
 	concurrency int
@@ -167,15 +196,16 @@ type cachedResolver struct {
 	log         *zap.Logger
 }
 
-// Resolve 批量解析一组 IP。
+// Resolve resolves a batch of IPs.
 //
-// nil receiver 直接返回 nil:未启用地理归属时调用方会把 nil Resolver 传下来,
-// 这里必须能安全退化,而不是 panic。
+// A nil receiver returns nil outright: when geolocation is off, callers pass a
+// nil Resolver down here, and this must degrade safely rather than panic.
 func (r *cachedResolver) Resolve(ctx context.Context, ips []string) map[string]Location {
 	if r == nil || len(ips) == 0 {
 		return nil
 	}
-	// 归一后按唯一地址去重:一次会话列表里多台设备常常共享同一个出口 IP。
+	// Deduplicate by unique address after normalization: multiple devices in one
+	// session list often share the same egress IP.
 	want := make(map[netip.Addr]struct{}, len(ips))
 	for _, ip := range ips {
 		if addr, ok := publicAddr(ip); ok {
@@ -186,8 +216,9 @@ func (r *cachedResolver) Resolve(ctx context.Context, ips []string) map[string]L
 		return nil
 	}
 
-	// 先查缓存,只把真正缺的送后端。限流很凶,一次本可命中缓存的出网就足以
-	// 拖慢整批并可能换来 429。
+	// Check the cache first and send only the genuinely missing ones to the
+	// backends. Rate limits are aggressive, and even one network round-trip that
+	// could have been a cache hit is enough to slow the batch and possibly earn a 429.
 	pending := make([]netip.Addr, 0, len(want))
 	hit := make(map[netip.Addr]Location, len(want))
 	for addr := range want {
@@ -206,7 +237,7 @@ func (r *cachedResolver) Resolve(ctx context.Context, ips []string) map[string]L
 	return expandByInput(hit, ips)
 }
 
-// resolvePending 沿后端链依次尝试,结果与负缓存一起落盘。
+// resolvePending tries the backend chain in order, writing results and negative-cache entries together.
 func (r *cachedResolver) resolvePending(ctx context.Context, pending []netip.Addr, hit map[netip.Addr]Location) {
 	for _, b := range r.backends {
 		if ctx.Err() != nil {
@@ -217,9 +248,10 @@ func (r *cachedResolver) resolvePending(ctx context.Context, pending []netip.Add
 			return
 		}
 		if state := b.Breaker().state(); state.Open {
-			// 熔断打开时整批跳过,不产生任何出网请求。熔断的全部意义就在这里:继续打
-			// 只会把 429/故障窗口一直续着,同时把每个请求的延迟预算也搭进去。
-			r.log.Debug("geoip 解析跳过：后端暂不可用",
+			// Skip the whole batch while the breaker is open, issuing no network
+			// requests at all. That is the entire point of the breaker: hammering
+			// on only extends the 429/failure window and burns every request's latency budget.
+			r.log.Debug("geoip resolution skipped: backend temporarily unavailable",
 				zap.String("backend", b.Name()),
 				zap.String("reason", state.Reason),
 				zap.Duration("remaining", state.Remaining),
@@ -228,12 +260,14 @@ func (r *cachedResolver) resolvePending(ctx context.Context, pending []netip.Add
 		}
 		r.resolveWithBackend(ctx, b, remaining, hit)
 	}
-	// 取消不代表后端查无此 IP，未走完的链不能污染负缓存。
+	// Cancellation does not mean the backend lacks this IP; an incomplete chain
+	// must not pollute the negative cache.
 	if ctx.Err() != nil {
 		return
 	}
-	// 所有后端都试过了还没结果才记负缓存:某个后端的缺失不能连带把整条链判死,
-	// 否则免费库的覆盖差异会让一批地址长期显示 Unknown。
+	// Record a negative cache entry only after every backend was tried and still
+	// found nothing: one backend's gap must not condemn the whole chain, or free
+	// libraries' coverage differences would keep a batch of addresses showing Unknown.
 	for _, addr := range pending {
 		if _, ok := hit[addr]; !ok {
 			r.cache.putMiss(addr)
@@ -241,11 +275,13 @@ func (r *cachedResolver) resolvePending(ctx context.Context, pending []netip.Add
 	}
 }
 
-// resolveWithBackend 用一个后端并发解析一批地址。
+// resolveWithBackend resolves a batch of addresses concurrently with one backend.
 //
-// 半途出现硬失败(超时/传输错误/5xx)就停止发新请求并让位给下一个后端:后端正在坏掉
-// 时,把它剩下的地址一个一个撞满超时预算只会拖慢整批,那正是 failover 要消灭的卡顿。
-// 明确答复"没这条 IP"不触发熔断,那只是让下一个后端继续试的机会。
+// A hard failure mid-batch (timeout / transport error / 5xx) stops new requests
+// and yields to the next backend: when a backend is failing, grinding through
+// its remaining addresses one timeout budget at a time only slows the batch --
+// exactly the stall failover exists to eliminate. A definite "no such IP" answer
+// does not trip the breaker; it is just an opportunity for the next backend to try.
 func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addrs []netip.Addr, hit map[netip.Addr]Location) {
 	sem := make(chan struct{}, r.concurrency)
 	var (
@@ -253,21 +289,24 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 		wg      sync.WaitGroup
 		healthy atomic.Bool
 	)
-	// 所有返回路径都必须等待在途任务；调用方随后会读 hit 或切换后端。
+	// Every return path must wait for in-flight tasks; the caller reads hit or
+	// switches backends right after.
 	defer wg.Wait()
 	healthy.Store(true)
 	for _, addr := range addrs {
 		if ctx.Err() != nil || !healthy.Load() {
 			break
 		}
-		// 信号量在发送方获取而不是在 goroutine 里:这样本循环自己就会阻塞,天然形成
-		// 并发上限,不必再让每个 IP 都起一个 goroutine 去抢。
+		// Acquire the semaphore on the sender side rather than inside the
+		// goroutine: this loop then blocks on its own, forming a natural
+		// concurrency cap without spawning a goroutine per IP to compete for it.
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
 			return
 		}
-		// 等待信号量期间可能发生取消或硬失败，不再向失效后端发新请求。
+		// Cancellation or a hard failure may occur while waiting for the
+		// semaphore; send no new requests to a failed backend.
 		if ctx.Err() != nil || !healthy.Load() {
 			<-sem
 			return
@@ -279,7 +318,8 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 				wg.Done()
 			}()
 			loc, status := b.Lookup(ctx, addr)
-			// 调用方取消/总预算到期不能被误记为后端故障。
+			// A caller cancellation or an expired overall budget must not be
+			// miscounted as a backend fault.
 			if ctx.Err() == nil {
 				b.Breaker().record(status)
 			}
@@ -290,9 +330,10 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 				mu.Unlock()
 				r.cache.put(addr, loc)
 			case statusNotFound:
-				// 后端活着但没这条数据,继续问下一个后端。
+				// The backend is alive but lacks this data; keep asking the next backend.
 			case statusRateLimited:
-				// 熔断窗口由 breaker 维护,本批剩下的地址继续打没有意义,直接让位。
+				// The breaker maintains the window; hammering the rest of the batch
+				// is pointless, so yield immediately.
 				healthy.Store(false)
 			default:
 				healthy.Store(false)
@@ -301,10 +342,11 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 	}
 }
 
-// Close 释放后端资源。HTTP 后端没有长期资源,这里只是不让接口变得不对称。
+// Close releases backend resources. HTTP backends hold no long-lived resources;
+// this exists only so the interface stays symmetric.
 func (r *cachedResolver) Close() error { return nil }
 
-// unresolved 返回还没拿到结果的地址。
+// unresolved returns the addresses that have no result yet.
 func unresolved(pending []netip.Addr, hit map[netip.Addr]Location) []netip.Addr {
 	out := make([]netip.Addr, 0, len(pending))
 	for _, addr := range pending {
@@ -315,8 +357,9 @@ func unresolved(pending []netip.Addr, hit map[netip.Addr]Location) []netip.Addr 
 	return out
 }
 
-// expandByInput 把按归一地址索引的结果重新映射到调用方传入的原始字符串。
-// 调用方直接用 authorization.ip 索引即可,不必知道归一规则。
+// expandByInput remaps results keyed by normalized address back to the original
+// strings the caller passed in. The caller can index directly by
+// authorization.ip without knowing the normalization rules.
 func expandByInput(hit map[netip.Addr]Location, ips []string) map[string]Location {
 	if len(hit) == 0 {
 		return nil

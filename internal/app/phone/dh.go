@@ -1,8 +1,10 @@
-// Package phone 实现私聊 1:1 通话的信令状态机与 DH 参数下发。
+// Package phone implements the signaling state machine and DH parameter delivery for
+// private 1:1 calls.
 //
-// 服务端职责边界：信令转发、状态机、commit-reveal 核验（SHA256(g_a)==g_a_hash）、
-// connections 下发。媒体面由客户端 tgcalls 走 P2P/TURN，密钥交换是 E2E 的，
-// 服务端不知道也无法验证共享密钥本身。
+// Server responsibility boundary: signaling relay, state machine, commit-reveal
+// verification (SHA256(g_a)==g_a_hash), and connections delivery. The media plane runs
+// through client tgcalls over P2P/TURN; key exchange is E2E, so the server neither knows
+// nor can verify the shared key itself.
 package phone
 
 import (
@@ -11,35 +13,41 @@ import (
 	"fmt"
 )
 
-// DHConfigVersion 是 messages.getDhConfig 的服务端配置版本。p/g 是编译期常量，
-// 客户端缓存命中（请求 version 相同）时只回 dhConfigNotModified{random}。
+// DHConfigVersion is the server-side config version for messages.getDhConfig. p/g are
+// compile-time constants; on a client cache hit (same requested version) only
+// dhConfigNotModified{random} is returned.
 //
-// 版本 1 是 server-ready 之前沿用的占位值，不能继续复用：TDLib/DrKLO 会把 version
-// 与 p/g 一起持久化；私有 DC 客户端若带着同为 1、但来自另一配置 profile 的缓存，
-// 服务端错误返回 NotModified 会让密聊两端用不同 p/g，表现为接受方 Ready、发起方因
-// key fingerprint mismatch 立即 Closed。该版本必须在 p/g 变化时再次递增。
+// Version 1 was the placeholder used before server-ready and cannot be reused: TDLib/DrKLO
+// persist version together with p/g; if a private-DC client carries a cache that is also 1
+// but comes from a different config profile, a server mistakenly returning NotModified makes
+// the two secret-chat ends use different p/g, showing as the receiver Ready while the
+// initiator immediately Closed due to a key fingerprint mismatch. This version must be
+// incremented again whenever p/g changes.
 const DHConfigVersion = 20260811
 
-// DHG 是 DH generator。与官方一致取 3：TDesktop MTP::IsPrimeAndGood 对
-// 「官方 2048-bit prime + g∈{3,4,5,7}」有白名单快速通过路径，DrKLO native 同。
+// DHG is the DH generator. It is 3, matching the official: TDesktop MTP::IsPrimeAndGood
+// has a whitelist fast path for "official 2048-bit prime + g∈{3,4,5,7}", and DrKLO native
+// is the same.
 const DHG = 3
 
-// dhPrimeHex 是官方 2048-bit safe prime。与 internal/app/account/srp.go 的
-// baseP 同值（SRP 与通话 DH 共用官方参数）；改动任一处须同步另一处。
+// dhPrimeHex is the official 2048-bit safe prime. Same value as baseP in
+// internal/app/account/srp.go (SRP and call DH share the official parameters);
+// changing either one requires syncing the other.
 const dhPrimeHex = "c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c3720fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f642477fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a695811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed950d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b"
 
 var dhPrime = mustDecodeHex(dhPrimeHex)
 
-// maxDHRandomLength 钳制客户端请求的随机字节数，防御恶意大请求。
+// maxDHRandomLength clamps the number of random bytes a client can request, defending against maliciously large requests.
 const maxDHRandomLength = 1024
 
-// DHPrime 返回官方 2048-bit prime 的拷贝。
+// DHPrime returns a copy of the official 2048-bit prime.
 func DHPrime() []byte {
 	return append([]byte(nil), dhPrime...)
 }
 
-// DHRandom 生成恰好 n 字节加密随机数；n 钳制到 [0, maxDHRandomLength]。
-// 客户端契约要求 random 尺寸与请求一致（TDesktop 校验 random.size() 与其请求相同）。
+// DHRandom generates exactly n bytes of cryptographic random data; n is clamped to
+// [0, maxDHRandomLength]. The client contract requires the random size to match the
+// request (TDesktop verifies random.size() equals its request).
 func DHRandom(n int) ([]byte, error) {
 	if n < 0 {
 		n = 0

@@ -9,8 +9,10 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-// TestCheckCatchupRateLimit 锁定 Phase 2 difference 类 catch-up FLOOD_WAIT 行为：配置阈值后
-// 放行返回 nil、超限返回 FLOOD_WAIT 错误；阈值 <=0 或 Limiter 未装配时完全不限速（行为不变）。
+// TestCheckCatchupRateLimit pins the Phase 2 difference-type catch-up FLOOD_WAIT
+// behavior: once a threshold is configured, allowed returns nil and over-budget
+// returns a FLOOD_WAIT error; with a threshold <=0 or the Limiter not wired there
+// is no rate limiting at all (behavior unchanged).
 func TestCheckCatchupRateLimit(t *testing.T) {
 	const userID = int64(7001)
 
@@ -53,7 +55,7 @@ func TestCheckCatchupRateLimit(t *testing.T) {
 		if err == nil {
 			t.Fatal("over budget should return FLOOD_WAIT error")
 		}
-		// 默认 window 在未配置时回落 defaultCatchupRateWindow。
+		// The default window falls back to defaultCatchupRateWindow when unset.
 		if lim.calls[0].window != defaultCatchupRateWindow {
 			t.Fatalf("window = %v, want default %v when unset", lim.calls[0].window, defaultCatchupRateWindow)
 		}

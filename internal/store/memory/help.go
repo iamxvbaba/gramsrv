@@ -6,14 +6,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// HelpStore 是 store.AppConfigStore 和 store.CountryStore 的内存实现。
+// HelpStore is the in-memory implementation of store.AppConfigStore and store.CountryStore.
 type HelpStore struct {
 	mu        sync.RWMutex
 	appConfig map[string]domain.AppConfig
 	countries domain.CountriesList
 }
 
-// NewHelpStore 创建内存 HelpStore。
+// NewHelpStore creates an in-memory HelpStore.
 func NewHelpStore() *HelpStore {
 	return &HelpStore{appConfig: make(map[string]domain.AppConfig)}
 }

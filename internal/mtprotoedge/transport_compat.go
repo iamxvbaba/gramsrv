@@ -88,8 +88,10 @@ func newCompatTransportListener(codec func() transport.Codec, listener net.Liste
 	return &compatTransportListener{codec: codec, listener: listener, budget: budget}
 }
 
-// singleConnListener 是一个只产出一条「已接受」连接、随后阻塞到关闭的 net.Listener。
-// 生产接入已直接提升单连接；这个适配器仅保留给仍需 listener 形态的测试/调用方。
+// singleConnListener is a net.Listener that yields exactly one "accepted"
+// connection and then blocks until closed. Production intake promotes a single
+// connection directly; this adapter is retained only for tests/callers that still
+// need the listener shape.
 type singleConnListener struct {
 	addr net.Addr
 	ch   chan net.Conn
@@ -260,8 +262,9 @@ func (c *compatTransportConn) Send(ctx context.Context, b *bin.Buffer) error {
 	return c.SendDeadline(deadline, b)
 }
 
-// SendDeadline 按显式写超时发送一帧（deadline 为零值表示不设超时）。
-// 出站热路径（Conn.writeFrame）走这里，免去 per-frame context timer 分配。
+// SendDeadline sends a frame with an explicit write timeout (a zero deadline means
+// no timeout). The outbound hot path (Conn.writeFrame) goes through here, avoiding
+// per-frame context timer allocation.
 func (c *compatTransportConn) SendDeadline(deadline time.Time, b *bin.Buffer) error {
 	return c.sendDeadline(deadline, b, nil)
 }
@@ -444,9 +447,11 @@ func (c *compatTransportConn) Recv(ctx context.Context, b *bin.Buffer) error {
 	return c.RecvDeadline(deadline, b)
 }
 
-// RecvDeadline 按显式读超时收一帧（deadline 为零值表示不设超时）。
-// serveConn 的每帧读走这里，免去 per-frame context timer 分配；连接取消仍由
-// serveConn 的 ctx watcher 主动 Close 底层连接来解除阻塞（与旧行为一致）。
+// RecvDeadline receives a frame with an explicit read timeout (a zero deadline
+// means no timeout). serveConn's per-frame read goes through here, avoiding
+// per-frame context timer allocation; connection cancellation is still unblocked by
+// serveConn's ctx watcher actively Closing the underlying connection (matching the
+// old behavior).
 func (c *compatTransportConn) RecvDeadline(deadline time.Time, b *bin.Buffer) error {
 	c.readMux.Lock()
 	defer c.readMux.Unlock()
@@ -773,8 +778,8 @@ func (q *quickAckPaddedIntermediateCodec) Write(w io.Writer, b *bin.Buffer) erro
 	if err := validateOutgoingCompatMessage(b); err != nil {
 		return err
 	}
-	// padding 随机数走 per-codec 缓冲预读；codec 写入被 compatTransportConn.writeMux
-	// 串行化，单 goroutine 访问安全。
+	// Padding random data is read through a per-codec buffered pre-read; codec writes
+	// are serialized by compatTransportConn.writeMux, so single-goroutine access is safe.
 	if q.rand == nil {
 		q.rand = bufio.NewReaderSize(tdcrypto.DefaultRand(), 64)
 	}

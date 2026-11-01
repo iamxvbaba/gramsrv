@@ -12,13 +12,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// LangPackStore 用 PostgreSQL 实现 store.LangPackStore。
+// LangPackStore implements store.LangPackStore with PostgreSQL.
 type LangPackStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewLangPackStore 基于 pgx 连接池（或事务）创建 LangPackStore。
+// NewLangPackStore creates a LangPackStore backed by a pgx pool (or transaction).
 func NewLangPackStore(db sqlcgen.DBTX) *LangPackStore {
 	return &LangPackStore{db: db, q: sqlcgen.New(db)}
 }

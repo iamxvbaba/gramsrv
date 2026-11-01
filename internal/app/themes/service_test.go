@@ -25,7 +25,7 @@ func TestServiceCreateAutoSlugAndCreatorGuard(t *testing.T) {
 		t.Fatalf("creator mismatch")
 	}
 
-	// 两次空 slug 创建得到不同的自动 slug。
+	// Two empty-slug creates yield different automatic slugs.
 	b, err := svc.Create(ctx, domain.ThemeSpec{CreatorUserID: owner, Title: "B"})
 	if err != nil {
 		t.Fatalf("create b: %v", err)
@@ -34,12 +34,12 @@ func TestServiceCreateAutoSlugAndCreatorGuard(t *testing.T) {
 		t.Fatalf("auto slugs collided: %q", a.Slug)
 	}
 
-	// 非创建者不能改。
+	// A non-creator cannot edit.
 	if _, err := svc.Update(ctx, 2002, domain.ThemeRef{ID: a.ID, AccessHash: a.AccessHash}, domain.ThemeUpdate{Title: strptr("hacked")}); !errors.Is(err, domain.ErrThemeInvalid) {
 		t.Fatalf("non-creator update err = %v, want ErrThemeInvalid", err)
 	}
 
-	// 创建者可改 title + document。
+	// The creator can edit title + document.
 	newTitle := "A2"
 	newDoc := int64(99)
 	updated, err := svc.Update(ctx, owner, domain.ThemeRef{ID: a.ID, AccessHash: a.AccessHash}, domain.ThemeUpdate{Title: &newTitle, DocumentID: &newDoc})
@@ -50,7 +50,7 @@ func TestServiceCreateAutoSlugAndCreatorGuard(t *testing.T) {
 		t.Fatalf("update result = %+v, want title A2 doc 99", updated)
 	}
 
-	// install 计数 + 列表。
+	// install count + list.
 	if err := svc.Install(ctx, owner, domain.ThemeRef{ID: a.ID, AccessHash: a.AccessHash}, true); err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestServiceCreateAutoSlugAndCreatorGuard(t *testing.T) {
 		t.Fatalf("installed list = %+v, want [a]", list)
 	}
 
-	// 未知引用 → ErrThemeInvalid。
+	// Unknown reference → ErrThemeInvalid.
 	if err := svc.Install(ctx, owner, domain.ThemeRef{Slug: "nope"}, false); !errors.Is(err, domain.ErrThemeInvalid) {
 		t.Fatalf("install unknown err = %v, want ErrThemeInvalid", err)
 	}

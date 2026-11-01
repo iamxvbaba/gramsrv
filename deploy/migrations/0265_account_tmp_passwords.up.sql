@@ -1,4 +1,4 @@
--- v2 编号 0265；移植自 main 0241_account_tmp_passwords（main 8fce8c54，B14），见 docs/main-v2-sync.md。
+-- v2 number 0265; ported from main 0241_account_tmp_passwords (main 8fce8c54, B14), see docs/main-v2-sync.md.
 -- account.getTmpPassword grants. A grant belongs to one permanent
 -- authorization: issuing again replaces it, and deleting the authorization
 -- (logout, session reset, account deletion) deletes it. Only the SHA-256 of

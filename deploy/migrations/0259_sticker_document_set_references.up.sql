@@ -1,4 +1,4 @@
--- v2 编号 0259；移植自 main 0235_sticker_document_set_references（main 9a6059db，B8），见 docs/main-v2-sync.md。
+-- v2 number 0259; ported from main 0235_sticker_document_set_references (main 9a6059db, B8), see docs/main-v2-sync.md.
 -- Different source-account exports overwrote the same document with conflicting
 -- set credentials. Repair proven catalog references, preserving attribute order.
 WITH repaired AS (

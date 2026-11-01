@@ -8,9 +8,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// pushUserMessageTransient 推送 transient（typing/presence）update：未就绪的
-// session 直接跳过、不进 pending。生产 Edge control 必须显式实现该能力；缺失时
-// fail closed，避免退回普通 durable/pending push 语义。
+// pushUserMessageTransient pushes a transient (typing/presence) update: sessions that are not
+// ready are skipped and never enter pending. Production Edge control must implement this
+// explicitly; when it is missing this fails closed rather than falling back to ordinary
+// durable/pending push semantics.
 func (r *Router) pushUserMessageTransient(ctx context.Context, userID int64, logMessage string, msg tg.UpdatesClass) int {
 	if r.deps.Sessions == nil || userID == 0 || msg == nil {
 		return 0

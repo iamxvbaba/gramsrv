@@ -13,15 +13,15 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// PinPrivateMessage 翻转私聊消息的置顶状态。官方语义：
-//   - pin 且非 pm_oneside：双方 box 行同步置位（对端 box 经
-//     private_message_id 翻译），双方各收一条带账号 pts 的
-//     updatePinnedMessages；
-//   - pin 且 pm_oneside / Saved Messages：仅本侧；
-//   - unpin：无 oneside 形态，双侧清除（对端行未置顶时自然跳过）；
-//   - 状态已是目标值：幂等 no-op，不烧 pts、不发事件。
+// PinPrivateMessage flips the pinned state of a private message. Official semantics:
+//   - pin and not pm_oneside: both box rows are set together (the peer box translated via
+//     private_message_id), and each side receives an updatePinnedMessages with account pts;
+//   - pin and pm_oneside / Saved Messages: this side only;
+//   - unpin: no oneside form; both sides are cleared (skipped naturally when the peer row is not
+//     pinned);
+//   - state already at the target value: idempotent no-op, burns no pts and emits no event.
 //
-// 共享 pin 的服务消息、pin 状态、PTS 与 outbox 在同一事务提交。
+// The shared pin's service message, pin state, PTS and outbox are committed in the same transaction.
 func (s *MessageStore) PinPrivateMessage(ctx context.Context, req domain.PinPrivateMessageRequest) (res domain.PinPrivateMessageResult, err error) {
 	res = domain.PinPrivateMessageResult{OwnerUserID: req.OwnerUserID}
 	if req.OwnerUserID == 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == 0 {
@@ -128,8 +128,9 @@ func (s *MessageStore) pinPrivateMessageTx(ctx context.Context, tx pgx.Tx, req d
 		boxID  int
 	}
 	sides := []pinSide{{userID: req.OwnerUserID, peer: req.Peer, boxID: int(owned.BoxID)}}
-	// 对端侧翻转：pin 仅在非 oneside 时传播；unpin 恒尝试清除（oneside
-	// pin 的对端行本就未置顶，SetMessageBoxPinned 0 行自然跳过）。
+	// Peer-side flip: pin only propagates when not oneside; unpin always attempts to clear (the
+	// peer row of a oneside pin is not pinned anyway, so SetMessageBoxPinned affecting 0 rows skips
+	// naturally).
 	propagatePeer := req.Peer.ID != req.OwnerUserID && (!req.Pinned || !req.PmOneside)
 	if propagatePeer {
 		peerRow, peerErr := qtx.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
@@ -202,9 +203,10 @@ func (s *MessageStore) pinPrivateMessageTx(ctx context.Context, tx pgx.Tx, req d
 	return res, nil
 }
 
-// UnpinAllPrivateMessages 清空与某私聊 peer 的全部置顶。本侧整批清除，
-// 共享置顶经 private_message_id 同步清除对端行；双方各收一条带账号 pts
-// 的 updatePinnedMessages{pinned:false}，messages 为各自视角 box id。
+// UnpinAllPrivateMessages clears all pins with a private peer. This side clears in one batch, and
+// shared pins clear the peer rows in step via private_message_id; each side receives an
+// updatePinnedMessages{pinned:false} with account pts, with messages being the box ids from its own
+// viewpoint.
 func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.UnpinAllPrivateMessagesRequest) (res domain.PinPrivateMessageResult, err error) {
 	res = domain.PinPrivateMessageResult{OwnerUserID: req.OwnerUserID}
 	if req.OwnerUserID == 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == 0 {

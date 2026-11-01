@@ -7,11 +7,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// BotStore 持久化 bot 账号元数据（bots 表）与内置 bot 对话状态（bot_chat_states 表）。
+// BotStore persists bot account metadata (bots table) and built-in bot chat state (bot_chat_states table).
 //
-// CreateBotAccountWithDelivery 必须原子地创建 users 行（is_bot=true,
-// bot_info_version=1, phone 空）、bots 行与 owner absolute delivery；username
-// 冲突返回 domain.ErrUsernameOccupied。不存在 mutation-only 创建入口。
+// CreateBotAccountWithDelivery must atomically create the users row (is_bot=true,
+// bot_info_version=1, empty phone), the bots row and the owner's absolute delivery; a username
+// conflict returns domain.ErrUsernameOccupied. There is no mutation-only creation entry point.
 type BotStore interface {
 	CreateBotAccountWithDelivery(ctx context.Context, user domain.User, profile domain.BotProfile, effects DeliveryEffectsBuilder[BotLifecycleDeliverySnapshot]) (domain.User, domain.BotProfile, error)
 	DeleteBotAccountWithDelivery(ctx context.Context, botUserID int64, effects DeliveryEffectsBuilder[BotLifecycleDeliverySnapshot]) (domain.User, error)
@@ -19,13 +19,13 @@ type BotStore interface {
 	GetBotInfo(ctx context.Context, botUserID int64, langCode string) (domain.BotInfoValues, bool, error)
 	ListBotsByOwner(ctx context.Context, ownerUserID int64) ([]domain.BotProfile, error)
 	CountBotsByOwner(ctx context.Context, ownerUserID int64) (int, error)
-	// UpdateBotTokenSecret 写入新 token 随机段；旧 token 立即失效（无缓存层）。
+	// UpdateBotTokenSecret writes a new random token segment; the old token is invalidated immediately (no cache layer).
 	UpdateBotTokenSecret(ctx context.Context, botUserID int64, secret string) error
 
-	// 以下 P2 元数据写入：每个都在单事务内同时 bump 该 bot 对应 users 行的
-	// bot_info_version（客户端据此感知变更并重拉 getFullUser），返回 bump 后的新
-	// version。UpdateBotInfoWithDelivery 跨 users（first_name/about）与 bots（description）两表，
-	// 因此放在同一原子方法里。
+	// The P2 metadata writes below each bump bot_info_version on the bot's users row in the same
+	// transaction (clients use it to notice changes and refetch getFullUser) and return the bumped
+	// version. UpdateBotInfoWithDelivery spans the users (first_name/about) and bots (description)
+	// tables, so it lives in one atomic method.
 	UpdateBotCommandsWithDelivery(ctx context.Context, botUserID int64, commands []domain.BotCommand, effects DeliveryEffectsBuilder[BotCommandsDeliverySnapshot]) (newVersion int, changed bool, err error)
 	UpdateBotInfoWithDelivery(ctx context.Context, botUserID int64, upd domain.BotInfoUpdate, effects DeliveryEffectsBuilder[UserAudienceDeliverySnapshot]) (newVersion int, changed bool, err error)
 	UpdateBotMenuButton(ctx context.Context, botUserID int64, button domain.BotMenuButton) (newVersion int, err error)

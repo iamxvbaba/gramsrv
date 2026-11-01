@@ -10,8 +10,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestWebPageForURL 验证 getWebPage 决策：done 卡片→webPage；hash 匹配→webPageNotModified；
-// 无预览/失败→webPageEmpty（带 URL）。
+// TestWebPageForURL verifies the getWebPage decision: done card -> webPage; hash
+// match -> webPageNotModified; no preview/failure -> webPageEmpty (with URL).
 func TestWebPageForURL(t *testing.T) {
 	ctx := context.Background()
 	const url = "https://example.com/x"
@@ -53,7 +53,8 @@ func TestWebPageForURL(t *testing.T) {
 	})
 
 	t.Run("cache-first-skips-resolve", func(t *testing.T) {
-		// 缓存命中时不应再调 ResolveWebPage（避免请求路径阻塞抓取）。
+		// On a cache hit, ResolveWebPage must not be called again (avoid blocking
+		// the request path on a fetch).
 		cf := &fakeFiles{
 			lookupWebPageFn: func(u string) (domain.MessageWebPage, bool) {
 				return domain.MessageWebPage{State: domain.MessageWebPageStateDone, ID: 1, URL: u, DisplayURL: "x", Title: "Cached", Hash: 7}, true

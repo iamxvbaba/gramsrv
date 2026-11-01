@@ -2,8 +2,8 @@ package domain
 
 import "errors"
 
-// 文件分片上传与媒体相关业务错误。rpc 层据此映射为对应 rpc_error（见 internal/rpc/errors.go）：
-// 文件分片（part invalid/parts invalid/part too big）、上传配额、照片与文档。
+// File-part upload and media-related business errors. The rpc layer maps these to the corresponding rpc_error (see internal/rpc/errors.go):
+// file parts (part invalid/parts invalid/part too big), upload quota, photos and documents.
 var (
 	ErrFilePartInvalid     = errors.New("file part invalid")
 	ErrFilePartsInvalid    = errors.New("file parts invalid")

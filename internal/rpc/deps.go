@@ -13,11 +13,14 @@ import (
 	"telesrv/internal/updatecdn"
 )
 
-// 本文件按「消费者定义接口」惯例，在 rpc 包定义 Router 依赖的业务服务接口。
-// app/* 的 Service 实现它们；微服务化时 gRPC client 同样可实现，rpc 层无需改动。
-// 接口方法只用 domain 类型与基本类型，不依赖 app 具体包——这是 rpc↔业务的契约边界。
+// Following the "consumer defines the interface" convention, this file defines the
+// business service interfaces Router depends on in the rpc package. app/* Service
+// types implement them; gRPC clients can implement them too when going
+// microservices, without changing the rpc layer. Interface methods use only domain
+// and basic types, never a concrete app package -- this is the rpc<->business
+// contract boundary.
 
-// AuthService 抽象登录/注册业务。
+// AuthService abstracts the login/registration business.
 type AuthService interface {
 	BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error)
 	ResolveAuthKey(ctx context.Context, authKeyID [8]byte) ([8]byte, bool, error)
@@ -29,14 +32,15 @@ type AuthService interface {
 	ResendCode(ctx context.Context, phone, phoneCodeHash string) (string, error)
 	CancelCode(ctx context.Context, phone, phoneCodeHash string) error
 	SignIn(ctx context.Context, a domain.Authorization, phone, phoneCodeHash, code string, delivery store.DeliveryEffectsBuilder[store.AuthorizationDeliverySnapshot]) (domain.User, domain.Message, bool, error)
-	// SignInWithEmail 处理带 email_verification 的 auth.signIn（登录邮箱路径）。
+	// SignInWithEmail handles auth.signIn with email_verification (the login-email path).
 	SignInWithEmail(ctx context.Context, a domain.Authorization, phone, phoneCodeHash, code string, delivery store.DeliveryEffectsBuilder[store.AuthorizationDeliverySnapshot]) (domain.User, domain.Message, bool, error)
 	SignUp(ctx context.Context, a domain.Authorization, phone, phoneCodeHash, firstName, lastName string) (domain.User, domain.Message, error)
 	AcceptLoginToken(ctx context.Context, a domain.Authorization, userID int64, delivery store.DeliveryEffectsBuilder[store.AuthorizationDeliverySnapshot]) (domain.Authorization, error)
-	// BindVerifiedLogin 绑定一个已由外部强因子(passkey)验证身份的用户,直接完成授权。
+	// BindVerifiedLogin binds a user already verified by an external strong factor (passkey), completing authorization directly.
 	BindVerifiedLogin(ctx context.Context, a domain.Authorization, userID int64, delivery store.DeliveryEffectsBuilder[store.AuthorizationDeliverySnapshot]) (domain.User, error)
-	// SignInBot 校验 bot token 并绑定授权（auth.importBotAuthorization）；
-	// 校验失败返回 domain.ErrBotTokenInvalid。
+	// SignInBot validates the bot token and binds authorization
+	// (auth.importBotAuthorization); a validation failure returns
+	// domain.ErrBotTokenInvalid.
 	SignInBot(ctx context.Context, a domain.Authorization, token string) (domain.User, error)
 	LogOut(ctx context.Context, authKeyID [8]byte) error
 	Authorization(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
@@ -96,13 +100,13 @@ const (
 
 type SemanticTransientSessionBinder = edgecontrol.SemanticTransientPusher
 
-// RateLimiter 抽象 RPC 高频写操作限流。
+// RateLimiter abstracts rate limiting of high-frequency RPC write operations.
 type RateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, retryAfterSeconds int, err error)
 	AllowN(ctx context.Context, key string, cost, limit int, window time.Duration) (allowed bool, retryAfterSeconds int, err error)
 }
 
-// UsersService 抽象用户查询。
+// UsersService abstracts user queries.
 type UsersService interface {
 	Self(ctx context.Context, userID int64) (domain.User, error)
 	ByID(ctx context.Context, currentUserID, userID int64) (domain.User, bool, error)
@@ -152,8 +156,9 @@ type SparseBatchViewerUsersResolver interface {
 	ByIDsForViewerUserIDs(ctx context.Context, userIDsByViewer map[int64][]int64) (map[int64][]domain.User, error)
 }
 
-// BotsService 抽象 bot 元数据查询与管理（bots.* RPC + userFull.bot_info hydrate）。
-// 写方法返回 bump 后的 bot_info_version（客户端据此重拉）。
+// BotsService abstracts bot metadata queries and management (bots.* RPC +
+// userFull.bot_info hydrate). Write methods return the bumped bot_info_version (the
+// client refetches from it).
 type BotsService interface {
 	BotInfo(ctx context.Context, botUserID int64) (domain.BotProfile, bool, error)
 	OwnsBot(ctx context.Context, ownerUserID, botUserID int64) (bool, error)
@@ -231,7 +236,7 @@ type ServiceBotInlineResults interface {
 	OnInlineQuery(ctx context.Context, botUserID, userID int64, query, offset string) (domain.BotInlineResults, bool, error)
 }
 
-// UserIdentityService 是 UsersService 的资料扩展能力，用于 username/phone 解析。
+// UserIdentityService is the profile extension capability of UsersService, used for username/phone resolution.
 type UserIdentityService interface {
 	CheckUsername(ctx context.Context, userID int64, username string) (bool, error)
 	UpdateProfile(ctx context.Context, userID int64, update domain.UserProfileUpdate) (domain.User, error)
@@ -252,21 +257,23 @@ type UserProfileDeliveryService interface {
 	UpdateColorWithDelivery(ctx context.Context, userID int64, forProfile bool, color domain.PeerColor, build store.UserDeliveryPayloadBuilder, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, error)
 }
 
-// UserPremiumService 是 UsersService 的会员扩展能力：授予/续期、到期清理
-// （PremiumSweeper）与 emoji status（premium 专属）。设计见 docs/premium-module.md。
+// UserPremiumService is the Premium extension capability of UsersService:
+// grant/renew, expiry cleanup (PremiumSweeper) and emoji status (Premium-only).
+// Design: see docs/premium-module.md.
 type UserPremiumService interface {
 	GrantPremium(ctx context.Context, userID int64, months int) (domain.User, error)
 	SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error)
 	SweepExpiredPremiumWithDelivery(ctx context.Context, now int64, limit int, effects store.DeliveryEffectsBuilder[[]domain.User]) ([]domain.User, error)
 }
 
-// UserPremiumStatusService 暴露轻量会员判断（基础用户缓存路径，不做 viewer
-// 投影），供限额双档（reaction 上限等）低成本调用。
+// UserPremiumStatusService exposes a lightweight Premium check (base user cache path,
+// no viewer projection), for low-cost calls by the dual-tier limits (reaction cap
+// etc.).
 type UserPremiumStatusService interface {
 	PremiumActive(ctx context.Context, userID int64) bool
 }
 
-// AccountService 抽象账号设置查询。
+// AccountService abstracts account settings queries.
 type AccountService interface {
 	SendChangePhoneCode(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64, phone string) (string, domain.AuthCodeDelivery, error)
 	ChangePhoneWithDelivery(ctx context.Context, userID int64, authKeyID, originRawAuthKeyID [8]byte, sessionID int64, phone, phoneCodeHash, code string, date int, effects store.DeliveryEffectsBuilder[store.UserDeliverySnapshot]) (domain.PhoneChangeResult, error)
@@ -283,7 +290,7 @@ type AccountService interface {
 	ConfirmPasswordEmail(ctx context.Context, userID int64, code string) error
 	ResendPasswordEmail(ctx context.Context, userID int64) error
 	CancelPasswordEmail(ctx context.Context, userID int64) error
-	// 登录邮箱（独立于 2FA 恢复邮箱）：authed 走 userID，登录流程/重置走 phone。
+	// Login email (independent of the 2FA recovery email): authed goes through userID, login flow/reset goes through phone.
 	SendLoginEmailCode(ctx context.Context, userID int64, phone, phoneCodeHash, email string, setup bool) (string, int, error)
 	VerifyLoginEmail(ctx context.Context, userID int64, phone, phoneCodeHash, code string, setup bool) (string, error)
 	SetLoginEmail(ctx context.Context, userID int64, email string) error
@@ -304,8 +311,9 @@ type AccountService interface {
 	SetReactionsNotifySettings(ctx context.Context, userID int64, settings domain.ReactionsNotifySettings) (domain.AccountReactionSettings, error)
 }
 
-// AccountBusinessAutomationService 是账号业务自动化的可选扩展。
-// 只暴露 domain DTO，避免 Telegram TL 类型越过 rpc 边界。
+// AccountBusinessAutomationService is an optional extension for account business
+// automation. It exposes only domain DTOs, avoiding Telegram TL types crossing the
+// rpc boundary.
 type AccountBusinessAutomationService interface {
 	GetBusinessProfile(ctx context.Context, userID int64) (domain.BusinessProfile, bool, error)
 	UpdateBusinessWorkHours(ctx context.Context, userID int64, hours *domain.BusinessWorkHours) (domain.BusinessProfile, error)
@@ -342,7 +350,7 @@ type PrivacyDeliveryService interface {
 	SetRulesWithDelivery(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, rules []domain.PrivacyRule, build store.PrivacyDeliveryPayloadBuilder, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.PrivacyRules, error)
 }
 
-// HelpService 抽象启动配置与国家区号目录。
+// HelpService abstracts startup config and the country dialing-code catalog.
 type HelpService interface {
 	GetAppConfig(ctx context.Context, userID int64, hash int) (domain.AppConfig, bool, error)
 	GetCountries(ctx context.Context, langCode string, hash int) (domain.CountriesList, bool, error)
@@ -370,7 +378,7 @@ type AccountDeletionNotificationService interface {
 	DeliverAccountDeletionNotification(ctx context.Context, id int64, now time.Time, delivery store.DeliveryOutboxEnqueue) error
 }
 
-// UpdatesService 抽象 update 状态查询。
+// UpdatesService abstracts update state queries.
 type UpdatesService interface {
 	GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
 	CurrentState(ctx context.Context, userID int64) (domain.UpdateState, error)
@@ -403,7 +411,7 @@ type UpdatesService interface {
 	RecordDraftMessage(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, topMsgID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 }
 
-// ContactsService 抽象通讯录查询。
+// ContactsService abstracts contact-list queries.
 type ContactsService interface {
 	GetContacts(ctx context.Context, userID int64, hash int64) (domain.ContactList, bool, error)
 	ContactIDs(ctx context.Context, userID int64, hash int64) ([]int, bool, error)
@@ -423,7 +431,7 @@ type ContactsService interface {
 	GetBlocked(ctx context.Context, userID int64, offset, limit int) (domain.BlockedContactList, error)
 }
 
-// DialogsService 抽象会话列表查询。
+// DialogsService abstracts dialog list queries.
 type DialogsService interface {
 	MutateAccountDialogs(ctx context.Context, mutation store.DialogAccountMutation, effects store.DeliveryEffectsBuilder[store.DialogAccountMutationSnapshot]) (store.DialogAccountMutationSnapshot, error)
 	GetDialogsHash(ctx context.Context, userID int64, filter domain.DialogFilter) (domain.DialogHashCheck, error)
@@ -449,7 +457,7 @@ type DialogsService interface {
 	EditPeerFolders(ctx context.Context, userID int64, peers []domain.FolderPeerUpdate) error
 }
 
-// ChatlistsService 抽象 Telegram shared folders / chatlists 业务。
+// ChatlistsService abstracts the Telegram shared folders / chatlists business.
 type ChatlistsService interface {
 	ExportInvite(ctx context.Context, userID int64, filterID int, title string, peers []domain.DialogFolderPeer, date int) (domain.DialogFolder, domain.ChatlistInvite, error)
 	ListInvites(ctx context.Context, userID int64, filterID int) ([]domain.ChatlistInvite, error)
@@ -464,7 +472,7 @@ type ChatlistsService interface {
 	LeaveSuggestions(ctx context.Context, userID int64, localFilterID int) ([]domain.DialogFolderPeer, error)
 }
 
-// MessagesService 抽象消息历史、搜索与已读。
+// MessagesService abstracts message history, search and read state.
 type MessagesService interface {
 	ScheduleMessage(ctx context.Context, userID int64, req domain.ScheduleMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error)
 	EditScheduledMessage(ctx context.Context, userID int64, req domain.EditScheduledMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error)
@@ -527,14 +535,16 @@ type TranslationService interface {
 	PeerDisabled(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
 }
 
-// AlbumGroupService 是 MessagesService 的可选、生产必备能力：sendMultiMedia 在
-// 解析任何媒体或落第一条消息前，持久预留整批 random_id 的 grouped_id。
-// 单独定义可避免让不触发 sendMultiMedia 的轻量测试替身实现无关方法。
+// AlbumGroupService is an optional, production-required MessagesService capability:
+// sendMultiMedia durably reserves the grouped_id for the whole batch of random_ids
+// before parsing any media or storing the first message. Defining it separately
+// avoids forcing lightweight test doubles that never trigger sendMultiMedia to
+// implement unrelated methods.
 type AlbumGroupService interface {
 	ReserveAlbumGroup(ctx context.Context, userID int64, req domain.AlbumGroupReservationRequest) (int64, error)
 }
 
-// StoriesService 抽象 story 读取、已读、观看与 reaction 状态。
+// StoriesService abstracts story read, read-state, viewing and reaction state.
 type StoriesService interface {
 	CreateStory(ctx context.Context, userID int64, req domain.StoryCreateRequest, effects store.DeliveryEffectsBuilder[store.StoryMutationSnapshot]) (domain.StoryCreateResult, error)
 	GetAllStories(ctx context.Context, viewerUserID int64, hidden bool, now, limit int) (domain.StoryList, error)
@@ -566,13 +576,14 @@ type StoriesService interface {
 	CanSendStory(ctx context.Context, viewerUserID int64, peer domain.Peer) (int, error)
 }
 
-// ChannelsService 抽象超级群/频道业务。
+// ChannelsService abstracts supergroup/channel business.
 type ChannelsService interface {
 	CreateMegagroupFromCreateChat(ctx context.Context, userID int64, req domain.CreateChannelRequest) (domain.CreateChannelResult, error)
 	CreateChannel(ctx context.Context, userID int64, req domain.CreateChannelRequest) (domain.CreateChannelResult, error)
 	GetChannel(ctx context.Context, userID, channelID int64) (domain.ChannelView, error)
-	// ResolveChannel 是 GetChannel 的轻量版（仅访问校验 + Channel/Self，跳过 dialog/boost），
-	// 供 inputPeerFor 等只需 access_hash / 频道标志的解析路径用。
+	// ResolveChannel is the lightweight version of GetChannel (access check only +
+	// Channel/Self, skipping dialog/boost), for resolution paths like inputPeerFor
+	// that only need access_hash / channel flags.
 	ResolveChannel(ctx context.Context, userID, channelID int64) (domain.ChannelView, error)
 	GetChannels(ctx context.Context, userID int64, channelIDs []int64) ([]domain.ChannelView, error)
 	GetJoinableChannel(ctx context.Context, userID, channelID int64) (domain.Channel, error)
@@ -583,9 +594,9 @@ type ChannelsService interface {
 	JoinChannel(ctx context.Context, userID, channelID int64, date int, effects store.DeliveryEffectsBuilder[store.ChannelPendingJoinDeliverySnapshot]) (domain.CreateChannelResult, error)
 	LeaveChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
 	EditTitle(ctx context.Context, userID int64, req domain.EditChannelTitleRequest) (domain.EditChannelTitleResult, error)
-	// EditFactCheck 写入/删除消息的 Layer 231 事实核查标签；空文本表示删除。
+	// EditFactCheck writes/deletes a message's Layer 231 fact-check label; empty text means delete.
 	EditFactCheck(ctx context.Context, userID int64, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error)
-	// GetFactChecks 批量读取消息的事实核查标签。
+	// GetFactChecks batch-reads messages' fact-check labels.
 	GetFactChecks(ctx context.Context, userID, channelID int64, messageIDs []int) (domain.FactCheckList, error)
 	SetWallpaper(ctx context.Context, userID int64, req domain.SetChannelWallpaperRequest) (domain.SetChannelWallpaperResult, error)
 	EditAbout(ctx context.Context, userID int64, req domain.EditChannelAboutRequest) (domain.Channel, error)
@@ -704,7 +715,7 @@ type ChannelsService interface {
 	ActiveChannelIDsForUser(ctx context.Context, userID, afterChannelID int64, limit int) ([]int64, error)
 	DirtyActiveChannelsForUser(ctx context.Context, userID int64, sinceDate int, afterChannelID int64, limit int) ([]domain.DirtyChannel, error)
 	ActiveMemberIDs(ctx context.Context, userID, channelID int64, limit int) ([]int64, error)
-	// SetActiveCall / AppendCallServiceMessage 是群通话模块的频道侧挂接点。
+	// SetActiveCall / AppendCallServiceMessage are the channel-side attachment points of the group call module.
 	SetActiveCall(ctx context.Context, channelID, callID, callAccessHash int64, notEmpty bool) (domain.Channel, error)
 	AppendCallServiceMessage(ctx context.Context, channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error)
 	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID int64, savedID int64, date int, action domain.ChannelMessageAction) error
@@ -750,18 +761,19 @@ type CommunitiesService interface {
 	SearchScope(ctx context.Context, userID, communityID int64) (domain.CommunitySearchScope, error)
 }
 
-// FilesService 抽象文件上传分片、下载与媒体（document/photo）组装。
-// 方法只用 domain 类型；rpc 层负责 tg.InputFileLocation / InputMedia ↔ domain 转换。
+// FilesService abstracts file upload parts, download and media (document/photo)
+// assembly. Methods use only domain types; the rpc layer converts
+// tg.InputFileLocation / InputMedia <-> domain.
 type FilesService interface {
 	SaveFilePart(ctx context.Context, ownerUserID, fileID int64, part int, bytes []byte) (bool, error)
 	SaveBigFilePart(ctx context.Context, ownerUserID, fileID int64, part, totalParts int, bytes []byte) (bool, error)
 	GetFile(ctx context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error)
 	GetFileHashes(ctx context.Context, req domain.FileHashRequest) ([]domain.FileHash, bool, error)
-	// CreateEncryptedFileFromUpload 把密聊上传分片组装成盲 blob 并铸造 EncryptedFile 快照（P2）。
+	// CreateEncryptedFileFromUpload assembles secret chat upload parts into a blind blob and mints an EncryptedFile snapshot (P2).
 	CreateEncryptedFileFromUpload(ctx context.Context, file domain.UploadedFileRef, keyFingerprint int) (domain.EncryptedFileRef, error)
-	// GeoMapTile 渲染 geo 消息地图缩略占位图（upload.getWebFile），确定性、无外部依赖。
+	// GeoMapTile renders the geo message map thumbnail placeholder (upload.getWebFile), deterministic and with no external dependency.
 	GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, string)
-	// 资源读取（reaction / sticker / document）。
+	// Resource reads (reaction / sticker / document).
 	ListAvailableReactions(ctx context.Context) ([]domain.AvailableReaction, error)
 	AvailableEffects(ctx context.Context) ([]domain.AvailableEffect, int, error)
 	GetDocuments(ctx context.Context, ids []int64) ([]domain.Document, error)
@@ -776,20 +788,25 @@ type FilesService interface {
 	ChangeStickerPosition(ctx context.Context, actorUserID int64, documentID int64, accessHash int64, position int, effects store.DeliveryEffectsBuilder[store.StickerSetMutation]) (domain.StickerSet, []domain.Document, error)
 	RenameStickerSet(ctx context.Context, actorUserID int64, ref domain.StickerSetRef, title string, effects store.DeliveryEffectsBuilder[store.StickerSetMutation]) (domain.StickerSet, []domain.Document, error)
 	DeleteStickerSet(ctx context.Context, actorUserID int64, ref domain.StickerSetRef, effects store.DeliveryEffectsBuilder[store.StickerSetMutation]) (domain.StickerSetKind, error)
-	// 头像（profile photo）与消息媒体组装。
+	// Avatar (profile photo) and message media assembly.
 	CreatePhotoFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error)
 	CreatePhotoFromBytes(ctx context.Context, data []byte) (domain.Photo, error)
-	// CreatePhotoFromURL / CreateDocumentFromURL 抓取外链媒体（inputMediaPhoto/DocumentExternal），
-	// SSRF 安全；未启用返回 ErrExternalMediaDisabled。
+	// CreatePhotoFromURL / CreateDocumentFromURL fetch external-link media
+	// (inputMediaPhoto/DocumentExternal), SSRF-safe; returns ErrExternalMediaDisabled
+	// when not enabled.
 	CreatePhotoFromURL(ctx context.Context, rawURL string) (domain.Photo, error)
 	CreateDocumentFromURL(ctx context.Context, rawURL string) (domain.Document, error)
-	// ResolveWebPage 解析链接预览（messages.getWebPagePreview / 发送挂卡片）；SSRF 安全，
-	// 经 L1+L3 去重缓存。未启用返回 ErrWebPagePreviewDisabled；瞬时失败返回错误（调用方降级）。
+	// ResolveWebPage resolves a link preview (messages.getWebPagePreview / sending
+	// with an attached card); SSRF-safe, deduped through the L1+L3 cache. Returns
+	// ErrWebPagePreviewDisabled when not enabled; a transient failure returns an error
+	// (the caller degrades).
 	ResolveWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, error)
-	// WebPagePreviewEnabled 报告是否启用链接预览；未启用时发送不挂 pending 占位（否则会永久 pending）。
+	// WebPagePreviewEnabled reports whether link preview is enabled; when not enabled, sending attaches no pending placeholder (otherwise it would stay pending forever).
 	WebPagePreviewEnabled() bool
-	// LookupWebPage 仅查缓存（不抓取）返回已解析的链接预览。发送时用它：若客户端输入时
-	// getWebPagePreview 已解析过，则 echo 直接带 done 卡片（与官方一致），不依赖异步换卡。
+	// LookupWebPage only checks the cache (no fetch) and returns the resolved link
+	// preview. Used when sending: if getWebPagePreview already resolved it when the
+	// client typed, the echo carries a done card directly (matching official), not
+	// relying on an async card swap.
 	LookupWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool)
 	CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error)
 	CreateAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error)
@@ -809,7 +826,7 @@ type FilesService interface {
 	DeleteProfilePhotosKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoIDs []int64, effects store.DeliveryEffectsBuilder[store.ProfilePhotoMutation]) (store.ProfilePhotoMutation, error)
 }
 
-// LangPackService 抽象客户端语言包查询。
+// LangPackService abstracts client language pack queries.
 type LangPackService interface {
 	GetLangPack(ctx context.Context, langPack, langCode string) (domain.LangPack, error)
 	GetDifference(ctx context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error)
@@ -817,8 +834,9 @@ type LangPackService interface {
 	ListLanguages(ctx context.Context, langPack string) ([]domain.LangPackLanguage, error)
 }
 
-// AIComposeService 抽象客户端输入框 AI 改写/润色与 aicompose tones 目录。
-// 这里只使用 domain DTO；rpc 层负责 tg.TextWithEntities/InputAiComposeTone ↔ domain 转换。
+// AIComposeService abstracts the client input-box AI rewrite/polish and the
+// aicompose tones catalog. Only domain DTOs are used here; the rpc layer converts
+// tg.TextWithEntities/InputAiComposeTone <-> domain.
 type AIComposeService interface {
 	ListTones(ctx context.Context, userID, hash int64) (domain.AIComposeTones, bool, error)
 	GetTone(ctx context.Context, userID int64, ref domain.AIComposeToneRef) (domain.AIComposeTones, error)
@@ -846,10 +864,11 @@ type EphemeralService interface {
 	ReportTarget(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, error)
 }
 
-// TranscriptionService 把 voice 文档交给本地 ASR 后端转写（app/transcription）：
-// 缓存命中直接回文本，否则登记 pending 任务；完成通知由 runtime 注入的
-// TranscribedAudioDelivery 在标记完成的同一事务写 durable outbox。nil 或后端未
-// 配置时调用方回 TRANSCRIPTION_FAILED。
+// TranscriptionService hands voice documents to the local ASR backend for transcription
+// (app/transcription): a cache hit returns the text directly, otherwise it registers a pending
+// job; the completion notice is written to the durable outbox by the runtime-injected
+// TranscribedAudioDelivery in the same transaction that marks the job done. When nil or the
+// backend is not configured, callers return TRANSCRIPTION_FAILED.
 type TranscriptionService interface {
 	Transcribe(ctx context.Context, userID int64, peer domain.Peer, msgID int, document domain.Document) (domain.TranscriptionResult, error)
 }
@@ -961,7 +980,7 @@ type BotVerificationService interface {
 	SetCustomVerification(ctx context.Context, req domain.SetCustomVerificationRequest) (changed bool, err error)
 }
 
-// Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
+// Deps injects service interfaces by business domain. See the corresponding file (auth.go / users.go / updates.go) for each domain's handler registration.
 type Deps struct {
 	Auth                AuthService
 	AuthInvalidations   store.AuthInvalidationBroker
@@ -1031,13 +1050,16 @@ type Deps struct {
 	MainTabs MainTabStore
 	Passkey  PasskeyService
 	Themes   ThemeService
-	// GeoIP 把会话记录的 IP 解析为 account.getAuthorizations 展示用的国家/地区
-	// 文案。为 nil(未配置地理后端)时列表继续回传占位文案,与启用前一致。
+	// GeoIP resolves the IP recorded for a session into the country/region text shown
+	// by account.getAuthorizations. When nil (no geo backend configured) the list
+	// keeps returning the placeholder text, as before it was enabled.
 	GeoIP geoip.Resolver
 }
 
-// ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。
-// 文件上传(uploadTheme)由 rpc 层直接经 Files 完成,不经此接口。只用 domain + 基本类型。
+// ThemeService abstracts custom cloud themes (app/themes): create/update/query
+// themes + maintain the per-user installed list. File upload (uploadTheme) is done
+// directly by the rpc layer through Files, not through this interface. Uses only
+// domain + basic types.
 type ThemeService interface {
 	Create(ctx context.Context, spec domain.ThemeSpec) (domain.Theme, error)
 	Update(ctx context.Context, userID int64, ref domain.ThemeRef, upd domain.ThemeUpdate) (domain.Theme, error)
@@ -1049,9 +1071,10 @@ type ThemeService interface {
 	ListForUser(ctx context.Context, userID int64) ([]domain.Theme, error)
 }
 
-// PasskeyService 抽象 passkey(WebAuthn)登录与管理(app/passkey)。挑战选项以 DataJSON
-// 字节返回;注册/登录验证收原始字节(credentialID 已 base64url 解码)。FinishLogin 返回
-// 已验证用户 id,auth_key 绑定由 rpc 经 Auth.BindVerifiedLogin 完成。
+// PasskeyService abstracts passkey (WebAuthn) login and management (app/passkey).
+// Challenge options are returned as DataJSON bytes; registration/login verification
+// takes raw bytes (credentialID already base64url-decoded). FinishLogin returns the
+// verified user id; auth_key binding is done by rpc via Auth.BindVerifiedLogin.
 type PasskeyService interface {
 	InitLogin(ctx context.Context) ([]byte, error)
 	FinishLogin(ctx context.Context, credentialID, clientDataJSON, authenticatorData, signature []byte, userHandle string) (int64, error)
@@ -1061,8 +1084,9 @@ type PasskeyService interface {
 	Delete(ctx context.Context, userID int64, credentialID []byte) (bool, error)
 }
 
-// GiftsService 抽象 Star 礼物（app/stargifts）：目录 + peer 收到的礼物实例 CRUD。
-// 扣费/退款/服务消息投递由 rpc 层经 Stars 账本 + Messages.SendPrivateText 编排。
+// GiftsService abstracts Star gifts (app/stargifts): catalog + CRUD of gift
+// instances received by a peer. Charging/refunds/service message delivery is
+// orchestrated by the rpc layer via the Stars ledger + Messages.SendPrivateText.
 type GiftsService interface {
 	SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error)
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
@@ -1119,9 +1143,11 @@ type GiftsService interface {
 	PurchaseWithDelivery(ctx context.Context, req domain.StarGiftPurchaseRequest, effects store.DeliveryEffectsBuilder[domain.StarGiftPurchaseResult]) (domain.StarGiftPurchaseResult, error)
 }
 
-// StarsService 抽象 Stars 本地账本（app/stars）：余额查询、贷记/借记、流水分页。
-// 借记原子且永不为负；余额不足返回 domain.ErrStarsInsufficient（rpc 经 starsErr
-// 映射为 BALANCE_TOO_LOW）。getStarsStatus 首读时惰性授予起始余额。
+// StarsService abstracts the local Stars ledger (app/stars): balance query,
+// credit/debit, transaction pagination. Debit is atomic and never negative; an
+// insufficient balance returns domain.ErrStarsInsufficient (rpc maps it to
+// BALANCE_TOO_LOW via starsErr). getStarsStatus lazily grants the starting balance
+// on first read.
 type StarsService interface {
 	GetBalance(ctx context.Context, userID int64) (domain.StarsBalance, error)
 	ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error)
@@ -1147,15 +1173,17 @@ type PremiumService interface {
 	Refund(ctx context.Context, req domain.PremiumRefundRequest) (domain.PremiumPurchaseResult, error)
 }
 
-// SecretChatService 抽象私聊端对端加密（Secret Chat）握手状态机（app/secretchat）。
-// 服务端是盲中继；错误集合见 domain.ErrSecretChat* 与 app/secretchat.ErrGAInvalid
-// （rpc 层经 secretChatErr 映射为 ENCRYPTION_* / CHAT_ID_INVALID / DH_G_A_INVALID）。
+// SecretChatService abstracts the private end-to-end encryption (Secret Chat)
+// handshake state machine (app/secretchat). The server is a blind relay; the error
+// set is in domain.ErrSecretChat* and app/secretchat.ErrGAInvalid (the rpc layer
+// maps them to ENCRYPTION_* / CHAT_ID_INVALID / DH_G_A_INVALID via secretChatErr).
 type SecretChatService interface {
 	RequestEncryption(ctx context.Context, req domain.SecretChatRequest) (domain.SecretChat, error)
 	AcceptEncryption(ctx context.Context, chatID int, viewerUserID, participantAuthKeyID, accessHash int64, gb []byte, keyFingerprint int64, date int) (domain.SecretChat, error)
 	DiscardEncryption(ctx context.Context, chatID int, viewerUserID, viewerAuthKeyID int64, deleteHistory bool, date int) (domain.SecretChat, bool, error)
-	// DiscardForAuthKey 级联 discard 绑定该 perm auth_key 的全部活跃密聊（设备登出/授权撤销），
-	// 返回实际迁移到 discarded 的密聊供通知对端。
+	// DiscardForAuthKey cascade-discards all active secret chats bound to this perm
+	// auth_key (device logout / authorization revocation), returning the chats
+	// actually migrated to discarded for notifying the peer.
 	DiscardForAuthKey(ctx context.Context, authKeyID, ownerUserID int64, date int) ([]domain.SecretChat, error)
 	GetSecretChat(ctx context.Context, chatID int) (domain.SecretChat, bool, error)
 	SendEncrypted(ctx context.Context, chatID int, viewerUserID, viewerAuthKeyID, accessHash int64, delivery domain.SecretMessageDelivery) (domain.SecretChat, domain.SecretChatMessage, error)
@@ -1169,8 +1197,9 @@ type SecretChatService interface {
 	GetEncryptedFile(ctx context.Context, id, accessHash int64) (domain.EncryptedFileRef, bool, error)
 }
 
-// PhoneService 抽象私聊 1:1 通话信令状态机（app/phone）。所有返回值都是状态快照；
-// 错误集合见 app/phone 的 Err*（rpc 层经 phoneCallErr 映射为 CALL_* RPC_ERROR）。
+// PhoneService abstracts the private 1:1 call signaling state machine (app/phone).
+// All return values are state snapshots; the error set is app/phone's Err* (the rpc
+// layer maps them to CALL_* RPC_ERROR via phoneCallErr).
 type PhoneService interface {
 	RequestCall(ctx context.Context, callerID int64, in domain.PhoneCallRequest) (domain.PhoneCall, error)
 	ReceivedCall(ctx context.Context, userID, callID, accessHash int64) (domain.PhoneCall, bool, error)
@@ -1178,21 +1207,24 @@ type PhoneService interface {
 	ConfirmCall(ctx context.Context, userID, callID, accessHash int64, ga []byte, keyFingerprint int64, proto domain.PhoneCallProtocol) (call domain.PhoneCall, forcedDiscard bool, err error)
 	DiscardCall(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, duration int) (call domain.PhoneCall, already bool, err error)
 	DiscardCallWithSlug(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, reasonSlug string, duration int) (call domain.PhoneCall, already bool, err error)
-	// Signal 在该通话的信令顺序锁内执行 forward；drop=true 表示按契约静默吞掉。
-	// peerDevice 是对端受理设备锚点（可零值/失效），定向推送失败须回退 user 扇出。
+	// Signal executes forward within the call's signaling-order lock; drop=true means
+	// silently swallowed per contract. peerDevice is the peer's accepting-device
+	// anchor (may be zero/stale); a failed targeted push must fall back to user
+	// fan-out.
 	Signal(ctx context.Context, userID, callID, accessHash int64, forward func(peerUserID int64, peerDevice domain.SessionRef)) (drop bool, err error)
 	Lookup(ctx context.Context, callID, accessHash int64) (domain.PhoneCall, bool)
-	// ExpireDue 由 PhoneExpiryDispatcher 周期调用：迁移超时通话并返回快照。
+	// ExpireDue is called periodically by PhoneExpiryDispatcher: migrate timed-out calls and return snapshots.
 	ExpireDue(ctx context.Context, now time.Time) []domain.PhoneCall
 }
 
-// GroupCallsService 抽象超级群语音聊天信令（app/groupcalls）。
-// 错误集合见 domain.ErrGroupCall*（rpc 层映射为 GROUPCALL_* RPC_ERROR）。
+// GroupCallsService abstracts supergroup voice chat signaling (app/groupcalls).
+// The error set is domain.ErrGroupCall* (the rpc layer maps them to GROUPCALL_*
+// RPC_ERROR).
 type GroupCallsService interface {
 	Create(ctx context.Context, channelID, creatorUserID int64, title string, rtmpStream, joinMuted bool, scheduleDate, now int) (domain.GroupCall, error)
-	// RtmpStreamKey 取/轮换 channel 的持久 RTMP 推流密钥（rotate=true 覆盖旧 key）。
+	// RtmpStreamKey fetches/rotates a channel's persistent RTMP stream key (rotate=true overwrites the old key).
 	RtmpStreamKey(ctx context.Context, channelID int64, rotate bool, now int) (string, error)
-	// StartScheduled / SetScheduleSubscription / ScheduleSubscriberIDs 是定时通话流程。
+	// StartScheduled / SetScheduleSubscription / ScheduleSubscriberIDs are the scheduled-call flow.
 	StartScheduled(ctx context.Context, callID int64) (domain.GroupCall, bool, error)
 	SetScheduleSubscription(ctx context.Context, callID, userID int64, subscribed bool) error
 	ScheduleSubscriberIDs(ctx context.Context, callID int64) ([]int64, error)
@@ -1223,18 +1255,19 @@ type GroupCallsService interface {
 	ChainBlocks(ctx context.Context, callID int64, subChainID, offset, limit int) (domain.GroupCallChainBlockPage, error)
 }
 
-// LiveStreamsService 抽象直播媒体面（app/livestream：RTMP ingest + 切段 ring）。
-// nil = 直播媒体面未启用（信令仍可用，观众停留在"等待推流"占位）。
+// LiveStreamsService abstracts the live media plane (app/livestream: RTMP ingest +
+// segment ring). nil = live media plane not enabled (signaling still works, viewers
+// stay on the "waiting for stream" placeholder).
 type LiveStreamsService interface {
-	// StreamChannels 返回 channel 当前直播时间轴；无活跃推流返回空。
+	// StreamChannels returns the channel's current live timeline; empty when there is no active stream.
 	StreamChannels(channelID int64) []domain.LiveStreamChannel
-	// StreamPart 按 time_ms/scale 取一段打包好的 tgcalls broadcast part。
+	// StreamPart fetches a packaged tgcalls broadcast part by time_ms/scale.
 	StreamPart(channelID int64, timeMs int64, scale int) ([]byte, error)
-	// DropChannel 断开该 channel 的推流会话并清空缓冲（discard/revoke）。
+	// DropChannel disconnects the channel's stream session and clears the buffer (discard/revoke).
 	DropChannel(channelID int64)
 }
 
-// PollsService 抽象 poll 权威态的发送时创建与投票人列表（messages.getPollVotes）。
+// PollsService abstracts send-time creation of poll authoritative state and the voter list (messages.getPollVotes).
 type PollsService interface {
 	CreatePoll(ctx context.Context, def domain.PollDefinition) error
 	GetPollDefinition(ctx context.Context, pollID int64) (domain.PollDefinition, bool, error)

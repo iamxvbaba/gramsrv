@@ -10,15 +10,19 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 私聊密聊文件收发 RPC handler（P2）。盲中继：文件内容是客户端加密的 bytes，服务端
-// 组装上传分片成 blob（location_key "enc:<id>"）、铸造 EncryptedFile 快照、原样转发，
-// 永不解密。下载经 upload.getFile + inputEncryptedFileLocation 复用同 blob 链路。
-// 设计见 docs/secret-chat-module.md §8。
+// Private secret chat file send/receive RPC handler (P2). Blind relay: the file
+// content is client-encrypted bytes; the server assembles upload parts into a
+// blob (location_key "enc:<id>"), mints an EncryptedFile snapshot, forwards it
+// verbatim, and never decrypts. Downloads go through upload.getFile +
+// inputEncryptedFileLocation reusing the same blob chain. Design: see
+// docs/secret-chat-module.md §8.
 
-// resolveInputEncryptedFile 把 InputEncryptedFile 解析为服务端文件快照：
-//   - Empty → nil（无文件）。
-//   - Uploaded / BigUploaded → 组装上传分片铸造新 EncryptedFile 并持久化元数据。
-//   - InputEncryptedFile{id, access_hash} → 按 id 回查既有快照（resend 复用路径）。
+// resolveInputEncryptedFile resolves InputEncryptedFile into a server file snapshot:
+//   - Empty → nil (no file).
+//   - Uploaded / BigUploaded → assemble upload parts, mint a new EncryptedFile and
+//     persist the metadata.
+//   - InputEncryptedFile{id, access_hash} → look up the existing snapshot by id
+//     (resend reuse path).
 func (r *Router) resolveInputEncryptedFile(ctx context.Context, ownerUserID int64, input tg.InputEncryptedFileClass) (*domain.EncryptedFileRef, error) {
 	switch f := input.(type) {
 	case *tg.InputEncryptedFileEmpty, nil:
@@ -45,7 +49,7 @@ func (r *Router) resolveInputEncryptedFile(ctx context.Context, ownerUserID int6
 	}
 }
 
-// mintEncryptedFile 组装上传分片铸造 EncryptedFile 并持久化元数据快照。
+// mintEncryptedFile assembles upload parts to mint an EncryptedFile and persists a metadata snapshot.
 func (r *Router) mintEncryptedFile(ctx context.Context, ownerUserID int64, upload domain.UploadedFileRef, keyFingerprint int) (*domain.EncryptedFileRef, error) {
 	if r.deps.Files == nil {
 		return nil, notImplementedErr()
@@ -78,7 +82,7 @@ func (r *Router) onMessagesSendEncryptedFile(ctx context.Context, req *tg.Messag
 	if !ok {
 		return nil, internalErr()
 	}
-	// 先完成 chat/device 授权，避免无权或终态请求先组装 blob、写元数据后才失败。
+	// Complete the chat/device authorization first, so an unauthorized or terminal-state request does not assemble the blob and write metadata before failing.
 	if _, _, _, err := r.resolveSecretChatPeer(ctx, userID, req.Peer); err != nil {
 		return nil, err
 	}
@@ -111,7 +115,7 @@ func (r *Router) onMessagesUploadEncryptedFile(ctx context.Context, req *tg.Mess
 	if err != nil {
 		return nil, err
 	}
-	// 校验调用方是该密聊参与者（access_hash 匹配）。
+	// Verify the caller is a participant of this secret chat (access_hash matches).
 	if _, _, _, err := r.resolveSecretChatPeer(ctx, userID, req.Peer); err != nil {
 		return nil, err
 	}

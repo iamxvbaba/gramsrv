@@ -84,9 +84,10 @@ func tgDeletedPrivateMessageOutboxUpdate(event domain.UpdateEvent) *tg.Updates {
 	}
 }
 
-// appendAuxPtsBookkeeping 给"占账号 pts 但 TL update 不带 pts"的事件附一条
-// 空 updateDeleteMessages：客户端按 pts/pts_count 推进本地水位且不产生任何
-// 可见变化。没有它，客户端水位停在事件前，下一条带 pts 的更新会被判为空洞。
+// appendAuxPtsBookkeeping attaches an empty updateDeleteMessages to events that "consume account
+// pts but whose TL update carries no pts": the client advances its local watermark by pts/pts_count
+// without producing any visible change. Without it, the client watermark stops before the event and
+// the next pts-bearing update is treated as a gap.
 func appendAuxPtsBookkeeping(updates []tg.UpdateClass, event domain.UpdateEvent) []tg.UpdateClass {
 	if event.Pts <= 0 || event.PtsCount <= 0 || !event.LacksWirePts() {
 		return updates

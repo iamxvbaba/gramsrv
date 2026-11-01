@@ -20,11 +20,14 @@ import (
 	"telesrv/internal/edgecontrol"
 )
 
-// Conn 是一个已识别 session 的客户端连接，持有向其加密发送消息所需的全部上下文。
-// 由 SessionManager 管理，供请求响应与主动 push 共用。
+// Conn is a client connection for an identified session, holding all the
+// context needed to send it encrypted messages. It is managed by SessionManager
+// and shared by request responses and proactive pushes.
 //
-// Send 并发安全：所有出站消息先进 per-Conn outbound actor，由它串行分配 msg_id/seq_no、
-// 加密并写 transport，避免高并发 RPC 响应与 push 交错造成 MTProto 顺序错误。
+// Send is concurrency-safe: all outbound messages first enter the per-Conn
+// outbound actor, which serially assigns msg_id/seq_no, encrypts and writes to
+// the transport, avoiding MTProto ordering errors from interleaved concurrent
+// RPC responses and pushes.
 type outboundWriter interface {
 	Send(context.Context, *bin.Buffer) error
 }
@@ -74,12 +77,14 @@ type Conn struct {
 	now func() time.Time
 
 	authKeyID [8]byte
-	// authKeyHex 是 authKeyID 的 hex 缓存：每条 RPC 的结构化日志都会带它，
-	// 建连时算一次，避免热路径反复 hex 编码分配。
+	// authKeyHex is the hex cache of authKeyID: every RPC's structured log
+	// carries it, so it is computed once at connection setup to avoid repeated
+	// hex encoding allocations on the hot path.
 	authKeyHex string
-	// authKeyExpiresAt=0 表示 permanent key；正值是 temporary/media-temporary
-	// key 在握手时确定的绝对协议失效时间；-1 是仅供迁移的 legacy-unknown
-	// sentinel（edge 会在创建 Conn 前以 -404 拒绝）。Conn 创建后不可变。
+	// authKeyExpiresAt=0 means a permanent key; a positive value is the absolute
+	// protocol expiry time determined at handshake for a temporary/media-temporary
+	// key; -1 is the legacy-unknown sentinel used only for migration (the edge
+	// rejects it with -404 before creating the Conn). Immutable after Conn creation.
 	authKeyExpiresAt int
 	sessionID        int64
 	salt             int64
@@ -133,8 +138,9 @@ type Conn struct {
 	rpcClose         sync.Once
 	rpcMu            sync.Mutex
 	rpcWG            sync.WaitGroup
-	// rpcReservationWG 跟踪 Copy 前预算到 commit/abort 的短窗口，使 Close 返回时
-	// 全局/单连接预算都已归还或转交给明确的 queued/running task。
+	// rpcReservationWG tracks the short window from pre-Copy budget to
+	// commit/abort, so that when Close returns the global/per-connection budget
+	// has either been returned or handed off to an explicit queued/running task.
 	rpcReservationWG sync.WaitGroup
 	rpcTimeout       time.Duration
 	rpcQueue         []inboundRPC
@@ -164,23 +170,27 @@ type Conn struct {
 	// deliveryClientAcked is invoked by the sole outbound actor after a client
 	// msgs_ack resolves to a v3 durable delivery frame.
 	deliveryClientAcked func(*Conn, edgecontrol.DeliveryTracking, int64)
-	// inflightRPCBytes 跟踪已预留/入队/执行中 inbound RPC 的 memory charge；legacy
-	// 等于 copied body，exact 是 typed materialization 的保守放大值。它配合
-	// maxInflightRPCBytes 给 RPC 队列设内存预算（不止限条数）。
+	// inflightRPCBytes tracks the memory charge of reserved/queued/executing
+	// inbound RPCs; legacy equals the copied body, exact is the conservative
+	// inflated value of typed materialization. Together with
+	// maxInflightRPCBytes it puts a memory budget on the RPC queue (not just a count).
 	inflightRPCBytes atomic.Int64
-	// 单连接只保留并发配额；实际 worker 来自 Server 共享池，避免每连接预留 goroutine。
+	// A single connection only keeps a concurrency quota; the actual worker comes
+	// from the Server's shared pool, avoiding a reserved goroutine per connection.
 	rpcRootCtx     context.Context
 	rpcMaxInflight int
-	// remoteAddr 是 MTProto 连接对端的规范化 IP 字面量（来自 net.Conn.RemoteAddr，
-	// 去掉端口与 zone，IPv4-mapped 还原为 IPv4）；绑定设备授权时写入 authorizations.ip，
-	// 便于在 admin 面板看到登录 IP。非 IP 的对端（如 unix socket）不记录。
+	// remoteAddr is the normalized IP literal of the MTProto connection's peer (from
+	// net.Conn.RemoteAddr, with port and zone stripped and IPv4-mapped addresses restored to IPv4);
+	// it is written to authorizations.ip when a device authorization is bound, so the admin panel
+	// shows the login IP. Non-IP peers (such as a unix socket) are not recorded.
 	remoteAddr string
 
 	// sentContentMessages is retained only for standalone construction tests.
 	// Server connections allocate seq_no from logical-session outboundState.
 	sentContentMessages int32
-	// outboundRand 只由 outbound actor 访问：对 cipher 随机源的缓冲预读，
-	// 把每帧 padding 的 getrandom syscall 摊薄成 ~1KiB 一次。
+	// outboundRand is accessed only by the outbound actor: a buffered pre-read of
+	// the cipher's random source, amortizing the getrandom syscall for each
+	// frame's padding down to about one per ~1KiB.
 	outboundRand *bufio.Reader
 
 	identityMu              sync.RWMutex
@@ -198,10 +208,12 @@ type Conn struct {
 	channelWatermarkMu         sync.Mutex
 	channelPayloadPts          map[int64]int
 	channelNudgePts            map[int64]int
-	// membershipsSynced 表示该连接的 channel membership 推送路由（byMemberChannel）
-	// 已成功建立。它与 receivesUpdates 共同构成「session 完全就绪」：membership
-	// 同步失败时保持 false，让置位短路放行、下一条 RPC 重试同步，避免
-	// 「已置位但 channel 路由缺失」的 session 静默漏收超级群推送。
+	// membershipsSynced indicates that this connection's channel membership push
+	// route (byMemberChannel) has been established successfully. Together with
+	// receivesUpdates it forms "session fully ready": on membership sync failure
+	// it stays false, letting the flag short-circuit admission and the next RPC
+	// retry the sync, avoiding a session that is flagged ready but lacks channel
+	// routes silently missing supergroup pushes.
 	membershipsSynced atomic.Bool
 	// updatesActivationToken/At are protected by SessionManager.mu. They make
 	// readiness activation single-flight per physical connection generation;
@@ -215,12 +227,14 @@ type Conn struct {
 	bootstrapProbeToken uint64
 	bootstrapProbeAt    time.Time
 	bootstrapProbed     bool
-	// membershipGen 是本连接 channel membership 索引的修订号：任何增量修订
-	// （join/leave/kick 的 Add/Remove、身份切换/下线的整体清除）都递增。全量同步方
-	// 在读取持久成员列表前采样、落地时带回比对，检测「读取窗口内发生增量修订」的
-	// 丢失更新竞态（paged membership commit 改走合并路径并保持未就绪重试）。
+	// membershipGen is the revision number of this connection's channel membership index: every
+	// incremental revision (Add/Remove for join/leave/kick, a full clear on identity switch/logout)
+	// increments it. A full sync samples it before reading the persisted member list and compares it
+	// when applying, detecting the lost-update race of "an incremental revision happened inside the
+	// read window" (a paged membership commit then takes the merge path and keeps retrying until ready).
 	membershipGen atomic.Int64
-	// createdAt 是连接建立时刻，供同 auth_key session 数触顶时驱逐真正最旧的连接。
+	// createdAt is the connection setup time, used to evict the genuinely oldest
+	// connection when the session count for the same auth_key hits its cap.
 	createdAt time.Time
 	// layerProfileState atomically packs profile, provenance and epoch. A profile
 	// inherited from auth-key metadata is only a default; a later well-formed
@@ -373,10 +387,10 @@ func (c *Conn) legacyClientLayer() int { return int(c.clientLayer.Load()) }
 // setLegacyClientLayer records the package-internal legacy mirror.
 func (c *Conn) setLegacyClientLayer(layer int) { c.clientLayer.Store(int32(layer)) }
 
-// AuthKeyID 返回连接的 auth_key_id。
+// AuthKeyID returns the connection's auth_key_id.
 func (c *Conn) AuthKeyID() [8]byte { return c.authKeyID }
 
-// AuthKeyExpiresAt 返回 raw 协议 key 的失效时间；0 表示 permanent key。
+// AuthKeyExpiresAt returns the raw protocol key's expiry time; 0 means a permanent key.
 func (c *Conn) AuthKeyExpiresAt() int { return c.authKeyExpiresAt }
 
 func (c *Conn) authKeyProtocolUnavailableNow() bool {
@@ -390,24 +404,27 @@ func (c *Conn) authKeyProtocolUnavailableNow() bool {
 	return authKeyProtocolUnavailable(c.authKeyExpiresAt, now)
 }
 
-// BusinessAuthKeyID 返回业务视角的 auth_key_id。
+// BusinessAuthKeyID returns the auth_key_id from the business view.
 //
-// temp auth_key 绑定后解析为 perm auth_key；第二个返回值表示本连接是否已完成解析，
-// 即便解析结果等于原始 auth_key_id 也会返回 true，以避免每个 RPC 重复查绑定表。
+// After a temp auth_key is bound it resolves to the perm auth_key; the second
+// return value indicates whether this connection has completed resolution, and
+// returns true even when the result equals the original auth_key_id, to avoid
+// querying the binding table on every RPC.
 func (c *Conn) BusinessAuthKeyID() ([8]byte, bool) {
 	c.identityMu.RLock()
 	defer c.identityMu.RUnlock()
 	return c.businessAuthKeyID, c.businessAuthKeyResolved
 }
 
-// BusinessAuthKeyHex 返回业务视角 auth_key_id 的 hex 缓存（每 RPC 日志用，免重复编码）。
+// BusinessAuthKeyHex returns the hex cache of the business-view auth_key_id
+// (used in every RPC log, avoiding repeated encoding).
 func (c *Conn) BusinessAuthKeyHex() (string, bool) {
 	c.identityMu.RLock()
 	defer c.identityMu.RUnlock()
 	return c.businessAuthKeyHex, c.businessAuthKeyResolved
 }
 
-// SetBusinessAuthKeyID 缓存业务视角 auth_key_id。
+// SetBusinessAuthKeyID caches the business-view auth_key_id.
 func (c *Conn) SetBusinessAuthKeyID(id [8]byte) {
 	c.identityMu.Lock()
 	changed := !c.businessAuthKeyResolved || c.businessAuthKeyID != id
@@ -424,30 +441,35 @@ func (c *Conn) SetBusinessAuthKeyID(id [8]byte) {
 	}
 }
 
-// SessionID 返回连接的 session_id。
+// SessionID returns the connection's session_id.
 func (c *Conn) SessionID() int64 { return c.sessionID }
 
-// UserID 返回绑定的用户 id；未登录为 0。
+// UserID returns the bound user id; 0 when not logged in.
 func (c *Conn) UserID() int64 { return c.userID.Load() }
 
-// UserIDResolved 返回 user_id 授权状态是否已为当前连接解析过。
+// UserIDResolved reports whether the user_id authorization state has been
+// resolved for the current connection.
 //
-// resolved=true 且 userID=0 表示该 auth_key 当前未登录；这样登录前的多次 RPC
-// 不会反复查询授权表，后续登录成功会由 BindUser 覆盖为真实用户。
+// resolved=true with userID=0 means this auth_key is not currently logged in;
+// this way the many RPCs before login do not repeatedly query the authorization
+// table, and a later successful login is overwritten with the real user by
+// BindUser.
 func (c *Conn) UserIDResolved() (userID int64, resolved bool) {
 	return c.userID.Load(), c.userIDResolved.Load()
 }
 
-// ReceivesUpdates 报告该连接是否接收主动推送的 updates。
+// ReceivesUpdates reports whether this connection receives proactively pushed updates.
 func (c *Conn) ReceivesUpdates() bool { return c.receivesUpdates.Load() }
 
-// SetReceivesUpdates 设置该连接是否接收主动推送的 updates。
-// 登录后的主连接在 updates.getState/getDifference 建立同步基线后置为 true。
+// SetReceivesUpdates sets whether this connection receives proactively pushed updates.
+// After login the main connection is set to true once updates.getState/getDifference
+// have established the sync baseline.
 func (c *Conn) SetReceivesUpdates(v bool) { c.receivesUpdates.Store(v) }
 
-// setRemoteAddrStr 记录 MTProto 连接的对端地址（remote 形如 host:port 或纯 host）。
-// 只保留可解析为 IP 的规范化字面量：CoreExec 会把它原样转交 Core，Core 拒绝任何
-// 非规范 IP，因此 Edge 侧不得转发 unix socket 路径等非 IP 值。
+// setRemoteAddrStr records the peer address of the MTProto connection (remote is host:port or a
+// bare host). Only a normalized literal that parses as an IP is kept: CoreExec passes it to Core
+// as is, and Core rejects any non-normalized IP, so the Edge must not forward non-IP values such
+// as a unix socket path.
 func (c *Conn) setRemoteAddrStr(remote string) {
 	host := remote
 	if h, _, err := net.SplitHostPort(remote); err == nil {
@@ -460,5 +482,5 @@ func (c *Conn) setRemoteAddrStr(remote string) {
 	c.remoteAddr = addr.WithZone("").Unmap().String()
 }
 
-// clientIP 返回连接的对端 IP（host 部分），未设置时为空字符串。
+// clientIP returns the connection's peer IP (host part), empty when unset.
 func (c *Conn) clientIP() string { return c.remoteAddr }

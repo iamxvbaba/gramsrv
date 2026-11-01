@@ -8,8 +8,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 共享媒体标签页读路径(memory 实现):直接扫内存消息按 domain.ClassifyMediaCategories 分类过滤,
-// 无需索引表(数据量小)。分类真值与 postgres 写路径/回填同源。
+// Shared media-tab read path (memory implementation): it scans in-memory messages
+// directly and filters by domain.ClassifyMediaCategories, with no index table needed
+// (small data volume). The category truth is shared with the postgres write path/backfill.
 
 func mediaCategorySet(cats []domain.MediaCategory) map[domain.MediaCategory]bool {
 	set := make(map[domain.MediaCategory]bool, len(cats))
@@ -62,7 +63,7 @@ func savedMessageHasAnyTag(tags []domain.MessageReaction, wanted []domain.Messag
 	return false
 }
 
-// pageMediaIDs 把全部匹配 id 按 newest-first 分页(返回本页 id + 满足 max/min 的总数)。
+// pageMediaIDs paginates all matching ids newest-first (returns this page's ids plus the total satisfying max/min).
 func pageMediaIDs(ids []int, req domain.MediaSearchRequest) ([]int, int) {
 	sort.Sort(sort.Reverse(sort.IntSlice(ids)))
 	inRange := make([]int, 0, len(ids))
@@ -96,7 +97,7 @@ func pageMediaIDs(ids []int, req domain.MediaSearchRequest) ([]int, int) {
 	return page, count
 }
 
-// SearchPrivateMedia 实现 store.MessageStore。
+// SearchPrivateMedia implements store.MessageStore.
 func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peerID int64, req domain.MediaSearchRequest) (domain.MessageList, error) {
 	set := mediaCategorySet(req.Categories)
 	if ownerUserID == 0 || peerID == 0 || len(set) == 0 {
@@ -138,7 +139,7 @@ func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peer
 	return list, nil
 }
 
-// CountPrivateMediaCategories 实现 store.MessageStore。
+// CountPrivateMediaCategories implements store.MessageStore.
 func (s *MessageStore) CountPrivateMediaCategories(_ context.Context, ownerUserID, peerID int64) (domain.MediaCategoryCounts, error) {
 	if ownerUserID == 0 || peerID == 0 {
 		return domain.MediaCategoryCounts{}, nil
@@ -159,7 +160,7 @@ func (s *MessageStore) CountPrivateMediaCategories(_ context.Context, ownerUserI
 	return out, nil
 }
 
-// SearchChannelMedia 实现 store.ChannelStore。
+// SearchChannelMedia implements store.ChannelStore.
 func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error) {
 	set := mediaCategorySet(req.Categories)
 	if viewerUserID == 0 || channelID == 0 || len(set) == 0 {
@@ -209,7 +210,7 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 	return hist, nil
 }
 
-// CountChannelMediaCategories 实现 store.ChannelStore。
+// CountChannelMediaCategories implements store.ChannelStore.
 func (s *ChannelStore) CountChannelMediaCategories(_ context.Context, viewerUserID, channelID int64) (domain.MediaCategoryCounts, error) {
 	if viewerUserID == 0 || channelID == 0 {
 		return domain.MediaCategoryCounts{}, nil

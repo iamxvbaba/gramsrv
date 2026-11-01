@@ -1,6 +1,6 @@
 package domain
 
-// TempAuthKeyBinding 是 auth.bindTempAuthKey 的持久化记录。
+// TempAuthKeyBinding is the persisted record of auth.bindTempAuthKey.
 type TempAuthKeyBinding struct {
 	TempAuthKeyID    [8]byte
 	PermAuthKeyID    int64

@@ -15,8 +15,9 @@ var (
 	ErrRemoteOwnerUnavailable        = errors.New("sfu owner: remote owner unavailable")
 )
 
-// OwnerRecord 是 callID -> SFU instance 的短租约记录。它只描述媒体面 owner，
-// 业务权限、参与者状态和 version 仍以 group call store 为准。
+// OwnerRecord is the short lease record of callID -> SFU instance. It only describes the media
+// plane owner; business permissions, participant state and version still come from the group call
+// store.
 type OwnerRecord struct {
 	CallID        int64  `json:"call_id"`
 	InstanceID    string `json:"instance_id"`
@@ -34,8 +35,9 @@ type OwnerRegistry interface {
 	ListInstance(ctx context.Context, instanceID string) ([]OwnerRecord, error)
 }
 
-// RemoteService 是未来 telesrv-core -> telesrv-sfu 的替换点。当前没有配置远端
-// client 时，遇到非本实例 owner 必须显式失败，避免同一 call 被拆成多个媒体房间。
+// RemoteService is the future replacement point for telesrv-core -> telesrv-sfu. Without a
+// configured remote client, an owner on another instance must fail explicitly, so one call is
+// never split into several media rooms.
 type RemoteService interface {
 	Join(ctx context.Context, owner OwnerRecord, callID, userID int64, kind EndpointKind, offer ClientOffer) (ServerAnswer, error)
 	Leave(ctx context.Context, owner OwnerRecord, callID, userID int64, kind EndpointKind) error
@@ -420,7 +422,7 @@ func remoteOwnerError(owner OwnerRecord) error {
 	return fmt.Errorf("%w: call_id=%d owner=%s control_addr=%s", ErrRemoteOwnerUnavailable, owner.CallID, owner.InstanceID, owner.ControlAddr)
 }
 
-// MemoryOwnerRegistry 是测试与纯进程内验证用的 owner registry。
+// MemoryOwnerRegistry is the owner registry for tests and in-process verification only.
 type MemoryOwnerRegistry struct {
 	mu     sync.Mutex
 	owners map[int64]OwnerRecord

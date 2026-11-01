@@ -1,11 +1,13 @@
-// Command stickerfetch 从官方 Telegram 拉取贴纸集(messages.getStickerSet),写成 telesrv
-// SeedMedia 可直接导入的 seed 目录格式:<out>/<setdir>/set_info.json + stickers/<docid>.tgs。
-// 这样 masks / custom-emoji / 系统集等只需把 seed 文件放进 data/sticker-seed 即可被现有
-// SeedMedia + handler 识别下发,无需改服务端代码。
+// Command stickerfetch pulls sticker sets from official Telegram
+// (messages.getStickerSet) and writes them as a seed directory format that telesrv
+// SeedMedia can import directly: <out>/<setdir>/set_info.json + stickers/<docid>.tgs.
+// This way masks / custom-emoji / system sets etc. only need their seed files
+// placed in data/sticker-seed to be recognized and served by the existing
+// SeedMedia + handler, with no server code change.
 //
-// 支持的 set spec(命令行参数,可多个):
+// Supported set specs (command-line arguments, can be multiple):
 //
-//	short:<shortName>            按 short_name 拉(普通/mask/emoji 集)
+//	short:<shortName>            pull by short_name (normal/mask/emoji sets)
 //	emoji_default_statuses       inputStickerSetEmojiDefaultStatuses
 //	emoji_channel_default_statuses inputStickerSetEmojiChannelDefaultStatuses
 //	emoji_default_topic_icons    inputStickerSetEmojiDefaultTopicIcons
@@ -24,11 +26,11 @@
 // Documents are exported with their thumbs: Android renders .tgs stickers and
 // custom emoji as such only when thumbs are present.
 //
-// 需登录会话(复用 appearancefetch 的 /tmp/appearance.session,SESSION env 可覆盖)。
+// Login session required (reuses appearancefetch's /tmp/appearance.session, overridable via SESSION env).
 // TG_API_ID / TG_API_HASH override the built-in TDesktop credentials, which
 // Telegram may answer with API_ID_PUBLISHED_FLOOD.
 //
-// 用法: SESSION=/tmp/appearance.session stickerfetch [-timeout 12m] <out_dir> <spec> [spec...]
+// Usage: SESSION=/tmp/appearance.session stickerfetch [-timeout 12m] <out_dir> <spec> [spec...]
 package main
 
 import (
@@ -100,7 +102,7 @@ func specToInput(spec string) (tg.InputStickerSetClass, string, error) {
 	}
 }
 
-// ---- seed JSON 结构(字段对齐 internal/app/files/seed.go 的解析) ----
+// ---- seed JSON structures (fields aligned with internal/app/files/seed.go's parsing) ----
 
 type attrJSON struct {
 	Type              string           `json:"_"`
@@ -243,7 +245,7 @@ func main() {
 	if err := client.Run(ctx, func(ctx context.Context) error {
 		api := client.API()
 		if status, err := client.Auth().Status(ctx); err != nil || !status.Authorized {
-			return fmt.Errorf("session %s 未授权(先用 appearancefetch 登录): %v", sessionPath(), err)
+			return fmt.Errorf("session %s unauthorized (log in with appearancefetch first): %v", sessionPath(), err)
 		}
 		dl := downloader.NewDownloader()
 		for _, spec := range specs {
@@ -298,7 +300,7 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 		if !ok {
 			continue
 		}
-		// 下载主体 blob → stickers/<docid>.<ext>
+		// Download the body blob → stickers/<docid>.<ext>
 		ext := ".tgs"
 		if doc.MimeType == "video/webm" {
 			ext = ".webm"
@@ -418,7 +420,7 @@ func downloadToFile(ctx context.Context, dl *downloader.Downloader, api *tg.Clie
 	return os.Rename(tmpPath, path)
 }
 
-// ---- 消息特效(messages.getAvailableEffects)----
+// ---- Message effects (messages.getAvailableEffects) ----
 
 type effectJSON struct {
 	ID                int64  `json:"id"`
@@ -437,7 +439,7 @@ type effectsFileJSON struct {
 	} `json:"result"`
 }
 
-// downloadDoc 下载一个文档主体到 dir/<docid>.<ext> 并返回其 seed 元数据。
+// downloadDoc downloads a document body to dir/<docid>.<ext> and returns its seed metadata.
 func downloadDoc(ctx context.Context, fetch fetchFunc, dir string, doc *tg.Document) (documentJSON, error) {
 	ext := ".tgs"
 	switch doc.MimeType {
@@ -519,8 +521,8 @@ func fetchEffects(ctx context.Context, api *tg.Client, dl *downloader.Downloader
 	return nil
 }
 
-// ---- 可用 reaction(messages.getAvailableReactions)----
-// 写成 SeedMedia.seedReactions 读取的布局:
+// ---- Available reactions (messages.getAvailableReactions) ----
+// Written in the layout SeedMedia.seedReactions reads:
 // <out>/telegram_reactions_export/global_json/available_reactions_raw.json + reactions/<docid>.<ext>
 
 type reactionJSON struct {
@@ -626,7 +628,8 @@ func writeReactionsExport(ctx context.Context, fetch fetchFunc, outRoot string, 
 	return nil
 }
 
-// fetchFeatured 拉取官方当前推荐的贴纸/emoji 集(messages.getFeatured[Emoji]Stickers),逐个按 ID 导出。
+// fetchFeatured pulls the sticker/emoji sets Telegram currently features
+// (messages.getFeatured[Emoji]Stickers), exporting each by ID.
 func fetchFeatured(ctx context.Context, api *tg.Client, dl *downloader.Downloader, outRoot string, emoji bool) error {
 	var res tg.MessagesFeaturedStickersClass
 	var err error

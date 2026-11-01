@@ -23,13 +23,13 @@ func TestIsBlockedExternalIP(t *testing.T) {
 		{"fe80::1", true},        // link-local v6
 		{"0.0.0.0", true},        // unspecified
 		{"100.64.0.1", true},     // CGNAT
-		{"100.127.255.1", true},  // CGNAT 上界
+		{"100.127.255.1", true},  // CGNAT upper bound
 		{"224.0.0.1", true},      // multicast
-		{"8.8.8.8", false},       // 公网
-		{"1.1.1.1", false},       // 公网
-		{"100.63.255.1", false},  // CGNAT 下界外（公网）
-		{"100.128.0.1", false},   // CGNAT 上界外（公网）
-		{"2606:4700:4700::1111", false}, // 公网 v6
+		{"8.8.8.8", false},       // public
+		{"1.1.1.1", false},       // public
+		{"100.63.255.1", false},  // outside the CGNAT lower bound (public)
+		{"100.128.0.1", false},   // outside the CGNAT upper bound (public)
+		{"2606:4700:4700::1111", false}, // public v6
 	}
 	for _, c := range cases {
 		ip := net.ParseIP(c.ip)
@@ -42,8 +42,9 @@ func TestIsBlockedExternalIP(t *testing.T) {
 	}
 }
 
-// TestExternalMediaFetcherSSRFGuard 验证 SSRF 防护：httptest 在 loopback 上，
-// allowPrivate=false 必须拦截（不连接内网），allowPrivate=true 放行抓取到字节。
+// TestExternalMediaFetcherSSRFGuard verifies SSRF protection: httptest is on loopback, so
+// allowPrivate=false must block (not connect to the internal network) and allowPrivate=true must
+// allow fetching the bytes through.
 func TestExternalMediaFetcherSSRFGuard(t *testing.T) {
 	body := []byte("hello-external-bytes")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,13 +53,13 @@ func TestExternalMediaFetcherSSRFGuard(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// 生产配置（allowPrivate=false）：loopback 目标被 SSRF 防护拦截。
+	// Production config (allowPrivate=false): a loopback target is blocked by SSRF protection.
 	guarded := newExternalMediaFetcher(DefaultExternalMediaMaxBytes, DefaultExternalMediaRatePerMin, false)
 	if _, _, err := guarded.fetch(context.Background(), srv.URL); !errors.Is(err, ErrExternalMediaInvalid) {
-		t.Fatalf("SSRF guard fetch err = %v, want ErrExternalMediaInvalid (loopback 应被拦)", err)
+		t.Fatalf("SSRF guard fetch err = %v, want ErrExternalMediaInvalid (loopback should be blocked)", err)
 	}
 
-	// 测试放行（allowPrivate=true）：抓取成功。
+	// Test bypass (allowPrivate=true): the fetch succeeds.
 	open := newExternalMediaFetcher(DefaultExternalMediaMaxBytes, DefaultExternalMediaRatePerMin, true)
 	data, ct, err := open.fetch(context.Background(), srv.URL)
 	if err != nil {
@@ -72,7 +73,7 @@ func TestExternalMediaFetcherSSRFGuard(t *testing.T) {
 	}
 }
 
-// TestExternalMediaFetcherRejectsBadURL 非 http(s)/空 host 直接拒。
+// TestExternalMediaFetcherRejectsBadURL directly rejects non-http(s)/empty host.
 func TestExternalMediaFetcherRejectsBadURL(t *testing.T) {
 	f := newExternalMediaFetcher(DefaultExternalMediaMaxBytes, DefaultExternalMediaRatePerMin, true)
 	for _, bad := range []string{"", "ftp://x/y", "file:///etc/passwd", "javascript:alert(1)", "http://", "not a url"} {
@@ -82,7 +83,7 @@ func TestExternalMediaFetcherRejectsBadURL(t *testing.T) {
 	}
 }
 
-// TestExternalMediaFetcherSizeLimit 超大小上限拒。
+// TestExternalMediaFetcherSizeLimit rejects over the size limit.
 func TestExternalMediaFetcherSizeLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(make([]byte, 2048))
@@ -94,7 +95,7 @@ func TestExternalMediaFetcherSizeLimit(t *testing.T) {
 	}
 }
 
-// TestExternalMediaDisabled 未启用时 Create*FromURL 返回 ErrExternalMediaDisabled。
+// TestExternalMediaDisabled: Create*FromURL returns ErrExternalMediaDisabled when not enabled.
 func TestExternalMediaDisabled(t *testing.T) {
 	s := &Service{}
 	if _, err := s.CreatePhotoFromURL(context.Background(), "http://x/y.png"); !errors.Is(err, ErrExternalMediaDisabled) {

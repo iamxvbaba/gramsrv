@@ -8,8 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// staleChannelIDAllocator 模拟落后的 channel id 计数器：从 start 起按 1
-// 步进，必然撞上已存在的 channel 主键。
+// staleChannelIDAllocator simulates a lagging channel id counter: it steps by
+// 1 from start, inevitably colliding with an existing channel primary key.
 type staleChannelIDAllocator struct {
 	next atomic.Int64
 }

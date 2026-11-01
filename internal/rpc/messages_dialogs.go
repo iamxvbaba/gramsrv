@@ -451,7 +451,7 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return false, internalErr()
 	}
-	// archive folder 行自身的置顶（TDesktop 归档行右键 Pin/Unpin）。
+	// Pinning of the archive folder row itself (TDesktop right-click Pin/Unpin on the archive row).
 	if folderPeer, ok := req.Peer.(*tg.InputDialogPeerFolder); ok {
 		return r.toggleArchiveFolderPin(ctx, userID, folderPeer.FolderID, req.GetPinned())
 	}
@@ -515,9 +515,10 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 	return true, nil
 }
 
-// toggleArchiveFolderPin 处理 toggleDialogPin(inputDialogPeerFolder)：置顶/
-// 取消置顶 archive folder 行本身。事件 peer 用 PeerTypeFolder 表达，生成的
-// updateDialogPinned 携带 dialogPeerFolder 且不带 folder_id flag。
+// toggleArchiveFolderPin handles toggleDialogPin(inputDialogPeerFolder):
+// pin/unpin the archive folder row itself. The event peer is expressed as
+// PeerTypeFolder, and the generated updateDialogPinned carries dialogPeerFolder
+// without a folder_id flag.
 func (r *Router) toggleArchiveFolderPin(ctx context.Context, userID int64, folderID int, pinned bool) (bool, error) {
 	if folderID != domain.DialogArchiveFolderID {
 		return false, folderIDInvalidErr()
@@ -540,8 +541,8 @@ func (r *Router) onMessagesReorderPinnedDialogs(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return false, internalErr()
 	}
-	// 官方允许在主列表（0）与归档（1）内分别重排置顶；自定义 filter 没有
-	// 服务器侧置顶顺序。
+	// The official server allows reordering pins separately in the main list (0)
+	// and the archive (1); custom filters have no server-side pin order.
 	if req.FolderID != 0 && req.FolderID != domain.DialogArchiveFolderID {
 		return false, folderIDInvalidErr()
 	}
@@ -735,8 +736,9 @@ func (r *Router) dialogPeersFromInput(ctx context.Context, userID int64, items [
 				return nil, folderIDInvalidErr()
 			}
 			hasFolder = true
-			// 第一阶段不维护 archived/folder 会话。若请求同时包含普通 peer，
-			// 按 Telegram 企业版路径优先返回普通 peer；纯 folder 请求返回空摘要。
+			// Phase one does not maintain archived/folder dialogs. If the request
+			// also contains ordinary peers, return ordinary peers preferentially per
+			// the Telegram Business path; a pure folder request returns an empty summary.
 		default:
 			return nil, inputConstructorInvalidErr()
 		}
@@ -771,9 +773,10 @@ func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, f
 		}
 		emoticon, hasEmoticon := f.GetEmoticon()
 		color, hasColor := f.GetColor()
-		// 官方要求 filter 至少一个 include 条件（类别开关或 include/pinned
-		// peer），否则永不匹配任何会话；TDesktop UI 不会发空 filter，这里
-		// 兜底拒绝（FILTER_INCLUDE_EMPTY）。
+		// The official server requires a filter to have at least one include
+		// condition (a category switch or an include/pinned peer), otherwise it
+		// never matches any dialog; the TDesktop UI never sends an empty filter, so
+		// this is a fallback rejection (FILTER_INCLUDE_EMPTY).
 		if !f.Contacts && !f.NonContacts && !f.Groups && !f.Broadcasts && !f.Bots &&
 			len(include) == 0 && len(pinned) == 0 {
 			return domain.DialogFolder{}, filterIncludeEmptyErr()

@@ -11,8 +11,9 @@ VALUES ($1, $2, $3);
 SELECT * FROM bots WHERE bot_user_id = $1;
 
 -- name: ListBotsByOwner :many
--- 排除 self-owner 种子行（内置 BotFather 自有），与 memory 实现一致：/mybots 与
--- 创建上限只统计用户经 /newbot 创建的 bot。
+-- Exclude the self-owner seed row (owned by the built-in BotFather), consistent
+-- with the memory implementation: /mybots and the creation cap count only bots
+-- users created via /newbot.
 SELECT * FROM bots WHERE owner_user_id = $1 AND bot_user_id <> owner_user_id ORDER BY bot_user_id;
 
 -- name: CountBotsByOwner :one
@@ -77,7 +78,7 @@ WHERE id = $1 AND is_bot
 RETURNING bot_info_version;
 
 -- name: UpdateBotProfileFields :one
--- 部分更新 bot 的 users 行（setBotInfo 的 name/about）；NULL 参数表示不动该字段。
+-- Partially update a bot's users row (setBotInfo's name/about); a NULL parameter means leave that field unchanged.
 UPDATE users
 SET first_name = COALESCE(sqlc.narg(first_name), first_name),
     about      = COALESCE(sqlc.narg(about), about),

@@ -11,13 +11,13 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// UpdateStateStore 用 PostgreSQL 实现 store.UpdateStateStore。
+// UpdateStateStore implements store.UpdateStateStore with PostgreSQL.
 type UpdateStateStore struct {
 	q  *sqlcgen.Queries
 	db sqlcgen.DBTX
 }
 
-// NewUpdateStateStore 基于 pgx 连接池（或事务）创建 UpdateStateStore。
+// NewUpdateStateStore creates an UpdateStateStore on top of a pgx pool (or transaction).
 func NewUpdateStateStore(db sqlcgen.DBTX) *UpdateStateStore {
 	return &UpdateStateStore{q: sqlcgen.New(db), db: db}
 }

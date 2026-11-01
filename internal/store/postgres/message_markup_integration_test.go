@@ -10,12 +10,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestSendPrivateReplyMarkupSurvivesReadPaths 验证 bot inline keyboard（reply_markup）
-// 经全部读路径字节级保真且双盒一致（P3 I2/I3）：
-//   - 发送结果双端（sender/recipient）携带 markup；
-//   - history（ListByUser）读回 markup，callback data 含 0x00/0xFF/非 UTF-8 逐字节相等；
-//   - 接收方经 UpdateEventStore.ListAfter（在线/离线 difference 共用重建路径）带 markup；
-//   - 编辑替换/清空 markup 后双盒一致。
+// TestSendPrivateReplyMarkupSurvivesReadPaths verifies the bot inline keyboard (reply_markup)
+// stays byte-faithful through all read paths and consistent in both boxes (P3 I2/I3):
+//   - the send result carries markup on both ends (sender/recipient);
+//   - history (ListByUser) reads back markup, with callback data containing 0x00/0xFF/non-UTF-8
+//     compared byte for byte;
+//   - the recipient gets markup via UpdateEventStore.ListAfter (the rebuild path shared by
+//     online/offline difference);
+//   - after an edit replaces/clears markup both boxes are consistent.
 func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -74,11 +76,11 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 		}
 	}
 
-	// 双端发送结果带 markup（I3）。
+	// The send result carries markup on both ends (I3).
 	assertMarkup("sender result", res.SenderMessage.ReplyMarkup)
 	assertMarkup("recipient result", res.RecipientMessage.ReplyMarkup)
 
-	// history 读回（getHistory 主渲染路径）字节保真。
+	// history reads back byte-faithfully (the getHistory main render path).
 	list, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("list by user: %v", err)
@@ -88,7 +90,7 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 	}
 	assertMarkup("recipient history", list.Messages[0].ReplyMarkup)
 
-	// 接收方经更新事件重建（离线 difference / 在线推送共用路径）带 markup。
+	// The recipient gets markup via the update-event rebuild (the path shared by offline difference / online push).
 	events := NewUpdateEventStore(pool)
 	got, err := events.ListAfter(ctx, recipient.ID, 0, 10)
 	if err != nil {
@@ -105,7 +107,7 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 		t.Fatal("no new_message event for recipient")
 	}
 
-	// 编辑替换 markup（仅一个 callback 按钮）→ 双盒一致更新。
+	// Edit replaces markup (a single callback button) → both boxes update consistently.
 	editRes, err := messages.EditMessage(ctx, domain.EditMessageRequest{
 		OwnerUserID:    sender.ID,
 		Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
@@ -128,7 +130,7 @@ func TestSendPrivateReplyMarkupSurvivesReadPaths(t *testing.T) {
 		}
 	}
 
-	// 编辑清空 markup（SetReplyMarkup + nil）→ 双盒 markup 清空。
+	// Edit clears markup (SetReplyMarkup + nil) → both boxes' markup is cleared.
 	clearRes, err := messages.EditMessage(ctx, domain.EditMessageRequest{
 		OwnerUserID:    sender.ID,
 		Peer:           domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},

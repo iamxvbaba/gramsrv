@@ -23,8 +23,9 @@ type channelViewCacheKey struct {
 	channelID int64
 }
 
-// channelViewReadModelCache 与 channelResolveReadModelCache 都缓存 domain.ChannelView,
-// 由统一缓存原语承载(版本闸门 / epoch 守卫 / LRU / clone)。
+// channelViewReadModelCache and channelResolveReadModelCache both cache
+// domain.ChannelView, backed by the shared cache primitive
+// (version gate / epoch guard / LRU / clone).
 type channelViewReadModelCache struct {
 	cache *readmodelcache.Cache[channelViewCacheKey, domain.ChannelView]
 }
@@ -71,8 +72,10 @@ func (s *Service) channelViewHash(ctx context.Context, userID, channelID int64) 
 		{Model: readmodel.ModelChannelBase, OwnerUserID: 0, PeerType: domain.PeerTypeChannel, PeerID: channelID},
 		{Model: readmodel.ModelChannelMember, OwnerUserID: userID, PeerType: domain.PeerTypeChannel, PeerID: channelID},
 		{Model: readmodel.ModelDialogLight, OwnerUserID: userID, PeerType: domain.PeerTypeChannel, PeerID: channelID},
-		// 快照含 SelfBoostsApplied：必须把 channel_self_boosts 纳入校验 token，否则 apply/revoke
-		// 加成不会失效这份长 TTL 快照。注：boost 自然到期是 time-based、不触发写，故其残余仍受 TTL 约束。
+		// The snapshot includes SelfBoostsApplied: channel_self_boosts must be part of the
+		// validation token, otherwise applying/revoking a boost would not invalidate this
+		// long-TTL snapshot. Note: a boost expiring naturally is time-based and triggers no
+		// write, so its residue is still bounded by the TTL.
 		{Model: readmodel.ModelChannelSelfBoosts, OwnerUserID: userID, PeerType: domain.PeerTypeChannel, PeerID: channelID},
 	}
 	rows, err := s.versions.ReadModelHashes(ctx, keys)

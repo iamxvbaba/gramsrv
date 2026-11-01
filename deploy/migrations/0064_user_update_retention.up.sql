@@ -1,12 +1,15 @@
--- 服务端已发送/构造的 update_states.pts 不是客户端确认：difference 响应可能在网络中
--- 丢失。observed_pts 只由客户端后续请求实际带回的 pts（或 getState 显式建立的快照
--- baseline）推进，retention 只能使用这个水位。
+-- The server-side sent/constructed update_states.pts is not client confirmation: a
+-- difference response may be lost in the network. observed_pts is advanced only by
+-- the pts the client actually carries back on a later request (or a snapshot
+-- baseline explicitly established by getState), and retention may use only this
+-- watermark.
 ALTER TABLE public.update_states
     ADD COLUMN observed_pts integer NOT NULL DEFAULT 0 CHECK (observed_pts >= 0);
 
--- 账号级 durable update 安全前缀回收水位。
--- 这里只记录“所有当前授权设备都已明确确认”的连续前缀；TDesktop 不支持
--- updates.differenceTooLong，故该表绝不能用于任意 TTL 硬裁剪。
+-- Account-level durable update safe-prefix retention watermark.
+-- It records only the contiguous prefix "confirmed explicitly by all currently
+-- authorized devices"; TDesktop does not support updates.differenceTooLong, so this
+-- table must never be used for arbitrary TTL hard trimming.
 CREATE TABLE public.user_update_retention (
     user_id bigint PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
     retained_through_pts integer NOT NULL DEFAULT 0 CHECK (retained_through_pts >= 0),
@@ -17,6 +20,6 @@ CREATE TABLE public.user_update_retention (
 CREATE INDEX user_update_retention_updated_idx
     ON public.user_update_retention (updated_at, user_id);
 
--- retention 先按时间挑全局最老的安全候选，再按 (user_id, pts) 删除连续前缀。
+-- retention first picks the globally oldest safe candidate by time, then deletes the contiguous prefix by (user_id, pts).
 CREATE INDEX user_update_events_retention_global_idx
     ON public.user_update_events (date, user_id, pts);

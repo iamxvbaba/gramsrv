@@ -10,8 +10,10 @@ import (
 	"testing"
 )
 
-// 官方礼物快照会随 Telegram 上新礼物而增长。以下下界只用来识别空快照或被截断的
-// 快照，不锁定任何一份具体归档，因此刷新快照不会让这些 opt-in 测试变红。
+// The official gift snapshot grows as Telegram adds new gifts. The lower bounds
+// below only serve to detect an empty or truncated snapshot; they do not pin any
+// specific archive, so refreshing the snapshot will not turn these opt-in tests
+// red.
 const (
 	minOfficialSnapshotGifts    = 100
 	minOfficialUpgradeableGifts = 50
@@ -86,9 +88,10 @@ func TestConfiguredOfficialSnapshotIsComplete(t *testing.T) {
 			}
 			continue
 		}
-		// manifest 声明的属性池必须真的能加载出同样数量、且哈希已校验的文档。
-		// 这一条替代了原先写死的属性总数：它检查的是「声明即可用」这个不变量，
-		// 而不是某一份具体归档的数字。
+		// The attribute pool declared by the manifest must actually load the same
+		// number of documents, with their hashes verified. This replaces the
+		// previously hard-coded attribute totals: it checks the "declared means
+		// usable" invariant rather than the numbers of a specific archive.
 		if len(bundle.Collectible.Models) != item.ModelCount ||
 			len(bundle.Collectible.Patterns) != item.PatternCount ||
 			len(bundle.Collectible.Backdrops) != item.BackdropCount {
@@ -108,9 +111,12 @@ func TestConfiguredOfficialSnapshotIsComplete(t *testing.T) {
 			verifiedDocuments[pattern.Document.ID] = struct{}{}
 		}
 	}
-	// 官方目录会随 Telegram 上新礼物而变化。把礼物/属性总数写死，会让每次刷新快照
-	// 都红灯，而真正的损坏（文档哈希不符、属性池被截断）反而被同样的噪声淹没。
-	// 这里只断言与具体归档无关的下界：挡住空快照、截断快照和空属性池。
+	// The official catalog changes as Telegram adds new gifts. Hard-coding the
+	// gift/attribute totals would turn red on every snapshot refresh, while real
+	// corruption (mismatched document hashes, a truncated attribute pool) would be
+	// drowned out by the same noise. Here we only assert archive-independent lower
+	// bounds: they catch an empty snapshot, a truncated snapshot and an empty
+	// attribute pool.
 	if len(items) < minOfficialSnapshotGifts {
 		t.Fatalf("catalog has %d gifts, want at least %d", len(items), minOfficialSnapshotGifts)
 	}

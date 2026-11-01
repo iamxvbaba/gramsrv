@@ -64,13 +64,14 @@ func (d *seedSelfDelivery) ProfilePhotoCommitted(userID int64) {
 	d.committed[userID]++
 }
 
-// TestBotAvatarsSeedViaRealService 集成测试：通过真实 files.Service、真实
-// permanent-blob 后端与真实、分开的 upload-staging 后端调用 botavatars.Seed。
-// Seed 内部经 SeedTx 构造事务化服务——这里确保 uploadParts / thumbs 等字段在
-// 事务服务上完整保留。premiumbot.mp4 的 CreateAvatarVideoFromBytes 必须直接写
-// permanent blob，不经 upload parts：v2 Core 的 remote FileData assembler 用自己的
-// 连接读 part，看不到 SeedTx 里未提交的 part 行，曾让 Docker 中 Core 启动失败
-// （"file parts invalid"）。视频静态帧不得回落成生成占位图。
+// TestBotAvatarsSeedViaRealService is an integration test: it calls botavatars.Seed through a
+// real files.Service, a real permanent-blob backend and a real, separate upload-staging backend.
+// Seed builds a transactional service through SeedTx -- this makes sure fields such as
+// uploadParts / thumbs survive intact on the transactional service. CreateAvatarVideoFromBytes for
+// premiumbot.mp4 must write the permanent blob directly, not through upload parts: v2 Core's remote
+// FileData assembler reads parts over its own connection and cannot see uncommitted part rows inside
+// SeedTx, which once made Core fail to start in Docker ("file parts invalid"). The video's still
+// frame must not fall back to a generated placeholder.
 func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	ctx := context.Background()
 
@@ -79,9 +80,9 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new local fs blob backend: %v", err)
 	}
-	// 独立的 upload-staging backend：与 permanent-blob 后端是分开的实例/目录。
+	// Independent upload-staging backend: a separate instance/directory from the permanent-blob backend.
 	staging := &countingUploadPartBackend{LocalFS: mustLocalFS(t, "staging backend")}
-	// Фейковый thumbnailer фиксирует, что SeedTx сохранил thumbs для видео-статика.
+	// The fake thumbnailer records that SeedTx preserved thumbs for the video static frame.
 	thumb := &countingThumbnailer{}
 	blind := &txBlindAssembler{}
 	svc := NewService(media, blobs, 2, WithUploadPartBackend(staging), WithVideoThumbnailer(thumb), WithUploadBlobAssembler(blind))
@@ -95,8 +96,8 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	if _, err := botavatars.SeedOfficialSystemAvatar(ctx, svc, delivery, nil, 1750000000); err != nil {
 		t.Fatalf("botavatars.SeedOfficialSystemAvatar failed: %v", err)
 	}
-	// v2 只接受带 durable delivery 的头像写入：每个被 seed 的账号恰好一条自投递，
-	// 并且只在事务提交后失效投影。
+	// v2 only accepts avatar writes with durable delivery: exactly one self-delivery per seeded
+	// account, and the projection is invalidated only after the transaction commits.
 	if got, want := len(media.deliveryEffects), len(botavatarsPeersForSeed()); got != want {
 		t.Fatalf("seed committed %d delivery effects, want %d", got, want)
 	}
@@ -111,13 +112,13 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	if staging.putUploadPartCalls != 0 || blind.calls != 0 {
 		t.Fatalf("embedded video avatar went through upload parts: staging=%d assembler=%d", staging.putUploadPartCalls, blind.calls)
 	}
-	// 视频静态帧必须从真实 thumbnailer 抽取，而不是回落成生成占位图——这证明
-	// SeedTx 保留了 thumbs。
+	// The video static frame must be extracted from the real thumbnailer rather than falling back to a
+	// generated placeholder — proving that SeedTx preserved thumbs.
 	if thumb.extractCalls == 0 {
 		t.Fatalf("video thumbnailer never invoked: thumbs not carried into SeedTx")
 	}
 
-	// 每个系统 bot/账号都应有头像相册与当前照片。
+	// Every system bot/account should have an avatar album and a current photo.
 	for peerID := range botavatarsPeersForSeed() {
 		ref, err := media.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{peerID}, domain.ProfilePhotoKindProfile)
 		if err != nil {
@@ -137,7 +138,7 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		if photo.DCID != 2 {
 			t.Fatalf("peer %d photo dc_id = %d, want 2", peerID, photo.DCID)
 		}
-		// 每个 photo size 都必须有真实 blob 可下载。
+		// Every photo size must have a real downloadable blob.
 		for _, size := range photo.Sizes {
 			blob, found, err := media.GetFileBlob(ctx, photoBlobKey(photo.ID, size.Type))
 			if err != nil {
@@ -156,9 +157,9 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		}
 	}
 
-	// 幂等：二次 Seed 不报错，且不再生成新照片。（官方系统账号的头像由
-	// SeedOfficialSystemAvatar 单独播种，每次调用都会重设，故不参与这里的
-	// 幂等断言。）
+	// Idempotent: a second Seed does not error and no longer generates new photos. (The official
+	// system account's avatar is seeded separately by SeedOfficialSystemAvatar and is reset on every
+	// call, so it does not participate in the idempotency assertion here.)
 	before := len(media.photos)
 	beforeEffects := len(media.deliveryEffects)
 	if err := botavatars.Seed(ctx, svc, delivery, 1750000001); err != nil {

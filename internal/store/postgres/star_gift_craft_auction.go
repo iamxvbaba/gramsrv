@@ -127,8 +127,9 @@ WHERE f.buyer_user_id=stale.buyer_user_id AND f.form_id=stale.form_id`, now, for
 		}
 	}
 
-	// 单个拍卖异常不得中断整轮 lifecycle 清算：否则一条坏数据会让所有到期拍卖、
-	// 未交付奖励和频道礼物通知被无限期跳过。记录首个错误，其余条目照常推进。
+	// A single auction error must not interrupt the whole lifecycle sweep: otherwise one bad row
+	// would make all expired auctions, undelivered awards and channel gift notifications be skipped
+	// indefinitely. Record the first error and keep advancing the remaining entries.
 	var sweepErr error
 	auctionLimit := remaining
 	if auctionLimit > 100 {
@@ -856,7 +857,7 @@ func (s *StarGiftLifecycleStore) dispatchStarGiftAuctionAwards(ctx context.Conte
 	if s.messages == nil {
 		return domain.ErrStarGiftAuctionUnavailable
 	}
-	// 交付欠付的中标奖励不看 c.enabled：运营下架该礼物后，已中标的用户仍必须收到礼物。
+	// Delivering owed auction awards ignores c.enabled: once operators delist the gift, users who already won must still receive it.
 	gift, found, err := NewStarGiftStore(s.db).CatalogGiftAnyState(ctx, giftID)
 	if err != nil || !found {
 		return domain.ErrStarGiftAuctionUnavailable
@@ -901,9 +902,10 @@ WHERE gift_id=$1 AND saved_gift_id IS NULL ORDER BY id LIMIT 100`, giftID)
 		}
 		for _, item := range items {
 			owner := domain.Peer{Type: domain.PeerType(item.recipientType), ID: item.recipientID}
-			// 拍卖奖励必须按中标价（star_gift_auction_acquired.bid_amount）投影，而不是目录起拍价。
-			// ensureStarGiftAuction 用 gift.Stars 作为 min_bid_amount，若沿用目录价，客户端会把
-			// 每一次中标都渲染成起拍价（"You won the auction with a bid of 50 Stars"）。
+			// The auction award must be projected at the winning bid (star_gift_auction_acquired.bid_amount),
+			// not the catalog starting price. ensureStarGiftAuction uses gift.Stars as min_bid_amount; if the
+			// catalog price were reused, the client would render every win at the starting price
+			// ("You won the auction with a bid of 50 Stars").
 			paid := item.amount
 			if paid <= 0 {
 				paid = gift.Stars

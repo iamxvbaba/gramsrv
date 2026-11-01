@@ -10,10 +10,10 @@ import (
 	"telesrv/internal/store"
 )
 
-// onMessagesTranscribeAudio 是 messages.transcribeAudio 的入口。缓存命中直接回文本；
-// 否则登记/复用 pending 后台 ASR 任务，完成时由 TranscribedAudioDelivery 在同一
-// 事务写 durable updateTranscribedAudio（与官方一致：客户端凭 Pending 标志等
-// update 拿终稿）。
+// onMessagesTranscribeAudio is the entry point of messages.transcribeAudio. A cache hit returns
+// the text directly; otherwise it registers/reuses a pending background ASR job, and on completion
+// TranscribedAudioDelivery writes a durable updateTranscribedAudio in the same transaction (as
+// upstream: the client sees the Pending flag and waits for the update with the final text).
 func (r *Router) onMessagesTranscribeAudio(
 	ctx context.Context,
 	req *tg.MessagesTranscribeAudioRequest,
@@ -44,8 +44,9 @@ func (r *Router) onMessagesTranscribeAudio(
 	}, nil
 }
 
-// voiceMessageDocument 按 viewer 视角加载 (peer, msgID) 上的 voice 文档，
-// 结构与 loadMessagePoll 一致（频道按 channelID 限定，私聊需比对 peer）。
+// voiceMessageDocument loads the voice document at (peer, msgID) from the viewer's perspective,
+// with the same structure as loadMessagePoll (channels are scoped by channelID; private chats
+// must match the peer).
 func (r *Router) voiceMessageDocument(
 	ctx context.Context,
 	userID int64,

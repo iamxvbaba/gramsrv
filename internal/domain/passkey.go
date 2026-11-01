@@ -2,7 +2,7 @@ package domain
 
 import "errors"
 
-// Passkey 相关错误。
+// Passkey-related errors.
 var (
 	ErrPasskeyChallengeInvalid  = errors.New("passkey challenge invalid")
 	ErrPasskeyNotFound          = errors.New("passkey not found")
@@ -10,7 +10,7 @@ var (
 	ErrPasskeyUserHandleInvalid = errors.New("passkey user handle invalid")
 )
 
-// PasskeyChallengePurpose 区分注册挑战与登录挑战。
+// PasskeyChallengePurpose distinguishes a registration challenge from a login challenge.
 type PasskeyChallengePurpose string
 
 const (
@@ -18,28 +18,28 @@ const (
 	PasskeyChallengeRegister PasskeyChallengePurpose = "register"
 )
 
-// PasskeyChallenge 是一次性 WebAuthn 挑战的元数据(短 TTL、用后即焚)。
-// 注册挑战绑定发起用户;登录挑战(discoverable)UserID=0,用户由 user_handle 反查。
+// PasskeyChallenge is the metadata of a one-time WebAuthn challenge (short TTL, burn after use).
+// A registration challenge is bound to the initiating user; a login (discoverable) challenge has UserID=0 and the user is looked up from user_handle.
 type PasskeyChallenge struct {
 	Purpose   PasskeyChallengePurpose
 	UserID    int64
-	ExpiresAt int64 // unix 秒
+	ExpiresAt int64 // unix seconds
 }
 
-// PasskeyCredential 是一条已注册的 passkey 凭据(WebAuthn 公钥)。
+// PasskeyCredential is a registered passkey credential (WebAuthn public key).
 type PasskeyCredential struct {
-	CredentialID []byte // 原始 credential id 字节(对外以 base64url 暴露)
+	CredentialID []byte // raw credential id bytes (exposed as base64url)
 	UserID       int64
-	PublicKey    []byte // COSE 公钥原始字节
+	PublicKey    []byte // raw COSE public key bytes
 	SignCount    uint32
 	AAGUID       []byte
 	Name         string
 	Transports   []string
-	CreatedAt    int64 // unix 秒
-	LastUsedAt   int64 // unix 秒;0 表示从未用于登录
+	CreatedAt    int64 // unix seconds
+	LastUsedAt   int64 // unix seconds; 0 means never used to log in
 }
 
-// Clone 深拷贝(切片字段),避免内存 store 暴露内部引用。
+// Clone deep-copies the slice fields so the in-memory store never exposes internal references.
 func (c PasskeyCredential) Clone() PasskeyCredential {
 	out := c
 	out.CredentialID = append([]byte(nil), c.CredentialID...)

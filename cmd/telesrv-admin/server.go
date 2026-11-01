@@ -2236,7 +2236,7 @@ type importStarGiftAPIRequest struct {
 	PerUserTotal   int    `json:"per_user_total"`
 
 	// Optional lifecycle authoring for the auction panel and the scheduled
-	// release ("отложенный дроп"). Zero values describe an ordinary gift; the
+	// release ("delayed drop"). Zero values describe an ordinary gift; the
 	// admin service validates the combination before writing a revision.
 	Auction              bool   `json:"auction"`
 	AuctionSlug          string `json:"auction_slug"`
@@ -3496,15 +3496,15 @@ func displayPhone(v string) string {
 
 func channelKind(ch ChannelRow) string {
 	if ch.Broadcast && !ch.Megagroup {
-		return "频道"
+		return "channel"
 	}
 	if ch.Megagroup {
 		if ch.Forum {
-			return "超级群/论坛"
+			return "supergroup/forum"
 		}
-		return "超级群"
+		return "supergroup"
 	}
-	return "频道/群"
+	return "channel/group"
 }
 
 func errString(err error) string {

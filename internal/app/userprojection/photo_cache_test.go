@@ -88,7 +88,7 @@ func TestCachedPhotoProviderCachesHitsAndMisses(t *testing.T) {
 	c := newCachedPhotoProviderWithClock(inner, time.Minute, func() time.Time { return now })
 	ctx := context.Background()
 
-	// 首次：两 owner 都未命中，查底层一次。
+	// First time: both owners miss, so the underlying store is queried once.
 	got, err := c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1, 2}, domain.ProfilePhotoKindProfile)
 	if err != nil {
 		t.Fatalf("first: %v", err)
@@ -103,7 +103,7 @@ func TestCachedPhotoProviderCachesHitsAndMisses(t *testing.T) {
 		t.Fatalf("first call: kindCalls=%d queried=%v, want 1 call of 2 ids", inner.kindCalls, inner.queriedIDs)
 	}
 
-	// 二次（TTL 内）：全部命中缓存（含 owner 2 的负结果），不再查底层。
+	// Second time (within TTL): all hits in cache (including owner 2's negative result), no further underlying query.
 	got, err = c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1, 2}, domain.ProfilePhotoKindProfile)
 	if err != nil {
 		t.Fatalf("second: %v", err)
@@ -115,7 +115,7 @@ func TestCachedPhotoProviderCachesHitsAndMisses(t *testing.T) {
 		t.Fatalf("second call hit DB: kindCalls=%d, want still 1", inner.kindCalls)
 	}
 
-	// 不同 kind 是独立缓存键：fallback 应再查一次。
+	// Different kinds are independent cache keys: fallback should query again.
 	if _, err = c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1}, domain.ProfilePhotoKindFallback); err != nil {
 		t.Fatalf("fallback: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestCachedPhotoProviderCachesHitsAndMisses(t *testing.T) {
 		t.Fatalf("fallback kind should query: kindCalls=%d, want 2", inner.kindCalls)
 	}
 
-	// TTL 过期后重新查底层。
+	// After the TTL expires it re-queries the underlying store.
 	now = now.Add(2 * time.Minute)
 	if _, err = c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1, 2}, domain.ProfilePhotoKindProfile); err != nil {
 		t.Fatalf("after ttl: %v", err)

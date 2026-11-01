@@ -1,21 +1,21 @@
 package domain
 
-// SavedHiddenAuthorUserID 是官方 hidden-author 收藏夹子会话的占位 user id
-// （TDesktop kSavedHiddenAuthorId / TDLib HIDDEN_AUTHOR_DIALOG_ID）。
-// 运行时新写入永远能确定源会话，不产生该值；仅存量回填中
-// 「fwd 头只有 from_name、源会话已不可知」的消息归入此子会话。
+// SavedHiddenAuthorUserID is the placeholder user id of the official hidden-author saved-messages sub-chat
+// (TDesktop kSavedHiddenAuthorId / TDLib HIDDEN_AUTHOR_DIALOG_ID).
+// New runtime writes can always determine the source chat and never produce this value; only in backfill
+// are messages whose "fwd header has only from_name and the source chat is unknowable" grouped into this sub-chat.
 const SavedHiddenAuthorUserID int64 = 2666000
 
-// MaxPinnedSavedDialogs 是收藏夹子会话置顶上限（官方 premium 上限同级）。
+// MaxPinnedSavedDialogs is the saved-messages sub-chat pin limit (same tier as the official Premium limit).
 const MaxPinnedSavedDialogs = 100
 
-// MaxSavedDialogsLimit 是 messages.getSavedDialogs 单页上限。
+// MaxSavedDialogsLimit is the per-page limit of messages.getSavedDialogs.
 const MaxSavedDialogsLimit = 100
 
-// SavedPeerForSelfChat 计算 self-chat 新消息的 saved 子会话分组键，与
-// TDLib SavedMessagesTopicId 语义对齐：转发带源会话（saved_from_peer）→
-// 源会话；fwd 头仅 from_name 且源会话不可知 → hidden author 占位（防御
-// 分支，运行时转发总是带源会话）；其余（直发、drop_author）→ self。
+// SavedPeerForSelfChat computes the saved sub-chat grouping key for a new self-chat message, aligned with
+// TDLib SavedMessagesTopicId semantics: a forward with a source chat (saved_from_peer) →
+// the source chat; a fwd header with only from_name and an unknowable source → the hidden-author placeholder (a defensive
+// branch; runtime forwards always carry a source chat); everything else (direct send, drop_author) → self.
 func SavedPeerForSelfChat(selfUserID int64, forward *MessageForward) Peer {
 	if forward != nil {
 		if forward.SavedFrom.ID != 0 {
@@ -28,46 +28,46 @@ func SavedPeerForSelfChat(selfUserID int64, forward *MessageForward) Peer {
 	return Peer{Type: PeerTypeUser, ID: selfUserID}
 }
 
-// SavedDialog 是收藏夹的一个子会话（savedDialog TL 构造器的业务形态）。
+// SavedDialog is one saved-messages sub-chat (the business form of the savedDialog TL constructor).
 type SavedDialog struct {
 	Peer Peer
-	// TopMessage 是该子会话当前最新可见消息的 owner 视角 box id。
+	// TopMessage is the owner-perspective box id of the sub-chat's current latest visible message.
 	TopMessage int
 	Pinned     bool
 }
 
-// SavedDialogList 是 getSavedDialogs/getPinnedSavedDialogs/getSavedDialogsByID
-// 的业务层结果。Messages 与 Dialogs 一一对应（top message 全量行）。
+// SavedDialogList is the business-layer result of getSavedDialogs/getPinnedSavedDialogs/getSavedDialogsByID.
+// Messages and Dialogs correspond one-to-one (a full row per top message).
 type SavedDialogList struct {
 	Dialogs  []SavedDialog
 	Messages []Message
 	Users    []User
 	Channels []Channel
-	// Count 是过滤口径下（含/不含 pinned）的子会话总数。
+	// Count is the total number of sub-chats under the filter scope (with/without pinned).
 	Count int
-	// Full 为 true 表示本页已含过滤口径下的全部剩余子会话
-	// （映射 messages.savedDialogs；false 映射 savedDialogsSlice）。
+	// Full being true means this page already contains all remaining sub-chats under the filter scope
+	// (maps to messages.savedDialogs; false maps to savedDialogsSlice).
 	Full bool
 }
 
-// SavedDialogsFilter 描述 getSavedDialogs 分页条件。
+// SavedDialogsFilter describes the getSavedDialogs pagination condition.
 type SavedDialogsFilter struct {
 	ExcludePinned bool
-	// OffsetID 是上一页最后一个子会话的 top message box id；0 或 >= MaxMessageBoxID
-	// 视为从最新开始（TDesktop 首页传 0，DrKLO Android 首页传 int32 max）。
+	// OffsetID is the top message box id of the previous page's last sub-chat; 0 or >= MaxMessageBoxID
+	// is treated as starting from the newest (TDesktop sends 0 on the first page, DrKLO Android sends int32 max).
 	OffsetID int
-	// OffsetDate/OffsetPeer 仅作合法性校验；box id 单调于时间，分页统一按
-	// top box id 严格降序推进。
+	// OffsetDate/OffsetPeer are only for validity checking; box id is monotonic in time, so paging always advances
+	// by strictly descending top box id.
 	OffsetDate int
 	OffsetPeer Peer
 	Limit      int
 }
 
-// DeleteSavedHistoryRequest 是 messages.deleteSavedHistory 的业务命令：
-// 删除 self-chat 中一个 saved 子会话的消息。self-chat 单侧，无 revoke 语义。
+// DeleteSavedHistoryRequest is the business command of messages.deleteSavedHistory:
+// delete the messages of one saved sub-chat in the self-chat. Self-chat is one-sided, with no revoke semantics.
 type DeleteSavedHistoryRequest struct {
 	OwnerUserID int64
-	// SavedPeer 是要清空的子会话分组键。
+	// SavedPeer is the sub-chat grouping key to clear.
 	SavedPeer       Peer
 	MaxID           int
 	MinDate         int
@@ -77,11 +77,11 @@ type DeleteSavedHistoryRequest struct {
 	OriginSessionID int64
 }
 
-// DeleteSavedHistoryResult 描述一次 saved 子会话删除批次。
+// DeleteSavedHistoryResult describes one saved sub-chat deletion batch.
 type DeleteSavedHistoryResult struct {
-	// MessageIDs 是本批被删除的 owner 视角 box id。
+	// MessageIDs are the deleted owner-perspective box ids in this batch.
 	MessageIDs []int
 	Event      UpdateEvent
-	// More 为 true 表示仍有剩余批次，客户端按 affectedHistory.offset 续发。
+	// More being true means there are remaining batches; the client continues by affectedHistory.offset.
 	More bool
 }

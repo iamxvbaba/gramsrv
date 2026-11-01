@@ -20,40 +20,47 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// 本文件实现地图缩略图的真实数据源：upload.getWebFile 命中 geo 坐标时，服务端代理
-// Mapbox Static Images API 抓取一张静态地图并落盘缓存。客户端按 offset/limit 分片下载
-// 同一文件，字节必须全程一致，因此：
-//   - 抓取成功先原子落盘（temp+rename），所有分片一律从缓存文件读；
-//   - 落盘失败时字节进短 TTL 进程内缓存兜底——分片是顺序请求、singleflight 合并不了，
-//     没有这层缓存会退化成每分片一次外网抓取，且两次抓取的字节无逐字节一致保证；
-//   - 抓取失败记一个短 TTL 负缓存，期间该 key 直接走确定性占位图，避免同一次下载
-//     前后分片在「真图/占位图」之间翻转，也避免上游故障时每个分片都打一次外网。
+// This file implements the real data source for map thumbnails: when upload.getWebFile hits a geo
+// coordinate, the server proxies the Mapbox Static Images API to fetch a static map and cache it to
+// disk. The client downloads the same file in offset/limit chunks and the bytes must be consistent
+// throughout, therefore:
+//   - a successful fetch is atomically written to disk first (temp+rename), and all chunks are read
+//     from the cache file;
+//   - if the disk write fails the bytes go into a short-TTL in-process fallback cache — chunks are
+//     sequential requests that singleflight cannot merge, so without this layer it would degrade to
+//     one external fetch per chunk with no byte-for-byte consistency guarantee across two fetches;
+//   - a failed fetch records a short-TTL negative cache, during which the key goes straight to the
+//     deterministic placeholder, avoiding a flip between "real map/placeholder" across chunks of the
+//     same download and avoiding one external request per chunk while the upstream is down.
 //
-// 资源边界（key 空间由客户端可控的坐标×尺寸组合构成，必须设防）：
-//   - 抓取尺寸量化到 32px 档位，收窄 key 空间与缓存基数；
-//   - 磁盘缓存有总量上限，超限按 mtime 从旧到新淘汰（顺带回收崩溃遗留 .tmp）；
-//   - 上游抓取有全局速率上限，超限当次退占位图，防止恶意枚举烧 Mapbox 配额。
+// Resource bounds (the key space is made of client-controllable coordinate×size combinations and
+// must be defended):
+//   - the fetch size is quantized to 32px steps, narrowing the key space and cache cardinality;
+//   - the disk cache has a total limit, evicting oldest-first by mtime when over (also reclaiming
+//     .tmp files left by crashes);
+//   - upstream fetches have a global rate limit, falling back to the placeholder for that request
+//     when over, preventing a malicious enumeration from burning the Mapbox quota.
 //
-// 地图不内嵌定位针：TDesktop（historyMapPoint icon）与 DrKLO 都在客户端叠加 marker，
-// 与官方静态图行为一致。
+// The map does not embed a location pin: TDesktop (historyMapPoint icon) and DrKLO both overlay the
+// marker client-side, consistent with the official static image behavior.
 
 const (
 	mapTileFetchTimeout   = 15 * time.Second
-	mapTileMaxFetchBytes  = 8 << 20 // 防御性上限；640x640@2x PNG 远小于此
+	mapTileMaxFetchBytes  = 8 << 20 // defensive limit; a 640x640@2x PNG is far smaller
 	mapTileFailureTTL     = time.Minute
 	mapboxStaticStyleBase = "/styles/v1/mapbox/streets-v12/static"
 
-	// mapTileEdgeStep 是抓取尺寸的量化步长（向上取整）；客户端拿到略大的图自适应缩放。
+	// mapTileEdgeStep is the quantization step for the fetch size (rounded up); the client receives a slightly larger image and scales it adaptively.
 	mapTileEdgeStep = 32
-	// mapTileMemTTL/mapTileMemMaxBytes 是落盘失败兜底字节缓存的保留期与总量上限。
+	// mapTileMemTTL/mapTileMemMaxBytes are the retention period and total limit of the fallback byte cache used when the disk write fails.
 	mapTileMemTTL      = 10 * time.Minute
 	mapTileMemMaxBytes = 32 << 20
-	// mapTileDiskMaxBytes 是磁盘缓存总量上限；超限按 mtime 淘汰到 90%。
+	// mapTileDiskMaxBytes is the total disk cache limit; over the limit it evicts by mtime down to 90%.
 	mapTileDiskMaxBytes = int64(256 << 20)
-	// mapTileFetchRateLimit 是全局每分钟上游抓取上限（防恶意坐标枚举烧配额）。
+	// mapTileFetchRateLimit is the global per-minute upstream fetch limit (prevents a malicious coordinate enumeration from burning the quota).
 	mapTileFetchRateLimit  = 120
 	mapTileFetchRateWindow = time.Minute
-	// mapTileTmpMaxAge 是崩溃遗留 .tmp 的回收阈值。
+	// mapTileTmpMaxAge is the reclamation threshold for .tmp files left by crashes.
 	mapTileTmpMaxAge = time.Hour
 )
 
@@ -64,7 +71,7 @@ type memTileEntry struct {
 
 type mapTileProxy struct {
 	token        string
-	baseURL      string // 默认 https://api.mapbox.com；测试注入 httptest 地址
+	baseURL      string // defaults to https://api.mapbox.com; tests inject an httptest address
 	dir          string
 	client       *http.Client
 	log          *zap.Logger
@@ -74,14 +81,15 @@ type mapTileProxy struct {
 	sweepMu sync.Mutex
 
 	mu         sync.Mutex
-	failures   map[string]time.Time // key → 失败时刻（负缓存）
+	failures   map[string]time.Time // key → failure time (negative cache)
 	memTiles   map[string]memTileEntry
 	memBytes   int
-	fetchTimes []time.Time // 上游抓取滑动窗口
+	fetchTimes []time.Time // upstream fetch sliding window
 }
 
-// WithMapboxMapTiles 启用 Mapbox 静态地图代理；token 为空时不启用（保持占位图）。
-// logger 由 NewService 在全部 Option 应用后统一注入。
+// WithMapboxMapTiles enables the Mapbox static map proxy; it is not enabled when token is empty
+// (keeping the placeholder). The logger is injected uniformly by NewService after all Options are
+// applied.
 func WithMapboxMapTiles(token, cacheDir string) Option {
 	return func(s *Service) {
 		if token == "" || cacheDir == "" {
@@ -99,14 +107,14 @@ func WithMapboxMapTiles(token, cacheDir string) Option {
 	}
 }
 
-// tile 返回 (lat,long,zoom,w,h,scale) 对应的静态地图字节；入参须已 clamp。
+// tile returns the static map bytes for (lat,long,zoom,w,h,scale); the inputs must already be clamped.
 func (p *mapTileProxy) tile(lat, long float64, w, h, zoom, scale int) ([]byte, string, error) {
-	// Mapbox 静态图只支持 @2x；scale 3 同样按 2x 抓（客户端按目标尺寸自适应缩放）。
+	// Mapbox static images only support @2x; scale 3 is also fetched at 2x (the client scales adaptively to the target size).
 	retina := ""
 	if scale >= 2 {
 		retina = "@2x"
 	}
-	// 尺寸量化收窄客户端可铸造的 key 空间；客户端按目标矩形自适应缩放略大的图。
+	// Size quantization narrows the key space the client can mint; the client scales the slightly larger image adaptively to the target rectangle.
 	w = quantizeTileEdge(w)
 	h = quantizeTileEdge(h)
 	key := fmt.Sprintf("v1-%.5f-%.5f-%d-%dx%d%s", lat, long, zoom, w, h, retina)
@@ -128,7 +136,7 @@ func (p *mapTileProxy) tile(lat, long float64, w, h, zoom, scale int) ([]byte, s
 			return data, nil
 		}
 		if !p.allowFetch() {
-			// 全局抓取限速：负缓存让该 key 短期稳定走占位图（保持分片字节一致），不打上游。
+			// Global fetch rate limit: the negative cache keeps this key stably on the placeholder for a short time (keeping chunk bytes consistent) without hitting upstream.
 			p.markFailed(key)
 			return nil, errors.New("map tile fetch rate limited")
 		}
@@ -138,8 +146,9 @@ func (p *mapTileProxy) tile(lat, long float64, w, h, zoom, scale int) ([]byte, s
 			return nil, err
 		}
 		if err := p.store(path, data); err != nil {
-			// 分片是顺序请求，singleflight 合并不了后续分片；字节必须进内存缓存兜底，
-			// 否则磁盘持续故障会退化成每分片一次外网抓取且字节无一致性保证。
+			// Chunks are sequential requests that singleflight cannot merge for later chunks; the
+			// bytes must go into the memory cache as a fallback, otherwise a persistent disk failure
+			// would degrade to one external fetch per chunk with no consistency guarantee.
 			p.rememberMemTile(key, data)
 			p.log.Warn("map tile cache write failed, serving from memory", zap.Error(err), zap.String("key", key))
 		} else {
@@ -154,7 +163,7 @@ func (p *mapTileProxy) tile(lat, long float64, w, h, zoom, scale int) ([]byte, s
 	return data, mapTileMime(data), nil
 }
 
-// quantizeTileEdge 把边长向上量化到 mapTileEdgeStep 的整数倍（caller 已 clamp 到 16..1024）。
+// quantizeTileEdge rounds the edge length up to a multiple of mapTileEdgeStep (the caller has already clamped to 16..1024).
 func quantizeTileEdge(v int) int {
 	q := ((v + mapTileEdgeStep - 1) / mapTileEdgeStep) * mapTileEdgeStep
 	if q > mapTileMaxEdge {
@@ -163,11 +172,11 @@ func quantizeTileEdge(v int) int {
 	return q
 }
 
-// fetch 请求 Mapbox Static Images API。注意 URL 坐标顺序是 {long},{lat}。
+// fetch requests the Mapbox Static Images API. Note the URL coordinate order is {long},{lat}.
 func (p *mapTileProxy) fetch(lat, long float64, w, h, zoom int, retina string) ([]byte, error) {
 	endpoint := fmt.Sprintf("%s%s/%.5f,%.5f,%d/%dx%d%s?access_token=%s&attribution=false&logo=false",
 		p.baseURL, mapboxStaticStyleBase, long, lat, zoom, w, h, retina, url.QueryEscape(p.token))
-	// 不透传 RPC ctx：singleflight 结果被并发分片共享，单个调用方取消不应拖垮整次抓取。
+	// The RPC ctx is not passed through: the singleflight result is shared by concurrent chunks, and a single caller's cancellation should not take down the whole fetch.
 	ctx, cancel := context.WithTimeout(context.Background(), mapTileFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -176,7 +185,7 @@ func (p *mapTileProxy) fetch(lat, long float64, w, h, zoom int, retina string) (
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		// 传输层错误内嵌完整 URL（含 access_token），脱敏后再向上传播/落日志。
+		// Transport-layer errors embed the full URL (including access_token), so redact before propagating/logging.
 		return nil, fmt.Errorf("fetch map tile: %s", p.redactToken(err.Error()))
 	}
 	defer resp.Body.Close()
@@ -226,7 +235,7 @@ func (p *mapTileProxy) store(path string, data []byte) error {
 	return nil
 }
 
-// redactToken 把错误文本中的 access token（原样或 URL 转义形态）替换为占位符。
+// redactToken replaces the access token in error text (raw or URL-escaped form) with a placeholder.
 func (p *mapTileProxy) redactToken(s string) string {
 	if p.token == "" {
 		return s
@@ -238,7 +247,7 @@ func (p *mapTileProxy) redactToken(s string) string {
 	return s
 }
 
-// cachedMemTile 返回落盘失败兜底缓存中的字节（TTL 内）。
+// cachedMemTile returns bytes from the fallback cache used when the disk write fails (within the TTL).
 func (p *mapTileProxy) cachedMemTile(key string) ([]byte, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -254,7 +263,7 @@ func (p *mapTileProxy) cachedMemTile(key string) ([]byte, bool) {
 	return entry.data, true
 }
 
-// rememberMemTile 在落盘失败时暂存字节；超总量按最旧淘汰。
+// rememberMemTile stashes bytes when the disk write fails; over the total limit it evicts oldest-first.
 func (p *mapTileProxy) rememberMemTile(key string, data []byte) {
 	if len(data) > mapTileMemMaxBytes {
 		return
@@ -286,7 +295,7 @@ func (p *mapTileProxy) rememberMemTile(key string, data []byte) {
 	p.memBytes += len(data)
 }
 
-// allowFetch 是全局上游抓取限速（滑动窗口）；超限返回 false。
+// allowFetch is the global upstream fetch rate limit (sliding window); returns false when over the limit.
 func (p *mapTileProxy) allowFetch() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -305,8 +314,9 @@ func (p *mapTileProxy) allowFetch() bool {
 	return true
 }
 
-// sweepDisk 在新写入后核算缓存目录总量，超限按 mtime 从旧到新淘汰到 90%，
-// 顺带回收崩溃遗留的过期 .tmp。store 仅发生在上游抓取后（低频），同步扫描可接受。
+// sweepDisk measures the total cache directory size after a new write and, when over the limit,
+// evicts oldest-first by mtime down to 90%, also reclaiming expired .tmp files left by crashes.
+// store only happens after an upstream fetch (low frequency), so a synchronous scan is acceptable.
 func (p *mapTileProxy) sweepDisk() {
 	p.sweepMu.Lock()
 	defer p.sweepMu.Unlock()
@@ -379,7 +389,7 @@ func (p *mapTileProxy) recentlyFailed(key string) bool {
 func (p *mapTileProxy) markFailed(key string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// 顺手清理过期项，防 map 无界增长（key 空间本身有限：坐标×尺寸枚举）。
+	// Also clean up expired entries to prevent unbounded map growth (the key space itself is bounded: coordinate×size enumeration).
 	now := time.Now()
 	for k, at := range p.failures {
 		if now.Sub(at) > mapTileFailureTTL {
@@ -389,7 +399,7 @@ func (p *mapTileProxy) markFailed(key string) {
 	p.failures[key] = now
 }
 
-// mapTileMime 按魔数识别图片类型；非图片返回空串。
+// mapTileMime identifies the image type by magic number; returns an empty string for non-images.
 func mapTileMime(data []byte) string {
 	switch {
 	case len(data) > 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G':

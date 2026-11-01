@@ -20,8 +20,10 @@ func TestMessagesForwardMessagesRecordsRequestAndReturnsUpdates(t *testing.T) {
 		fromID  = int64(1000000002)
 		toID    = int64(1000000003)
 	)
-	// 私聊→私聊转发统一经 forwardSources 取源（GetMessages）再逐条 SendPrivateText，
-	// 以便在 RPC 层对原作者做 PrivacyKeyForwards 降级，故必须提供源消息。
+	// Private-to-private forwards uniformly fetch sources via forwardSources
+	// (GetMessages) and then SendPrivateText one by one, so the RPC layer can
+	// apply PrivacyKeyForwards downgrade to the original author; the source
+	// messages must therefore be provided.
 	messages := &captureMessages{list: domain.MessageList{Messages: []domain.Message{
 		{ID: 3, OwnerUserID: ownerID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: fromID}, From: domain.Peer{Type: domain.PeerTypeUser, ID: fromID}, Date: 1700000000, Body: "first"},
 		{ID: 4, OwnerUserID: ownerID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: fromID}, From: domain.Peer{Type: domain.PeerTypeUser, ID: fromID}, Date: 1700000001, Body: "second"},

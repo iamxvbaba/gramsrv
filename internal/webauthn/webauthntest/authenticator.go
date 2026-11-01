@@ -1,9 +1,12 @@
-// Package webauthntest 提供一个纯 Go 软件 authenticator,模拟平台 passkey 设备
-// 生成符合 WebAuthn 规范的 attestation(注册)与 assertion(登录)。
+// Package webauthntest provides a pure-Go software authenticator that simulates a
+// platform passkey device, generating WebAuthn-spec-compliant attestation
+// (registration) and assertion (login).
 //
-// 它与被测的 internal/webauthn 是「同一规范的两份独立实现」:authenticator 按规范
-// 构造字节并用真私钥签名,服务端按规范验证。e2e/单测通过即说明双方对规范的理解一致。
-// 仅供测试使用(被 _test.go 导入)。
+// Together with the internal/webauthn under test it is "two independent
+// implementations of the same spec": the authenticator constructs the bytes per
+// the spec and signs with a real private key, and the server verifies per the
+// spec. Passing e2e/unit tests means both sides agree on the spec. It is for test
+// use only (imported by _test.go).
 package webauthntest
 
 import (
@@ -26,8 +29,9 @@ const (
 
 var b64 = base64.RawURLEncoding
 
-// Authenticator 是一个 ES256(ECDSA P-256)软件 authenticator,持有一对密钥与一个
-// 凭据 id,可重复用于注册与多次登录(签名计数器递增)。
+// Authenticator is an ES256 (ECDSA P-256) software authenticator holding a key
+// pair and a credential id, reusable for registration and multiple logins (the
+// signature counter increments).
 type Authenticator struct {
 	priv      *ecdsa.PrivateKey
 	credID    []byte
@@ -35,7 +39,7 @@ type Authenticator struct {
 	signCount uint32
 }
 
-// New 生成一个新的软件 authenticator(随机 ES256 密钥 + 随机 credential id)。
+// New generates a new software authenticator (random ES256 key + random credential id).
 func New() (*Authenticator, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -45,14 +49,14 @@ func New() (*Authenticator, error) {
 	if _, err := rand.Read(credID); err != nil {
 		return nil, err
 	}
-	aaguid := make([]byte, 16) // 全 0 aaguid(与多数 platform passkey 一致)
+	aaguid := make([]byte, 16) // all-zero aaguid (consistent with most platform passkeys)
 	return &Authenticator{priv: priv, credID: credID, aaguid: aaguid}, nil
 }
 
-// CredentialID 返回 credential id 原始字节。
+// CredentialID returns the raw credential id bytes.
 func (a *Authenticator) CredentialID() []byte { return append([]byte(nil), a.credID...) }
 
-// CredentialIDB64 返回 base64url(无填充) 的 credential id(对应 TL 的 ID/RawID string)。
+// CredentialIDB64 returns the base64url (unpadded) credential id (corresponding to TL's ID/RawID string).
 func (a *Authenticator) CredentialIDB64() string { return b64.EncodeToString(a.credID) }
 
 type clientData struct {
@@ -102,7 +106,7 @@ func (a *Authenticator) authData(rpID string, flags byte, includeCred bool) []by
 	return buf
 }
 
-// Register 模拟 createCredential,返回 clientDataJSON 与 attestationObject(fmt=none)。
+// Register simulates createCredential, returning clientDataJSON and attestationObject (fmt=none).
 func (a *Authenticator) Register(rpID, origin string, challenge []byte) (clientDataJSON, attestationObject []byte, err error) {
 	cd := a.clientDataJSON("webauthn.create", origin, challenge)
 	ad := a.authData(rpID, flagUserPresent|flagUserVerified|flagAttestedCredData, true)
@@ -118,8 +122,8 @@ func (a *Authenticator) Register(rpID, origin string, challenge []byte) (clientD
 	return cd, obj, nil
 }
 
-// Assert 模拟 getCredential,返回 clientDataJSON、authenticatorData 与 signature。
-// 每次调用签名计数器 +1。
+// Assert simulates getCredential, returning clientDataJSON, authenticatorData and
+// signature. Each call increments the signature counter by 1.
 func (a *Authenticator) Assert(rpID, origin string, challenge []byte) (clientDataJSON, authenticatorData, signature []byte, err error) {
 	a.signCount++
 	cd := a.clientDataJSON("webauthn.get", origin, challenge)

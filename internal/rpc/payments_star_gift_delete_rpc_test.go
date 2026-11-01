@@ -10,8 +10,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// deleteStarGiftRPCGifts 只实现 payments.deleteStarGift 用到的部分，其余方法
-// 通过嵌入接口保持满足 GiftsService。
+// deleteStarGiftRPCGifts implements only the part used by payments.deleteStarGift; the remaining
+// methods stay satisfied via the embedded interface for GiftsService.
 type deleteStarGiftRPCGifts struct {
 	GiftsService
 	req   domain.StarGiftDeleteRequest
@@ -65,7 +65,7 @@ func TestPaymentsDeleteStarGiftRejectsForeignOwner(t *testing.T) {
 	r, gifts, sender := deleteStarGiftRouter(t)
 	ctx := WithUserID(context.Background(), sender.ID)
 
-	// 频道礼物属于频道资产：解析阶段就拒绝，不会走到删除。
+	// Channel gifts are channel assets: rejected at the resolution stage, never reaching deletion.
 	_, err := r.onPaymentsDeleteStarGift(ctx, &tg.PaymentsDeleteStarGiftRequest{
 		Stargift: &tg.InputSavedStarGiftChat{Peer: &tg.InputPeerSelf{}, SavedID: 7},
 	})

@@ -7,28 +7,33 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 )
 
-// preCheckoutTimeoutSeconds 是客户端挂起等待 bot 应答的窗口。Bot API 明确要求在
-// 10 秒内回答 pre_checkout_query，超时这笔支付即失败。
+// preCheckoutTimeoutSeconds is the window during which the client waits for the bot's reply. The
+// Bot API explicitly requires answering pre_checkout_query within 10 seconds; after the timeout the
+// payment fails.
 const preCheckoutTimeoutSeconds = 10
 
-// preCheckoutErrorMaxLen 是 error_message 的长度上限，与 Bot API 一致：超长直接拒绝，
-// 而不是静默截断成一个含义已经变了的说辞。
+// preCheckoutErrorMaxLen is the length limit for error_message, consistent with the Bot API: too
+// long is rejected outright rather than silently truncated into a statement whose meaning has
+// changed.
 const preCheckoutErrorMaxLen = 200
 
-// preCheckoutFailedErr 是"付款闸门没有得到批准"：bot 明确拒绝、没有应答，或应答来迟。
+// preCheckoutFailedErr is "the payment gate was not approved": the bot explicitly declined, did not
+// answer, or answered too late.
 //
-// 它和"支付失败"是两件事：前者是卖家拒绝了订单，后者是技术故障。PAYMENT_FAILED
-// 正是 Bot API 在 pre-checkout 未通过时使用的错误。
+// It is a different thing from "payment failed": the former is the seller rejecting the order, the
+// latter is a technical failure. PAYMENT_FAILED is exactly the error the Bot API uses when
+// pre-checkout does not pass.
 func preCheckoutFailedErr() error {
 	return tgerr.New(400, "PAYMENT_FAILED")
 }
 
-// preCheckoutDeclinedErr 带上了 bot 给的理由——Bot API 就是把这个 error_message 显示给
-// 付款人的，所以理由必须原样送到客户端。
+// preCheckoutDeclinedErr carries the reason given by the bot — the Bot API shows this
+// error_message to the payer, so the reason must be delivered to the client verbatim.
 //
-// 这里手写 tgerr.Error 而不是 tgerr.New：New 会从 Message 反解 Type，而我们需要
-// Type 固定为 PAYMENT_FAILED、Message 装 bot 的原话。errors.go 里禁止手写的理由是
-// FLOOD_WAIT_X 这类带参数字段的反解，那一条在此不适用。
+// Here tgerr.Error is hand-written instead of tgerr.New: New reverse-parses Type from Message,
+// whereas we need Type fixed to PAYMENT_FAILED and Message to hold the bot's own words. The
+// rationale for banning hand-writing in errors.go concerns reverse-parsing parameterized fields
+// like FLOOD_WAIT_X, which does not apply here.
 func preCheckoutDeclinedErr(message string) error {
 	message = strings.TrimSpace(message)
 	if message == "" {

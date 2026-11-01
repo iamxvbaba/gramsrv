@@ -32,7 +32,7 @@ func emojiStickerRouter(t *testing.T) *Router {
 					{Emoticon: "📂", DocumentIDs: []int64{403}},
 				}},
 				{ID: 12, Hash: 2, Archived: true, Packs: []domain.StickerPack{
-					{Emoticon: "👍", DocumentIDs: []int64{999}}, // 归档集应被排除
+					{Emoticon: "👍", DocumentIDs: []int64{999}}, // archived set should be excluded
 				}},
 			},
 		},
@@ -55,8 +55,9 @@ func stickerDocIDs(t *testing.T, res tg.MessagesStickersClass) []int64 {
 	return ids
 }
 
-// TestMessagesGetStickersByEmoji 验证 emoji→贴纸索引检索 + 归档排除 + hash notModified
-// + hash=0 永不返回 NotModified（崩溃安全契约）+ 变体选择符归一化。
+// TestMessagesGetStickersByEmoji verifies emoji->sticker index lookup + archived
+// exclusion + hash notModified + hash=0 never returns NotModified (crash-safety
+// contract) + variation-selector normalization.
 func TestMessagesGetStickersByEmoji(t *testing.T) {
 	r := emojiStickerRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -67,46 +68,48 @@ func TestMessagesGetStickersByEmoji(t *testing.T) {
 	}
 	ids := stickerDocIDs(t, first)
 	if len(ids) != 2 || ids[0] != 201 || ids[1] != 202 {
-		t.Fatalf("👍 stickers = %v, want [201 202]（归档集 999 排除）", ids)
+		t.Fatalf("👍 stickers = %v, want [201 202] (archived set 999 excluded)", ids)
 	}
 	hash := first.(*tg.MessagesStickers).Hash
 	if hash == 0 {
 		t.Fatal("hash must be non-zero for cache round-trips")
 	}
 
-	// hash 命中 → NotModified。
+	// hash hit -> NotModified.
 	if again, err := r.onMessagesGetStickers(ctx, &tg.MessagesGetStickersRequest{Emoticon: "👍", Hash: hash}); err != nil {
 		t.Fatalf("getStickers 👍 hash: %v", err)
 	} else if _, ok := again.(*tg.MessagesStickersNotModified); !ok {
 		t.Fatalf("re-get with hash = %T, want NotModified", again)
 	}
 
-	// 崩溃安全：hash=0 永远返回完整响应（DrKLO premium 预览强转，notModified 会闪退）。
+	// Crash safety: hash=0 always returns the full response (DrKLO's premium preview
+	// casts unconditionally, and notModified would crash it).
 	if zero, err := r.onMessagesGetStickers(ctx, &tg.MessagesGetStickersRequest{Emoticon: "👍", Hash: 0}); err != nil {
 		t.Fatalf("getStickers 👍 hash=0: %v", err)
 	} else if _, ok := zero.(*tg.MessagesStickers); !ok {
 		t.Fatalf("hash=0 = %T, want full *tg.MessagesStickers (never NotModified)", zero)
 	}
 
-	// 另一个 emoji。
+	// Another emoji.
 	if ids := stickerDocIDs(t, mustStickers(t, r, ctx, "🔥", 0)); len(ids) != 1 || ids[0] != 301 {
 		t.Fatalf("🔥 stickers = %v, want [301]", ids)
 	}
 
-	// 变体选择符归一化：👍 + VS16 仍匹配。
+	// Variation-selector normalization: 👍 + VS16 still matches.
 	if ids := stickerDocIDs(t, mustStickers(t, r, ctx, "👍️", 0)); len(ids) != 2 {
-		t.Fatalf("👍+VS16 stickers = %v, want 2 (variation selector 归一化)", ids)
+		t.Fatalf("👍+VS16 stickers = %v, want 2 (variation selector normalized)", ids)
 	}
 
-	// 未知 emoji → 空。
+	// Unknown emoji -> empty.
 	if ids := stickerDocIDs(t, mustStickers(t, r, ctx, "🦄", 0)); len(ids) != 0 {
 		t.Fatalf("unknown emoji stickers = %v, want empty", ids)
 	}
 }
 
-// TestMessagesGetStickersSpecialCategories 固定 TDesktop、DrKLO Android 与
-// Telegram-iOS 共用的特殊类别标记。这些标记不是普通复合 emoji：服务端应把它们
-// 解析到对应的基础目录，同时不能拆分任意多 emoji 查询。
+// TestMessagesGetStickersSpecialCategories pins the special-category markers shared
+// by TDesktop, DrKLO Android and Telegram-iOS. These markers are not ordinary composite
+// emoji: the server must resolve them to the corresponding base catalog, while not
+// splitting an arbitrary multi-emoji query.
 func TestMessagesGetStickersSpecialCategories(t *testing.T) {
 	r := emojiStickerRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -152,9 +155,11 @@ func TestMessagesGetStickersSpecialCategories(t *testing.T) {
 	}
 }
 
-// TestMessagesGetStickersGreetingCategoryIsBounded 固定 greeting 与普通 👋 搜索的
-// 边界：每个贴纸集只贡献一个 greeting 代表项，且启动预取目录总数有界；普通搜索
-// 不受影响，避免为了优化启动资源而缩窄用户主动搜索结果。
+// TestMessagesGetStickersGreetingCategoryIsBounded pins the boundary between greeting
+// and an ordinary 👋 search: each sticker set contributes only one greeting
+// representative and the startup prefetch catalog total is bounded; an ordinary search
+// is unaffected, so optimizing startup resources does not narrow the results a user
+// actively searches for.
 func TestMessagesGetStickersGreetingCategoryIsBounded(t *testing.T) {
 	docs := make(map[int64]domain.Document)
 	sets := make([]domain.StickerSet, 0, maxGreetingStickers+4)

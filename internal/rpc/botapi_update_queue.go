@@ -390,9 +390,10 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 	}
 }
 
-// enqueueBotAPIPrivateMessageUpdateAsync 把私聊消息的 Bot API 队列写入投给后台
-// dispatcher（性能审计 H2）。若收件人是 bot，BotAPIUpdateStore 是必需 durable
-// producer 边界；缺失时 fail-fast，禁止把 bot 收件降级为可选副作用。
+// enqueueBotAPIPrivateMessageUpdateAsync hands the Bot API queue write for a private message to the
+// background dispatcher (performance audit H2). When the recipient is a bot, BotAPIUpdateStore is a
+// required durable producer boundary; when it is missing this fails fast, so receiving by a bot is
+// never downgraded to an optional side effect.
 func (r *Router) enqueueBotAPIPrivateMessageUpdateAsync(ctx context.Context, res domain.SendPrivateTextResult) error {
 	botID, required, err := r.botAPIPrivateMessageUpdateTarget(ctx, res)
 	if err != nil || !required {
@@ -407,7 +408,7 @@ func (r *Router) enqueueBotAPIPrivateMessageUpdateAsync(ctx context.Context, res
 	return nil
 }
 
-// enqueueBotAPIPrivateEditUpdatesAsync 同上，覆盖私聊编辑的 edited_message 队列写入。
+// enqueueBotAPIPrivateEditUpdatesAsync is the same, covering the edited_message queue write for a private-chat edit.
 func (r *Router) enqueueBotAPIPrivateEditUpdatesAsync(ctx context.Context, res domain.EditMessageResult) error {
 	required, err := r.botAPIPrivateEditUpdatesRequired(ctx, res)
 	if err != nil || !required {

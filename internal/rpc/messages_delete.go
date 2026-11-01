@@ -18,9 +18,11 @@ func (r *Router) onMessagesDeleteMessages(ctx context.Context, req *tg.MessagesD
 	if len(req.ID) > domain.MaxDeleteMessageIDs {
 		return nil, limitInvalidErr()
 	}
-	// 官方对私聊 revoke 不做 block 限制：被对方拉黑后撤回自己的消息仍
-	// 双向生效；客户端删除请求的 fail handler 是静默的，服务端报错只会
-	// 造成"本地已删、服务端未删"的复活错乱。
+	// The official server applies no block restriction to private-chat revokes:
+	// revoking your own message still takes effect on both sides even after the
+	// other party blocked you; the delete request's fail handler is silent on the
+	// client, so a server error only causes "deleted locally, not on the server"
+	// resurrection confusion.
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.DeleteMessages(ctx, userID, domain.DeleteMessagesRequest{
 		OwnerUserID:     userID,

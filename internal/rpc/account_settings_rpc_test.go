@@ -14,7 +14,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// accountSettingsRouter 装配一个接通账号设置持久化（内存）的 Router。
+// accountSettingsRouter builds a Router wired to in-memory account-settings persistence.
 func accountSettingsRouter(t *testing.T) *Router {
 	t.Helper()
 	passwordStore := memory.NewPasswordStore()
@@ -23,14 +23,14 @@ func accountSettingsRouter(t *testing.T) *Router {
 	}, zaptest.NewLogger(t), clock.System)
 }
 
-// TestAccountSettingsRoundTrip 回归：globalPrivacy/accountTTL/contentSettings/
-// contactSignUpNotification 此前是硬编码回显 stub（set 不持久化）。本测试验证
-// set→get 真往返：写入后读回与写入一致。
+// TestAccountSettingsRoundTrip regression: globalPrivacy/accountTTL/contentSettings/
+// contactSignUpNotification used to be hard-coded echo stubs (set did not persist). This test
+// verifies a true set -> get round-trip: what is read back matches what was written.
 func TestAccountSettingsRoundTrip(t *testing.T) {
 	r := accountSettingsRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)
 
-	// 默认（未持久化）：globalPrivacy 全关、TTL 365、sensitive 关但可切换、注册通知不静音。
+	// Default (not persisted): globalPrivacy all off, TTL 365, sensitive off but changeable, signup notification not muted.
 	gp, err := r.onAccountGetGlobalPrivacySettings(ctx)
 	if err != nil {
 		t.Fatalf("get global privacy: %v", err)
@@ -49,7 +49,7 @@ func TestAccountSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("default contact signup silent = %v err %v, want false", silent, err)
 	}
 
-	// 写 globalPrivacy（含 paid stars 可选字段）→ 读回一致。
+	// Write globalPrivacy (including the optional paid stars field) -> read back identical.
 	in := tg.GlobalPrivacySettings{
 		ArchiveAndMuteNewNoncontactPeers: true,
 		HideReadMarks:                    true,
@@ -71,19 +71,19 @@ func TestAccountSettingsRoundTrip(t *testing.T) {
 	}
 	assertGlobalPrivacy(t, got, in)
 
-	// 写 TTL → 读回。
+	// Write TTL -> read back.
 	if _, err := r.onAccountSetAccountTTL(ctx, tg.AccountDaysTTL{Days: 30}); err != nil {
 		t.Fatalf("set ttl: %v", err)
 	}
 	if ttl, err := r.onAccountGetAccountTTL(ctx); err != nil || ttl.Days != 30 {
 		t.Fatalf("ttl after set = %v err %v, want 30", ttl, err)
 	}
-	// TTL=0 非法。
+	// TTL=0 is invalid.
 	if ok, err := r.onAccountSetAccountTTL(ctx, tg.AccountDaysTTL{Days: 0}); ok || !tgerr.Is(err, "TTL_DAYS_INVALID") {
 		t.Fatalf("ttl=0 = ok %v err %v, want TTL_DAYS_INVALID", ok, err)
 	}
 
-	// 写 sensitive content → 读回。
+	// Write sensitive content -> read back.
 	if ok, err := r.onAccountSetContentSettings(ctx, &tg.AccountSetContentSettingsRequest{SensitiveEnabled: true}); err != nil || !ok {
 		t.Fatalf("set content settings: ok %v err %v", ok, err)
 	}
@@ -91,7 +91,7 @@ func TestAccountSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("content settings after set = %+v err %v, want sensitive on + can_change on", cs, err)
 	}
 
-	// 写 contact signup silent → 读回。
+	// Write contact signup silent -> read back.
 	if ok, err := r.onAccountSetContactSignUpNotification(ctx, true); err != nil || !ok {
 		t.Fatalf("set contact signup silent: ok %v err %v", ok, err)
 	}
@@ -99,13 +99,13 @@ func TestAccountSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("contact signup silent after set = %v err %v, want true", silent, err)
 	}
 
-	// 互不干扰：写完 contactSignUp 后 globalPrivacy 仍是之前写入的值。
+	// No cross-talk: after writing contactSignUp, globalPrivacy still holds the previously written value.
 	if got, err := r.onAccountGetGlobalPrivacySettings(ctx); err != nil || !got.ArchiveAndMuteNewNoncontactPeers {
 		t.Fatalf("global privacy must survive other settings writes, got %+v err %v", got, err)
 	}
 }
 
-// TestAccountSettingsNotWiredFallsBack 验证未接通持久化服务时各 handler 回落默认、不报错。
+// TestAccountSettingsNotWiredFallsBack verifies that with no persistence service wired, each handler falls back to defaults without erroring.
 func TestAccountSettingsNotWiredFallsBack(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 	ctx := WithUserID(context.Background(), 1000000001)

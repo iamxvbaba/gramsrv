@@ -155,9 +155,9 @@ func Start(ctx context.Context, addr string, bots BotsService, users UsersServic
 		return nil, err
 	}
 	go func() {
-		logger.Info("Bot API 网关已启用", zap.String("addr", addr))
+		logger.Info("Bot API gateway enabled", zap.String("addr", addr))
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Warn("Bot API 网关退出", zap.Error(err))
+			logger.Warn("Bot API gateway exited", zap.Error(err))
 		}
 	}()
 	if webhooks, ok := gateway.(GatewayWebhookControl); ok {
@@ -414,12 +414,15 @@ func (h *handler) giftPremiumSubscription(w http.ResponseWriter, r *http.Request
 	writeAPIOK(w, success)
 }
 
-// sendGift 实现 Bot API sendGift：机器人用自身 Stars 余额买一份星礼物送给用户或频道。
+// sendGift implements the Bot API sendGift: a bot buys a star gift from its own Stars balance
+// and sends it to a user or channel.
 //
-// 参数遵循官方 Bot API 形态：gift_id 必填，user_id 与 chat_id 二选一（互斥），
-// pay_for_upgrade 购买 collectible 升级，text/text_parse_mode/text_entities 是随礼物
-// 显示的短文本。request_id 与 Idempotency-Key 头是 telesrv 的幂等扩展，语义与
-// giftPremiumSubscription 相同：同键同请求返回 true 且不再扣款，同键不同请求报错。
+// Parameters follow the official Bot API shape: gift_id is required, user_id and chat_id are
+// mutually exclusive, pay_for_upgrade buys a collectible upgrade, and
+// text/text_parse_mode/text_entities is the short text shown with the gift. request_id and the
+// Idempotency-Key header are telesrv idempotency extensions with the same semantics as
+// giftPremiumSubscription: the same key with the same request returns true and charges no more,
+// while the same key with a different request errors.
 func (h *handler) sendGift(w http.ResponseWriter, r *http.Request, botID int64) {
 	gateway, ok := h.gateway.(StarGiftGatewayService)
 	if !ok {
@@ -438,7 +441,7 @@ func (h *handler) sendGift(w http.ResponseWriter, r *http.Request, botID int64) 
 	}
 	userID, userErr := botAPIOptionalInt64(values["user_id"])
 	chatID, chatErr := botAPIOptionalInt64(values["chat_id"])
-	// 两者都没给或都给都不是合法请求：官方模型里它们互斥，缺失时无法决定收礼人。
+	// Giving neither or both is not a valid request: in the official model they are mutually exclusive, and the recipient cannot be determined when missing.
 	if userErr != nil || chatErr != nil ||
 		(userID == 0 && chatID == 0) || (userID != 0 && chatID != 0) {
 		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
@@ -472,8 +475,9 @@ func (h *handler) sendGift(w http.ResponseWriter, r *http.Request, botID int64) 
 		requestID,
 	)
 	if err != nil {
-		// STAR_GIFT_UNAVAILABLE 表示礼物子系统自己不可用（каталог/журнал не отвечают），
-		// а не запрос неверен: 500, иначе бот решит, что ошибся его вызов.
+		// STAR_GIFT_UNAVAILABLE means the gift subsystem itself is unavailable (the
+		// catalog/journal is not responding), not that the request was invalid: 500,
+		// otherwise the bot would think its call was wrong.
 		if description := apiErrorDescription(err); description == "STAR_GIFT_UNAVAILABLE" {
 			writeAPIError(w, http.StatusInternalServerError, description)
 			return
@@ -485,7 +489,7 @@ func (h *handler) sendGift(w http.ResponseWriter, r *http.Request, botID int64) 
 	writeAPIOK(w, success)
 }
 
-// botAPIOptionalInt64 解析可选整数字段：空值表示「未提供」，非法内容是错误。
+// botAPIOptionalInt64 parses an optional integer field: an empty value means "not provided", while invalid content is an error.
 func botAPIOptionalInt64(raw string) (int64, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -498,8 +502,9 @@ func botAPIOptionalInt64(raw string) (int64, error) {
 	return value, nil
 }
 
-// botAPIRequestID 归一化幂等键：本地 request_id 与 Idempotency-Key 头同时出现时必须
-// 一致，缺失时生成随机键——无键的重试会再次扣款，所以宁可给每个调用一个唯一键。
+// botAPIRequestID normalizes the idempotency key: when both the local request_id and the
+// Idempotency-Key header are present they must agree, and when missing a random key is generated --
+// a retry with no key charges again, so it is better to give every call a unique key.
 func botAPIRequestID(r *http.Request, values map[string]string) (string, error) {
 	requestID := strings.TrimSpace(values["request_id"])
 	headerID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))

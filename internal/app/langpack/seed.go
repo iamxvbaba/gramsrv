@@ -25,8 +25,8 @@ type seedCandidate struct {
 	meta domain.LangPack
 }
 
-// SeedDirectory 将导出的 .strings 文件清单原子对账到 LangPackStore。
-// root 可直接指向 data/langpack，也可指向包含 .strings 的具体平台目录。
+// SeedDirectory atomically reconciles the exported .strings file inventory into LangPackStore.
+// root may point directly at data/langpack, or at a specific platform directory containing .strings files.
 func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 	if s == nil || s.packs == nil || root == "" {
 		return 0, nil

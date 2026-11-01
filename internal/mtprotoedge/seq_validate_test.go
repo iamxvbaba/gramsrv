@@ -5,8 +5,10 @@ import (
 	"testing"
 )
 
-// referenceValidateSeq 是 validateSeq 的旧全扫描语义（无高水位快路径），
-// 作为随机对拍的行为基准：快路径只允许接受「全扫描也必然接受」的子集。
+// referenceValidateSeq is validateSeq's old full-scan semantics (without the
+// high-water fast path), used as the behavioral baseline for randomized
+// differential testing: the fast path may only accept the subset that a full scan
+// would also necessarily accept.
 func referenceValidateSeq(cs *connState, msgID int64, seqNo int32, content bool) int {
 	if !content {
 		return 0
@@ -31,12 +33,13 @@ func TestValidateSeqFastPathMatchesFullScan(t *testing.T) {
 		fast := newConnState()
 		ref := newConnState()
 		for i := 0; i < 2000; i++ {
-			// 小值域制造乱序、重复 seq 与 too_low/too_high 反转；大 i 也覆盖淘汰窗口。
+			// A small value range produces out-of-order, duplicate seq and
+			// too_low/too_high inversions; large i also covers the eviction window.
 			msgID := int64(rng.Intn(3000) + 1)
 			seqNo := int32(rng.Intn(600))
 			content := rng.Intn(4) != 0
 			if _, ok := fast.seen[msgID]; ok {
-				continue // 真实调用链在 seenRecord 命中时不会走 validateSeq
+				continue // the real call chain does not reach validateSeq when seenRecord hits
 			}
 			got := fast.validateSeq(msgID, seqNo, content)
 			want := referenceValidateSeq(ref, msgID, seqNo, content)
@@ -54,7 +57,7 @@ func TestValidateSeqFastPathMatchesFullScan(t *testing.T) {
 
 func TestValidateSeqOrderedFastPath(t *testing.T) {
 	cs := newConnState()
-	// 正常客户端：msg_id 与 content seq_no 严格递增，应全部通过。
+	// Well-behaved client: msg_id and content seq_no strictly increase, so all should pass.
 	for i := 0; i < 1000; i++ {
 		msgID := int64(1000 + i*4)
 		seqNo := int32(i*2 + 1)
@@ -63,11 +66,11 @@ func TestValidateSeqOrderedFastPath(t *testing.T) {
 		}
 		cs.track(msgID, seqNo, true, msgStateReceived)
 	}
-	// seq 回退必须仍被拒绝（快路径不放行）。
+	// A seq regression must still be rejected (the fast path does not let it through).
 	if code := cs.validateSeq(1000+1000*4, 3, true); code != badMsgSeqTooLow {
 		t.Fatalf("seq regression code = %d, want badMsgSeqTooLow", code)
 	}
-	// 旧 msg_id 配新 seq 也必须仍被拒绝。
+	// An old msg_id with a new seq must also still be rejected.
 	if code := cs.validateSeq(500, 5000, true); code != badMsgSeqTooHigh {
 		t.Fatalf("old msg_id with high seq code = %d, want badMsgSeqTooHigh", code)
 	}

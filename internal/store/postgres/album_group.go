@@ -12,9 +12,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// ReserveAlbumGroup 先按稳定顺序获取整批 key 的事务级 advisory locks，再读取旧绑定
-// 并一次性补齐缺失项。锁覆盖不存在的行，因此避免单靠 UNIQUE/ON CONFLICT 时两个实例
-// 对重叠批次分别选出不同 grouped_id 的 write-skew。
+// ReserveAlbumGroup first acquires transaction-level advisory locks for the whole batch
+// of keys in a stable order, then reads existing bindings and fills in the missing ones
+// at once. The locks cover rows that do not exist yet, avoiding write skew where two
+// instances pick different grouped_ids for overlapping batches relying on UNIQUE/ON CONFLICT alone.
 func (s *MessageStore) ReserveAlbumGroup(ctx context.Context, req domain.AlbumGroupReservationRequest) (int64, error) {
 	if err := req.Validate(); err != nil {
 		return 0, err
@@ -93,7 +94,7 @@ ON CONFLICT (sender_user_id, peer_type, peer_id, random_id) DO NOTHING`,
 		}
 	}
 
-	// 防御性复核：advisory lock 协议若被未来代码绕过，也不能把拆组状态作为成功返回。
+	// Defensive re-check: even if future code bypasses the advisory-lock protocol, a split-group state must not be returned as success.
 	rows, err = tx.Query(ctx, `
 SELECT random_id, grouped_id, intent_hash
 FROM album_group_reservations
@@ -133,8 +134,8 @@ WHERE sender_user_id = $1
 	return groupedID, nil
 }
 
-// albumGroupAdvisoryLockIDs 对每个业务 key 派生一个 64-bit advisory lock，并按数值
-// 排序、去重。hash 碰撞最多造成无害串行化；排序保证重叠批次不会互相反序死锁。
+// albumGroupAdvisoryLockIDs derives a 64-bit advisory lock for each business key and
+// sorts and dedups them. A hash collision at worst causes harmless serialization; the sort ensures overlapping batches cannot deadlock in opposite orders.
 func albumGroupAdvisoryLockIDs(req domain.AlbumGroupReservationRequest) []int64 {
 	ids := make([]int64, 0, len(req.Items))
 	for _, item := range req.Items {

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// fakeClock 让 TTL 行为可确定地推进,无需 sleep。
+// fakeClock advances TTL behavior deterministically without sleeping.
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -73,7 +73,7 @@ func TestGetOrLoadSingleflightsConcurrentMiss(t *testing.T) {
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("load called %d times, want 1 (singleflight)", got)
 	}
-	// 命中:不再 load。
+	// Hit: no further load.
 	if v, err := c.GetOrLoad(ctx, 42, func() (string, error) { return "miss", nil }); err != nil || v != "v" {
 		t.Fatalf("cached GetOrLoad = %q,%v want v,<nil>", v, err)
 	}
@@ -104,14 +104,15 @@ func TestInvalidateWhereValueUsesImmutableDependency(t *testing.T) {
 	}
 }
 
-// TestEpochGuardRejectsStaleWriteback 证明 epoch 守卫堵住 lost-update:一次锁外 load
-// 期间到达的 Invalidate 不得被这次 load 的(已陈旧)结果覆盖;在飞读者最终拿到的是
-// 失效后重载的新值,且缓存未被陈旧值污染。
+// TestEpochGuardRejectsStaleWriteback proves the epoch guard closes a lost-update:
+// an Invalidate arriving during an out-of-lock load must not be overwritten by
+// this load's (now stale) result; the in-flight reader ultimately gets the value
+// reloaded after the invalidation, and the cache is not poisoned with stale data.
 func TestEpochGuardRejectsStaleWriteback(t *testing.T) {
 	ctx := context.Background()
 	c := New[int, string](Config[int, string]{MaxEntries: 16})
 
-	var seq atomic.Int32 // 第 1 次 load 返回 stale,失效后第 2 次返回 fresh
+	var seq atomic.Int32 // first load returns stale, the second (after invalidation) returns fresh
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -119,7 +120,7 @@ func TestEpochGuardRejectsStaleWriteback(t *testing.T) {
 		n := seq.Add(1)
 		if n == 1 {
 			once.Do(func() { close(started) })
-			<-release // 第一次 load 阻塞,模拟跨越一次失效
+			<-release // the first load blocks, simulating spanning an invalidation
 			return "stale", nil
 		}
 		return "fresh", nil
@@ -137,9 +138,10 @@ func TestEpochGuardRejectsStaleWriteback(t *testing.T) {
 	}()
 
 	<-started
-	// 失效在 load 期间到达(此刻缓存里还没有 key 7,delete 是 no-op,但 epoch++)。
+	// The invalidation arrives during the load (the cache has no key 7 yet, so the
+	// delete is a no-op, but epoch++).
 	c.Invalidate(7)
-	close(release) // 放行第一次 load:它返回 "stale",epoch 守卫必须拒绝写回。
+	close(release) // release the first load: it returns "stale", and the epoch guard must refuse the write-back.
 
 	select {
 	case err := <-errCh:
@@ -152,7 +154,7 @@ func TestEpochGuardRejectsStaleWriteback(t *testing.T) {
 		t.Fatal("timeout waiting for in-flight reader")
 	}
 
-	// 缓存现在应持有 fresh,且后续读不再 load。
+	// The cache should now hold fresh, and subsequent reads should not load again.
 	callsBefore := seq.Load()
 	if v, err := c.GetOrLoad(ctx, 7, load); err != nil || v != "fresh" {
 		t.Fatalf("post-race GetOrLoad = %q,%v want fresh,<nil>", v, err)
@@ -167,7 +169,7 @@ func TestLRUEvictsOldestNotWholeMap(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		mustLoad(t, c, i, i*10)
 	}
-	// 插入第 4 个:应只驱逐最旧的(key 1),而不是整表清空。
+	// Insert the 4th: only the oldest (key 1) should be evicted, not the whole table cleared.
 	mustLoad(t, c, 4, 40)
 	if c.Len() != 3 {
 		t.Fatalf("Len = %d, want 3 (single-entry eviction, not whole-map flush)", c.Len())
@@ -187,11 +189,11 @@ func TestLRUTouchOnGet(t *testing.T) {
 	c := New[int, int](Config[int, int]{MaxEntries: 2})
 	mustLoad(t, c, 1, 10)
 	mustLoad(t, c, 2, 20)
-	// 触碰 key 1 使其变最近使用。
+	// Touch key 1 to make it the most recently used.
 	if v, err := c.GetOrLoad(ctx, 1, failLoad[int](t)); err != nil || v != 10 {
 		t.Fatalf("touch GetOrLoad(1) = %d,%v", v, err)
 	}
-	// 插入 key 3:应驱逐 key 2(最久未用),保留 key 1。
+	// Insert key 3: key 2 (least recently used) should be evicted, keeping key 1.
 	mustLoad(t, c, 3, 30)
 	if _, ok := c.Peek(2); ok {
 		t.Fatal("key 2 should have been evicted (LRU), key 1 was touched")
@@ -279,18 +281,18 @@ func TestVersionGateReloadsOnHashChange(t *testing.T) {
 	load := func(tag string) func() (string, error) {
 		return func() (string, error) { calls.Add(1); return tag, nil }
 	}
-	// hash 100 装入。
+	// Insert under hash 100.
 	if v, _ := c.GetOrLoadVersioned(ctx, 1, 100, load("h100")); v != "h100" {
 		t.Fatalf("first load = %q", v)
 	}
-	// 同 hash:命中,不 load。
+	// Same hash: hit, no load.
 	if v, _ := c.GetOrLoadVersioned(ctx, 1, 100, failLoad[string](t)); v != "h100" {
 		t.Fatalf("same-hash hit = %q", v)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("same-hash re-loaded: calls=%d", calls.Load())
 	}
-	// hash 改变:miss,重载。
+	// Hash changed: miss, reload.
 	if v, _ := c.GetOrLoadVersioned(ctx, 1, 200, load("h200")); v != "h200" {
 		t.Fatalf("hash-change reload = %q", v)
 	}
@@ -308,7 +310,7 @@ func TestTTLExpiryIsPerKeyAndDoesNotBumpEpoch(t *testing.T) {
 	mustLoad(t, c, 1, 10)
 	epochBefore := c.cacheEpoch()
 
-	clock.advance(2 * time.Minute) // 越过 TTL
+	clock.advance(2 * time.Minute) // past the TTL
 
 	var reloaded atomic.Int32
 	v, err := c.GetOrLoad(ctx, 1, func() (int, error) { reloaded.Add(1); return 11, nil })
@@ -364,8 +366,8 @@ func TestCloneIsolatesCallerFromCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got[0] = 999  // 突变返回值
-	orig[1] = 888 // 突变 load 来源
+	got[0] = 999  // mutate the returned value
+	orig[1] = 888 // mutate the load source
 	again, _ := c.Peek(1)
 	if again[0] != 1 || again[1] != 2 || again[2] != 3 {
 		t.Fatalf("cache entry mutated through aliasing: %v", again)
@@ -391,7 +393,7 @@ func TestFlushClearsAndBumpsEpoch(t *testing.T) {
 
 func TestNilCacheBypassesToLoad(t *testing.T) {
 	ctx := context.Background()
-	var c *Cache[int, string] // New 在 MaxEntries<=0 时返回 nil
+	var c *Cache[int, string] // New returns nil when MaxEntries<=0
 	if got := New[int, string](Config[int, string]{MaxEntries: 0}); got != nil {
 		t.Fatalf("New(MaxEntries:0) = %v, want nil", got)
 	}
@@ -403,7 +405,7 @@ func TestNilCacheBypassesToLoad(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("nil cache should call load exactly once: %d", calls.Load())
 	}
-	// 其它方法对 nil 安全。
+	// Other methods are nil-safe.
 	c.Invalidate(1)
 	c.InvalidateWhere(func(int) bool { return true })
 	c.Flush()
@@ -417,23 +419,24 @@ func TestNilCacheBypassesToLoad(t *testing.T) {
 }
 
 func TestStoreIfEpochRejectsStaleExternalBuild(t *testing.T) {
-	// 外部构建模式:LoadEpoch 快照 → 构建期间发生失效 → StoreIfEpoch 必须拒绝写回。
+	// External-build mode: LoadEpoch snapshot -> invalidation during the build ->
+	// StoreIfEpoch must refuse the write-back.
 	c := New[int, string](Config[int, string]{MaxEntries: 16})
 	loadEpoch := c.LoadEpoch()
-	c.Invalidate(7) // 构建期间的失效(epoch++)
+	c.Invalidate(7) // invalidation during the build (epoch++)
 	c.StoreIfEpoch(7, "stale", loadEpoch)
 	if _, ok := c.Peek(7); ok {
-		t.Fatal("StoreIfEpoch 在 epoch 变更后必须拒绝写回")
+		t.Fatal("StoreIfEpoch must refuse the write-back after the epoch changed")
 	}
-	// 无并发失效时,StoreIfEpoch 正常写入。
+	// With no concurrent invalidation, StoreIfEpoch writes normally.
 	fresh := c.LoadEpoch()
 	c.StoreIfEpoch(7, "fresh", fresh)
 	if v, ok := c.Peek(7); !ok || v != "fresh" {
-		t.Fatalf("StoreIfEpoch 在 epoch 未变时应写入: %q ok=%v", v, ok)
+		t.Fatalf("StoreIfEpoch should write when the epoch is unchanged: %q ok=%v", v, ok)
 	}
 }
 
-// batchVal 模拟带负缓存的值(found=false 表示「查过但不存在」)。
+// batchVal models a value with negative caching (found=false means "looked up but does not exist").
 type batchVal struct {
 	n     int
 	found bool
@@ -451,13 +454,13 @@ func TestGetOrLoadBatchCachesHitsMissesAndNegatives(t *testing.T) {
 		lastMissing.Store(int32(len(missing)))
 		out := make(map[int]batchVal, len(missing))
 		for _, k := range missing {
-			// 偶数存在,奇数为负结果(仍须返回,以便缓存负结果)。
+			// Even keys exist, odd ones are negative results (still returned so the negative result can be cached).
 			out[k] = batchVal{n: k * 10, found: k%2 == 0}
 		}
 		return out, nil
 	}
 
-	// 首次:全 miss,一次批量 load。
+	// First pass: all miss, one batch load.
 	got, err := c.GetOrLoadBatch(ctx, []int{1, 2, 3, 4}, noVersion, load)
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +472,7 @@ func TestGetOrLoadBatchCachesHitsMissesAndNegatives(t *testing.T) {
 		t.Fatalf("first batch: calls=%d missing=%d, want 1/4", loadCalls.Load(), lastMissing.Load())
 	}
 
-	// 再查(含一个新键 6):仅 6 是 miss,负结果(1/3)也已缓存不再 load。
+	// Second lookup (including a new key 6): only 6 misses; negative results (1/3) are already cached and not loaded again.
 	got2, err := c.GetOrLoadBatch(ctx, []int{1, 2, 3, 4, 6}, noVersion, load)
 	if err != nil {
 		t.Fatal(err)
@@ -569,14 +572,14 @@ func TestGetOrLoadBatchVersionGateReloadsOnHashChange(t *testing.T) {
 	if _, err := c.GetOrLoadBatch(ctx, []int{1}, versionOf, load); err != nil {
 		t.Fatal(err)
 	}
-	// 同 hash:命中,不 load。
+	// Same hash: hit, no load.
 	if _, err := c.GetOrLoadBatch(ctx, []int{1}, versionOf, load); err != nil {
 		t.Fatal(err)
 	}
 	if loadCalls.Load() != 1 {
 		t.Fatalf("same-hash batch re-loaded: calls=%d", loadCalls.Load())
 	}
-	// hash 改变:版本闸门 miss,重载。
+	// Hash changed: version gate misses, reload.
 	hash.Store(200)
 	got, err := c.GetOrLoadBatch(ctx, []int{1}, versionOf, load)
 	if err != nil {
@@ -587,9 +590,12 @@ func TestGetOrLoadBatchVersionGateReloadsOnHashChange(t *testing.T) {
 	}
 }
 
-// TestGetOrLoadBatchStoresUnderLookupHashNotStoreHash 钉住版本闸门修复:写回必须用查阶段
-// 快照的 hash,而非写回时重算的 hash。这里在 loadMissing(恰好在查与写之间执行)里把版本
-// 从 100 改成 200——若写回误用新 hash 200,则按版本 100 加载的数据会被当作 200 的新数据命中。
+// TestGetOrLoadBatchStoresUnderLookupHashNotStoreHash pins down the version-gate
+// fix: the write-back must use the hash snapshotted at lookup time, not the hash
+// recomputed at write-back. Here loadMissing (which runs exactly between the
+// lookup and the write) changes the version from 100 to 200 -- if the write-back
+// wrongly used the new hash 200, data loaded under version 100 would be hit as
+// new data for 200.
 func TestGetOrLoadBatchStoresUnderLookupHashNotStoreHash(t *testing.T) {
 	ctx := context.Background()
 	c := New[int, batchVal](Config[int, batchVal]{MaxEntries: 64})
@@ -600,7 +606,7 @@ func TestGetOrLoadBatchStoresUnderLookupHashNotStoreHash(t *testing.T) {
 	var loadCalls atomic.Int32
 	load := func(_ context.Context, missing []int) (map[int]batchVal, error) {
 		loadCalls.Add(1)
-		gen.Store(200) // 版本在「查(@100,miss)」与「写回」之间变更
+		gen.Store(200) // version changes between the lookup (@100, miss) and the write-back
 		out := make(map[int]batchVal, len(missing))
 		for _, k := range missing {
 			out[k] = batchVal{n: k, found: true}
@@ -608,15 +614,16 @@ func TestGetOrLoadBatchStoresUnderLookupHashNotStoreHash(t *testing.T) {
 		return out, nil
 	}
 
-	// 首批:查@100 miss → load(把 gen 改到 200)→ 写回须用快照的 100,而非 200。
+	// First pass: lookup@100 miss -> load (changes gen to 200) -> write-back must use the snapshotted 100, not 200.
 	if _, err := c.GetOrLoadBatch(ctx, []int{1}, versionOf, load); err != nil {
 		t.Fatal(err)
 	}
 	if loadCalls.Load() != 1 {
 		t.Fatalf("first batch load calls = %d, want 1", loadCalls.Load())
 	}
-	// 现在 currentHash=200。若 entry 误以 200 戳入(bug),这次会命中陈旧数据、不重载;
-	// 修复后 entry 是 100 != 200 → miss → 重载。
+	// Now currentHash=200. If the entry were wrongly stamped with 200 (bug), this
+	// read would hit stale data and not reload; after the fix the entry is
+	// 100 != 200 -> miss -> reload.
 	if _, err := c.GetOrLoadBatch(ctx, []int{1}, versionOf, load); err != nil {
 		t.Fatal(err)
 	}
@@ -628,7 +635,7 @@ func TestGetOrLoadBatchStoresUnderLookupHashNotStoreHash(t *testing.T) {
 func TestGetOrLoadBatchBypassesNonCacheable(t *testing.T) {
 	ctx := context.Background()
 	c := New[int, batchVal](Config[int, batchVal]{MaxEntries: 64})
-	// key 7 不可缓存(version 缺失),其余纯 TTL 缓存。
+	// key 7 is not cacheable (missing version), the rest are pure TTL caches.
 	versionOf := func(k int) (int64, bool) { return 0, k != 7 }
 	var loadCalls atomic.Int32
 	load := func(_ context.Context, missing []int) (map[int]batchVal, error) {
@@ -642,7 +649,7 @@ func TestGetOrLoadBatchBypassesNonCacheable(t *testing.T) {
 	if _, err := c.GetOrLoadBatch(ctx, []int{7, 8}, versionOf, load); err != nil {
 		t.Fatal(err)
 	}
-	// 7 不可缓存故未写回;8 已缓存。再查应只为 7 load。
+	// 7 is not cacheable and was not written back; 8 is cached. The next lookup should load only 7.
 	got, err := c.GetOrLoadBatch(ctx, []int{7, 8}, versionOf, load)
 	if err != nil {
 		t.Fatal(err)
@@ -672,14 +679,14 @@ func TestGetOrLoadBatchRetriesOnEpochChangeDuringLoad(t *testing.T) {
 		out := make(map[int]batchVal, len(missing))
 		if n == 1 {
 			once.Do(func() { close(started) })
-			<-release // 第一趟批量 load 阻塞,期间发生失效
+			<-release // the first batch load blocks, an invalidation happens meanwhile
 			for _, k := range missing {
-				out[k] = batchVal{n: k, found: true} // 旧批数据
+				out[k] = batchVal{n: k, found: true} // old batch data
 			}
 			return out, nil
 		}
 		for _, k := range missing {
-			out[k] = batchVal{n: k + 1000, found: true} // 失效后重载的新数据
+			out[k] = batchVal{n: k + 1000, found: true} // reloaded data after the invalidation
 		}
 		return out, nil
 	}
@@ -690,14 +697,14 @@ func TestGetOrLoadBatchRetriesOnEpochChangeDuringLoad(t *testing.T) {
 		resCh <- got
 	}()
 	<-started
-	c.Invalidate(1) // 批量 load 期间失效 → epoch++
+	c.Invalidate(1) // invalidation during the batch load -> epoch++
 	close(release)
 
 	got := <-resCh
 	if got[1].n != 1001 {
 		t.Fatalf("epoch retry should return reloaded data: got %+v, want 1001", got[1])
 	}
-	// 缓存里应是重载后的新值,且不再 load。
+	// The cache should hold the reloaded value, and further reads should not load.
 	callsBefore := seq.Load()
 	if v, ok := c.Peek(1); !ok || v.n != 1001 {
 		t.Fatalf("cache should hold reloaded value: %+v ok=%v", v, ok)
@@ -729,13 +736,13 @@ func TestLoadErrorNotCached(t *testing.T) {
 	if _, ok := c.Peek(1); ok {
 		t.Fatal("failed load must not be cached")
 	}
-	// 之后成功 load 应生效。
+	// A later successful load should take effect.
 	if v, err := c.GetOrLoad(ctx, 1, func() (int, error) { return 5, nil }); err != nil || v != 5 {
 		t.Fatalf("retry GetOrLoad = %d,%v", v, err)
 	}
 }
 
-// TestConcurrentAccessNoPanic 在 -race 下能抓数据竞争;无 -race 时验证无 panic/死锁。
+// TestConcurrentAccessNoPanic catches data races under -race; without -race it verifies there is no panic/deadlock.
 func TestConcurrentAccessNoPanic(t *testing.T) {
 	ctx := context.Background()
 	c := New[int, int](Config[int, int]{MaxEntries: 64, TTL: time.Millisecond})

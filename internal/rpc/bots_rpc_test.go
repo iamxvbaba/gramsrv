@@ -193,7 +193,7 @@ func TestBotsSetBotInfoLocalizedCommitsAbsoluteReload(t *testing.T) {
 	input := &tg.InputUser{UserID: bot.ID, AccessHash: bot.AccessHash}
 	req := &tg.BotsSetBotInfoRequest{LangCode: "zh-Hans"}
 	req.SetBot(input)
-	req.SetName("本地名称")
+	req.SetName("Localized Name")
 	rowsBefore := len(outbox.Snapshot())
 	if ok, err := r.onBotsSetBotInfo(ownerCtx, req); err != nil || !ok {
 		t.Fatalf("localized setBotInfo = %v,%v", ok, err)
@@ -214,7 +214,7 @@ func TestBotsSetBotInfoLocalizedCommitsAbsoluteReload(t *testing.T) {
 		t.Fatalf("localized update = %#v", updates.Updates[0])
 	}
 	localized, err := svc.GetBotInfo(ctx, bot.ID, "zh-hans")
-	if err != nil || localized.Name != "本地名称" {
+	if err != nil || localized.Name != "Localized Name" {
 		t.Fatalf("localized info = %+v err=%v", localized, err)
 	}
 	defaults, err := svc.GetBotInfo(ctx, bot.ID, "")
@@ -224,7 +224,7 @@ func TestBotsSetBotInfoLocalizedCommitsAbsoluteReload(t *testing.T) {
 	getReq := &tg.BotsGetBotInfoRequest{LangCode: "zh-Hans"}
 	getReq.SetBot(input)
 	got, err := r.onBotsGetBotInfo(ownerCtx, getReq)
-	if err != nil || got.Name != "本地名称" {
+	if err != nil || got.Name != "Localized Name" {
 		t.Fatalf("localized getBotInfo = %#v err=%v", got, err)
 	}
 	if ok, err := r.onBotsSetBotInfo(ownerCtx, req); err != nil || !ok {

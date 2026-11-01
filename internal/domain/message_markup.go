@@ -8,49 +8,49 @@ import (
 )
 
 const (
-	// MaxMarkupRows 限制 inline keyboard 行数。
+	// MaxMarkupRows limits the inline keyboard row count.
 	MaxMarkupRows = 100
-	// MaxMarkupButtonsPerRow 限制单行按钮数。
+	// MaxMarkupButtonsPerRow limits the per-row button count.
 	MaxMarkupButtonsPerRow = 8
-	// MaxMarkupButtonsTotal 限制 inline keyboard 总按钮数（对齐官方约 100）。
+	// MaxMarkupButtonsTotal limits the inline keyboard total button count (aligned with the official ~100).
 	MaxMarkupButtonsTotal = 100
-	// MaxCallbackDataLen 是 callback 按钮 data 的字节上限（对齐 Bot API 1-64）。
+	// MaxCallbackDataLen is the byte limit of a callback button's data (aligned with Bot API 1-64).
 	MaxCallbackDataLen = 64
-	// MaxMarkupButtonTextLen 是按钮文本长度上限（rune 计数）。
+	// MaxMarkupButtonTextLen is the button text length limit (rune count).
 	MaxMarkupButtonTextLen = 256
-	// MaxReplyKeyboardButtonTextLen 对齐 Bot API KeyboardButton 的 1-64 字符约束。
+	// MaxReplyKeyboardButtonTextLen aligns with Bot API KeyboardButton's 1-64 character constraint.
 	MaxReplyKeyboardButtonTextLen = 64
-	// MaxReplyKeyboardPlaceholderLen 是 reply keyboard / force reply 输入框占位符上限。
+	// MaxReplyKeyboardPlaceholderLen is the placeholder limit for the reply keyboard / force reply input field.
 	MaxReplyKeyboardPlaceholderLen = 64
-	// MaxBotCallbackAnswerLen 是 callback answer 弹窗/toast 文本上限。
+	// MaxBotCallbackAnswerLen is the text limit of a callback answer alert/toast.
 	MaxBotCallbackAnswerLen = 200
-	// MaxStartParamLen 是 messages.startBot 深链 payload 上限（对齐官方 64）。
+	// MaxStartParamLen is the deep-link payload limit of messages.startBot (aligned with the official 64).
 	MaxStartParamLen = 64
 )
 
-// markup / callback 业务错误。
+// Markup / callback business errors.
 var (
-	// ErrButtonDataInvalid 表示 callback data 越界（>64 字节）。
+	// ErrButtonDataInvalid means the callback data is out of bounds (>64 bytes).
 	ErrButtonDataInvalid = errors.New("button data invalid")
-	// ErrButtonInvalid 表示键盘结构非法（行/按钮数超限、文本空/过长）。
+	// ErrButtonInvalid means the keyboard structure is invalid (row/button count exceeded, empty/too-long text).
 	ErrButtonInvalid = errors.New("button invalid")
-	// ErrButtonURLInvalid 表示 url 按钮的链接非法（非 https）。
+	// ErrButtonURLInvalid means a url button's link is invalid (not https).
 	ErrButtonURLInvalid = errors.New("button url invalid")
-	// ErrButtonTypeInvalid 表示按钮类型 P3 不支持（webview/game/url_auth/request_* 等）。
+	// ErrButtonTypeInvalid means the button type is unsupported in P3 (webview/game/url_auth/request_* etc.).
 	ErrButtonTypeInvalid = errors.New("button type invalid")
-	// ErrStartParamInvalid 表示 startBot 的 start_param 越界。
+	// ErrStartParamInvalid means startBot's start_param is out of bounds.
 	ErrStartParamInvalid = errors.New("start param invalid")
 )
 
-// MarkupButtonType 标识消息键盘按钮类型。
+// MarkupButtonType identifies a message keyboard button type.
 type MarkupButtonType string
 
 const (
-	// MarkupButtonText 是 reply keyboard 的普通文本按钮；点击后客户端发送标准文本消息。
+	// MarkupButtonText is a plain text button of the reply keyboard; tapping it makes the client send a standard text message.
 	MarkupButtonText MarkupButtonType = "text"
-	// MarkupButtonCallback 是 keyboardButtonCallback（点击触发 getBotCallbackAnswer）。
+	// MarkupButtonCallback is keyboardButtonCallback (tapping it triggers getBotCallbackAnswer).
 	MarkupButtonCallback MarkupButtonType = "callback"
-	// MarkupButtonURL 是 keyboardButtonUrl（点击打开链接）。
+	// MarkupButtonURL is keyboardButtonUrl (tapping it opens a link).
 	MarkupButtonURL MarkupButtonType = "url"
 	// MarkupButtonLoginURL is Bot API login_url / inputKeyboardButtonUrlAuth.
 	// The target bot is resolved and the linked origin is verified before the
@@ -116,8 +116,8 @@ type BotRequestPeerFilter struct {
 	BotAdminRights     *BotRequestAdminRights `json:"bot_admin_rights,omitempty"`
 }
 
-// MarkupButton 是一颗消息键盘按钮。reply keyboard 当前只接受普通文本按钮；
-// inline keyboard 当前接受 callback/url。
+// MarkupButton is one message keyboard button. The reply keyboard currently accepts only plain text buttons;
+// the inline keyboard currently accepts callback/url.
 type MarkupButton struct {
 	Type MarkupButtonType `json:"type"`
 	Text string           `json:"text"`
@@ -125,10 +125,10 @@ type MarkupButton struct {
 	Style MarkupButtonStyle `json:"style,omitempty"`
 	// IconCustomEmojiID is the optional custom emoji rendered before Text.
 	IconCustomEmojiID int64 `json:"icon_custom_emoji_id,omitempty"`
-	// Data 仅 callback 使用：原始字节（含 0x00/非 UTF-8/高位）。json 自动 base64
-	// 编解码，保证经 JSONB 列字节级 round-trip（updateBotCallbackQuery.data 须原样）。
+	// Data is used only by callback: raw bytes (including 0x00/non-UTF-8/high bits). json automatically base64
+	// encodes/decodes, guaranteeing a byte-level round-trip through the JSONB column (updateBotCallbackQuery.data must be verbatim).
 	Data []byte `json:"data,omitempty"`
-	// URL 仅 url 使用。
+	// URL is used only by url.
 	URL string `json:"url,omitempty"`
 	// Login URL-only fields. LoginBotUserID=0 means the sending bot until the
 	// RPC/Bot API edge resolves it. LoginBotUsername is input-only and must be
@@ -137,8 +137,8 @@ type MarkupButton struct {
 	LoginBotUserID     int64  `json:"login_bot_user_id,omitempty"`
 	LoginBotUsername   string `json:"login_bot_username,omitempty"`
 	RequestWriteAccess bool   `json:"request_write_access,omitempty"`
-	// RequiresPassword 仅 callback 使用（keyboardButtonCallback.requires_password，
-	// 2FA SRP 校验 P3 stub）。
+	// RequiresPassword is used only by callback (keyboardButtonCallback.requires_password,
+	// the P3 stub for 2FA SRP verification).
 	RequiresPassword bool `json:"requires_password,omitempty"`
 	// PollType is empty, "regular", or "quiz" for request_poll.
 	PollType string `json:"poll_type,omitempty"`
@@ -157,7 +157,7 @@ type MarkupButton struct {
 	CopyText          string                `json:"copy_text,omitempty"`
 }
 
-// MessageReplyMarkupType 标识互斥的 ReplyMarkup constructor。
+// MessageReplyMarkupType identifies the mutually exclusive ReplyMarkup constructors.
 type MessageReplyMarkupType string
 
 const (
@@ -167,8 +167,8 @@ const (
 	MessageReplyMarkupForceReply MessageReplyMarkupType = "force_reply"
 )
 
-// MessageReplyMarkup 是消息携带的协议中立 reply markup 快照。Type 为空且 Inline
-// 非空表示 0110 之前已经持久化的合法 inline keyboard，Kind 会将其解释为 inline。
+// MessageReplyMarkup is the protocol-neutral reply markup snapshot carried by a message. An empty Type with a
+// non-empty Inline means a valid inline keyboard persisted before 0110, which Kind interprets as inline.
 type MessageReplyMarkup struct {
 	Type        MessageReplyMarkupType `json:"type,omitempty"`
 	Inline      [][]MarkupButton       `json:"inline,omitempty"`
@@ -180,7 +180,7 @@ type MessageReplyMarkup struct {
 	Placeholder string                 `json:"placeholder,omitempty"`
 }
 
-// Kind 返回 markup constructor；兼容已落库的无 Type inline 快照。
+// Kind returns the markup constructor; it is compatible with an already-persisted inline snapshot without a Type.
 func (m *MessageReplyMarkup) Kind() MessageReplyMarkupType {
 	if m == nil {
 		return ""
@@ -194,7 +194,7 @@ func (m *MessageReplyMarkup) Kind() MessageReplyMarkupType {
 	return ""
 }
 
-// IsReplyKeyboardFamily 报告 markup 是否会控制输入框下方的 reply keyboard。
+// IsReplyKeyboardFamily reports whether the markup controls the reply keyboard below the input field.
 func (m *MessageReplyMarkup) IsReplyKeyboardFamily() bool {
 	switch m.Kind() {
 	case MessageReplyMarkupKeyboard, MessageReplyMarkupHide, MessageReplyMarkupForceReply:
@@ -204,7 +204,7 @@ func (m *MessageReplyMarkup) IsReplyKeyboardFamily() bool {
 	}
 }
 
-// IsZero 报告 markup 是否为空（无任何按钮）。空 markup 不写 wire flag、不入库。
+// IsZero reports whether the markup is empty (no buttons). An empty markup writes no wire flag and is not persisted.
 func (m *MessageReplyMarkup) IsZero() bool {
 	if m == nil {
 		return true
@@ -231,8 +231,8 @@ func (m *MessageReplyMarkup) IsZero() bool {
 	}
 }
 
-// ValidateReplyMarkup 校验 markup constructor、结构与按钮，校验须先于落库（I9）。
-// 空 inline markup 合法（视为清空/无键盘）。
+// ValidateReplyMarkup validates the markup constructor, structure and buttons; validation must precede persist (I9).
+// An empty inline markup is valid (treated as clearing/no keyboard).
 func ValidateReplyMarkup(m *MessageReplyMarkup) error {
 	if m == nil {
 		return nil
@@ -384,7 +384,7 @@ func validateMarkupButton(b MarkupButton, replyKeyboard bool) error {
 			return ErrButtonInvalid
 		}
 	default:
-		// webview/game/url_auth/request_* 等 P3 未实现类型：拒绝，绝不半实现下发。
+		// P3-unimplemented types such as webview/game/url_auth/request_*: reject, never ship a half-implementation.
 		return ErrButtonTypeInvalid
 	}
 	return nil
@@ -423,8 +423,8 @@ func validateLoginButtonURL(raw string) error {
 	return nil
 }
 
-// BotCallbackAnswer 是 bot 对一次 callback query 的应答（setBotCallbackAnswer →
-// 解挂等待中的 getBotCallbackAnswer）。
+// BotCallbackAnswer is a bot's answer to one callback query (setBotCallbackAnswer →
+// unblocks a waiting getBotCallbackAnswer).
 type BotCallbackAnswer struct {
 	Alert     bool
 	Message   string

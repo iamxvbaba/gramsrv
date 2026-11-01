@@ -5,11 +5,14 @@ import (
 	"unicode/utf8"
 )
 
-// MinBankCardDigits 是卡号最少的数字位数（TDLib match_bank_card_numbers 的下限）。
+// MinBankCardDigits is the minimum number of digits in a card number (the lower
+// bound of TDLib match_bank_card_numbers).
 const MinBankCardDigits = 13
 
-// MayContainBankCardNumber 报告文本里的 ASCII 数字是否够组成一个卡号。自动实体识别的快速
-// 路径用它跳过绝大多数只含少量数字（时间、金额、编号）的消息。
+// MayContainBankCardNumber reports whether the text contains enough ASCII digits
+// to form a card number. The fast path of automatic entity detection uses it to
+// skip the vast majority of messages that contain only a few digits (time,
+// amount, ID).
 func MayContainBankCardNumber(message string) bool {
 	count := 0
 	for i := 0; i < len(message); i++ {
@@ -23,9 +26,11 @@ func MayContainBankCardNumber(message string) bool {
 	return false
 }
 
-// BankCardDigits 去掉卡号里的分组空格和连字符（识别出的卡号实体只含这两种分隔符），
-// 出现其它字符时返回 false。客户端点击卡号实体时把实体原文发给 payments.getBankCardData，
-// 例如 Android ChatActivity.didLongPressCard 发的是 "4242 4242 4242 4242"。
+// BankCardDigits strips the grouping spaces and hyphens from a card number (a
+// detected bank-card entity contains only these two separators), returning false
+// when any other character is present. When a client taps a bank-card entity it
+// sends the entity's raw text to payments.getBankCardData, for example Android
+// ChatActivity.didLongPressCard sends "4242 4242 4242 4242".
 func BankCardDigits(number string) (string, bool) {
 	digits := make([]byte, 0, len(number))
 	for i := 0; i < len(number); i++ {
@@ -40,7 +45,7 @@ func BankCardDigits(number string) (string, bool) {
 	return string(digits), true
 }
 
-// BankCardLuhnValid 报告纯数字卡号是否通过 Luhn 校验。
+// BankCardLuhnValid reports whether a digits-only card number passes the Luhn check.
 func BankCardLuhnValid(digits string) bool {
 	if digits == "" {
 		return false
@@ -63,9 +68,10 @@ func BankCardLuhnValid(digits string) bool {
 	return sum%10 == 0
 }
 
-// BankCardScheme 返回 TDLib 识别卡号时区分的卡组织（td/telegram/MessageEntity.cpp
-// is_valid_bank_card：Visa、Mastercard、American Express、UnionPay、MIR），无法判定时为空。
-// digits 须至少 4 位纯数字。
+// BankCardScheme returns the card scheme that TDLib distinguishes when recognizing
+// a card number (td/telegram/MessageEntity.cpp is_valid_bank_card: Visa,
+// Mastercard, American Express, UnionPay, MIR), or empty when it cannot be
+// determined. digits must be at least 4 digits.
 func BankCardScheme(digits string) string {
 	if len(digits) < 4 {
 		return ""
@@ -92,7 +98,8 @@ func BankCardScheme(digits string) string {
 	return ""
 }
 
-// bankCardEntityValid 是 TDLib is_valid_bank_card：Luhn 校验加各卡组织的位数。
+// bankCardEntityValid mirrors TDLib is_valid_bank_card: the Luhn check plus each
+// scheme's digit count.
 func bankCardEntityValid(digits string) bool {
 	if !BankCardLuhnValid(digits) {
 		return false
@@ -110,10 +117,13 @@ func bankCardEntityValid(digits string) bool {
 	return true
 }
 
-// detectBankCardMessageEntities 按 TDLib match_bank_card_numbers 找出文本中的卡号：
-// 13–19 位数字，可用空格或连字符分组，前面不能紧跟字母、数字或 .,+-_，后面不能紧跟
-// 字母或 -_；连续 16–19 位数字后的空格结束卡号。官方服务端下发 messageEntityBankCard，
-// TDLib 对收到的消息不再自行识别（MessagesManager.cpp get_message_text skip_new_entities）。
+// detectBankCardMessageEntities finds card numbers in the text following TDLib
+// match_bank_card_numbers: 13-19 digits, optionally grouped with spaces or
+// hyphens, not immediately preceded by a letter, digit or .,+-_, and not
+// immediately followed by a letter or -_; a space after 16-19 consecutive digits
+// ends the card number. The official server sends messageEntityBankCard, and
+// TDLib no longer recognizes it on its own for received messages
+// (MessagesManager.cpp get_message_text skip_new_entities).
 func detectBankCardMessageEntities(message string) []MessageEntity {
 	if !MayContainBankCardNumber(message) {
 		return nil

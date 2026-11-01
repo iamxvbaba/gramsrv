@@ -17,7 +17,7 @@ import (
 	"telesrv/internal/geoip"
 )
 
-// registerAccount 注册 account.* RPC handler。
+// registerAccount registers the account.* RPC handlers.
 func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.AccountReportPeerRequest](d, tlprofile.SemanticMethodAccountReportPeer, func(ctx context.Context, req *tg.AccountReportPeerRequest) (any, error) {
 		return r.onAccountReportPeer(ctx, req)
@@ -227,7 +227,7 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[
 
-	// 自定义云主题(Create a New Theme 全链路):upload→create→update→save→install→get。
+	// Custom cloud themes (the full "Create a New Theme" flow): upload -> create -> update -> save -> install -> get.
 	*tg.AccountUploadThemeRequest](d, tlprofile.SemanticMethodAccountUploadTheme, func(ctx context.Context, layerRequest *tg.AccountUploadThemeRequest) (any, error) {
 		return r.onAccountUploadTheme(ctx, layerRequest)
 	})
@@ -410,9 +410,11 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.AccountResetWebAuthorizationsRequest](d, tlprofile.SemanticMethodAccountResetWebAuthorizations, func(ctx context.Context, layerRequest *tg.AccountResetWebAuthorizationsRequest) (
 
-		// account.getWebBrowserSettings：telesrv 不接入网页浏览器（web bot）集成，返回空设置
-		// （无内置浏览器例外、不强制外部浏览器）。Android 启动时会拉取，缺它会反复 500
-		// NOT_IMPLEMENTED。空结构 Hash=0，客户端按默认（内置浏览器、无例外）渲染。
+		// account.getWebBrowserSettings: telesrv does not integrate a web-browser (web bot) feature, so
+		// it returns empty settings (no built-in-browser exceptions, no forcing of an external
+		// browser). Android fetches this at startup, and without it repeatedly returns 500
+		// NOT_IMPLEMENTED. The empty struct has Hash=0, so the client renders its default (built-in
+		// browser, no exceptions).
 		any, error) {
 		return r.onAccountResetWebAuthorizations(ctx)
 	})
@@ -424,9 +426,10 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return &tg.AccountWebBrowserSettings{}, nil
 	})
 	// account.updateWebBrowserSettings / deleteWebBrowserSettingsExceptions /
-	// toggleWebBrowserSettingsException：telesrv 不接入网页浏览器（web bot）集成。
-	// iOS 会在浏览器设置页调用这些方法，缺 handler 会落到 Unhandled RPC（500
-	// NOT_IMPLEMENTED）。改动是空操作：保持 getWebBrowserSettings 返回的空设置语义。
+	// toggleWebBrowserSettingsException: telesrv does not integrate a web-browser (web bot) feature.
+	// iOS calls these methods on the browser settings page, and a missing handler falls through to
+	// Unhandled RPC (500 NOT_IMPLEMENTED). The change is a no-op: keep the empty-settings semantics
+	// of getWebBrowserSettings.
 	registerRPC[*tg.AccountUpdateWebBrowserSettingsRequest](d, tlprofile.SemanticMethodAccountUpdateWebBrowserSettings, func(ctx context.Context, layerRequest *tg.AccountUpdateWebBrowserSettingsRequest) (any, error) {
 		return &tg.AccountWebBrowserSettings{}, nil
 	})
@@ -639,8 +642,9 @@ func (r *Router) onAccountResetAuthorization(ctx context.Context, hash int64) (b
 	}
 	r.revokeAuthKeySessions(deleted.AuthKeyID)
 	_ = r.clearAuthKeyState(ctx, deleted.AuthKeyID)
-	// 撤销该设备的业务授权后，级联 discard 其绑定的活跃密聊并通知对端。
-	// 协议 auth key 必须保留，供客户端重连后取得 AUTH_KEY_UNREGISTERED。
+	// After revoking this device's business authorization, cascade-discard the active secret chats it
+	// is bound to and notify the peer. The protocol auth key must be kept so the client gets
+	// AUTH_KEY_UNREGISTERED after reconnecting.
 	r.discardSecretChatsForAuthKey(ctx, businessAuthKeyInt64(deleted.AuthKeyID), userID)
 	return true, nil
 }
@@ -705,8 +709,9 @@ func (r *Router) onAccountCancelPasswordEmail(ctx context.Context) (bool, error)
 	return true, nil
 }
 
-// onAccountSendVerifyEmailCode 处理 account.sendVerifyEmailCode：为登录邮箱的设置/变更
-// 发送邮箱验证码。loginChange 走已登录用户，loginSetup 走登录流程中的手机号 + phone_code_hash。
+// onAccountSendVerifyEmailCode handles account.sendVerifyEmailCode: it sends an email verification
+// code for setting/changing the login email. loginChange goes through a logged-in user; loginSetup
+// goes through the phone + phone_code_hash in the login flow.
 func (r *Router) onAccountSendVerifyEmailCode(ctx context.Context, req *tg.AccountSendVerifyEmailCodeRequest) (*tg.AccountSentEmailCode, error) {
 	if r.deps.Account == nil {
 		return nil, internalErr()
@@ -740,11 +745,12 @@ func (r *Router) onAccountSendVerifyEmailCode(ctx context.Context, req *tg.Accou
 	}
 }
 
-// onAccountVerifyEmail 处理 account.verifyEmail：确认登录邮箱验证码。
-// loginChange（已登录）返回 emailVerified{email}；loginSetup（登录流程中）返回
-// emailVerifiedLogin{email, sent_code}。TDesktop 能消费嵌套 auth.sentCodeSuccess，
-// 直接进入注册/登录完成；DrKLO Android 12.8.1 该路径漏处理 sentCodeSuccess，
-// 临时降级为普通 emailCode sentCode，待 Android 补齐后移除。
+// onAccountVerifyEmail handles account.verifyEmail: it confirms the login-email verification code.
+// loginChange (logged in) returns emailVerified{email}; loginSetup (in the login flow) returns
+// emailVerifiedLogin{email, sent_code}. TDesktop can consume the nested auth.sentCodeSuccess and go
+// straight to sign-up/login completion; DrKLO Android 12.8.1 misses handling sentCodeSuccess on
+// this path, so it is temporarily downgraded to an ordinary emailCode sentCode, to be removed once
+// Android catches up.
 func (r *Router) onAccountVerifyEmail(ctx context.Context, req *tg.AccountVerifyEmailRequest) (tg.AccountEmailVerifiedClass, error) {
 	if r.deps.Account == nil {
 		return nil, internalErr()
@@ -798,7 +804,7 @@ func (r *Router) onAccountVerifyEmail(ctx context.Context, req *tg.AccountVerify
 	}
 }
 
-// onAccountGetPasskeys 列出当前用户的 passkey(管理页)。
+// onAccountGetPasskeys lists the current user's passkeys (management page).
 func (r *Router) onAccountGetPasskeys(ctx context.Context) (*tg.AccountPasskeys, error) {
 	if r.deps.Passkey == nil {
 		return &tg.AccountPasskeys{}, nil
@@ -814,7 +820,7 @@ func (r *Router) onAccountGetPasskeys(ctx context.Context) (*tg.AccountPasskeys,
 	return &tg.AccountPasskeys{Passkeys: tgPasskeys(creds)}, nil
 }
 
-// onAccountInitPasskeyRegistration 为已登录用户生成 passkey 注册选项(creation options)。
+// onAccountInitPasskeyRegistration generates passkey registration options (creation options) for a logged-in user.
 func (r *Router) onAccountInitPasskeyRegistration(ctx context.Context) (*tg.AccountPasskeyRegistrationOptions, error) {
 	if r.deps.Passkey == nil {
 		return nil, internalErr()
@@ -833,7 +839,7 @@ func (r *Router) onAccountInitPasskeyRegistration(ctx context.Context) (*tg.Acco
 	return &tg.AccountPasskeyRegistrationOptions{Options: tg.DataJSON{Data: string(options)}}, nil
 }
 
-// onAccountRegisterPasskey 验证注册 attestation 并持久化凭据。
+// onAccountRegisterPasskey verifies the registration attestation and persists the credential.
 func (r *Router) onAccountRegisterPasskey(ctx context.Context, credential tg.InputPasskeyCredentialPublicKey) (*tg.Passkey, error) {
 	if r.deps.Passkey == nil {
 		return nil, internalErr()
@@ -857,7 +863,7 @@ func (r *Router) onAccountRegisterPasskey(ctx context.Context, credential tg.Inp
 	return &pk, nil
 }
 
-// onAccountDeletePasskey 删除当前用户的某个 passkey。
+// onAccountDeletePasskey deletes one of the current user's passkeys.
 func (r *Router) onAccountDeletePasskey(ctx context.Context, id string) (bool, error) {
 	if r.deps.Passkey == nil {
 		return false, internalErr()
@@ -877,7 +883,7 @@ func (r *Router) onAccountDeletePasskey(ctx context.Context, id string) (bool, e
 	return deleted, nil
 }
 
-// passkeyDisplayName 取用户显示名(authenticator UI 用),失败回退空串。
+// passkeyDisplayName takes the user's display name (for the authenticator UI), falling back to an empty string on failure.
 func (r *Router) passkeyDisplayName(ctx context.Context, userID int64) string {
 	if r.deps.Users == nil {
 		return ""
@@ -1128,8 +1134,9 @@ func (r *Router) tgAccountPrivacyRules(ctx context.Context, viewerUserID int64, 
 	}
 	out := &tg.AccountPrivacyRules{
 		Rules: tgPrivacyRules(rules.Rules),
-		// viewer 可能把自己（inputUserSelf）写进隐私名单，须带 self 标志，否则下发的
-		// self=false user 会被 DrKLO putUsers 覆盖账号缓存。
+		// A viewer may write itself (inputUserSelf) into a privacy list, so it must carry the self
+		// flag; otherwise the sent self=false user would have DrKLO putUsers overwrite the account
+		// cache.
 		Users: tgUsersForViewer(viewerUserID, users),
 		Chats: []tg.ChatClass{},
 	}
@@ -1395,8 +1402,9 @@ type accountReactionSettingsService interface {
 	accountReactionSettingsReader
 }
 
-// accountSettingsService 是账号级单例设置（全局隐私/TTL/敏感内容/注册通知）持久化的
-// 可选扩展，由 *app/account.Service 实现。未接通时各 handler 回落历史回显默认。
+// accountSettingsService is the optional extension for persisting account-level singleton settings
+// (global privacy / TTL / sensitive content / signup notification), implemented by
+// *app/account.Service. When not wired, handlers fall back to the historical echoed defaults.
 type accountSettingsService interface {
 	GetAccountSettings(ctx context.Context, userID int64) (domain.AccountSettings, error)
 	SetGlobalPrivacy(ctx context.Context, userID int64, privacy domain.GlobalPrivacy) (domain.AccountSettings, error)
@@ -1405,7 +1413,7 @@ type accountSettingsService interface {
 	SetContactSignUpSilent(ctx context.Context, userID int64, silent bool) (domain.AccountSettings, error)
 }
 
-// accountSettingsSvc 取账号设置服务（未接通返回 nil）。
+// accountSettingsSvc returns the account-settings service (nil when not wired).
 func (r *Router) accountSettingsSvc() (accountSettingsService, bool) {
 	svc, ok := r.deps.Account.(accountSettingsService)
 	return svc, ok
@@ -1459,9 +1467,9 @@ func domainGlobalPrivacy(settings tg.GlobalPrivacySettings) domain.GlobalPrivacy
 	return gp
 }
 
-// tgContentSettings 把敏感内容开关投影为 account.contentSettings。
-// SensitiveCanChange 恒置位：telesrv 不做地区年龄门控，客户端始终可切换
-// （直接赋值 flag-bool 字段，EncodeBare 自动 SetFlags）。
+// tgContentSettings projects the sensitive-content switch into account.contentSettings.
+// SensitiveCanChange is always set: telesrv does no region age-gating, so the client can always
+// toggle it (assign the flag-bool field directly; EncodeBare sets the flag automatically).
 func tgContentSettings(enabled bool) *tg.AccountContentSettings {
 	return &tg.AccountContentSettings{
 		SensitiveEnabled:   enabled,
@@ -1685,9 +1693,10 @@ func (r *Router) onAccountToggleUsername(ctx context.Context, req *tg.AccountTog
 	return true, nil
 }
 
-// onAccountUpdateBirthday 持久化资料页生日（account.updateBirthday）。birthday 缺省即清除；
-// 月/日/年非法返回 BIRTHDAY_INVALID。生日落在 userFull（按隐私 PrivacyKeyBirthday 对外裁剪）。
-// 写入后生成 non-PTS durable delivery，促使本人其它在线 session 重拉已加载的 full profile。
+// onAccountUpdateBirthday persists the profile birthday (account.updateBirthday). A missing
+// birthday clears it; an invalid month/day/year returns BIRTHDAY_INVALID. The birthday lives in
+// userFull (trimmed for others by the PrivacyKeyBirthday privacy rule). After the write it creates a
+// non-PTS durable delivery so the user's other online sessions refetch the loaded full profile.
 func (r *Router) onAccountUpdateBirthday(ctx context.Context, req *tg.AccountUpdateBirthdayRequest) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -1720,9 +1729,11 @@ func (r *Router) onAccountUpdateBirthday(ctx context.Context, req *tg.AccountUpd
 	return true, nil
 }
 
-// onAccountUpdatePersonalChannel 设置/清除资料页「个人频道」（account.updatePersonalChannel）。
-// inputChannelEmpty 清除；否则解析频道并要求调用者为其创建者/管理员（与官方 picker 取
-// getAdminedPublicChannels 一致）。频道与最新一帖在 getFullUser 时按 id 投影进 userFull + chats。
+// onAccountUpdatePersonalChannel sets/clears the profile-page "personal channel"
+// (account.updatePersonalChannel). inputChannelEmpty clears it; otherwise the channel is resolved
+// and the caller is required to be its creator/admin (consistent with the official picker's
+// getAdminedPublicChannels). The channel and its latest post are projected by id into userFull +
+// chats on getFullUser.
 func (r *Router) onAccountUpdatePersonalChannel(ctx context.Context, channel tg.InputChannelClass) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -1832,9 +1843,10 @@ func (r *Router) domainUserEmojiStatus(ctx context.Context, userID int64, input 
 	}
 }
 
-// onAccountUpdateColor 持久化当前用户的消息 accent 或资料页背景色。
-// 普通 peerColor 可清除（color flag absent）、可显式设置 color=0；collectible
-// 颜色依赖礼物资产模型，当前阶段按范围外能力拒绝并记录在兼容矩阵。
+// onAccountUpdateColor persists the current user's message accent or profile-page background color.
+// An ordinary peerColor can be cleared (color flag absent) or explicitly set to color=0; collectible
+// colors depend on the gift asset model and are rejected at this stage as an out-of-scope capability
+// and recorded in the compatibility matrix.
 func (r *Router) onAccountUpdateColor(ctx context.Context, req *tg.AccountUpdateColorRequest) (bool, error) {
 	if req == nil {
 		return false, inputConstructorInvalidErr()
@@ -1898,10 +1910,11 @@ func accountUpdateColorIDAllowed(forProfile bool, colorID int) bool {
 	return tdesktop.IsPeerColorID(colorID)
 }
 
-// onAccountGetDefaultEmojiStatuses 返回默认 emoji status 列表，与
-// inputStickerSetEmojiDefaultStatuses 系统集同源同序（选择器主体由该系统集
-// 经 messages.getStickerSet 填充，这里是顶部"默认状态"行）。该系统集是生产
-// 依赖，缺失时失败，不合成空目录。
+// onAccountGetDefaultEmojiStatuses returns the default emoji status list, from the same source and
+// in the same order as the inputStickerSetEmojiDefaultStatuses system set (the picker body is filled
+// from that set through messages.getStickerSet; this is the top "default statuses" row). The system
+// set is a production dependency: when it is missing this fails instead of synthesizing an empty
+// catalog.
 func (r *Router) onAccountGetDefaultEmojiStatuses(ctx context.Context, hash int64) (tg.AccountEmojiStatusesClass, error) {
 	if r.deps.Files == nil {
 		return nil, internalErr()
@@ -1962,31 +1975,35 @@ func (r *Router) onAccountGetCollectibleEmojiStatuses(ctx context.Context, hash 
 	return &tg.AccountEmojiStatuses{Hash: catalogHash, Statuses: statuses}, nil
 }
 
-// authorizationLocationUnknown 是国家/地区都解析不出来时的回退文案。
+// authorizationLocationUnknown is the fallback text when neither country nor region resolves.
 //
-// 协议层没有 help.requestIpAddress 的对等实现,地理归属只能由部署方自备;没有
-// 解析器、解析器失败或上游查无此 IP 时都必须回落到这里,而不是回传空串——
-// 空串会让客户端把位置渲染成空行,比显示 Unknown 更难解释。
+// The protocol layer has no counterpart to help.requestIpAddress, so geo attribution can only be
+// provided by the deployer; with no resolver, a resolver failure, or an upstream miss for this IP,
+// it must fall back to this rather than returning an empty string -- an empty string would make the
+// client render the location as a blank line, which is harder to explain than showing Unknown.
 const authorizationLocationUnknown = "Unknown"
 
-// authorizationLocationLookupTimeout 限制一次会话列表请求里地理解析的总时长。
+// authorizationLocationLookupTimeout bounds the total geo-resolution time in one session-list
+// request.
 //
-// 解析是纯展示增强,拖慢 account.getAuthorizations 没有任何好处,所以给它封顶:
-// 超时后剩余地址按 Unknown 回落,列表照常返回。
+// Resolution is a pure display enhancement, and slowing down account.getAuthorizations has no
+// benefit, so it is capped: after the timeout the remaining addresses fall back to Unknown and the
+// list is returned as usual.
 const authorizationLocationLookupTimeout = 3 * time.Second
 
-// resolveAuthorizationLocations 批量解析本次会话列表里出现过的所有 IP。
+// resolveAuthorizationLocations batch-resolves all IPs appearing in this session list.
 //
-// 必须批量:上游一次往返约 0.7s 且限流很凶,逐条解析会把成本乘以设备数。
-// 未注入解析器、或列表里没有任何 IP 时返回 nil,逐条查找会自然回落到占位文案。
+// It must be batched: an upstream round trip takes ~0.7s and is heavily rate-limited, so resolving
+// one by one would multiply the cost by the device count. Returns nil when no resolver is injected
+// or the list has no IPs, and per-address lookups then naturally fall back to the placeholder text.
 func (r *Router) resolveAuthorizationLocations(ctx context.Context, items []domain.Authorization) map[string]geoip.Location {
 	if r.deps.GeoIP == nil || len(items) == 0 {
 		return nil
 	}
 	ips := make([]string, 0, len(items))
 	for _, item := range items {
-		// 空白地址同样跳过:解析器会把它判成不可解析,但那仍是一次无谓的调用,
-		// 而上游配额经不起无谓的调用。
+		// Blank addresses are skipped too: the resolver would judge them unparseable, but that would
+		// still be a pointless call, and the upstream quota cannot afford pointless calls.
 		if strings.TrimSpace(item.IP) != "" {
 			ips = append(ips, item.IP)
 		}
@@ -1999,8 +2016,8 @@ func (r *Router) resolveAuthorizationLocations(ctx context.Context, items []doma
 	return r.deps.GeoIP.Resolve(lookupCtx, ips)
 }
 
-// tgAuthorization 把一条持久化的授权转成 TL 授权。loc 由调用方预先批量解析,
-// 取不到时退化为零值 -> Unknown。
+// tgAuthorization converts a persisted authorization into a TL authorization. loc is batch-resolved
+// in advance by the caller, and degrades to the zero value -> Unknown when unavailable.
 func (r *Router) tgAuthorization(loc geoip.Location, a domain.Authorization, currentAuthKeyID [8]byte, now int) tg.Authorization {
 	created := int(a.CreatedAt.Unix())
 	if created == 0 {
@@ -2028,8 +2045,9 @@ func (r *Router) tgAuthorization(loc geoip.Location, a domain.Authorization, cur
 	}
 }
 
-// authorizationLocationText 收敛空值到占位文案。上游对查不到的 IP 会返回空的
-// country_name/city,那属于"没查到",不属于"这个 IP 没有国家"。
+// authorizationLocationText collapses empty values into the placeholder text. Upstream returns an
+// empty country_name/city for an IP it cannot find, and that is "not found", not "this IP has no
+// country".
 func authorizationLocationText(value string) string {
 	if trimmed := strings.TrimSpace(value); trimmed != "" {
 		return trimmed

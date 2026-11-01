@@ -11,16 +11,18 @@ import (
 	"telesrv/internal/domain"
 )
 
-// RTMP 直播（Live Stream）RPC：createGroupCall(rtmp_stream) 建房后，推流方（OBS）
-// 用 getGroupCallStreamRtmpUrl 拿到的 url/key 推流，观众 join 后经
-// upload.getFile(inputGroupCallStream) 拉 broadcast chunk。
+// RTMP livestream (Live Stream) RPCs: after createGroupCall(rtmp_stream) creates the room, the
+// streamer (OBS) pushes using the url/key from getGroupCallStreamRtmpUrl, and viewers pull
+// broadcast chunks via upload.getFile(inputGroupCallStream) after joining.
 //
-// 与普通语音聊天（RTC/SFU）关键差异：RTMP join 不建 SFU 连接、不做 ssrc 唯一性
-// 媒体面校验；updateGroupCallConnection.params 返回 {"stream":true,"rtmp":true}
-// 让 TDesktop 切 broadcast 模式（ParseJoinResponse → JoinBroadcastStream）。
+// Key difference from an ordinary voice chat (RTC/SFU): an RTMP join builds no SFU connection and
+// does no ssrc-uniqueness media-plane validation; updateGroupCallConnection.params returns
+// {"stream":true,"rtmp":true} to make TDesktop switch to broadcast mode (ParseJoinResponse →
+// JoinBroadcastStream).
 
-// rtmpConnectionParams 是 RTMP 观众 join 响应的下行 JSON（tgcalls broadcast 分支）。
-// 可管理者附 rtmp_stream_url/key 供直播设置页展示（普通观众不下发，避免泄漏推流凭据）。
+// rtmpConnectionParams is the downlink JSON for an RTMP viewer's join response (the tgcalls
+// broadcast branch). Managers get rtmp_stream_url/key appended for the livestream settings page
+// (ordinary viewers get none, to avoid leaking stream credentials).
 type rtmpConnectionParams struct {
 	Stream        bool   `json:"stream"`
 	Rtmp          bool   `json:"rtmp"`
@@ -37,9 +39,10 @@ func buildRtmpConnectionParams(url, key string) (string, error) {
 	return string(out), nil
 }
 
-// joinRtmpGroupCall 处理 RTMP 直播房间的 joinGroupCall。
+// joinRtmpGroupCall handles joinGroupCall for an RTMP livestream room.
 func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, req *tg.PhoneJoinGroupCallRequest) (tg.UpdatesClass, error) {
-	// 房间上限：RTMP 观众也计入 participants_count；rejoin（已在会换 ssrc）不受限。
+	// Room cap: RTMP viewers also count toward participants_count; a rejoin (already in the call,
+	// swapping ssrc) is not limited.
 	if max := r.cfg.GroupCallMaxParticipants; max > 0 && scope.call.ParticipantsCount >= max {
 		if p, found, _ := r.deps.GroupCalls.Participant(ctx, scope.call.ID, scope.userID); !found || p.Left {
 			return nil, groupCallForbiddenErr()
@@ -50,8 +53,9 @@ func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, r
 		return nil, err
 	}
 	now := int(r.clock.Now().Unix())
-	// RTMP 观众的 join JSON 仍带 tgcalls ssrc（客户端为拉流也建了本地 controller）；
-	// 解析失败/缺失不致命——直播不需要 SFU，用随机 ssrc 记账保证参与者行有效。
+	// An RTMP viewer's join JSON still carries a tgcalls ssrc (the client builds a local controller
+	// for the fetch too); a parse failure/absence is not fatal — the livestream needs no SFU, so a
+	// random ssrc is used for bookkeeping to keep the participant row valid.
 	ssrc := int64(0)
 	if _, s, err := parseGroupCallJoinPayload(req.Params.Data); err == nil {
 		ssrc = s
@@ -59,9 +63,10 @@ func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, r
 	if ssrc == 0 {
 		ssrc = randomSSRC()
 	}
-	// RTMP 观众（含创建者，其经 OBS 独立推流，在 group call 里同样是纯观众）一律
-	// force-muted：IsAdmin=false 让 store 对 join_muted 房间置 muted+muted_by_admin，
-	// self 行输出 muted=true / can_self_unmute=false，TDesktop 才会稳定停在 stream 模式。
+	// RTMP viewers (including the creator, who streams independently via OBS and is likewise a pure
+	// viewer within the group call) are all force-muted: IsAdmin=false makes the store set
+	// muted+muted_by_admin for a join_muted room, and the self row outputs muted=true /
+	// can_self_unmute=false, so TDesktop stays stably in stream mode.
 	mut, err := r.deps.GroupCalls.Join(ctx, domain.JoinGroupCallRequest{
 		CallID:          scope.call.ID,
 		UserID:          scope.userID,
@@ -74,7 +79,8 @@ func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, r
 	if err != nil {
 		return nil, groupCallErr(err)
 	}
-	// 可管理者拿推流 url/key（直播设置页展示）；普通观众只得 stream:true。
+	// Managers get the stream url/key (shown on the livestream settings page); ordinary viewers only
+	// get stream:true.
 	var url, key string
 	if scope.canManage() && r.deps.GroupCalls != nil {
 		if k, kerr := r.deps.GroupCalls.RtmpStreamKey(ctx, scope.channel.ID, false, now); kerr == nil {
@@ -93,9 +99,9 @@ func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, r
 			Participants: tgGroupCallParticipants([]domain.GroupCallParticipant{mut.Participant}, scope.userID),
 			Version:      mut.Call.Version,
 		}, []int64{scope.userID})
-	// updateGroupCall 必须先于 updateGroupCallConnection：TDesktop 按序 applyUpdates，
-	// 处理 connection 时若还没从 groupCall 读到 stream_dc_id 会打
-	// "Api Error: Empty stream_dc_id" 并 fallback 主 DC。
+	// updateGroupCall must precede updateGroupCallConnection: TDesktop applies updates in order, and
+	// if it has not yet read stream_dc_id from the groupCall when handling the connection it logs
+	// "Api Error: Empty stream_dc_id" and falls back to the main DC.
 	callUpdate := &tg.UpdateGroupCall{Call: tgGroupCall(mut.Call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL)}
 	if channel.ID != 0 {
 		callUpdate.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
@@ -105,9 +111,9 @@ func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, r
 	return out, nil
 }
 
-// onPhoneGetGroupCallStreamRtmpURL 返回频道的 RTMP 推流 url/key（创建前预览、
-// 直播设置页展示、revoke 轮换）。仅频道管理员可调；revoke=true 生成新 key，旧 key
-// 立即失效并断开正在进行的推流。
+// onPhoneGetGroupCallStreamRtmpURL returns the channel's RTMP stream url/key (pre-create preview,
+// livestream settings page display, revoke rotation). Only a channel admin can call it; revoke=true
+// generates a new key, immediately invalidating the old key and disconnecting an in-progress stream.
 func (r *Router) onPhoneGetGroupCallStreamRtmpURL(ctx context.Context, req *tg.PhoneGetGroupCallStreamRtmpURLRequest) (*tg.PhoneGroupCallStreamRtmpURL, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
@@ -139,15 +145,17 @@ func (r *Router) onPhoneGetGroupCallStreamRtmpURL(ctx context.Context, req *tg.P
 		return nil, groupCallErr(err)
 	}
 	if req.Revoke && r.deps.LiveStreams != nil {
-		// 旧 key 失效后仍在推的连接必须断开（否则用旧 key 的推流会继续被接收）。
+		// Connections still streaming after the old key is invalidated must be disconnected
+		// (otherwise a stream using the old key keeps being accepted).
 		r.deps.LiveStreams.DropChannel(peer.ID)
 	}
 	return &tg.PhoneGroupCallStreamRtmpURL{URL: r.rtmpIngestURL(), Key: key}, nil
 }
 
-// onPhoneGetGroupCallStreamChannels 返回 RTMP 直播的当前时间轴（unified：channel=1
-// scale=0），供 tgcalls 决定从哪个 time_ms 起拉 chunk。无活跃推流时返回空列表，
-// TDesktop 据此显示"等待推流"占位并循环重试。
+// onPhoneGetGroupCallStreamChannels returns the current timeline of the RTMP livestream (unified:
+// channel=1, scale=0), letting tgcalls decide from which time_ms to fetch chunks. With no active
+// stream it returns an empty list, and TDesktop shows a "waiting for stream" placeholder and
+// retries in a loop.
 func (r *Router) onPhoneGetGroupCallStreamChannels(ctx context.Context, call tg.InputGroupCallClass) (*tg.PhoneGroupCallStreamChannels, error) {
 	scope, err := r.groupCallScopeFrom(ctx, call)
 	if err != nil {
@@ -167,7 +175,7 @@ func (r *Router) onPhoneGetGroupCallStreamChannels(ctx context.Context, call tg.
 	return out, nil
 }
 
-// rtmpIngestURL 返回展示给推流端的 RTMP 服务器地址。
+// rtmpIngestURL returns the RTMP server address shown to the streaming side.
 func (r *Router) rtmpIngestURL() string {
 	if r.cfg.RtmpIngestURL != "" {
 		return r.cfg.RtmpIngestURL

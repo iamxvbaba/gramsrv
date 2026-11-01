@@ -1835,7 +1835,7 @@ func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testi
 		t.Fatalf("imported models=%+v backdrops=%+v", models, gifts.lastBundle.Collectible.Backdrops)
 	}
 	catalog := gifts.lastBundle.Catalog
-	// The collectible supply ("уникальный тираж") configures the pool alone and
+	// The collectible supply ("unique supply") configures the pool alone and
 	// never turns the base gift into a limited edition: without the explicit
 	// Limited flag the base catalog stays unlimited even when the snapshot and
 	// pool carry finite numbers. Sold-out, resale, and sale-date state still does

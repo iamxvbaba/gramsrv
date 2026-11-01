@@ -1,7 +1,9 @@
--- v2 编号 0255；移植自 main 0228_donations（main 3a84827a，B7g），见 docs/main-v2-sync.md。
--- v2（D7）：钱包加密密钥只来自 Core YAML donations.wallet_key_file 指向的共享密钥文件，
--- 不自动生成；未配置即关闭捐赠。钱包生成与链上 watcher 只由持有 PG advisory 租约的 Core 运行。
--- 本地 Ganache 链在 v2 默认不启用（main 默认启用 127.0.0.1:7545），由运维显式打开。
+-- v2 number 0255; ported from main 0228_donations (main 3a84827a, B7g), see docs/main-v2-sync.md.
+-- v2 (D7): the wallet encryption key comes only from the shared key file named by the Core YAML
+-- donations.wallet_key_file and is never generated automatically; without it donations are off. Wallet
+-- generation and the on-chain watcher run only on the Core holding the PG advisory lease.
+-- The local Ganache chain is disabled by default in v2 (main enables 127.0.0.1:7545 by default); operators
+-- turn it on explicitly.
 -- Crypto donations: one deterministic BIP32 deposit address per user, the
 -- same address on every EVM-compatible chain (same secp256k1 curve, same
 -- derivation, only the RPC endpoint and token contracts differ). Deposits

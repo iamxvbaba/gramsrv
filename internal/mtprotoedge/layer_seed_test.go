@@ -19,10 +19,13 @@ func (seededLayerRPC) Dispatch(context.Context, [8]byte, int64, *bin.Buffer) (bi
 
 func (seededLayerRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 225, true }
 
-// TestRegisterSeedsNegotiatedLayerBeforeFirstRPC 验证连接注册即从 rpc 层播种协商 layer：
-// 只发一条 ping（服务消息，不经 RPC Dispatch），连接的 ClientLayer 就必须是协商值，
-// 而不是等首条 RPC 的 Dispatch 返回后才刷新——否则重连老客户端在首条 RPC handler
-// 执行期间收到的 pending flush / 并发 push 会按 canonical 227 漏降级。
+// TestRegisterSeedsNegotiatedLayerBeforeFirstRPC verifies that a connection,
+// on registration, seeds the negotiated layer from the rpc layer: even if only a
+// ping is sent (a service message that does not go through RPC Dispatch), the
+// connection's ClientLayer must already be the negotiated value, rather than
+// being refreshed only after the first RPC's Dispatch returns—otherwise a
+// reconnecting old client would receive pending flush / concurrent pushes during
+// its first RPC handler and silently downgrade to canonical 227.
 func TestRegisterSeedsNegotiatedLayerBeforeFirstRPC(t *testing.T) {
 	addr, pub, srv := startTestServer(t, Options{DC: 2, legacyRPC: seededLayerRPC{}})
 	conn, auth, cipher := dialHandshake(t, addr, 2, pub)
@@ -30,7 +33,7 @@ func TestRegisterSeedsNegotiatedLayerBeforeFirstRPC(t *testing.T) {
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	sendEncryptedWithSeq(t, conn, cipher, auth, clientMsgID.New(proto.MessageFromClient), 1, &mt.PingRequest{PingID: 7})
 
-	// 等 pong 回来，确保携带注册动作的那一帧已处理完成。
+	// Wait for the pong, ensuring the frame carrying the registration action has been fully processed.
 	gotPong := false
 	for i := 0; i < 12 && !gotPong; i++ {
 		_, id, _ := readServerMessage(t, conn, cipher, auth.AuthKey)

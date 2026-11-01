@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// resetModerationProfileWarning 恢复进程级默认状态，避免测试之间通过
-// SetModerationProfileWarning 串味（atomic.Value 是全局的）。
+// resetModerationProfileWarning restores the process-level default state so tests do not
+// bleed into each other through SetModerationProfileWarning (the atomic.Value is global).
 func resetModerationProfileWarning(t *testing.T) {
 	t.Helper()
 	SetModerationProfileWarning("", "")
@@ -16,7 +16,7 @@ func resetModerationProfileWarning(t *testing.T) {
 func TestModerationProfileWarningPrependsOverOwnerText(t *testing.T) {
 	resetModerationProfileWarning(t)
 
-	// 标记 + 自己的描述：警告是第一行，owner 的文本紧随其后。
+	// Flag + own description: the warning is the first line and the owner's text follows.
 	got := ModerationProfileWarning(true, false, "я андрей вот мое описание")
 	if want := defaultScamProfileWarning + "\nя андрей вот мое описание"; got != want {
 		t.Fatalf("scam about = %q, want %q", got, want)
@@ -24,14 +24,14 @@ func TestModerationProfileWarningPrependsOverOwnerText(t *testing.T) {
 	if got := ModerationProfileWarning(false, true, "owner text"); got != defaultFakeProfileWarning+"\nowner text" {
 		t.Fatalf("fake about = %q", got)
 	}
-	// 描述为空时只有警告，不留悬空的换行。
+	// With an empty description only the warning remains, with no dangling newline.
 	if got := ModerationProfileWarning(true, false, ""); got != defaultScamProfileWarning {
 		t.Fatalf("empty-owner about = %q", got)
 	}
 }
 
-// 默认文案必须是完整可读的一句话（⚠️ Warning: ...），而不是官方客户端那两字母
-// 徽标词——角标只画在名字旁，描述里需要解释“为什么被标记”。
+// The default text must be a full readable sentence (⚠️ Warning: ...), not the official client's two-letter
+// badge word — the badge is only drawn next to the name, and the description needs to explain "why it was flagged".
 func TestModerationProfileWarningDefaultsAreFullSentences(t *testing.T) {
 	for name, text := range map[string]string{
 		"scam": defaultScamProfileWarning,
@@ -75,7 +75,7 @@ func TestModerationProfileWarningUsesConfiguredText(t *testing.T) {
 func TestModerationProfileWarningBlankConfigFallsBackToDefault(t *testing.T) {
 	resetModerationProfileWarning(t)
 
-	// 纯空白（operator 把 .env 里的值留成了空格）不该产出空白首行。
+	// Pure whitespace (an operator left the .env value as spaces) must not produce a blank first line.
 	SetModerationProfileWarning("   ", "\n")
 	if got := ModerationProfileWarning(true, false, "owner"); got != defaultScamProfileWarning+"\nowner" {
 		t.Fatalf("blank scam config about = %q", got)
@@ -85,8 +85,8 @@ func TestModerationProfileWarningBlankConfigFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// 面板拒绝同时置两个标记（ErrPeerModerationFlagsInvalid），但投影层仍要给出
-// 确定的单行结果，而不是两段拼接或空串。
+// The panel rejects setting both flags at once (ErrPeerModerationFlagsInvalid), but the projection layer must still produce
+// a determinate single-line result, not a concatenation of two or an empty string.
 func TestModerationProfileWarningBothFlagsPrefersScam(t *testing.T) {
 	resetModerationProfileWarning(t)
 

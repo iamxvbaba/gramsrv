@@ -5,7 +5,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// authzFromCtx 从连接上下文组装一条待绑定的设备授权（UserID 由业务层填充）。
+// authzFromCtx assembles a device authorization to be bound from the connection
+// context (UserID is filled in by the business layer).
 func (r *Router) authzFromCtx(ctx context.Context) domain.Authorization {
 	id, _ := AuthKeyIDFrom(ctx)
 	a := domain.Authorization{AuthKeyID: id, Layer: LayerFrom(ctx)}
@@ -22,10 +23,12 @@ func (r *Router) authzFromCtx(ctx context.Context) domain.Authorization {
 	return a
 }
 
-// currentUserID 返回当前连接已登录的 user_id。
+// currentUserID returns the user_id of the currently logged-in connection.
 //
-// 优先使用 active session 缓存；若新连接尚未绑定但 auth_key 已授权，则只在这里
-// 查询一次授权表并回填 session，避免各业务 service 每个 RPC 重复 authKey→userID。
+// It prefers the active session cache; if a new connection is not yet bound but
+// the auth_key is already authorized, it queries the authorization table only
+// here once and backfills the session, avoiding a repeated authKey->userID
+// lookup per RPC in every business service.
 func (r *Router) currentUserID(ctx context.Context) (int64, bool, error) {
 	if userID, ok := UserIDFrom(ctx); ok {
 		return userID, true, nil

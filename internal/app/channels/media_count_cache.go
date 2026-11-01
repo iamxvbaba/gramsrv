@@ -20,7 +20,8 @@ type mediaCountCacheKey struct {
 	channelID int64
 }
 
-// mediaCountReadModelCache 由统一缓存原语承载(版本闸门 / epoch 守卫 / LRU / clone)。
+// mediaCountReadModelCache is backed by the shared cache primitive
+// (version gate / epoch guard / LRU / clone).
 type mediaCountReadModelCache struct {
 	cache *readmodelcache.Cache[mediaCountCacheKey, domain.MediaCategoryCounts]
 }

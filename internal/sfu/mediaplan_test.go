@@ -2,8 +2,9 @@ package sfu
 
 import "testing"
 
-// 选层契约：订阅端只为 SIM[0]（最低层）与其 FID RTX 伙伴建解码 sink，
-// SFU 只转发这两个视频 ssrc，其余层在 SFU 终结。
+// Layer-selection contract: the subscriber creates a decode sink only for SIM[0]
+// (the lowest layer) and its FID RTX partner; the SFU forwards only these two video
+// ssrcs and terminates the remaining layers at the SFU.
 func TestBuildMediaPlanSimulcast(t *testing.T) {
 	offer := ClientOffer{
 		AudioSSRC: 1000,
@@ -25,13 +26,13 @@ func TestBuildMediaPlanSimulcast(t *testing.T) {
 			t.Fatalf("ssrc %d must be dropped (higher simulcast layer)", ssrc)
 		}
 	}
-	// 未声明 ssrc（探测/未来扩展）放行，订阅端安全丢弃。
+	// Undeclared ssrcs (probing/future extensions) pass through; the subscriber drops them safely.
 	if !plan.shouldForward(9999) {
 		t.Fatalf("undeclared ssrc must pass through")
 	}
 }
 
-// 单层发布（conference 模式）：无 SIM 组、唯一 FID 组的第一个 ssrc 即主流。
+// Single-layer publish (conference mode): no SIM group, and the first ssrc of the sole FID group is the primary stream.
 func TestBuildMediaPlanSingleLayer(t *testing.T) {
 	plan := buildMediaPlan(ClientOffer{
 		AudioSSRC:  2000,
@@ -42,7 +43,7 @@ func TestBuildMediaPlanSingleLayer(t *testing.T) {
 	}
 }
 
-// 纯音频（无视频组）：一切放行。
+// Audio-only (no video group): everything passes through.
 func TestBuildMediaPlanAudioOnly(t *testing.T) {
 	plan := buildMediaPlan(ClientOffer{AudioSSRC: 3000})
 	if !plan.shouldForward(3000) || !plan.shouldForward(3001) {

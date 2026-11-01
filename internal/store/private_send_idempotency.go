@@ -25,9 +25,11 @@ type channelSendSnapshotEnvelope struct {
 	Message domain.ChannelMessage `json:"message"`
 }
 
-// privateSendFingerprintPayload 只包含一次发送的客户端不可变意图。Date、origin
-// auth/session、当前 block 状态与 automation 元数据均为执行环境，不得让同一请求在
-// 重连或状态变化后变成另一条逻辑消息。sender/random_id 由幂等索引键单独约束。
+// privateSendFingerprintPayload contains only the client's immutable intent for one send.
+// Date, origin auth/session, current block state, and automation metadata are all execution
+// environment and must not make the same request become a different logical message after a
+// reconnect or state change. sender/random_id are constrained separately by the idempotency
+// index key.
 type privateSendFingerprintPayload struct {
 	Version         int                        `json:"version"`
 	RecipientUserID int64                      `json:"recipient_user_id"`

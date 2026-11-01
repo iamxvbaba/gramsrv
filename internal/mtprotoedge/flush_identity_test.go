@@ -8,9 +8,12 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
-// TestRunFlushDiscardsBatchOnIdentitySwitch 验证排空进行中连接易主（登出/换号致
-// c.userID != owner）时，属于旧账号的暂存被丢弃、不发给新账号、也不回排进 pending。
-// 这是对抗审查发现的 P0：在飞 batch 逃过 bind/unbind 的 pending 清理。
+// TestRunFlushDiscardsBatchOnIdentitySwitch verifies that when a connection
+// changes hands while a flush is in progress (logout/account switch causing
+// c.userID != owner), the staged data belonging to the old account is discarded,
+// not sent to the new account, and not requeued into pending. This is a P0 found
+// by adversarial review: an in-flight batch escaping the pending cleanup of
+// bind/unbind.
 func TestRunFlushDiscardsBatchOnIdentitySwitch(t *testing.T) {
 	sm := NewSessionManager(nil)
 	raw := [8]byte{7}
@@ -24,9 +27,9 @@ func TestRunFlushDiscardsBatchOnIdentitySwitch(t *testing.T) {
 		outboundStop:    make(chan struct{}),
 	}
 	sm.Register(c)
-	sm.BindUserForAuthKey(raw, sessionID, 100) // 当前账号 A=100
+	sm.BindUserForAuthKey(raw, sessionID, 100) // current account A=100
 
-	// session 未就绪：两条推送进 pending。
+	// Session not ready: two pushes go into pending.
 	for i := 0; i < 2; i++ {
 		if err := sm.PushToSessionForAuthKey(context.Background(), raw, sessionID, proto.MessageFromServer, &tg.UpdatesTooLong{}); err != nil {
 			t.Fatalf("queue pending: %v", err)
@@ -39,13 +42,14 @@ func TestRunFlushDiscardsBatchOnIdentitySwitch(t *testing.T) {
 		t.Fatalf("pending = %d, want 2", pending)
 	}
 
-	// 模拟「排空已启动（flushing=true，owner=旧账号 A），但运行到时连接已换号成 B」。
+	// Simulate "flush already started (flushing=true, owner=old account A), but by
+	// the time it runs the connection has switched to B".
 	sm.mu.Lock()
 	sm.flushing[key] = true
 	sm.mu.Unlock()
-	c.userID.Store(200) // 换号后的新账号 B
+	c.userID.Store(200) // new account B after the switch
 
-	sm.runFlush(c, key, 100, 0) // owner=旧账号 A，当前 userID=B → 必须丢弃
+	sm.runFlush(c, key, 100, 0) // owner=old account A, current userID=B → must discard
 
 	if n := len(c.outbound); n != 0 {
 		t.Fatalf("sent %d pushes to new owner, want 0 (discarded)", n)

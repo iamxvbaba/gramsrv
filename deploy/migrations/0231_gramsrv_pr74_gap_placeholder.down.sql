@@ -1,2 +1,3 @@
--- 占位迁移回滚（no-op）：对应 up 不创建任何对象，回滚只把版本号退回上一条。
+-- Placeholder migration rollback (no-op): the matching up creates no objects; rolling back only moves the
+-- version back to the previous one.
 SELECT 1;

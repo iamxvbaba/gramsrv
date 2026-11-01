@@ -7,42 +7,44 @@ import (
 )
 
 var (
-	// ErrInvalidAuthKeyProtocolExpiry 表示新握手试图写入 migration-only
-	// unknown sentinel 或超出 TL int32 时间戳范围的协议寿命。
+	// ErrInvalidAuthKeyProtocolExpiry means a new handshake tried to write the
+	// migration-only unknown sentinel or a protocol expiry outside the TL int32 timestamp range.
 	ErrInvalidAuthKeyProtocolExpiry = errors.New("invalid auth key protocol expiry")
-	// ErrAuthKeyProtocolMetadataConflict 表示同一 cryptographic auth_key_id
-	// 被尝试改写为另一 key body 或另一 permanent/temp 类型/寿命。
+	// ErrAuthKeyProtocolMetadataConflict means the same cryptographic auth_key_id
+	// was rewritten to a different key body or a different permanent/temp type/expiry.
 	ErrAuthKeyProtocolMetadataConflict = errors.New("auth key protocol metadata conflict")
 	// ErrAuthKeyNotFound prevents client metadata writes from silently succeeding
 	// after the protocol key row has already disappeared. auth_keys is the
 	// authoritative Layer source; an authorization mirror must never advance on
 	// its own when that primary write did not happen.
 	ErrAuthKeyNotFound = errors.New("auth key not found")
-	// ErrAuthKeyNotPermanent 防止 authorization 落到 temporary/legacy-unknown key。
+	// ErrAuthKeyNotPermanent prevents an authorization from landing on a temporary/legacy-unknown key.
 	ErrAuthKeyNotPermanent = errors.New("auth key is not permanent")
-	// ErrAuthKeyBindingInvalid 表示 temp/perm 引用缺失、类型错误，或 binding
-	// expiry 未归一到握手权威值。
+	// ErrAuthKeyBindingInvalid means the temp/perm reference is missing, has the wrong
+	// type, or the binding expiry was not normalized to the handshake-authoritative value.
 	ErrAuthKeyBindingInvalid = errors.New("invalid temporary auth key binding")
 )
 
-// ValidNewAuthKeyProtocolExpiry 只允许握手写 permanent(0) 或 TL int32
-// 范围内的 positive temporary expiry。-1 仅能由 migration 0086 写入。
+// ValidNewAuthKeyProtocolExpiry only allows a handshake to write permanent(0) or a
+// positive temporary expiry within the TL int32 range. -1 can only be written by migration 0086.
 func ValidNewAuthKeyProtocolExpiry(expiresAt int) bool {
 	return expiresAt >= 0 && int64(expiresAt) <= math.MaxInt32
 }
 
-// AuthKeyData 是一条持久化的 MTProto auth key 记录。
+// AuthKeyData is one persisted MTProto auth key record.
 //
-// 不依赖 td 协议类型：连接层在边界做 crypto.AuthKey ↔ AuthKeyData 转换。
+// It does not depend on td protocol types: the connection layer converts between
+// crypto.AuthKey and AuthKeyData at the boundary.
 type AuthKeyData struct {
-	ID         [8]byte   // auth_key_id（key 的 SHA1 低 64 位）
+	ID         [8]byte   // auth_key_id (low 64 bits of the key's SHA1)
 	Value      [256]byte // 2048-bit auth key
-	ServerSalt int64     // 密钥交换产出的初始 server salt
-	CreatedAt  int64     // unix 秒
-	// ExpiresAt 是 temporary/media-temporary auth key 的协议失效时间（unix 秒）。
-	// 0 只允许表示 permanent key；-1 仅表示 migration 0086 无法证明类型的历史 key，
-	// edge 必须用 -404 拒绝并迫使客户端重握手。key 类型是握手事实，不能由
-	// authorization 是否存在推断。
+	ServerSalt int64     // initial server salt produced by the key exchange
+	CreatedAt  int64     // unix seconds
+	// ExpiresAt is the protocol expiry of a temporary/media-temporary auth key (unix seconds).
+	// 0 is only allowed for a permanent key; -1 only denotes a historical key whose type
+	// migration 0086 cannot prove, and the edge must reject it with -404 and force the client
+	// to re-handshake. Key type is a handshake fact and cannot be inferred from whether an
+	// authorization exists.
 	ExpiresAt int
 	Layer     int
 	// LayerObservationID globally orders durable explicit Layer observations
@@ -55,7 +57,8 @@ type AuthKeyData struct {
 	SystemVersion      string
 	APIID              int
 	AppVersion         string
-	// 用户绑定不在此处：auth_key 是协议产物，授权（auth_key↔user + 设备信息）由 authorization 承载（P2）。
+	// The user binding is not here: auth_key is a protocol artifact, and the
+	// authorization (auth_key<->user + device info) is carried by authorization (P2).
 }
 
 type AuthKeyClientInfo struct {
@@ -138,19 +141,21 @@ func MergeAuthKeyLayerObservations(
 	}
 }
 
-// AuthKeyStore 持久化 auth key。实现见 store/memory（测试替身）、store/postgres。
+// AuthKeyStore persists auth keys. See store/memory (test double) and store/postgres for implementations.
 type AuthKeyStore interface {
-	// Save 保存一条 auth key 记录；同 ID 重试只能保持 key body 与协议类型/寿命不变。
+	// Save stores one auth key record; a retry with the same ID may only keep the key body and protocol type/expiry unchanged.
 	Save(ctx context.Context, k AuthKeyData) error
-	// Get 按 auth_key_id 查询；不存在时 found=false。
+	// Get looks up by auth_key_id; found=false when it does not exist.
 	Get(ctx context.Context, id [8]byte) (data AuthKeyData, found bool, err error)
 	Revalidate(ctx context.Context, id [8]byte) (data AuthKeyData, found bool, err error)
 	LoadBindingKeys(ctx context.Context, tempID, permID [8]byte) (AuthKeyBindingKeys, error)
-	// UpdateClientInfo 合并更新 auth key 的客户端协商元数据。目标 key 不存在时
-	// 必须返回 ErrAuthKeyNotFound，禁止把缺失 primary 当成成功后继续更新 mirror。
-	// 空字段不覆盖已有值，layer/api_id 为 0 时不覆盖。
+	// UpdateClientInfo merges updated client negotiation metadata into the auth key.
+	// When the target key is absent it must return ErrAuthKeyNotFound; a missing primary
+	// must never be treated as success and the mirror must not then be updated. Empty
+	// fields do not overwrite existing values, and layer/api_id do not overwrite when 0.
 	UpdateClientInfo(ctx context.Context, id [8]byte, info AuthKeyClientInfo) error
-	// Delete 删除一条 auth key 记录（destroy_auth_key）。不存在时静默成功。
-	// 连接层每帧按 auth_key_id 回查本接口，删除后该 key 的入站帧立即失效。
+	// Delete removes an auth key record (destroy_auth_key); a missing record succeeds silently.
+	// The connection layer checks this interface by auth_key_id on every frame, so inbound frames for
+	// the key become invalid as soon as it is deleted.
 	Delete(ctx context.Context, id [8]byte) error
 }

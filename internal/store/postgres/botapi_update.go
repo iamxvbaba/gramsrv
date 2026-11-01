@@ -570,15 +570,15 @@ WHERE bot_user_id = $1
 	return count, nil
 }
 
-// DeleteDeliveredOrExpired 回收 Bot API 投递队列的死行（性能审计 H1）：
-//  1. 已确认（id <= bot_api_update_states.confirmed_update_id）且入队超过 confirmedGrace 的行——
-//     官方 Bot API 语义下确认即弃，getUpdates 的 fromID 恒 > confirmed，删除不影响任何读路径；
-//     宽限仅防御 offset 回拨调试场景。
-//  2. 按队列 created_at 超过 maxAge 的行（无论确认与否）——对齐官方「updates 服务器最多保留 24 小时」
-//     语义，同时封顶 MTProto-only bot（从不调 getUpdates、无 state 行）成员身份带来的无界增长。
+// DeleteDeliveredOrExpired reclaims dead rows from the Bot API delivery queue (performance audit H1):
+//  1. rows already confirmed (id <= bot_api_update_states.confirmed_update_id) and enqueued longer than confirmedGrace—
+//     under official Bot API semantics confirmation means discard, getUpdates' fromID is always > confirmed, so deletion affects no read path;
+//     the grace only guards the offset-rewind debugging scenario.
+//  2. rows whose queue created_at exceeds maxAge (confirmed or not)—matching the official "the updates server keeps at most 24 hours"
+//     semantics, while also capping the unbounded growth caused by MTProto-only bots (which never call getUpdates and have no state row) being members.
 //
-// 与 user_update_events 的「永久保留」约束无关：那是 TDesktop 账号级 differenceTooLong 缺陷所迫，
-// Bot API 队列没有该约束。返回两步合计删除行数。
+// Unrelated to the "permanent retention" constraint of user_update_events: that is forced by a TDesktop account-level differenceTooLong defect,
+// and the Bot API queue has no such constraint. Returns the total rows deleted across both steps.
 func (s *BotAPIUpdateStore) DeleteDeliveredOrExpired(ctx context.Context, confirmedGrace, maxAge time.Duration, limit int) (int, error) {
 	if limit <= 0 {
 		limit = 10000
@@ -588,7 +588,7 @@ func (s *BotAPIUpdateStore) DeleteDeliveredOrExpired(ctx context.Context, confir
 	}
 	total := 0
 	if confirmedGrace > 0 {
-		// 从 states 小表出发，每 bot 走 bot_api_updates_bot_scan_idx(bot_user_id, id) 范围扫描。
+		// Start from the small states table; per bot use a range scan of bot_api_updates_bot_scan_idx(bot_user_id, id).
 		tag, err := s.db.Exec(ctx, `
 DELETE FROM bot_api_updates
 WHERE id IN (
@@ -605,7 +605,7 @@ WHERE id IN (
 	}
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge)
-		// 走 bot_api_updates_created_retention_idx(created_at, id)。
+		// Use bot_api_updates_created_retention_idx(created_at, id).
 		tag, err := s.db.Exec(ctx, `
 DELETE FROM bot_api_updates
 WHERE id IN (

@@ -14,7 +14,8 @@ import (
 // boundary. Every write commits its encoded absolute delivery fact in the same
 // transaction; there is no empty-stub or post-commit push path.
 
-// stickerDocumentFromInput 校验输入文档存在且为贴纸（faveSticker/saveRecentSticker）。
+// stickerDocumentFromInput validates that the input document exists and is a sticker
+// (faveSticker/saveRecentSticker).
 func (r *Router) stickerDocumentFromInput(ctx context.Context, input tg.InputDocumentClass, requireGif bool) (domain.Document, error) {
 	in, ok := input.(*tg.InputDocument)
 	if !ok || in.ID == 0 || r.deps.Files == nil {
@@ -218,8 +219,9 @@ func (r *Router) onMessagesGetSavedGifs(ctx context.Context, hash int64) (tg.Mes
 	return &tg.MessagesSavedGifs{Hash: catalogHash, Gifs: tgDocuments(docs)}, nil
 }
 
-// stickerCollectionDocuments 取某集合并解析为完整文档（最新在前，顺序与集合一致）。
-// 集合引用缺失或类型错误属于坏数据并 fail-fast；若 datesOut 非 nil，按相同顺序填充 used_at。
+// stickerCollectionDocuments fetches a collection and resolves it into full documents (newest
+// first, order matching the collection). A missing reference or type mismatch is bad data and
+// fails fast; if datesOut is non-nil, used_at is filled in the same order.
 func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, kind domain.StickerCollectionKind, datesOut *[]int) ([]domain.Document, error) {
 	if r.deps.Account == nil || r.deps.Files == nil {
 		return nil, store.ErrDeliveryOutboxRequired
@@ -247,10 +249,10 @@ func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, k
 	byID := documentsByID(resolved)
 	docs := make([]domain.Document, 0, len(items))
 	dates := make([]int, 0, len(items))
-	for _, id := range ids { // 保持集合顺序（最新在前）
+	for _, id := range ids { // preserve collection order (newest first)
 		doc, ok := byID[id]
 		if !ok {
-			continue // 引用已被删除的文档：冷静跳过而不是整单 500
+			continue // document reference already deleted: skip calmly instead of failing the whole request with 500
 		}
 		if kind == domain.StickerCollectionGif && !doc.IsGif() {
 			continue

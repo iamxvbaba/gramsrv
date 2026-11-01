@@ -454,8 +454,9 @@ type BatchListDispatchEventsRow struct {
 	ReplyUserEmojiStatusUntil      int64
 }
 
-// 按 (user_id, pts) 精确批量取账号事件，供 outbox worker 一次性加载一批 claim 的事件详情，
-// 取代逐条 ListUserUpdateEventsAfter。列与 ListUserUpdateEventsAfter 完全一致以复用转换逻辑。
+// Fetch account events in bulk precisely by (user_id, pts), so the outbox worker can load the details
+// of a batch of claimed events at once, replacing per-item ListUserUpdateEventsAfter. The columns match
+// ListUserUpdateEventsAfter exactly to reuse the conversion logic.
 func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDispatchEventsParams) ([]BatchListDispatchEventsRow, error) {
 	rows, err := q.db.Query(ctx, batchListDispatchEvents, arg.UserIds, arg.PtsList)
 	if err != nil {

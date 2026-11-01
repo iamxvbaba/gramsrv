@@ -8,18 +8,21 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 群通话瞬时信令策略（updateGroupCall / updateGroupCallParticipants / connection 均无
-// pts，不进 channel difference）：对象统一为「在线群成员」（OnlineChannelMemberUserIDs，
-// MaxChannelRealtimeFanout 封顶）——覆盖未入会的面板观察者（Android 点 banner 的
-// 参与者列表靠它增量刷新）。带频道 PTS 的 service message 不进入此路径，只由 Egress
-// durable channel lane 投递；banner 靠
-// channel.call_active/call_not_empty flag（拉 dialogs/getFullChannel 重建）；房间内
-// 状态靠 checkGroupCall 与 version 跳号触发 getGroupParticipants 全量 reload 自愈。
+// Group call transient signaling policy (updateGroupCall / updateGroupCallParticipants /
+// connection carry no pts and do not enter channel difference): the audience is always "online
+// group members" (OnlineChannelMemberUserIDs, capped by MaxChannelRealtimeFanout) -- this covers
+// panel observers who have not joined (the participant list Android opens from the banner
+// refreshes incrementally from it). Service messages with a channel PTS do not take this path;
+// only the Egress durable channel lane delivers them. The banner relies on the
+// channel.call_active/call_not_empty flags (rebuilt by fetching dialogs/getFullChannel); in-room
+// state self-heals through checkGroupCall and version gaps triggering a full
+// getGroupParticipants reload.
 
-// groupCallOnlineRecipients 返回在线群成员（含 originUserID 本人，推送时由
-// pushUserMessage 的 ctx except 排除发起 session、保留其它设备）。
-// 在线索引候选必须过一次 PG active 复核（与 channelTransientRecipients 同款纵深）：
-// 索引 stale（如踢人窗口）时不得把通话状态/参与者名单继续推给已非成员者。
+// groupCallOnlineRecipients returns the online group members (including originUserID itself;
+// at push time pushUserMessage's ctx except excludes the originating session and keeps other
+// devices). Online-index candidates must pass a PG active recheck (the same defense in depth as
+// channelTransientRecipients): when the index is stale (such as during a kick window), call
+// state/participant lists must not keep going to users who are no longer members.
 func (r *Router) groupCallOnlineRecipients(ctx context.Context, channelID int64) []int64 {
 	provider, ok := r.deps.Sessions.(OnlineUserProvider)
 	if !ok {
@@ -31,14 +34,15 @@ func (r *Router) groupCallOnlineRecipients(ctx context.Context, channelID int64)
 	}
 	active, err := r.deps.Channels.FilterActiveMemberIDs(ctx, channelID, online)
 	if err != nil {
-		// 复核失败宁可漏推不误推：群通话 update 无 pts，客户端靠 checkGroupCall/
-		// version 跳号自愈，漏推不丢一致性。
+		// If the recheck fails, prefer an under-push to a wrong push: group-call updates carry no
+		// pts, and the client self-heals via checkGroupCall / a version jump, so a missed push does
+		// not lose consistency.
 		return nil
 	}
 	return active
 }
 
-// groupCallUpdateContainer 把单条 update 包进 viewer 视角的 Updates 容器。
+// groupCallUpdateContainer wraps a single update in a viewer-perspective Updates container.
 func (r *Router) groupCallUpdateContainer(ctx context.Context, viewerUserID int64, channel domain.Channel, update tg.UpdateClass, userIDs []int64) *tg.Updates {
 	chats := []tg.ChatClass{}
 	if channel.ID != 0 {
@@ -53,9 +57,10 @@ func (r *Router) groupCallUpdateContainer(ctx context.Context, viewerUserID int6
 	}
 }
 
-// pushGroupCallUpdate 把 updateGroupCall（call 行变化）推给在线群成员。
-// 定时通话需 per-viewer 回填 schedule_start_subscribed：TDesktop applyCallFields
-// 无条件覆盖本地该 flag，漏填会把订阅者的"开播提醒"开关静默关掉。
+// pushGroupCallUpdate pushes updateGroupCall (a call row change) to online group members.
+// A scheduled call needs a per-viewer backfill of schedule_start_subscribed: TDesktop's
+// applyCallFields overwrites the local flag unconditionally, so omitting it silently switches the
+// subscriber's "start reminder" toggle off.
 func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel, call domain.GroupCall) {
 	if call.Conference() {
 		r.pushConferenceGroupCallUpdate(ctx, call)
@@ -83,8 +88,8 @@ func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel
 	}
 }
 
-// pushGroupCallParticipantsUpdate 把参与者增量（version=N）推给在线群成员。
-// 每个 viewer 单独构建：participant.Self flag 是 per-viewer 的。
+// pushGroupCallParticipantsUpdate pushes the participant increment (version=N) to online group
+// members. Built separately per viewer: the participant.Self flag is per-viewer.
 func (r *Router) pushGroupCallParticipantsUpdate(ctx context.Context, channel domain.Channel, call domain.GroupCall, rows []domain.GroupCallParticipant) {
 	if call.Conference() {
 		r.pushConferenceGroupCallParticipantsUpdate(ctx, call, rows)
@@ -165,8 +170,9 @@ func (r *Router) pushConferenceGroupCallParticipantsUpdate(ctx context.Context, 
 	}
 }
 
-// groupCallMutationFanout 是参与者维度变更后的统一扇出：participants 增量 +
-// call_not_empty 翻转时的 channel 维度刷新（Android banner 对 flag 依赖更重）。
+// groupCallMutationFanout is the unified fan-out after a participant-dimension change: the
+// participants increment + a channel-dimension refresh when call_not_empty flips (the Android
+// banner depends more heavily on the flag).
 func (r *Router) groupCallMutationFanout(ctx context.Context, channel domain.Channel, mut domain.GroupCallMutation) domain.Channel {
 	if mut.Call.Conference() {
 		r.pushConferenceGroupCallParticipantsUpdate(ctx, mut.Call, []domain.GroupCallParticipant{mut.Participant})

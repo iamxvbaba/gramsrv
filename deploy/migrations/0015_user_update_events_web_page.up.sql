@@ -1,7 +1,10 @@
--- 链接预览异步回填（updateWebPage）新增 user_update_events 事件类型 'web_page'：发送时挂的
--- pending 链接预览占位被带外解析后，经 EditMessage 的 WebPageResolve 模式就地替换并 append
--- 一条 web_page durable 事件（按 webPage id 关联，不标记「已编辑」）。0001/0003 的白名单未含它，
--- 真 Postgres 上 append 会被 CHECK 约束拒绝（SQLSTATE 23514）；memory store 无约束故单测未暴露。
+-- Link-preview async backfill (updateWebPage) adds the user_update_events event
+-- type 'web_page': once a pending link-preview placeholder attached at send time
+-- is resolved out of band, EditMessage's WebPageResolve mode replaces it in place
+-- and appends a web_page durable event (associated by webPage id, not marked
+-- "edited"). The 0001/0003 allowlists did not include it, so on real Postgres the
+-- append is rejected by the CHECK constraint (SQLSTATE 23514); the memory store
+-- has no constraint, so unit tests did not expose it.
 ALTER TABLE public.user_update_events DROP CONSTRAINT IF EXISTS user_update_events_type_check;
 ALTER TABLE public.user_update_events ADD CONSTRAINT user_update_events_type_check CHECK (
     (event_type)::text = ANY (ARRAY[

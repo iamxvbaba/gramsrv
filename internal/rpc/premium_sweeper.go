@@ -56,7 +56,9 @@ func (r *Router) sweepExpiredPremium(ctx context.Context, batch int) {
 			r.invalidatePremiumUserCaches(ctx, u.ID)
 			r.invalidateRPCProjectionForUser(u.ID)
 		}
-		// 不满一批说明已扫完当前积压；满批则继续，避免长停机后积压跨多个周期。
+		// A batch that is not full means the current backlog is drained; a full
+		// batch means keep going, so a long outage does not leave the backlog
+		// spanning multiple periods.
 		if len(users) == 0 {
 			return
 		}
@@ -154,15 +156,18 @@ func (r *Router) UserAudienceDeliveryEffects(snapshot store.UserAudienceDelivery
 	return effects, nil
 }
 
-// viewerPremium 报告 viewer 当前是否有效会员（限额双档判断用，best-effort：
-// 服务未接通时按非会员档处理）。
+// viewerPremium reports whether the viewer currently has active Premium (used for
+// the two-tier limit decision, best-effort: when the service is not wired, it is
+// treated as the non-Premium tier).
 func (r *Router) viewerPremium(ctx context.Context, userID int64) bool {
 	svc, ok := r.deps.Users.(UserPremiumStatusService)
 	return ok && svc.PremiumActive(ctx, userID)
 }
 
-// viewerSupport 报告 viewer 是否持有官方 support 账号标记（support 专属礼物
-// 的购买门槛用，best-effort：用户服务未接通时不放行，绝不向普通买家泄漏）。
+// viewerSupport reports whether the viewer holds the official support account flag
+// (used for the purchase threshold of support-exclusive gifts, best-effort: when
+// the user service is not wired it does not allow through, never leaking to
+// ordinary buyers).
 func (r *Router) viewerSupport(ctx context.Context, userID int64) bool {
 	if r == nil || r.deps.Users == nil {
 		return false

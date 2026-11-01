@@ -9,8 +9,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 共享媒体标签页读路径(迁移 0118):按类别查媒体索引拿到消息 id(JOIN 基表过滤软删 deleted),
-// 再复用既有「按 id 取消息」路径(GetByIDs / GetChannelMessages)做富化与打包,并按索引顺序(id 倒序)重排。
+// Shared media tab read path (migration 0118): query the media index by category to get message
+// ids (joining the base tables to filter out soft-deleted deleted rows), then reuse the existing
+// "fetch messages by id" paths (GetByIDs / GetChannelMessages) for enrichment and packing, and
+// reorder by index order (id descending).
 
 const mediaSearchPageLimit = 100
 
@@ -216,7 +218,7 @@ WHERE mi.channel_id = $1 AND mi.category = ANY($2::smallint[])
 	return where, args
 }
 
-// SearchPrivateMedia 返回某私聊会话中属于给定类别的消息(newest-first 分页)。
+// SearchPrivateMedia returns messages in a private conversation belonging to the given categories (newest-first pagination).
 func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peerID int64, req domain.MediaSearchRequest) (domain.MessageList, error) {
 	cats := mediaCategoriesToInt16(req.Categories)
 	if ownerUserID == 0 || peerID == 0 || len(cats) == 0 {
@@ -250,7 +252,7 @@ func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peer
 	return list, nil
 }
 
-// CountPrivateMediaCategories 返回某私聊会话按基础媒体类别聚合的精确计数。
+// CountPrivateMediaCategories returns the exact counts aggregated by base media category for a private conversation.
 func (s *MessageStore) CountPrivateMediaCategories(ctx context.Context, ownerUserID, peerID int64) (domain.MediaCategoryCounts, error) {
 	if ownerUserID == 0 || peerID == 0 {
 		return domain.MediaCategoryCounts{}, nil
@@ -278,7 +280,7 @@ WHERE owner_user_id = $1 AND peer_id = $2 AND media_count > 0`, ownerUserID, pee
 	return out, nil
 }
 
-// SearchChannelMedia 返回某频道中属于给定类别的消息(newest-first 分页)。
+// SearchChannelMedia returns messages in a channel belonging to the given categories (newest-first pagination).
 func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error) {
 	cats := mediaCategoriesToInt16(req.Categories)
 	if viewerUserID == 0 || channelID == 0 || len(cats) == 0 {
@@ -316,7 +318,7 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 	return hist, nil
 }
 
-// CountChannelMediaCategories 返回某频道对当前 viewer 可见消息按基础媒体类别聚合的精确计数。
+// CountChannelMediaCategories returns the exact counts aggregated by base media category over messages visible to the current viewer in a channel.
 func (s *ChannelStore) CountChannelMediaCategories(ctx context.Context, viewerUserID, channelID int64) (domain.MediaCategoryCounts, error) {
 	if viewerUserID == 0 || channelID == 0 {
 		return domain.MediaCategoryCounts{}, nil

@@ -1,5 +1,6 @@
--- Scheduled video chat：group_calls 增加 schedule_date（>0=定时未开始）；
--- 开播提醒订阅（toggleGroupCallStartSubscription 的 per-user 状态）。
+-- Scheduled video chat: group_calls gains schedule_date (>0 = scheduled, not yet
+-- started); start-notification subscriptions (the per-user state of
+-- toggleGroupCallStartSubscription).
 ALTER TABLE group_calls
     ADD COLUMN IF NOT EXISTS schedule_date integer DEFAULT 0 NOT NULL;
 

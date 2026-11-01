@@ -157,6 +157,6 @@ WHERE id=(SELECT active_revision_id FROM star_gift_catalog WHERE gift_id=$1)`, e
 		t.Fatalf("peer color after flag = count %d ids %v err %v",
 			coloredPage.Count, ids(coloredPage), err)
 	}
-	// main 的 host_peer_* 托管投影属于 D1（不移植）；v2 的 exclude_hosted 由
-	// star_gift_ton_profile_links 覆盖，见 star_gift_ton_integration_test.go。
+	// main's host_peer_* hosted projection belongs to D1 (not ported); v2's exclude_hosted is covered
+	// by star_gift_ton_profile_links, see star_gift_ton_integration_test.go.
 }

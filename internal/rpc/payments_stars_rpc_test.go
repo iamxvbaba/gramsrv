@@ -21,8 +21,8 @@ func starsRouter(t *testing.T, grant int64) *Router {
 	return New(Config{}, Deps{Stars: svc}, zaptest.NewLogger(t), clock.System)
 }
 
-// getStarsStatus 首读惰性授予后返回真实余额；响应必须是合法 starsStatus
-// （balance 必填 + chats/users 非 nil vector）。
+// getStarsStatus returns the real balance after the lazy first-read grant; the response must be a
+// valid starsStatus (balance required + chats/users non-nil vectors).
 func TestOnPaymentsGetStarsStatusGranted(t *testing.T) {
 	r := starsRouter(t, 1000)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -38,7 +38,7 @@ func TestOnPaymentsGetStarsStatusGranted(t *testing.T) {
 	if status.Chats == nil || status.Users == nil {
 		t.Fatalf("chats/users must be non-nil vectors, got chats=%v users=%v", status.Chats, status.Users)
 	}
-	// 余额是 flag 外必填字段，不能省略。
+	// The balance is a required field outside the flags and must not be omitted.
 	if _, hasHistory := status.GetHistory(); hasHistory {
 		t.Fatalf("status (not transactions) should carry no history")
 	}
@@ -65,11 +65,12 @@ func TestOnPaymentsGetStarsSubscriptionsReturnsTerminalEmptyPage(t *testing.T) {
 	}
 }
 
-// TON 余额未建模：返回 starsTonAmount 的合法响应（不崩客户端）。
+// TON balance is not modeled: return a valid starsTonAmount response (does not crash the client).
 func TestOnPaymentsGetStarsStatusTon(t *testing.T) {
 	r := starsRouter(t, 1000)
 	ctx := WithUserID(context.Background(), 1000000001)
-	// SetTon 同时置 flag 位+字段（gotd true-flag：GetTon 读 flag 位，手工 struct 字面量不置位）。
+	// SetTon sets both the flag bit and the field (gotd true-flag: GetTon reads the flag bit; a
+	// manual struct literal does not set it).
 	req := &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerSelf{}}
 	req.SetTon(true)
 	status, err := r.onPaymentsGetStarsStatus(ctx, req)
@@ -81,7 +82,8 @@ func TestOnPaymentsGetStarsStatusTon(t *testing.T) {
 	}
 }
 
-// getStarsTransactions 返回授予流水；keyset 分页末页省略 next_offset（防 DrKLO 死循环）。
+// getStarsTransactions returns the grant transactions; the keyset last page omits next_offset (to
+// prevent a DrKLO infinite loop).
 func TestOnPaymentsGetStarsTransactions(t *testing.T) {
 	r := starsRouter(t, 1000)
 	ctx := WithUserID(context.Background(), 1000000001)
@@ -98,11 +100,11 @@ func TestOnPaymentsGetStarsTransactions(t *testing.T) {
 	if amount, ok := txn.Amount.(*tg.StarsAmount); !ok || amount.Amount != 1000 {
 		t.Fatalf("grant txn amount = %#v, want +1000", txn.Amount)
 	}
-	// grant 走 Fragment 对手方（Peer 必填，不可 nil）。
+	// grant goes to the Fragment counterparty (Peer is required, must not be nil).
 	if _, ok := txn.Peer.(*tg.StarsTransactionPeerFragment); !ok {
 		t.Fatalf("grant peer = %#v, want StarsTransactionPeerFragment", txn.Peer)
 	}
-	// 单页装得下 → 无 next_offset。
+	// Fits in a single page -> no next_offset.
 	if off, ok := status.GetNextOffset(); ok {
 		t.Fatalf("single-page next_offset = %q, want absent (no infinite paging)", off)
 	}
@@ -195,7 +197,7 @@ func TestTGStarsTransactionsPaidMessage(t *testing.T) {
 	}
 }
 
-// deps.Stars==nil 兜底：返回合法的空 starsStatus（余额 0），不崩。
+// deps.Stars==nil fallback: return a valid empty starsStatus (balance 0) without crashing.
 func TestTGStarsTransactionsDoesNotPromiseMissingUniqueGiftPayload(t *testing.T) {
 	out := tgStarsTransactions([]domain.StarsTransaction{{
 		ID: 2, UserID: 42, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 50},

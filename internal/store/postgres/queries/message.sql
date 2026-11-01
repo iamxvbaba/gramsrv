@@ -753,11 +753,13 @@ FROM paged
 ORDER BY box_id DESC;
 
 -- name: ListMessagesBackward :many
--- backward 热路径(add_offset>=0:初始加载/上滑翻页)的扁平静态查询。
--- 与 ListMessagesByUser 的 backward 分支逐位等价(相同 base 过滤 + 相同 anchor +
--- ORDER BY box_id DESC + OFFSET GREATEST(add_offset,0) + LIMIT),但只规划单次
--- index scan + 2 LEFT JOIN,避免大 CTE 把 4 个分支全树规划。total 走
--- 独立 CountMessagesByUser,仅 NeedTotalCount 时发。
+-- A flat, static query for the backward hot path (add_offset>=0: initial load /
+-- scroll-up paging). It is bit-for-bit equivalent to ListMessagesByUser's backward
+-- branch (same base filter + same anchor + ORDER BY box_id DESC +
+-- OFFSET GREATEST(add_offset,0) + LIMIT), but plans only a single index scan +
+-- 2 LEFT JOINs, avoiding a big CTE that plans all four branches as a whole tree.
+-- total goes through the separate CountMessagesByUser, issued only when
+-- NeedTotalCount.
 SELECT
   m.box_id,
   m.private_message_id,
@@ -905,8 +907,9 @@ OFFSET GREATEST(sqlc.arg(row_offset)::int, 0)
 LIMIT sqlc.arg(limit_count)::int;
 
 -- name: CountMessagesByUser :one
--- ListMessagesByUser total CTE 的独立化:相同 base 过滤(不含分页 anchor),
--- 仅 NeedTotalCount 时发,避免热路径(getHistory 恒不需 total)次次规划 count 子树。
+-- Separation of ListMessagesByUser's total CTE: same base filter (without the
+-- paging anchor), issued only when NeedTotalCount, so the hot path (getHistory,
+-- which never needs total) does not plan the count subtree each time.
 SELECT count(*)::int AS total_count
 FROM message_boxes m
 WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
@@ -1587,8 +1590,8 @@ WHERE owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND pinned <> sqlc.arg(pinned)::boolean;
 
 -- name: UnpinAllMessageBoxesByPeer :many
--- 按批清除（affectedHistory.offset 续清语义），单条 updatePinnedMessages
--- 的 messages 向量随之有界。
+-- Clear in batches (the affectedHistory.offset continue-clearing semantics), so the
+-- messages vector of a single updatePinnedMessages stays bounded.
 WITH target AS (
   SELECT m.owner_user_id, m.box_id
   FROM message_boxes m

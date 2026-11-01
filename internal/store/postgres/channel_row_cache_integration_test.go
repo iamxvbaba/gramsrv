@@ -9,13 +9,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestChannelRowCacheInvalidatesOnNotify 端到端验证：channels 触发器(0117) → LISTEN/NOTIFY →
-// ChannelChangeListener → ChannelRowCache 失效闭环。门控于 TELESRV_TEST_POSTGRES_DSN。
+// TestChannelRowCacheInvalidatesOnNotify verifies end to end: channels trigger (0117) →
+// LISTEN/NOTIFY → ChannelChangeListener → ChannelRowCache invalidation loop. Gated on
+// TELESRV_TEST_POSTGRES_DSN.
 //
-// 用「listener 连接时的 flush」作为就绪信号(轮询缓存被清空即确认 listener 已 LISTEN)，避免靠
-// sleep 猜时序导致竞态。
+// It uses "the flush on listener connect" as the readiness signal (polling until the cache is
+// cleared confirms the listener has LISTENed), avoiding races from guessing timing with sleep.
 func TestChannelRowCacheInvalidatesOnNotify(t *testing.T) {
-	pool := testPool(t) // 未设 DSN 会 t.Skip
+	pool := testPool(t) // without a DSN set this will t.Skip
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -52,49 +53,49 @@ func TestChannelRowCacheInvalidatesOnNotify(t *testing.T) {
 	}
 	channelID = created.Channel.ID
 
-	// 先填充缓存(此时 listener 未起)。
+	// Fill the cache first (the listener is not running yet).
 	if _, err := channels.GetChannel(ctx, owner.ID, channelID); err != nil {
 		t.Fatalf("warm GetChannel: %v", err)
 	}
 	if _, ok := cache.get(channelID); !ok {
-		t.Fatalf("GetChannel 后频道行应已缓存")
+		t.Fatalf("the channel row should be cached after GetChannel")
 	}
 
-	// 起 listener；它连接后会 flush 整表——用缓存被清空作为「listener 已就绪」的信号。
+	// Start the listener; on connect it flushes the whole table — use the cache being cleared as the "listener is ready" signal.
 	lctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	listener := NewChannelChangeListener(dsn, cache, nil)
 	go listener.Run(lctx)
 	if !waitUntil(2*time.Second, func() bool { _, ok := cache.get(channelID); return !ok }) {
-		t.Fatalf("listener 未在预期内连接并 flush 缓存")
+		t.Fatalf("the listener did not connect and flush the cache within the expected time")
 	}
 
-	// listener 就绪后重新填充缓存。
+	// Re-fill the cache once the listener is ready.
 	if _, err := channels.GetChannel(ctx, owner.ID, channelID); err != nil {
 		t.Fatalf("re-warm GetChannel: %v", err)
 	}
 	if _, ok := cache.get(channelID); !ok {
-		t.Fatalf("re-warm 后频道行应已缓存")
+		t.Fatalf("the channel row should be cached after re-warm")
 	}
 
-	// 模拟任意写点直接改 channels 表(触发器会 NOTIFY)。
+	// Simulate an arbitrary write point changing the channels table directly (the trigger will NOTIFY).
 	const newTitle = "Renamed By Trigger"
 	if _, err := pool.Exec(ctx, "UPDATE channels SET title = $2, updated_at = now() WHERE id = $1", channelID, newTitle); err != nil {
 		t.Fatalf("update title: %v", err)
 	}
 
-	// 触发器 → NOTIFY → listener 应实时失效该频道。
+	// Trigger → NOTIFY → the listener should invalidate that channel in real time.
 	if !waitUntil(3*time.Second, func() bool { _, ok := cache.get(channelID); return !ok }) {
-		t.Fatalf("UPDATE 后缓存未在预期内被 NOTIFY 失效")
+		t.Fatalf("the cache was not invalidated by NOTIFY within the expected time after UPDATE")
 	}
 
-	// 失效后再读应拿到新值(并回填缓存)。
+	// After invalidation, a read should get the new value (and re-fill the cache).
 	view, err := channels.GetChannel(ctx, owner.ID, channelID)
 	if err != nil {
 		t.Fatalf("post-invalidation GetChannel: %v", err)
 	}
 	if view.Channel.Title != newTitle {
-		t.Fatalf("失效后标题 = %q, want %q", view.Channel.Title, newTitle)
+		t.Fatalf("title after invalidation = %q, want %q", view.Channel.Title, newTitle)
 	}
 }
 

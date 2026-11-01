@@ -136,8 +136,8 @@ func TestClientMessageContentPolicy(t *testing.T) {
 	}
 }
 
-// TestEncryptedPingPong 验证 M2/M4：握手后 client 加密 ping，
-// server 回 new_session_created + pong + msgs_ack。
+// TestEncryptedPingPong verifies M2/M4: after the handshake the client sends an
+// encrypted ping, and the server replies with new_session_created + pong + msgs_ack.
 func TestEncryptedPingPong(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -164,9 +164,11 @@ func TestEncryptedPingPong(t *testing.T) {
 	}
 }
 
-// TestDuplicateMsgIDIdempotent 验证相同物理连接上的重复 content 请求只重新 ACK，
-// 原 owner 仍是唯一 rpc_result 发送者。若每次重复都重放完整结果，Android 的
-// bad_server_salt 全量重试会把一个启动批次放大成 N 轮孤儿结果并饿死新 request id。
+// TestDuplicateMsgIDIdempotent verifies that a duplicate content request on the
+// same physical connection only re-ACKs, and the original owner remains the sole
+// rpc_result sender. If every duplicate replayed the full result, Android's
+// full bad_server_salt retry would amplify one startup batch into N rounds of
+// orphaned results and starve new request ids.
 func TestDuplicateMsgIDIdempotent(t *testing.T) {
 	const dc = 2
 	handler := &admissionCountingRPC{}
@@ -183,8 +185,9 @@ func TestDuplicateMsgIDIdempotent(t *testing.T) {
 	})
 	waitForAtomicCalls(t, &handler.calls, 1)
 
-	// 用一个小型重试风暴覆盖完成后的 duplicate 路径。TCP 仍存活时原结果已在同一
-	// 可靠字节流上；每个 duplicate 只需 ACK，不应产生第二个 rpc_result。
+	// Cover the post-completion duplicate path with a small retry storm. While
+	// TCP is still alive the original result is already on the same reliable byte
+	// stream; each duplicate only needs an ACK and must not produce a second rpc_result.
 	const duplicateCount = 16
 	for i := 0; i < duplicateCount; i++ {
 		sendEncrypted(t, conn, cipher, auth, msgID, &tg.HelpGetConfigRequest{})
@@ -232,8 +235,9 @@ func TestServiceDuplicateCannotReplaceOriginallyAdmittedPayload(t *testing.T) {
 	}
 }
 
-// TestGetFutureSalts 验证 MTProto service message get_future_salts 由连接层直接响应，
-// 不再落到业务 RPC fallback。
+// TestGetFutureSalts verifies that the MTProto service message get_future_salts
+// is answered directly by the connection layer, no longer falling through to the
+// business RPC fallback.
 func TestGetFutureSalts(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -264,8 +268,9 @@ func TestGetFutureSalts(t *testing.T) {
 	}
 }
 
-// TestMsgsStateReq 验证 MTProto service message msgs_state_req 由连接层直接响应，
-// 不再落到业务 RPC fallback。
+// TestMsgsStateReq verifies that the MTProto service message msgs_state_req is
+// answered directly by the connection layer, no longer falling through to the
+// business RPC fallback.
 func TestMsgsStateReq(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -346,8 +351,9 @@ func TestTDLibReconnectRecoveryContainerAcceptsEvenServiceMessages(t *testing.T)
 	}
 }
 
-// TestMsgResendReq 验证 MTProto msg_resend_req 由连接层按状态查询兜底响应，
-// 不会落入业务 RPC fallback。
+// TestMsgResendReq verifies that MTProto msg_resend_req is answered by the
+// connection layer via a state lookup as a fallback, without falling into the
+// business RPC fallback.
 func TestMsgResendReq(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -379,8 +385,8 @@ func TestMsgResendReq(t *testing.T) {
 	}
 }
 
-// TestDestroySession 验证 destroy_session 返回 raw DestroySessionRes，
-// 避免客户端清理旧 session 时掉到 RPC fallback。
+// TestDestroySession verifies destroy_session returns a raw DestroySessionRes,
+// avoiding falling through to the RPC fallback when a client cleans up an old session.
 func TestDestroySession(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -460,8 +466,8 @@ func TestDestroySessionDurabilityFailureDoesNotAcknowledgeOrRetireLiveSession(t 
 	}
 }
 
-// TestRPCDropAnswer 验证 rpc_drop_answer 以 rpc_result 包装 RpcDropAnswer 返回，
-// 与 iamxvbaba/td 和 TDesktop 的请求/响应模型对齐。
+// TestRPCDropAnswer verifies rpc_drop_answer returns RpcDropAnswer wrapped in
+// rpc_result, matching the request/response model of iamxvbaba/td and TDesktop.
 func TestRPCDropAnswer(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -491,8 +497,9 @@ func TestRPCDropAnswer(t *testing.T) {
 	}
 }
 
-// TestHTTPWaitInContainerDoesNotNeedAck 验证 http_wait 在 container 中被协议层吞掉，
-// 但同 container 内的 ping 仍按 content-related service request 回 ack。
+// TestHTTPWaitInContainerDoesNotNeedAck verifies http_wait is swallowed by the
+// protocol layer inside a container, but a ping in the same container still gets
+// an ack as a content-related service request.
 func TestHTTPWaitInContainerDoesNotNeedAck(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -640,9 +647,10 @@ func TestPingDelayDisconnectOddSeqAccepted(t *testing.T) {
 	}
 }
 
-// TestDestroyAuthKey 验证 MTProto service message destroy_auth_key 无论裸发，
-// 还是沿官方客户端的 invokeWithLayer/initConnection 路径发送，都由连接层
-// 直接处理，并以绑定原请求的 rpc_result 回复。
+// TestDestroyAuthKey verifies that the MTProto service message destroy_auth_key,
+// whether sent bare or along the official client's invokeWithLayer/initConnection
+// path, is handled directly by the connection layer and answered with an
+// rpc_result bound to the original request.
 func TestDestroyAuthKey(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -855,8 +863,8 @@ func TestWrappedDestroyAuthKeyMixedContainerIsRejectedAtomically(t *testing.T) {
 	}
 }
 
-// TestBadServerSalt 验证客户端带错 server_salt 时 server 返回 bad_server_salt，
-// 并携带当前 auth key 的权威 salt。
+// TestBadServerSalt verifies that when the client sends a wrong server_salt the
+// server returns bad_server_salt, carrying the current auth key's authoritative salt.
 func TestBadServerSalt(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})

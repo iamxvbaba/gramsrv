@@ -8,13 +8,13 @@ import (
 	"telesrv/internal/domain"
 )
 
-// PasskeyStore 是 store.PasskeyStore 的内存实现。
+// PasskeyStore is the in-memory implementation of store.PasskeyStore.
 type PasskeyStore struct {
 	mu   sync.RWMutex
 	byID map[string]domain.PasskeyCredential // key = string(credentialID)
 }
 
-// NewPasskeyStore 创建内存 passkey 凭据 store。
+// NewPasskeyStore creates an in-memory passkey credential store.
 func NewPasskeyStore() *PasskeyStore {
 	return &PasskeyStore{byID: make(map[string]domain.PasskeyCredential)}
 }
@@ -75,8 +75,8 @@ func (s *PasskeyStore) DeletePasskey(_ context.Context, userID int64, credential
 	return true, nil
 }
 
-// PasskeyChallengeStore 是 store.PasskeyChallengeStore 的内存实现(进程内、短 TTL)。
-// 与 QR 登录 token 同属进程内一次性凭据,不跨实例。
+// PasskeyChallengeStore is the in-memory implementation of store.PasskeyChallengeStore
+// (in-process, short TTL). Like QR login tokens, it is an in-process one-shot credential and does not span instances.
 type PasskeyChallengeStore struct {
 	mu sync.Mutex
 	m  map[string]challengeEntry // key = string(challenge)
@@ -87,7 +87,7 @@ type challengeEntry struct {
 	expiresAt time.Time
 }
 
-// NewPasskeyChallengeStore 创建内存挑战 store。
+// NewPasskeyChallengeStore creates an in-memory challenge store.
 func NewPasskeyChallengeStore() *PasskeyChallengeStore {
 	return &PasskeyChallengeStore{m: make(map[string]challengeEntry)}
 }
@@ -109,7 +109,7 @@ func (s *PasskeyChallengeStore) ConsumePasskeyChallenge(_ context.Context, chall
 	if !ok {
 		return domain.PasskeyChallenge{}, false, nil
 	}
-	delete(s.m, string(challenge)) // 一次性:无论是否过期都删除
+	delete(s.m, string(challenge)) // one-shot: delete regardless of expiry
 	if time.Now().After(entry.expiresAt) {
 		return domain.PasskeyChallenge{}, false, nil
 	}

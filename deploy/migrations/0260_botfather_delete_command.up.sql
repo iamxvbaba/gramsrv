@@ -1,4 +1,4 @@
--- v2 编号 0260；移植自 main 0236_botfather_delete_command（main c34bc584，B9），见 docs/main-v2-sync.md。
+-- v2 number 0260; ported from main 0236_botfather_delete_command (main c34bc584, B9), see docs/main-v2-sync.md.
 -- Repair the published BotFather menu on existing databases as well as fresh
 -- installs. Bump its client cache version only when the menu actually changes.
 WITH rewritten AS (

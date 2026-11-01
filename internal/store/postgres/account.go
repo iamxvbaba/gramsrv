@@ -19,13 +19,13 @@ import (
 
 const accountPasswordsLoginEmailUniqueIdx = "account_passwords_login_email_lower_unique_idx"
 
-// PasswordStore 用 PostgreSQL 实现 store.PasswordStore。
+// PasswordStore implements store.PasswordStore with PostgreSQL.
 type PasswordStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
 }
 
-// NewPasswordStore 基于 pgx 连接池（或事务）创建 PasswordStore。
+// NewPasswordStore creates a PasswordStore backed by a pgx pool (or transaction).
 func NewPasswordStore(db sqlcgen.DBTX) *PasswordStore {
 	return &PasswordStore{db: db, q: sqlcgen.New(db)}
 }
@@ -655,7 +655,7 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
 }
 
 func (s *PasswordStore) AllPeerNotifySettings(ctx context.Context, ownerUserID int64) (map[domain.Peer]domain.PeerNotifySettings, error) {
-	// owner-scoped 单查询，走部分索引 notify_settings_owner_peer_idx（scope_kind='peer' AND topic_id=0）。
+	// owner-scoped single query using the partial index notify_settings_owner_peer_idx (scope_kind='peer' AND topic_id=0).
 	rows, err := s.db.Query(ctx, `
 SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
 FROM notify_settings
@@ -744,7 +744,7 @@ ORDER BY peer_type, peer_id, topic_id`, ownerUserID)
 			settings.StoriesHideSender = &storiesHideSender.Bool
 		}
 		if settings.IsZero() {
-			continue // 全默认行（如曾静音后取消）不算异常
+			continue // an all-default row (e.g. muted then unmuted) is not an exception
 		}
 		out = append(out, domain.NotifyException{
 			Peer:     domain.Peer{Type: domain.PeerType(peerType), ID: peerID},

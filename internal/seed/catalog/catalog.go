@@ -1,10 +1,14 @@
-// Package catalog 提供从官方 Telegram 拉取并固化的「目录/参考数据」种子:
-// 国家区号(help.getCountriesList)、时区(help.getTimezonesList)、emoji 分组
-// (messages.getEmojiGroups)、emoji 关键词(messages.getEmojiKeywords)。
+// Package catalog provides "catalog/reference data" seeds fetched from official
+// Telegram and frozen: country calling codes (help.getCountriesList), timezones
+// (help.getTimezonesList), emoji groups (messages.getEmojiGroups), and emoji
+// keywords (messages.getEmojiKeywords).
 //
-// 数据由 cmd/catalogfetch 经官方 API 拉取后写入本目录的 JSON,
-// 经 go:embed 进二进制。改了 JSON 即改了内容 hash,客户端发旧 hash 会被驱动重取。
-// 各 accessor 在数据为空(未 seed)时返回空集,由调用方决定是否回退到内置最小数据。
+// The data is fetched via the official API by cmd/catalogfetch and written to the
+// JSON files in this directory, then embedded into the binary via go:embed.
+// Changing the JSON changes the content hash, so a client sending an old hash is
+// driven to refetch. Each accessor returns an empty set when data is empty (not
+// seeded), leaving it to the caller to decide whether to fall back to built-in
+// minimal data.
 package catalog
 
 import (
@@ -44,7 +48,7 @@ type countryCodeJSON struct {
 	Patterns    []string `json:"patterns"`
 }
 
-// Timezone 是 help.getTimezonesList 的一条时区。
+// Timezone is one timezone from help.getTimezonesList.
 type Timezone struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -54,8 +58,9 @@ type timezonesFile struct {
 	Timezones []Timezone `json:"timezones"`
 }
 
-// EmojiGroup 是 messages.getEmojiGroups 的一个分类。IconEmojiID 指向一个 custom-emoji
-// 文档(本地若无对应文档,客户端分类图标回退为占位,不影响分组本身)。
+// EmojiGroup is one category from messages.getEmojiGroups. IconEmojiID points to a
+// custom-emoji document (if the document is absent locally, the client's category
+// icon falls back to a placeholder, which does not affect the group itself).
 type EmojiGroup struct {
 	Title       string   `json:"title"`
 	IconEmojiID int64    `json:"icon_emoji_id"`
@@ -65,13 +70,13 @@ type emojiGroupsFile struct {
 	Groups []EmojiGroup `json:"groups"`
 }
 
-// EmojiKeyword 是 emoji 关键词词典的一条:一个关键词 → 一组 emoji。
+// EmojiKeyword is one entry of the emoji keyword dictionary: one keyword -> a set of emoji.
 type EmojiKeyword struct {
 	Keyword   string   `json:"keyword"`
 	Emoticons []string `json:"emoticons"`
 }
 
-// EmojiKeywordSet 是某语言的整份 emoji 关键词词典。
+// EmojiKeywordSet is a whole emoji keyword dictionary for one language.
 type EmojiKeywordSet struct {
 	LangCode string         `json:"lang_code"`
 	Version  int            `json:"version"`
@@ -132,33 +137,34 @@ func load() {
 	})
 }
 
-// hashBytes 把内容映射为一个稳定的正整数 hash(FNV-1a 32),供 NotModified 协商。
-// 内容变了 hash 必变,客户端发旧 hash 即不命中→重取。
+// hashBytes maps content to a stable positive-integer hash (FNV-1a 32) for
+// NotModified negotiation. If the content changes the hash necessarily changes,
+// so a client sending an old hash misses -> refetch.
 func hashBytes(b []byte) int {
 	h := fnv.New32a()
 	_, _ = h.Write(b)
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-// Countries 返回固化的国家区号目录(空表示未 seed,调用方应回退内置最小集)。
+// Countries returns the frozen country calling code catalog (empty means not seeded; the caller should fall back to the built-in minimal set).
 func Countries() domain.CountriesList {
 	load()
 	return countries
 }
 
-// Timezones 返回时区目录与其内容 hash(空表示未 seed)。
+// Timezones returns the timezone catalog and its content hash (empty means not seeded).
 func Timezones() ([]Timezone, int) {
 	load()
 	return timezones, timezonesHash
 }
 
-// EmojiGroups 返回 emoji 分类目录与其内容 hash(空表示未 seed)。
+// EmojiGroups returns the emoji category catalog and its content hash (empty means not seeded).
 func EmojiGroups() ([]EmojiGroup, int) {
 	load()
 	return emojiGroups, emojiGroupsHash
 }
 
-// EmojiKeywords 返回指定语言的 emoji 关键词词典;ok=false 表示该语言未 seed。
+// EmojiKeywords returns the emoji keyword dictionary for the given language; ok=false means that language is not seeded.
 func EmojiKeywords(lang string) (EmojiKeywordSet, bool) {
 	load()
 	ks, ok := emojiKeywordSets[lang]

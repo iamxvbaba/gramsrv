@@ -30,7 +30,7 @@ func TestFrozenPresenceUpdateStatusNeverGoesOnline(t *testing.T) {
 	if err := r.NotifyAccountFreezeChanged(ctx, domain.AccountFreeze{UserID: userID, Frozen: true}); err != nil {
 		t.Fatalf("NotifyAccountFreezeChanged: %v", err)
 	}
-	// 冻结前可能残留的在线水位必须被清掉，且显式 updateStatus(online) 不得复活它。
+	// A residual online watermark from before the freeze must be cleared, and an explicit updateStatus(online) must not revive it.
 	if ok, err := r.onAccountUpdateStatus(ctx, false); err != nil || !ok {
 		t.Fatalf("updateStatus = %v, %v", ok, err)
 	}

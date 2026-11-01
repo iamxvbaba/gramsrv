@@ -10,8 +10,8 @@ const (
 	TranscriptionStatusFailed  TranscriptionStatus = "failed"
 )
 
-// MessageTranscription 是一条 voice 文档的转写结果，按 document_id 去重：
-// 同一文件被多条消息/多个用户引用时只跑一次 ASR。
+// MessageTranscription is the transcription result for one voice document, deduplicated by document_id:
+// the same file referenced by multiple messages/users runs ASR only once.
 type MessageTranscription struct {
 	DocumentID      int64
 	TranscriptionID int64
@@ -33,8 +33,8 @@ type PendingTranscriptionRequest struct {
 	MsgID           int
 }
 
-// TranscriptionResult 是 messages.transcribeAudio 的同步答案：
-// Pending=true 表示后台 ASR 仍在跑，完成后经 updateTranscribedAudio 推送。
+// TranscriptionResult is the synchronous answer of messages.transcribeAudio:
+// Pending=true means the background ASR is still running and will be pushed via updateTranscribedAudio when done.
 type TranscriptionResult struct {
 	TranscriptionID int64
 	Pending         bool

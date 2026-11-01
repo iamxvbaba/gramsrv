@@ -42,7 +42,7 @@ func TestStarGiftOwnGiftsFiltersPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog: %v", err)
 	}
-	// 可升级礼物：升级档有库存。
+	// Upgradable gift: the upgrade tier has stock.
 	if _, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 5, SlugPrefix: "own-" + suffix,
 		Models: []domain.StarGiftCollectibleAttribute{
@@ -103,12 +103,12 @@ func TestStarGiftOwnGiftsFiltersPostgres(t *testing.T) {
 		return out
 	}
 
-	// 桌面端「我的收藏品」页签的原样请求：结果必须是那只已升级的礼物。
+	// The desktop "My Collectibles" tab's exact request: the result must be that upgraded gift.
 	own := ids(domain.SavedStarGiftFilter{ExcludeUnlimited: true, ExcludeUpgradable: true, ExcludeUnupgradable: true})
 	if !slices.Equal(own, []int64{collectible.ID}) {
 		t.Fatalf("own gifts = %v, want only the collectible %d", own, collectible.ID)
 	}
-	// 已升级礼物在结果里必须真的是 unique，否则页签里的卡片是空壳。
+	// An upgraded gift must really be unique in the result, otherwise the tab's card is an empty shell.
 	page, err := gifts.ListByOwnerFiltered(ctx, domain.SavedStarGiftFilter{
 		Owner: ownerPeer, ExcludeUnlimited: true, ExcludeUpgradable: true, ExcludeUnupgradable: true, Limit: 10,
 	})
@@ -116,9 +116,9 @@ func TestStarGiftOwnGiftsFiltersPostgres(t *testing.T) {
 		t.Fatalf("own gift unique id = %+v err %v, want a collectible instance", page.Gifts, err)
 	}
 
-	// 单个标志必须保持原义：exclude_unupgradable 只留「可升级」。资料页的
-	// Upgradeable / Limited 分类过滤就是分别用这两个标志表达的
-	// （info_peer_gifts_widget.cpp），放宽其中一个会让资料页筛选错乱。
+	// Each flag must keep its literal meaning: exclude_unupgradable leaves only "upgradable". The
+	// profile page's Upgradeable / Limited category filters are expressed by these two flags
+	// respectively (info_peer_gifts_widget.cpp), and loosening either would scramble the profile filtering.
 	if got := ids(domain.SavedStarGiftFilter{ExcludeUnupgradable: true}); !slices.Equal(got, []int64{upgradable.ID}) {
 		t.Fatalf("exclude_unupgradable = %v, want only [%d]", got, upgradable.ID)
 	}

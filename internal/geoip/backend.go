@@ -14,57 +14,61 @@ import (
 	"go.uber.org/zap"
 )
 
-// maxResponseBytes 限制读取的响应体大小。正常响应不到 1KB,这个上限只用来防止被劫持
-// 或改写的端点把内存吃光。
+// maxResponseBytes caps the response body size read. Normal responses are under
+// 1KB; this limit only exists to stop a hijacked or rewritten endpoint from
+// exhausting memory.
 const maxResponseBytes = 64 << 10
 
-// lookupStatus 是一次后端查询的结果分类。分类有两个用途:让熔断器知道什么情况值得
-// 停下来,以及让上层知道该不该继续问下一个后端。
+// lookupStatus classifies the result of one backend lookup. The classification
+// serves two purposes: telling the breaker what is worth stopping for, and
+// telling the caller whether to continue to the next backend.
 type lookupStatus int
 
 const (
-	// statusOK 是"成功拿到了可用的国家/地区"。空结果不算 OK。
+	// statusOK means "a usable country/region was obtained successfully". An empty result is not OK.
 	statusOK lookupStatus = iota
-	// statusNotFound 是"后端明确没有这个 IP 的可用数据"。重试同一个后端没意义,
-	// 但继续问下一个后端有意义——免费库的覆盖范围互相不重合。
+	// statusNotFound means "the backend explicitly has no usable data for this
+	// IP". Retrying the same backend is pointless, but asking the next backend is
+	// worthwhile -- free libraries' coverage ranges do not overlap.
 	statusNotFound
-	// statusRateLimited 是 HTTP 429。只有它会推高限流窗口。
+	// statusRateLimited is HTTP 429. Only it advances the rate-limit window.
 	statusRateLimited
-	// statusTimeout 是本地上下文/请求超时。
+	// statusTimeout is a local context/request timeout.
 	statusTimeout
-	// statusFailed 是其它网络/协议错误,包括后端回 5xx。
+	// statusFailed is any other network/protocol error, including a 5xx from the backend.
 	statusFailed
 )
 
-// parseOutcome 是解析一个响应体得到的结果。
+// parseOutcome is the result of parsing one response body.
 type parseOutcome int
 
 const (
-	// parseOK 表示响应里有可用的国家名。
+	// parseOK means the response contains a usable country name.
 	parseOK parseOutcome = iota
-	// parseNotFound 表示响应是完整的,但没有可用的国家名(数据缺失、is_bogon、404)。
+	// parseNotFound means the response is complete but has no usable country name (missing data, is_bogon, 404).
 	parseNotFound
-	// parseFailed 表示响应本身没法用(坏 JSON、后端自报错误),应当计入不可达窗口。
+	// parseFailed means the response itself is unusable (bad JSON, backend self-reported error), which counts toward the unreachable window.
 	parseFailed
 )
 
-// responseParser 把一个后端的响应体翻译成展示文案。
+// responseParser translates one backend's response body into display text.
 type responseParser func(body []byte) (Location, parseOutcome)
 
-// backend 是一个地理后端。所有实现都是 HTTP + JSON,差别只在 URL 形态和响应字段。
+// backend is one geographic backend. All implementations are HTTP + JSON, differing only in URL shape and response fields.
 type backend interface {
-	// Name 是给日志用的短标识(一般是主机名)。
+	// Name is the short identifier used in logs (usually the hostname).
 	Name() string
-	// Lookup 查询单个已归一、确认公网可达的地址。
+	// Lookup queries a single normalized address already confirmed publicly routable.
 	Lookup(ctx context.Context, addr netip.Addr) (Location, lookupStatus)
-	// Breaker 返回该后端自己的健康状态机。多个后端各有一份,互不影响。
+	// Breaker returns this backend's own health state machine. Each backend has its own, independent of the others.
 	Breaker() *breaker
 }
 
-// httpBackend 是所有后端共用的 HTTP 实现。
+// httpBackend is the HTTP implementation shared by all backends.
 //
-// 端点做成配置而不是写死,是为了在对方改路径、换镜像或换供应商时只改环境变量;
-// 但请求形态(GET)和响应字段由 parser 固定。
+// The endpoint is configurable rather than hardcoded so that a changed path, a
+// different mirror or a new provider needs only an environment-variable change;
+// the request shape (GET) and response fields are fixed by the parser.
 type httpBackend struct {
 	name     string
 	endpoint string
@@ -81,11 +85,12 @@ type httpBackendConfig struct {
 	breaker  breakerConfig
 }
 
-// newHTTPBackend 按端点 URL 推断供应商并构造后端。
+// newHTTPBackend infers the provider from the endpoint URL and builds a backend.
 //
-// 按主机名而不是按显式 kind 推断,是为了让运维只填一串 URL:同一套
-// TELESRV_GEOIP_ENDPOINTS 对四个免费服务都成立。识别不出的主机(自建的 MaxMind 代理等)
-// 走通用解析,尽量从常见字段名里取。
+// Inferring from the hostname rather than an explicit kind lets operators supply
+// just a list of URLs: the same TELESRV_GEOIP_ENDPOINTS works for all four free
+// services. Unrecognized hosts (self-hosted MaxMind proxies, etc.) go through
+// generic parsing, which tries common field names.
 func newHTTPBackend(cfg httpBackendConfig, log *zap.Logger) (backend, error) {
 	endpoint := strings.TrimSpace(cfg.endpoint)
 	if !strings.Contains(endpoint, "{ip}") {
@@ -116,8 +121,9 @@ func newHTTPBackend(cfg httpBackendConfig, log *zap.Logger) (backend, error) {
 
 func newGeoIPHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		// 单请求超时。不用 http.Client.Timeout 之外再套 context 是为了把
-		// "我们的超时"和"调用方 ctx 取消"在日志里区分开。
+		// Per-request timeout. Not wrapping an extra context beyond
+		// http.Client.Timeout keeps "our timeout" and "caller ctx cancellation"
+		// distinguishable in logs.
 		Timeout: timeout,
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
@@ -147,28 +153,29 @@ func EndpointNames(endpoints []string) []string {
 	return names
 }
 
-// Lookup 查询单个地址,返回文案与结果分类。
+// Lookup queries a single address and returns display text plus a result classification.
 func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lookupStatus) {
 	ip := addr.String()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.requestURL(ip), nil)
 	if err != nil {
-		b.log.Error("geoip 请求构造失败", zap.String("ip", ip), zap.String("error_type", fmt.Sprintf("%T", err)))
+		b.log.Error("geoip request construction failed", zap.String("ip", ip), zap.String("error_type", fmt.Sprintf("%T", err)))
 		return Location{}, statusFailed
 	}
 	req.Header.Set("accept", "application/json")
 
 	resp, err := b.client.Do(req)
 	if err != nil {
-		// 调用方 ctx 超时和本机网络抖动在这里汇合。运营最想先看到的是前者
-		// (后端变慢拖住了 RPC),所以单独分类并按 warn 记。
+		// A caller ctx timeout and a local network hiccup converge here.
+		// Operators most want to see the former first (a slow backend holding up
+		// the RPC), so it is classified separately and logged at warn.
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			b.log.Warn("geoip 请求超时",
+			b.log.Warn("geoip request timed out",
 				zap.String("ip", ip),
 				zap.Duration("timeout", b.client.Timeout),
 				zap.String("error_type", fmt.Sprintf("%T", err)))
 			return Location{}, statusTimeout
 		}
-		b.log.Warn("geoip 请求失败",
+		b.log.Warn("geoip request failed",
 			zap.String("ip", ip),
 			zap.Bool("caller_cancelled", errors.Is(err, context.Canceled)),
 			zap.String("error_type", fmt.Sprintf("%T", err)))
@@ -181,33 +188,35 @@ func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lo
 
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		// 仅记录结构化状态，不记录可能回显 URL 凭证的响应头或正文。
-		b.log.Warn("geoip 命中上游限流",
+		// Log only structured status; never log response headers or a body that
+		// might echo URL credentials.
+		b.log.Warn("geoip hit upstream rate limit",
 			zap.String("ip", ip),
 			zap.Int("status", resp.StatusCode),
 			zap.Bool("retry_after_present", resp.Header.Get("Retry-After") != ""),
 			zap.String("backend", b.name))
 		return Location{}, statusRateLimited
 	case resp.StatusCode == http.StatusNotFound:
-		// 明确的"没这条记录",继续问下一个后端。
+		// A definite "no such record"; keep asking the next backend.
 		return Location{}, statusNotFound
 	case resp.StatusCode == http.StatusOK:
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		if err != nil {
-			b.log.Warn("geoip 响应读取失败", zap.String("ip", ip), zap.String("error_type", fmt.Sprintf("%T", err)))
+			b.log.Warn("geoip response read failed", zap.String("ip", ip), zap.String("error_type", fmt.Sprintf("%T", err)))
 			return Location{}, statusFailed
 		}
 		return b.parseBody(ip, body)
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		// 4xx(除 404/429)是请求本身不被接受:HackMyIP 服务故障时实测回的就是
-		// 400 + {"success":false}。这不算"没这条 IP",但也不该拖慢下一轮,让位即可。
-		b.log.Warn("geoip 请求被上游拒绝",
+		// A 4xx (other than 404/429) means the request itself was not accepted:
+		// when HackMyIP is failing it returns exactly 400 + {"success":false}.
+		// That is not "no such IP", but nor should it slow the next round; just yield.
+		b.log.Warn("geoip request rejected by upstream",
 			zap.String("ip", ip),
 			zap.Int("status", resp.StatusCode),
 			zap.String("backend", b.name))
 		return Location{}, statusNotFound
 	default:
-		b.log.Warn("geoip 请求返回非预期状态码",
+		b.log.Warn("geoip request returned an unexpected status code",
 			zap.String("ip", ip),
 			zap.Int("status", resp.StatusCode),
 			zap.String("backend", b.name))
@@ -215,18 +224,19 @@ func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lo
 	}
 }
 
-// parseBody 解析响应体并翻译成结果分类。
+// parseBody parses a response body and translates it into a result classification.
 func (b *httpBackend) parseBody(ip string, body []byte) (Location, lookupStatus) {
 	loc, outcome := b.parse(body)
 	switch outcome {
 	case parseOK:
 		return loc, statusOK
 	case parseNotFound:
-		// 上游活着但没这条数据(实测 1.1.1.1 在 geojs 上就没有 country)。
-		// 这不计入任何熔断计数,只把机会让给下一个后端。
+		// The upstream is alive but has no data for this (measured: 1.1.1.1 has
+		// no country on geojs). This does not count toward any breaker counter;
+		// it just gives the next backend a chance.
 		return Location{}, statusNotFound
 	default:
-		b.log.Warn("geoip 响应解析失败",
+		b.log.Warn("geoip response parse failed",
 			zap.String("ip", ip),
 			zap.String("backend", b.name),
 			zap.Int("bytes", len(body)))
@@ -234,14 +244,15 @@ func (b *httpBackend) parseBody(ip string, body []byte) (Location, lookupStatus)
 	}
 }
 
-// requestURL 把 {ip} 换成归一后的地址。地址经 publicAddr 校验过,一定是合法 IP,
-// 但仍然走 url.PathEscape——占位符可能被放进 path segment,直接拼字符串会在遇到
-// 意外输入时让 URL 结构失控。
+// requestURL substitutes {ip} with the normalized address. The address has been
+// validated by publicAddr and is certainly a valid IP, but it is still run
+// through url.PathEscape -- the placeholder may sit in a path segment, and plain
+// string concatenation would let unexpected input break the URL structure.
 func (b *httpBackend) requestURL(ip string) string {
 	return strings.ReplaceAll(b.endpoint, "{ip}", url.PathEscape(ip))
 }
 
-// parserForHost 按主机名挑解析器。识别不出的主机走通用解析。
+// parserForHost picks a parser by hostname. Unrecognized hosts use generic parsing.
 func parserForHost(host string) responseParser {
 	host = strings.ToLower(strings.TrimSpace(host))
 	switch {

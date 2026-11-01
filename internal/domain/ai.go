@@ -3,11 +3,11 @@ package domain
 import "errors"
 
 const (
-	// AICompose 最大文本长度沿用普通消息正文限制，避免 provider 请求被客户端巨大值打爆。
+	// The maximum AICompose text length follows the normal message body limit, so a huge client value cannot blow up the provider request.
 	MaxAIComposeTextLength = MaxMessageTextLength
-	// MaxAIComposeEntityCount 限制 TextWithEntities 的实体数量。
+	// MaxAIComposeEntityCount limits the number of entities in TextWithEntities.
 	MaxAIComposeEntityCount = MaxMessageEntityCount
-	// AICompose tone 的 appConfig 默认值与 TDesktop/DrKLO 消费点一致。
+	// The appConfig defaults for AICompose tones match the TDesktop/DrKLO consumers.
 	MaxAIComposeToneTitleLength    = 12
 	MaxAIComposeTonePromptLength   = 1024
 	AIComposeToneSavedLimitDefault = 5

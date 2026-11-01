@@ -7,8 +7,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 频道/超级群消息 poll 投票与关闭：成员资格与消息可见性沿用 reaction 同款校验，
-// poll 级语义委托共享 PollStore。
+// Channel/supergroup message poll voting and closing: membership and message visibility
+// reuse the same checks as reactions, while poll-level semantics are delegated to the
+// shared PollStore.
 
 func (s *ChannelStore) VoteChannelMessagePoll(_ context.Context, req domain.VoteChannelMessagePollRequest) (domain.ChannelMessagePollResult, error) {
 	if req.Date == 0 {
@@ -61,7 +62,7 @@ func (s *ChannelStore) pollChannelMessageTarget(userID, channelID int64, message
 	return cloneChannel(channel), cloneChannelMessage(msg), nil
 }
 
-// channelPollResult 只组装当前 RPC 调用者视角；可靠投递由频道 delivery lane 完成。
+// channelPollResult assembles only the current RPC caller's view; reliable delivery is done by the channel delivery lane.
 func (s *ChannelStore) channelPollResult(channel domain.Channel, msg domain.ChannelMessage, viewerUserID int64, now int) domain.ChannelMessagePollResult {
 	msg.Media = enrichPollMediaForViewer(s.polls, msg.Media, viewerUserID, now)
 	return domain.ChannelMessagePollResult{

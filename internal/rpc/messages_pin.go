@@ -9,11 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
-// updatePrivatePinnedMessage 处理 messages.updatePinnedMessage 的私聊
-// 分支（含 Saved Messages）。官方语义：非 pm_oneside 的 pin 双侧翻转并
-// 生成 messageActionPinMessage 服务消息（reply_to 指向被置顶消息）；
-// pm_oneside / Saved Messages / unpin 不生成服务消息；对端与本账号其它
-// 设备经可靠投递收到 updatePinnedMessages（账号 pts）。
+// updatePrivatePinnedMessage handles the private-chat branch of
+// messages.updatePinnedMessage (including Saved Messages). Official semantics: a
+// pin without pm_oneside flips both sides and generates a messageActionPinMessage
+// service message (reply_to pointing at the pinned message); pm_oneside / Saved
+// Messages / unpin generate no service message; the peer and the account's other
+// devices receive updatePinnedMessages (account pts) via reliable delivery.
 func (r *Router) updatePrivatePinnedMessage(ctx context.Context, userID int64, peer domain.Peer, req *tg.MessagesUpdatePinnedMessageRequest) (tg.UpdatesClass, error) {
 	if r.deps.Messages == nil {
 		return nil, notImplementedErr()
@@ -72,7 +73,7 @@ func (r *Router) updatePrivatePinnedMessage(ctx context.Context, userID int64, p
 	}, nil
 }
 
-// unpinAllPrivateMessages 处理 messages.unpinAllMessages 的私聊分支。
+// unpinAllPrivateMessages handles the private-chat branch of messages.unpinAllMessages.
 func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer domain.Peer) (*tg.MessagesAffectedHistory, error) {
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	if r.deps.Messages == nil {
@@ -94,7 +95,8 @@ func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer
 	}
 	self := res.Self()
 	if self.Event.Pts == 0 {
-		// 无置顶可清：返回当前账号 pts，避免客户端误判 pts 空洞。
+		// Nothing pinned to clear: return the current account pts so the client
+		// does not misjudge a pts gap.
 		return r.affectedHistory(ctx, authKeyID, userID, 0)
 	}
 	r.invalidateRPCProjectionForPeer(userID, peer)
@@ -104,8 +106,8 @@ func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer
 	return &tg.MessagesAffectedHistory{
 		Pts:      self.Event.Pts,
 		PtsCount: self.Event.PtsCount,
-		// Offset>0 时客户端按官方 affectedHistory 语义续发 unpinAll 清
-		// 剩余批次。
+		// When Offset>0 the client keeps sending unpinAll per the official
+		// affectedHistory semantics to clear the remaining batches.
 		Offset: res.Offset,
 	}, nil
 }

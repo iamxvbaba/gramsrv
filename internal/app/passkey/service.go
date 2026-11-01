@@ -1,6 +1,7 @@
-// Package passkey 实现 passkey(WebAuthn)登录与管理的业务编排:生成挑战选项、
-// 验证注册 attestation、验证登录 assertion,并维护凭据/挑战持久化。
-// 密码学验证委托 internal/webauthn;auth_key 绑定委托 auth.Service。
+// Package passkey implements the business orchestration for passkey (WebAuthn) login and
+// management: generating challenge options, verifying registration attestations, verifying
+// login assertions, and maintaining credential/challenge persistence. Cryptographic
+// verification is delegated to internal/webauthn; auth_key binding is delegated to auth.Service.
 package passkey
 
 import (
@@ -22,7 +23,7 @@ const (
 	challengeSize       = 32
 )
 
-// Service 提供 passkey 登录/注册业务。
+// Service provides passkey login/registration business logic.
 type Service struct {
 	creds          store.PasskeyStore
 	challenges     store.PasskeyChallengeStore
@@ -34,19 +35,19 @@ type Service struct {
 	now            func() time.Time
 }
 
-// Option 调整 passkey 服务可选项。
+// Option tweaks the passkey service's optional settings.
 type Option func(*Service)
 
-// WithRPName 设置 relying-party 显示名(authenticator UI 展示)。
+// WithRPName sets the relying-party display name (shown in the authenticator UI).
 func WithRPName(name string) Option { return func(s *Service) { s.rpName = name } }
 
-// WithAllowedOrigins 设置允许的 WebAuthn origin 白名单;为空表示不强校验 origin
-// （服务端通常不预知 Android apk-key-hash origin)。
+// WithAllowedOrigins sets the whitelist of allowed WebAuthn origins; an empty value means
+// origins are not strictly validated (the server usually cannot know the Android apk-key-hash origin in advance).
 func WithAllowedOrigins(origins []string) Option {
 	return func(s *Service) { s.allowedOrigins = append([]string(nil), origins...) }
 }
 
-// WithChallengeTTL 覆盖挑战有效期。
+// WithChallengeTTL overrides the challenge TTL.
 func WithChallengeTTL(d time.Duration) Option {
 	return func(s *Service) {
 		if d > 0 {
@@ -55,7 +56,7 @@ func WithChallengeTTL(d time.Duration) Option {
 	}
 }
 
-// WithClock 注入时钟(测试用)。
+// WithClock injects a clock (for tests).
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) {
 		if now != nil {
@@ -64,8 +65,9 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-// NewService 创建 passkey 服务。rpID 为 WebAuthn relying-party id(域名);dcID 写入
-// user_handle 供客户端 DC 重路由(本部署单 DC,仅做回显)。
+// NewService creates the passkey service. rpID is the WebAuthn relying-party id (domain);
+// dcID is written into user_handle so the client can re-route DCs (single DC in this
+// deployment, so it is only echoed back).
 func NewService(creds store.PasskeyStore, challenges store.PasskeyChallengeStore, rpID string, dcID int, opts ...Option) *Service {
 	s := &Service{
 		creds:        creds,
@@ -109,7 +111,7 @@ func parseUserHandle(h string) (int64, error) {
 	return id, nil
 }
 
-// InitRegistration 为已登录用户生成注册选项(creation options DataJSON)。
+// InitRegistration generates registration options (creation options DataJSON) for a logged-in user.
 func (s *Service) InitRegistration(ctx context.Context, userID int64, displayName string) ([]byte, error) {
 	if s == nil || s.creds == nil || s.challenges == nil || userID == 0 {
 		return nil, domain.ErrPasskeyInvalid
@@ -147,7 +149,7 @@ func (s *Service) InitRegistration(ctx context.Context, userID int64, displayNam
 	})
 }
 
-// Register 验证注册 attestation 并持久化凭据。credentialID 为原始字节(rpc 已 base64url 解码)。
+// Register verifies the registration attestation and persists the credential. credentialID is raw bytes (base64url-decoded by rpc).
 func (s *Service) Register(ctx context.Context, userID int64, credentialID, clientDataJSON, attestationObject []byte, name string) (domain.PasskeyCredential, error) {
 	if s == nil || s.creds == nil || s.challenges == nil || userID == 0 {
 		return domain.PasskeyCredential{}, domain.ErrPasskeyInvalid
@@ -173,7 +175,7 @@ func (s *Service) Register(ctx context.Context, userID int64, credentialID, clie
 	if err != nil {
 		return domain.PasskeyCredential{}, fmt.Errorf("%w: %v", domain.ErrPasskeyInvalid, err)
 	}
-	// credentialID 来自 TL 的 ID/RawID;以 authData 内的 credID 为准(防客户端不一致)。
+	// credentialID comes from the TL ID/RawID; the credID inside authData wins (guarding against client inconsistency).
 	now := s.now().Unix()
 	record := domain.PasskeyCredential{
 		CredentialID: cred.ID,
@@ -190,7 +192,7 @@ func (s *Service) Register(ctx context.Context, userID int64, credentialID, clie
 	return record, nil
 }
 
-// InitLogin 生成登录选项(request options DataJSON,discoverable,无 allowCredentials)。
+// InitLogin generates login options (request options DataJSON, discoverable, no allowCredentials).
 func (s *Service) InitLogin(ctx context.Context) ([]byte, error) {
 	if s == nil || s.challenges == nil {
 		return nil, domain.ErrPasskeyInvalid
@@ -208,7 +210,7 @@ func (s *Service) InitLogin(ctx context.Context) ([]byte, error) {
 	return webauthn.BuildLoginOptions(webauthn.LoginParams{RPID: s.rpID, Challenge: challenge})
 }
 
-// FinishLogin 验证登录 assertion,成功返回该 passkey 所属用户 id(auth_key 绑定由调用方完成)。
+// FinishLogin verifies the login assertion and, on success, returns the user id that owns the passkey (auth_key binding is done by the caller).
 func (s *Service) FinishLogin(ctx context.Context, credentialID, clientDataJSON, authenticatorData, signature []byte, userHandle string) (int64, error) {
 	if s == nil || s.creds == nil || s.challenges == nil {
 		return 0, domain.ErrPasskeyInvalid
@@ -224,7 +226,7 @@ func (s *Service) FinishLogin(ctx context.Context, credentialID, clientDataJSON,
 	if !found {
 		return 0, domain.ErrPasskeyNotFound
 	}
-	// 交叉校验:credential 所属用户须与 user_handle 一致。
+	// Cross-check: the user owning the credential must match user_handle.
 	if cred.UserID != handleUserID {
 		return 0, domain.ErrPasskeyInvalid
 	}
@@ -258,7 +260,7 @@ func (s *Service) FinishLogin(ctx context.Context, credentialID, clientDataJSON,
 	return cred.UserID, nil
 }
 
-// List 返回用户的全部 passkey(管理页)。
+// List returns all of the user's passkeys (management page).
 func (s *Service) List(ctx context.Context, userID int64) ([]domain.PasskeyCredential, error) {
 	if s == nil || s.creds == nil || userID == 0 {
 		return nil, nil
@@ -266,7 +268,7 @@ func (s *Service) List(ctx context.Context, userID int64) ([]domain.PasskeyCrede
 	return s.creds.ListPasskeysByUser(ctx, userID)
 }
 
-// Delete 删除用户的某个 passkey。credentialID 为原始字节。
+// Delete deletes one of the user's passkeys. credentialID is raw bytes.
 func (s *Service) Delete(ctx context.Context, userID int64, credentialID []byte) (bool, error) {
 	if s == nil || s.creds == nil || userID == 0 {
 		return false, nil

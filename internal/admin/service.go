@@ -909,7 +909,7 @@ type ImportStarGiftRequest struct {
 	PerUserTotal int `json:"per_user_total,omitempty"`
 
 	// Optional lifecycle authoring for the auction panel and scheduled-release
-	// ("отложенный дроп") surfaces. Zero values describe an ordinary gift.
+	// ("scheduled drop") surfaces. Zero values describe an ordinary gift.
 	// Validated by domain.StarGiftCatalogWrite.ValidateLifecycleAuthoring.
 	// For auctions Stars is the starting/minimum bid and AvailabilityTotal is
 	// the supply; AuctionRoundDuration is seconds (0 => engine default).
@@ -4211,7 +4211,7 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		req.SlugPrefix = "official-" + req.SourceGiftID
 	}
 
-	// Scheduled release ("отложенный дроп") for a snapshot gift. The snapshot's own
+	// Scheduled release ("scheduled drop") for a snapshot gift. The snapshot's own
 	// locked_until_date records Telegram's release window, which is normally long
 	// past by the time the gift is mirrored here, so it cannot serve as a local
 	// schedule. An operator-supplied time therefore wins, and must be in the future

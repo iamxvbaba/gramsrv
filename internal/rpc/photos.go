@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/store"
 )
 
-// registerPhotos 注册 photos.* RPC handler（头像上传 / 切换 / 查询 / 删除）。
+// registerPhotos registers the photos.* RPC handlers (avatar upload / switch / query / delete).
 func (r *Router) registerPhotos(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PhotosUploadProfilePhotoRequest](d, tlprofile.SemanticMethodPhotosUploadProfilePhoto, func(ctx context.Context, layerRequest *tg.PhotosUploadProfilePhotoRequest) (any, error) {
 		return r.onPhotosUploadProfilePhoto(ctx, layerRequest)
@@ -496,10 +496,12 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
-	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
-	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
-	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
+	// A frozen/deleted account appears to observers as a deleted tombstone: the main avatar has
+	// collapsed to the "deleted account" placeholder, so the album must be emptied too, otherwise the
+	// profile page shows two avatars at once — the tombstone placeholder and the user's real photo.
+	// The album data is kept in Files storage (dropping it would break restore-on-unfreeze); the
+	// tombstone is a view-time projection, so after unfreezing this naturally allows through and the
+	// real photos are restored verbatim. Album data is not deleted.
 	var photos []domain.Photo
 	var total int
 	if target.ID != currentUserID && target.Deleted {
@@ -514,8 +516,9 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	for _, p := range photos {
 		tgPhotos = append(tgPhotos, tgPhoto(p))
 	}
-	// 打开自己的头像相册（inputUserSelf 或显式自己 ID）时 target 即 viewer，须带 self
-	// 标志，否则 self=false 的自己 user 会污染 DrKLO 账号缓存（Saved Messages 变身）。
+	// When opening your own avatar album (inputUserSelf or an explicit self ID), target is the
+	// viewer, so the self flag is required; otherwise a self=false user for yourself would pollute
+	// DrKLO's account cache (Saved Messages transforms).
 	selfUser := r.tgUser(target)
 	if target.ID == currentUserID {
 		selfUser = r.tgSelfUser(target)
@@ -565,17 +568,19 @@ func (r *Router) onPhotosDeletePhotos(ctx context.Context, id []tg.InputPhotoCla
 		return nil, internalErr()
 	}
 	r.invalidateRPCProjectionForUser(userID)
-	// 删除可能撤掉当前头像（回落到下一张或无头像）：与 uploadProfilePhoto 同一纪律，
-	// 向全部在线 session（含当前）推 updateUser + fresh self（对齐参考实现 deletePhotos 的
-	// SyncPushUpdates），否则其它设备与当前设备（DrKLO 本地删除逻辑同样不重建 has_video）
-	// 头像停留在旧状态。
+	// Deletion may remove the current avatar (falling back to the next one or none): following the
+	// same discipline as uploadProfilePhoto, push updateUser + a fresh self to all online sessions
+	// (including the current one) (matching the reference implementation deletePhotos'
+	// SyncPushUpdates); otherwise other devices and the current device (DrKLO's local delete logic
+	// likewise does not rebuild has_video) leave the avatar in its old state.
 	_ = mutation
 	return ids, nil
 }
 
-// photosPhotoForSelf 组装 photos.photo 响应（新照片 + 带头像的 self user），并在头像变更后
-// 向该账号其它在线设备推送，使其即时刷新头像。仅由 uploadProfilePhoto / updateProfilePhoto
-// 等头像变更路径调用（只读路径不得使用，否则会误触发推送）。
+// photosPhotoForSelf assembles the photos.photo response (new photo + a self user with the avatar)
+// and, after an avatar change, pushes to the account's other online devices so they refresh the
+// avatar immediately. Called only by avatar-changing paths such as uploadProfilePhoto /
+// updateProfilePhoto (read-only paths must not use it, or it would wrongly trigger a push).
 func (r *Router) photosPhotoForSelf(ctx context.Context, userID int64, photo domain.Photo, kind domain.ProfilePhotoKind) (*tg.PhotosPhoto, error) {
 	out := &tg.PhotosPhoto{Photo: tgPhoto(photo), Users: []tg.UserClass{}}
 	r.invalidateRPCProjectionForUser(userID)
@@ -762,7 +767,7 @@ func selfPhotoUpdates(self domain.User, date int, user tg.UserClass) *tg.Updates
 	}
 }
 
-// uploadedFileRef 把 tg.InputFile / InputFileBig 转成 domain.UploadedFileRef。
+// uploadedFileRef converts tg.InputFile / InputFileBig into domain.UploadedFileRef.
 func uploadedFileRef(ownerUserID int64, file tg.InputFileClass) (domain.UploadedFileRef, bool) {
 	switch f := file.(type) {
 	case *tg.InputFile:
@@ -780,8 +785,9 @@ func uploadedFileRef(ownerUserID int64, file tg.InputFileClass) (domain.Uploaded
 	}
 }
 
-// resolveInputChatPhoto 把 tg.InputChatPhoto 解析为 *domain.Photo（nil=清除头像）。
-// 支持新上传（InputChatUploadedPhoto）与引用已有照片（InputChatPhoto{InputPhoto}）。
+// resolveInputChatPhoto resolves tg.InputChatPhoto into *domain.Photo (nil = clear the avatar).
+// Supports a new upload (InputChatUploadedPhoto) and referencing an existing photo
+// (InputChatPhoto{InputPhoto}).
 func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input tg.InputChatPhotoClass) (*domain.Photo, error) {
 	switch in := input.(type) {
 	case *tg.InputChatPhotoEmpty:
@@ -817,7 +823,7 @@ func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input 
 			}
 			return &photo, nil
 		default:
-			return nil, nil // InputPhotoEmpty → 清除
+			return nil, nil // InputPhotoEmpty -> clear
 		}
 	default:
 		return nil, photoInvalidErr()

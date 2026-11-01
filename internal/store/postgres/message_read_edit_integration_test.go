@@ -273,13 +273,13 @@ func TestMessageStoreReadHistoryStaleUnreadRepairDoesNotAppendPts(t *testing.T) 
 	`, recipient.ID, string(domain.PeerTypeUser), sender.ID).Scan(&unreadCount, &unreadMentions, &unreadReactions, &unreadMark); err != nil {
 		t.Fatalf("load repaired dialog: %v", err)
 	}
-	// readHistory 只清 message unread/mentions/manual mark；reaction 角标
-	// 由 messages.readReactions 单独清除，与官方语义一致。
+	// readHistory only clears message unread/mentions/manual mark; the reaction badge is cleared
+	// separately by messages.readReactions, consistent with the official semantics.
 	if unreadCount != 0 || unreadMentions != 0 || unreadReactions != 1 || unreadMark {
 		t.Fatalf("dialog unread fields = count %d mentions %d reactions %d mark %v, want history cleared with reaction badge preserved", unreadCount, unreadMentions, unreadReactions, unreadMark)
 	}
-	// stale counter 场景没有存活的 reaction_unread 行，readReactions 清 0
-	// 行但仍要把角标计数自愈归零。
+	// The stale counter scenario has no surviving reaction_unread rows; readReactions clears 0
+	// rows but must still self-heal the badge count to zero.
 	if cleared, err := messages.ReadPeerReactions(ctx, recipient.ID, domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}); err != nil || cleared != 0 {
 		t.Fatalf("ReadPeerReactions = %d err %v, want stale repair without live rows", cleared, err)
 	}

@@ -131,8 +131,8 @@ func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (t
 	}
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
 	updates := r.channelOperationUpdates(ctx, userID, res)
-	// Layer 227：messages.importChatInvite 返回 messages.ChatInviteJoinResult；
-	// 正常加入即 chatInviteJoinResultOk 包裹本次操作的 updates。
+	// Layer 227: messages.importChatInvite returns messages.ChatInviteJoinResult; a normal join is
+	// chatInviteJoinResultOk wrapping this operation's updates.
 	return &tg.MessagesChatInviteJoinResultOk{Updates: updates}, nil
 }
 

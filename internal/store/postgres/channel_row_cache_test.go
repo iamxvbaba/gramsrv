@@ -13,18 +13,18 @@ import (
 
 func TestChannelRowCacheNilDisabled(t *testing.T) {
 	if c := NewChannelRowCache(0); c != nil {
-		t.Fatalf("max<=0 应返回 nil(禁用)，got %v", c)
+		t.Fatalf("max<=0 should return nil (disabled), got %v", c)
 	}
 	if c := NewChannelRowCache(-5); c != nil {
-		t.Fatalf("负容量应返回 nil(禁用)，got %v", c)
+		t.Fatalf("negative capacity should return nil (disabled), got %v", c)
 	}
-	// nil 缓存上的所有操作都必须安全(no-op)。
+	// All operations on a nil cache must be safe (no-op).
 	var nilCache *ChannelRowCache
 	nilCache.put(domain.Channel{ID: 1})
 	nilCache.delete(1)
 	nilCache.flush()
 	if _, ok := nilCache.get(1); ok {
-		t.Fatalf("nil 缓存 get 必须返回 ok=false")
+		t.Fatalf("get on a nil cache must return ok=false")
 	}
 }
 
@@ -33,29 +33,29 @@ func TestChannelRowCachePutGetDeleteFlush(t *testing.T) {
 	ch := domain.Channel{ID: 42, Title: "hello", AccessHash: 7}
 
 	if _, ok := c.get(42); ok {
-		t.Fatalf("空缓存不应命中")
+		t.Fatalf("empty cache should not hit")
 	}
 	c.put(ch)
 	got, ok := c.get(42)
 	if !ok || got.ID != 42 || got.Title != "hello" || got.AccessHash != 7 {
-		t.Fatalf("put/get 往返失败: %+v ok=%v", got, ok)
+		t.Fatalf("put/get round-trip failed: %+v ok=%v", got, ok)
 	}
 
 	c.delete(42)
 	if _, ok := c.get(42); ok {
-		t.Fatalf("delete 后不应命中")
+		t.Fatalf("should not hit after delete")
 	}
 
 	c.put(ch)
 	c.flush()
 	if _, ok := c.get(42); ok {
-		t.Fatalf("flush 后不应命中")
+		t.Fatalf("should not hit after flush")
 	}
 
-	// id==0 既不存也不查。
+	// id==0 is neither stored nor looked up.
 	c.put(domain.Channel{ID: 0, Title: "zero"})
 	if _, ok := c.get(0); ok {
-		t.Fatalf("id==0 不应缓存/命中")
+		t.Fatalf("id==0 should not be cached/hit")
 	}
 }
 
@@ -69,26 +69,26 @@ func TestChannelRowCacheReturnsIsolatedClone(t *testing.T) {
 	orig.ReactionPolicy.CustomEmojiIDs = []int64{100}
 	c.put(orig)
 
-	// 改写 put 入参的底层切片不得污染缓存(put 须自持副本)。
+	// Mutating the underlying slice of the put argument must not pollute the cache (put must keep its own copy).
 	orig.PhotoStripped[0] = 99
 	orig.ReactionPolicy.Emoticons[0] = "💩"
 	orig.ReactionPolicy.CustomEmojiIDs[0] = 999
 
 	got, ok := c.get(9)
 	if !ok {
-		t.Fatalf("应命中")
+		t.Fatalf("should hit")
 	}
 	if got.PhotoStripped[0] != 1 || got.ReactionPolicy.Emoticons[0] != "👍" || got.ReactionPolicy.CustomEmojiIDs[0] != 100 {
-		t.Fatalf("缓存被 put 入参后续改写污染: %+v", got)
+		t.Fatalf("cache polluted by later mutation of the put argument: %+v", got)
 	}
 
-	// 改写 get 返回值的切片也不得污染缓存(get 须返回副本)。
+	// Mutating the slice returned by get must not pollute the cache either (get must return a copy).
 	got.PhotoStripped[0] = 77
 	got.ReactionPolicy.Emoticons[0] = "🔥"
 	got.ReactionPolicy.CustomEmojiIDs[0] = 777
 	again, _ := c.get(9)
 	if again.PhotoStripped[0] != 1 || again.ReactionPolicy.Emoticons[0] != "👍" || again.ReactionPolicy.CustomEmojiIDs[0] != 100 {
-		t.Fatalf("缓存被 get 返回值改写污染: %+v", again)
+		t.Fatalf("cache polluted by mutation of the get return value: %+v", again)
 	}
 }
 
@@ -96,21 +96,21 @@ func TestChannelRowCacheCapEviction(t *testing.T) {
 	c := NewChannelRowCache(2)
 	c.put(domain.Channel{ID: 1})
 	c.put(domain.Channel{ID: 2})
-	// 第三个新 id 超 cap=2:LRU 单条驱逐最旧的 id1,而非整表清空。
+	// A third new id exceeds cap=2: LRU evicts the oldest single entry id1 rather than clearing the whole table.
 	c.put(domain.Channel{ID: 3})
 	if _, ok := c.get(1); ok {
-		t.Fatalf("超限后最旧条目 id1 应被驱逐")
+		t.Fatalf("after overflow the oldest entry id1 should be evicted")
 	}
 	if _, ok := c.get(2); !ok {
-		t.Fatalf("LRU 单条驱逐应保留次新条目 id2,证明非整表 flush")
+		t.Fatalf("per-entry LRU eviction should keep the next-newest entry id2, proving it is not a whole-table flush")
 	}
 	if _, ok := c.get(3); !ok {
-		t.Fatalf("最新写入的条目 id3 应在")
+		t.Fatalf("the newest written entry id3 should be present")
 	}
-	// 已存在 id 的更新原地生效,不触发驱逐。
+	// Updating an existing id takes effect in place and does not trigger eviction.
 	c.put(domain.Channel{ID: 3, Title: "v2"})
 	if got, ok := c.get(3); !ok || got.Title != "v2" {
-		t.Fatalf("已存在 id 的更新应原地生效: %+v ok=%v", got, ok)
+		t.Fatalf("update of an existing id should take effect in place: %+v ok=%v", got, ok)
 	}
 }
 

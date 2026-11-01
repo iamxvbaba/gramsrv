@@ -6,16 +6,17 @@ import (
 	"github.com/iamxvbaba/td/tg"
 )
 
-// TestGroupCallJoinAsChannel 覆盖 join_as 身份闭环：admin 以频道身份入会 →
-// 参与者行 peer=PeerChannel（本人与对端视角一致）；非 admin 以频道身份被拒；
-// getGroupCallJoinAs 对 admin 返回 self+频道两个候选、普通成员只返回 self。
+// TestGroupCallJoinAsChannel covers the join_as identity loop: an admin joins as the channel ->
+// the participant row's peer=PeerChannel (identical from the user's and the peer's perspective); a
+// non-admin joining as the channel is rejected; getGroupCallJoinAs returns two candidates
+// (self + channel) for an admin and only self for an ordinary member.
 func TestGroupCallJoinAsChannel(t *testing.T) {
 	f := newGroupCallFixture(t)
 	ownerCtx := f.userCtx(f.owner, 11)
 	memberCtx := f.userCtx(f.member, 22)
 	channelPeer := &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash}
 
-	// --- getGroupCallJoinAs 候选 ---
+	// --- getGroupCallJoinAs candidates ---
 	ownerJoinAs, err := f.router.onPhoneGetGroupCallJoinAs(ownerCtx, channelPeer)
 	if err != nil {
 		t.Fatalf("owner getGroupCallJoinAs: %v", err)
@@ -34,7 +35,7 @@ func TestGroupCallJoinAsChannel(t *testing.T) {
 		t.Fatalf("member join-as peers = %d, want 1 (self only)", len(memberJoinAs.Peers))
 	}
 
-	// --- create + owner 以频道身份 join ---
+	// --- create + owner joins as the channel ---
 	createRes, err := f.router.onPhoneCreateGroupCall(ownerCtx, &tg.PhoneCreateGroupCallRequest{
 		Peer: channelPeer, RandomID: 1,
 	})
@@ -65,7 +66,7 @@ func TestGroupCallJoinAsChannel(t *testing.T) {
 		t.Fatalf("join_as channel row missing self flag for the joining user")
 	}
 
-	// --- 对端视角：member 拉参与者列表也看到频道身份 ---
+	// --- peer perspective: a member fetching the participant list also sees the channel identity ---
 	page, err := f.router.onPhoneGetGroupParticipants(memberCtx, &tg.PhoneGetGroupParticipantsRequest{
 		Call: input, Limit: 10,
 	})
@@ -82,7 +83,7 @@ func TestGroupCallJoinAsChannel(t *testing.T) {
 		t.Fatalf("member view incorrectly flags channel row as self")
 	}
 
-	// --- 非 admin 以频道身份 join 被拒 ---
+	// --- a non-admin joining as the channel is rejected ---
 	if _, err := f.router.onPhoneJoinGroupCall(memberCtx, &tg.PhoneJoinGroupCallRequest{
 		Call:   input,
 		JoinAs: channelPeer,
@@ -93,7 +94,7 @@ func TestGroupCallJoinAsChannel(t *testing.T) {
 		assertPhoneRPCErr(t, err, "JOIN_AS_PEER_INVALID")
 	}
 
-	// --- rejoin 换回本人身份：行替换而非新增 ---
+	// --- rejoin back to the user's own identity: the row is replaced, not added ---
 	rejoinRes, err := f.router.onPhoneJoinGroupCall(ownerCtx, &tg.PhoneJoinGroupCallRequest{
 		Call:   input,
 		JoinAs: &tg.InputPeerSelf{},

@@ -8,7 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// decodePasskeyID 容忍有/无填充地 base64url 解码 credential id(取第一个可解的非空值)。
+// decodePasskeyID base64url-decodes the credential id, tolerating presence or
+// absence of padding (takes the first non-empty decodable value).
 func decodePasskeyID(vals ...string) ([]byte, bool) {
 	for _, v := range vals {
 		if v == "" {
@@ -24,7 +25,8 @@ func decodePasskeyID(vals ...string) ([]byte, bool) {
 	return nil, false
 }
 
-// passkeyLoginFromCredential 从 inputPasskeyCredentialPublicKey 提取登录断言字段。
+// passkeyLoginFromCredential extracts the login assertion fields from
+// inputPasskeyCredentialPublicKey.
 func passkeyLoginFromCredential(pk tg.InputPasskeyCredentialPublicKey) (credID []byte, login *tg.InputPasskeyResponseLogin, ok bool) {
 	login, ok = pk.Response.(*tg.InputPasskeyResponseLogin)
 	if !ok {
@@ -37,7 +39,8 @@ func passkeyLoginFromCredential(pk tg.InputPasskeyCredentialPublicKey) (credID [
 	return credID, login, true
 }
 
-// passkeyRegisterFromCredential 从 inputPasskeyCredentialPublicKey 提取注册 attestation 字段。
+// passkeyRegisterFromCredential extracts the registration attestation fields
+// from inputPasskeyCredentialPublicKey.
 func passkeyRegisterFromCredential(pk tg.InputPasskeyCredentialPublicKey) (credID []byte, reg *tg.InputPasskeyResponseRegister, ok bool) {
 	reg, ok = pk.Response.(*tg.InputPasskeyResponseRegister)
 	if !ok {
@@ -50,7 +53,7 @@ func passkeyRegisterFromCredential(pk tg.InputPasskeyCredentialPublicKey) (credI
 	return credID, reg, true
 }
 
-// tgPasskey 把领域凭据投影为 tg.Passkey(ID 用 base64url)。
+// tgPasskey projects a domain credential into tg.Passkey (ID encoded as base64url).
 func tgPasskey(c domain.PasskeyCredential) tg.Passkey {
 	return tg.Passkey{
 		ID:            base64.RawURLEncoding.EncodeToString(c.CredentialID),

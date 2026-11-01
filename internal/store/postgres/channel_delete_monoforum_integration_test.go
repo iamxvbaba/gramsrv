@@ -7,11 +7,11 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestDeleteChannelCascadesLinkedMonoforumPostgres 回归 Risk A:删除开启了 Direct Messages 的母广播
-// 频道时,关联 monoforum 在同一事务内被软删并随结果返回。不级联会留下指向已删父频道的孤儿 mono。
-// 门控于 TELESRV_TEST_POSTGRES_DSN。
+// TestDeleteChannelCascadesLinkedMonoforumPostgres regression Risk A: when deleting a parent broadcast
+// channel with Direct Messages enabled, the linked monoforum is soft-deleted in the same transaction and returned in the result. Not cascading would leave an orphan mono pointing at the deleted parent channel.
+// Gated on TELESRV_TEST_POSTGRES_DSN.
 func TestDeleteChannelCascadesLinkedMonoforumPostgres(t *testing.T) {
-	pool := testPool(t) // 未设 DSN 会 t.Skip
+	pool := testPool(t) // an unset DSN makes it t.Skip
 	ctx := context.Background()
 	suffix := randomSuffix(t)
 
@@ -59,7 +59,7 @@ func TestDeleteChannelCascadesLinkedMonoforumPostgres(t *testing.T) {
 		t.Fatalf("result LinkedMonoforum = %+v, want deleted mono %d", res.LinkedMonoforum, monoID)
 	}
 
-	// 两行在 DB 里都必须 deleted=true。
+	// Both rows must be deleted=true in the DB.
 	var parentDeleted, monoDeleted bool
 	if err := pool.QueryRow(ctx, "SELECT deleted FROM channels WHERE id = $1", parentID).Scan(&parentDeleted); err != nil {
 		t.Fatalf("read parent deleted: %v", err)
@@ -71,7 +71,7 @@ func TestDeleteChannelCascadesLinkedMonoforumPostgres(t *testing.T) {
 		t.Fatalf("deleted flags parent=%v mono=%v, want both true (orphan monoforum left behind)", parentDeleted, monoDeleted)
 	}
 
-	// 删后 getDialogs 不再返回母频道或 mono。
+	// After the delete, getDialogs no longer returns the parent channel or the mono.
 	dialogs, err := channels.ListChannelDialogs(ctx, owner.ID, domain.DialogFilter{Limit: 100})
 	if err != nil {
 		t.Fatalf("list dialogs after delete: %v", err)

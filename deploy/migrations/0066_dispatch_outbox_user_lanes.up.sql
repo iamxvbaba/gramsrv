@@ -1,5 +1,6 @@
--- 一条 durable user update 只能有一个在线投递任务。历史 schema 的
--- ON CONFLICT DO NOTHING 没有对应唯一键，先显式保留最早任务并删除重复项。
+-- A durable user update may have only one online delivery task. The historical
+-- schema's ON CONFLICT DO NOTHING had no matching unique key, so the earliest task
+-- is explicitly kept and duplicates removed first.
 WITH duplicates AS (
     SELECT id
     FROM (
@@ -7,8 +8,9 @@ WITH duplicates AS (
             id,
             row_number() OVER (
                 PARTITION BY target_user_id, pts
-                -- 若历史重复中仍有可投递任务，优先保留它；不能让一个更早的
-                -- failed 副本覆盖健康 pending 副本并人为阻塞该用户 lane。
+                -- If historical duplicates still contain a deliverable task, keep
+                -- it preferentially; an earlier failed copy must not overwrite a
+                -- healthy pending copy and artificially block that user's lane.
                 ORDER BY
                     CASE status
                         WHEN 'pending' THEN 0
@@ -28,8 +30,8 @@ WHERE d.id = x.id;
 CREATE UNIQUE INDEX dispatch_outbox_user_pts_uidx
     ON dispatch_outbox (target_user_id, pts);
 
--- ClaimDispatchOutboxShards 固定用 256 logical shards；表达式必须与查询
--- 完全一致，避免每个 worker 为筛自己的 lane 全表扫描。
+-- ClaimDispatchOutboxShards fixes 256 logical shards; the expression must match the
+-- queries exactly, so each worker doesn't full-scan the table to filter its own lane.
 CREATE INDEX dispatch_outbox_logical_shard_head_idx
     ON dispatch_outbox (
         mod(target_user_id, 256::bigint),

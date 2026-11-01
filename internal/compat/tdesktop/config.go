@@ -9,10 +9,11 @@ import (
 	"telesrv/internal/links"
 )
 
-// BuildConfig 构造 help.getConfig 返回的 tg.Config，含自建 DC 的 DCOptions。
+// BuildConfig constructs the tg.Config returned by help.getConfig, including the
+// DCOptions of the self-hosted DC.
 //
-// 字段值取 Telegram 常见默认；TDesktop 联调阶段按客户端实际需要微调
-// （记录于 docs/compatibility-matrix.md）。
+// Field values follow common Telegram defaults; during TDesktop bring-up they are tuned
+// to what the client actually needs (recorded in docs/compatibility-matrix.md).
 func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL, updateBaseURL string) *tg.Config {
 	// TELESRV_ADVERTISE_IP is validated during config loading. Parse again here
 	// only to derive the wire ipv6 flag and to render IPv4-mapped addresses in
@@ -47,10 +48,10 @@ func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL, upda
 		PushChatPeriodMs:     60000,
 		PushChatLimit:        2,
 		EditTimeLimit:        172800,
-		// 官方现行 revoke 三元组：无时限 + 允许撤回对方发来的私聊消息。
-		// TDesktop 的私聊 "Also delete for X" 复选框要求
-		// revoke_pm_inbox=true 且 revoke_pm_time_limit=0x7FFFFFFF，
-		// 否则双向删除 UI 永不出现。
+		// The current official revoke triad: no time limit + allow revoking private
+		// messages sent by the other party. TDesktop's private-chat "Also delete for X"
+		// checkbox requires revoke_pm_inbox=true and revoke_pm_time_limit=0x7FFFFFFF,
+		// otherwise the two-way delete UI never appears.
 		RevokeTimeLimit:      2147483647,
 		RevokePmTimeLimit:    2147483647,
 		RevokePmInbox:        true,

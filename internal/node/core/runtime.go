@@ -185,7 +185,7 @@ func newBusinessAutomationOptions(cfg config.CoreConfig, online messageapp.Busin
 		opts = append(opts, messageapp.WithBusinessAutomationReplyProvider(messageapp.NewAIBusinessAutomationProvider(generator)))
 		logger.Info("Business automation reply provider", zap.String("provider", "ai"))
 	default:
-		logger.Warn("未知 Business automation AI provider，回退 quick reply 模板", zap.String("provider", cfg.BusinessAIProvider))
+		logger.Warn("unknown Business automation AI provider, falling back to the quick reply template", zap.String("provider", cfg.BusinessAIProvider))
 	}
 	return opts
 }
@@ -214,11 +214,11 @@ func newAIComposeOptions(cfg config.CoreConfig, limiter aiapp.RateLimiter, premi
 			Thinking:        pc.Thinking,
 		})
 		if err != nil {
-			logger.Warn("AI compose provider 已跳过", zap.String("provider", pc.Name), zap.String("kind", pc.Kind), zap.Error(err))
+			logger.Warn("AI compose provider skipped", zap.String("provider", pc.Name), zap.String("kind", pc.Kind), zap.Error(err))
 			continue
 		}
 		providers = append(providers, provider)
-		logger.Info("AI compose provider 已启用", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
+		logger.Info("AI compose provider enabled", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
 	}
 	if len(providers) > 0 {
 		opts = append(opts, aiapp.WithProviders(providers...))
@@ -274,27 +274,27 @@ func newTranslationOptions(cfg config.CoreConfig, limiter translationapp.RateLim
 			OmitTemperature: pc.OmitTemperature, Thinking: pc.Thinking,
 		})
 		if err != nil {
-			logger.Warn("translation provider 已跳过", zap.String("provider", pc.Name), zap.Error(err))
+			logger.Warn("translation provider skipped", zap.String("provider", pc.Name), zap.Error(err))
 			continue
 		}
 		providers = append(providers, translationapp.NewAIProvider(provider))
-		logger.Info("translation provider 已启用", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
+		logger.Info("translation provider enabled", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
 	}
 	if len(providers) > 0 {
 		opts = append(opts, translationapp.WithProviders(providers...))
 	} else if cfg.TranslationEnabled {
-		logger.Warn("translation 已启用但没有远程 provider；messages.translateText 将返回 TRANSLATIONS_DISABLED")
+		logger.Warn("translation enabled but no remote provider; messages.translateText will return TRANSLATIONS_DISABLED")
 	}
 	return opts
 }
 
-// startDebugServer 在 addr 上挂起 net/http/pprof 调试端点（addr 为空则关闭）。
-// 用独立 mux（不污染 http.DefaultServeMux），仅注册 pprof 路由：
-//   - /debug/pprof/profile  CPU 剖析（?seconds=30）
-//   - /debug/pprof/heap     堆内存快照
-//   - /debug/pprof/goroutine goroutine 栈（排查泄漏/阻塞）
-//   - /debug/pprof/mutex    锁竞争（需 SetMutexProfileFraction）
-//   - /debug/pprof/block    阻塞剖析（需 SetBlockProfileRate）
+// startDebugServer serves the net/http/pprof debug endpoints on addr (an empty addr disables it).
+// It uses its own mux (leaving http.DefaultServeMux untouched) and registers only pprof routes:
+//   - /debug/pprof/profile  CPU profile (?seconds=30)
+//   - /debug/pprof/heap     heap snapshot
+//   - /debug/pprof/goroutine goroutine stacks (for leaks/blocking)
+//   - /debug/pprof/mutex    lock contention (needs SetMutexProfileFraction)
+//   - /debug/pprof/block    blocking profile (needs SetBlockProfileRate)
 
 func liveStreamDep(s *livestream.Service) rpc.LiveStreamsService {
 	if s == nil {
@@ -509,7 +509,7 @@ func externalMediaOption(cfg config.CoreConfig) filesapp.Option {
 	return filesapp.WithExternalMedia(cfg.ExternalMediaMaxBytes, cfg.ExternalMediaRatePerMin)
 }
 
-// webPagePreviewOption 按配置启用链接预览抓取；禁用时返回 nil（NewService 跳过 nil option）。
+// webPagePreviewOption enables link-preview fetching per config; when disabled it returns nil (NewService skips a nil option).
 func webPagePreviewOption(cfg config.CoreConfig) filesapp.Option {
 	if !cfg.WebPagePreviewEnable {
 		return nil
@@ -593,14 +593,14 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	// Login, phone change, contact import and the Admin API (served by Core)
 	// all canonicalize through it, so every Core must use the same value.
 	domain.ConfigurePhoneFormatCheck(cfg.CheckNumberFormat)
-	logger.Info("手机号格式策略", zap.Bool("check_number_format", cfg.CheckNumberFormat))
+	logger.Info("phone format policy", zap.Bool("check_number_format", cfg.CheckNumberFormat))
 	// Server Settings → Server identity lives in cfg.IdentityDir, shared with
 	// the Admin role. The custom name becomes the 777000 display name now; the
 	// identity watcher started after the router keeps name and avatar in sync
 	// with later panel edits on every Core instance without a restart.
 	identityStore := identity.NewStore(cfg.IdentityDir)
 	if info, err := identityStore.Get(); err != nil {
-		logger.Warn("读取服务器身份失败，沿用品牌默认名", zap.Error(err))
+		logger.Warn("failed to read server identity, falling back to the branding default name", zap.Error(err))
 	} else {
 		domain.SetOfficialSystemUserDisplayName(info.Name)
 	}
@@ -609,8 +609,8 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		return fmt.Errorf("invalid instance id: %w", err)
 	}
 
-	// tg.Layer 由当前导入的 canonical schema 生成；纳入未来 Layer 后无需
-	// 在 telesrv 另维护一份常量。
+	// tg.Layer is generated from the currently imported canonical schema; after
+	// adopting a future Layer there is no need to maintain a separate constant in telesrv.
 	logger.Info("telesrv core starting",
 		zap.Int("dc", cfg.DC),
 		zap.String("default_country_code", cfg.DefaultCountryCode),
@@ -627,14 +627,16 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	ctx, stop, metricRegistry := common.StartRuntimeSupport(cfg, logger)
 	defer stop()
 
-	// 持久化依赖：先迁移 schema，再建立连接。auth key 与业务事实落 PostgreSQL，
-	// Redis 只承载可重建的短 TTL 状态、缓存、计数器和限流。
-	// 依赖由 deploy/docker-compose.yml 启动；连不上则启动失败（开发期须先 docker compose up）。
+	// Persistence dependencies: migrate the schema first, then establish
+	// connections. Auth keys and business facts land in PostgreSQL, while Redis
+	// carries only rebuildable short-TTL state, caches, counters and rate limits.
+	// Dependencies are started by deploy/docker-compose.yml; failing to connect
+	// fails startup (during development you must docker compose up first).
 	migrationStatus, err := postgres.MigrateAndStatus(cfg.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("postgres migrate: %w", err)
 	}
-	logger.Info("PostgreSQL schema 已迁移",
+	logger.Info("PostgreSQL schema migrated",
 		zap.Uint("schema_version", migrationStatus.Version),
 		zap.Bool("schema_dirty", migrationStatus.Dirty),
 		zap.Bool("schema_empty", migrationStatus.Empty),
@@ -733,7 +735,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 			{Name: "telesrv_redis_pool_wait_seconds", Value: time.Duration(stat.WaitDurationNs).Seconds()},
 		}
 	})
-	logger.Info("持久化依赖就绪", zap.String("redis", cfg.RedisAddr))
+	logger.Info("persistence dependencies ready", zap.String("redis", cfg.RedisAddr))
 	if cfg.TelegramLoginEnabled {
 		telegramLoginHTTPHandler, err = telegramloginhttp.NewHandler(telegramloginhttp.Config{
 			Service: telegramLoginService, Tokens: telegramLoginIDTokens,
@@ -945,18 +947,18 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		webPagePreviewOption(cfg),
 	)
 	if cfg.MapboxToken != "" {
-		logger.Info("地图缩略图代理已启用", zap.String("provider", "mapbox"), zap.String("cache_dir", cfg.MapTileCacheDir))
+		logger.Info("map thumbnail proxy enabled", zap.String("provider", "mapbox"), zap.String("cache_dir", cfg.MapTileCacheDir))
 	}
 	if cfg.ExternalMediaEnable {
-		logger.Info("外链媒体抓取已启用", zap.Int64("max_bytes", cfg.ExternalMediaMaxBytes), zap.Int("rate_per_min", cfg.ExternalMediaRatePerMin))
+		logger.Info("external media fetching enabled", zap.Int64("max_bytes", cfg.ExternalMediaMaxBytes), zap.Int("rate_per_min", cfg.ExternalMediaRatePerMin))
 	}
 	if cfg.WebPagePreviewEnable {
-		logger.Info("链接预览抓取已启用", zap.Int64("max_bytes", cfg.WebPagePreviewMaxBytes), zap.Int("rate_per_min", cfg.WebPagePreviewRatePerMin))
+		logger.Info("link preview fetching enabled", zap.Int64("max_bytes", cfg.WebPagePreviewMaxBytes), zap.Int("rate_per_min", cfg.WebPagePreviewRatePerMin))
 	}
 	if stats, err := filesService.SeedMedia(ctx, cfg.StickerSeedDir, cfg.StickerSeedMaxSets); err != nil {
 		return fmt.Errorf("seed media: %w", err)
 	} else if !stats.Skipped {
-		logger.Info("媒体种子导入完成",
+		logger.Info("media seed import complete",
 			zap.String("dir", cfg.StickerSeedDir),
 			zap.Int("reactions", stats.Reactions),
 			zap.Int("sticker_sets", stats.StickerSets),
@@ -978,7 +980,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	if stats, err := filesService.SeedPremiumPromo(ctx, cfg.PremiumPromoSeedDir); err != nil {
 		return fmt.Errorf("seed premium promo: %w", err)
 	} else if !stats.Skipped {
-		logger.Info("Premium promo 视频种子导入完成",
+		logger.Info("Premium promo video seed import complete",
 			zap.String("dir", cfg.PremiumPromoSeedDir),
 			zap.Int("videos", stats.Videos),
 			zap.Int("blobs", stats.Blobs),
@@ -987,7 +989,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	if stats, err := filesService.SeedAppearance(ctx); err != nil {
 		return fmt.Errorf("seed appearance: %w", err)
 	} else if !stats.Skipped {
-		logger.Info("外观种子导入完成",
+		logger.Info("appearance seed import complete",
 			zap.String("source", "default-seed"),
 			zap.Int("wallpapers", stats.Wallpapers),
 			zap.Int("documents", stats.Documents),
@@ -997,17 +999,18 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	if stats, err := filesService.SeedFreezeEmoji(ctx); err != nil {
 		return fmt.Errorf("seed freeze emoji: %w", err)
 	} else if stats.Imported {
-		logger.Info("内置 freeze 表情种子导入完成",
+		logger.Info("built-in freeze emoji seed import complete",
 			zap.Int64("document_id", freezeseed.DocumentID),
 			zap.Int64("set_id", freezeseed.SetID),
 		)
 	}
-	// 默认 emoji status 系统集：从 animated_emoji 精选合成（幂等，已 seed 的存量
-	// 库重启后自动补上）；缺失时 premium 用户的 status 选择器会是空的。
+	// Default emoji status system set: synthesized from curated animated_emoji
+	// (idempotent, automatically filled in after a restart of an already-seeded
+	// database); when missing, Premium users' status picker would be empty.
 	if count, created, err := filesService.EnsureDefaultEmojiStatusSet(ctx); err != nil {
-		logger.Warn("默认 emoji status 系统集合成失败", zap.Error(err))
+		logger.Warn("failed to synthesize the default emoji status system set", zap.Error(err))
 	} else if created {
-		logger.Info("默认 emoji status 系统集已合成", zap.Int("documents", count))
+		logger.Info("default emoji status system set synthesized", zap.Int("documents", count))
 	}
 	langPackStore := postgres.NewLangPackStore(pool)
 	passwordStore := postgres.NewPasswordStore(pool)
@@ -1077,16 +1080,19 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	if seeded, err := langPackService.SeedDirectory(ctx, cfg.LangPackSeedDir); err != nil {
 		return fmt.Errorf("seed langpack: %w", err)
 	} else if seeded > 0 {
-		logger.Info("语言包种子导入完成", zap.String("dir", cfg.LangPackSeedDir), zap.Int("strings", seeded))
+		logger.Info("language pack seed import complete", zap.String("dir", cfg.LangPackSeedDir), zap.Int("strings", seeded))
 	}
-	// 国家区号目录:把 catalog 固化的官方全量(~235 国)幂等 upsert 进 PG,覆盖迁移里仅
-	// seed 的 2 国(US/CN)默认值。否则 countries 表非空,ListCountries 返回那 2 行就会
-	// 绕过 catalog,登录页/号码格式只显示 2 国。upsert 失败仅告警不阻断启动(回退旧 2 行)。
+	// Country dialing code catalog: idempotently upsert the full official set
+	// (~235 countries) fixed in the catalog into PG, overwriting the migration's
+	// 2-country (US/CN) default seed. Otherwise the non-empty countries table makes
+	// ListCountries return those 2 rows and bypass the catalog, so the login page /
+	// number format shows only 2 countries. An upsert failure only warns and does not
+	// block startup (falling back to the old 2 rows).
 	if cs := catalog.Countries().Countries; len(cs) > 0 {
 		if err := helpStore.UpsertCountries(ctx, cs); err != nil {
-			logger.Warn("国家区号种子导入失败", zap.Error(err))
+			logger.Warn("country dialing code seed import failed", zap.Error(err))
 		} else {
-			logger.Info("国家区号种子导入完成", zap.Int("countries", len(cs)))
+			logger.Info("country dialing code seed import complete", zap.Int("countries", len(cs)))
 		}
 	}
 
@@ -1119,7 +1125,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 			return fmt.Errorf("configure OTP webhook: %w", err)
 		}
 		webhookSender = configured
-		logger.Info("OTP Webhook 投递已启用",
+		logger.Info("OTP Webhook delivery enabled",
 			zap.Bool("phone", cfg.PhoneCodeDeliveryProvider == "webhook"),
 			zap.Bool("email", cfg.LoginEmailEnable && cfg.EmailCodeDeliveryProvider == "webhook"))
 	}
@@ -1194,8 +1200,9 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	runRemoteSFUOwnerHeartbeat = func() {
 		sfu.RunRemoteOwnerHeartbeat(ctx, sfuOwnerRegistry, sfuInstanceRegistry, remoteSFU, cfg.SFUOwnerTTL, cfg.SFUOwnerHeartbeatInterval, cfg.SFUInstanceHealthTimeout)
 	}
-	// 频道 RTMP 直播媒体面（Live Stream）：内嵌 RTMP ingest（OBS 推流）+ ffmpeg
-	// 切段。未启用时信令仍可用，观众停留在"等待推流"占位。
+	// Channel RTMP live media plane (Live Stream): embedded RTMP ingest (OBS
+	// streaming) + ffmpeg segmentation. When disabled, signaling still works and
+	// viewers stay on the "waiting for stream" placeholder.
 	var liveStreamService *livestream.Service
 	if cfg.LiveStreamEnable {
 		liveStreamService = livestream.NewService(livestream.Config{
@@ -1209,9 +1216,9 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		}
 		defer liveStreamService.Close()
 	}
-	// 私聊通话中继（P3）：Core 只签发 phoneCall.connections 的 TURN REST
-	// credentials；UDP listener 和 relay allocations 固定由 standalone SFU role
-	// 持有。未启用时退回 P1 的纯信令 LAN/P2P 路径。
+	// Private call relay (P3): Core only issues the TURN REST credentials for
+	// phoneCall.connections; the UDP listener and relay allocations are always owned by the
+	// standalone SFU role. When disabled it falls back to P1's signaling-only LAN/P2P path.
 	turnService := turnsrv.Service(turnsrv.Disabled())
 	if cfg.TURNEnable {
 		turnAdvertise := cfg.TURNAdvertiseIP
@@ -1246,7 +1253,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	if err != nil {
 		return fmt.Errorf("init phone service: %w", err)
 	}
-	// 私聊端对端加密（Secret Chat）握手状态机 + qts 投递队列（盲中继）。
+	// Private end-to-end encryption (Secret Chat) handshake state machine + qts delivery queue (blind relay).
 	secretChatStore := postgres.NewSecretChatStore(pool)
 	encryptedQueueStore := postgres.NewEncryptedQueueStore(pool)
 	secretChatService := secretchatapp.NewService(secretChatStore, encryptedQueueStore)
@@ -1389,13 +1396,14 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	}
 	botsService.SetDonationsSource(donationsService)
 	donationsService.SetNotifier(botsService)
-	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
-	// 同属进程内一次性凭据,不跨实例)。
+	// Passkey: credentials are persisted in postgres; one-time challenges live in
+	// in-process memory (short TTL, the same kind of in-process one-time credential
+	// as the QR login token, not shared across instances).
 	passkeyStore := postgres.NewPasskeyStore(pool)
 	passkeyChallengeStore := memory.NewPasskeyChallengeStore()
 	passkeyService := passkeyapp.NewService(passkeyStore, passkeyChallengeStore, cfg.PasskeyRPID, cfg.DC,
 		passkeyapp.WithAllowedOrigins(cfg.PasskeyAllowedOrigins))
-	// 自定义云主题(Create a New Theme):主题目录与每用户已安装列表均持久化到 postgres。
+	// Custom cloud themes (Create a New Theme): both the theme catalog and each user's installed list are persisted in postgres.
 	themeService := themesapp.NewService(postgres.NewThemeStore(pool))
 	usersService := users.NewService(userStore,
 		users.WithBaseUserCache(userCache),
@@ -1486,7 +1494,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		return fmt.Errorf("migrate legacy ephemeral reports: %w", err)
 	}
 	if legacyReportsMigrated > 0 {
-		logger.Info("旧 ephemeral 举报已迁移到统一审核管线",
+		logger.Info("legacy ephemeral reports migrated to the unified moderation pipeline",
 			zap.Int("reports", legacyReportsMigrated))
 	}
 	translationService := translationapp.NewService(
@@ -1512,7 +1520,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
 		auth.WithOTPDeliveryFailureObserver(func(_ context.Context, request otpdelivery.Request, err error) {
-			logger.Named("otp").Warn("附加 OTP provider 投递失败，777000 App-code 保持有效",
+			logger.Named("otp").Warn("additional OTP provider delivery failed; the 777000 App-code remains valid",
 				zap.String("delivery_id", request.DeliveryID),
 				zap.String("purpose", string(request.Purpose)),
 				zap.String("channel", string(request.Channel)),
@@ -1607,9 +1615,11 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		}
 		appUpdateResolver = client
 	}
-	// 会话地理归属(account.getAuthorizations 的 country/region)。协议层没有
-	// help.requestIpAddress 的对等实现,不配 endpoint 时 resolver 为 nil,列表继续回传
-	// "Unknown" 占位文案——这是未启用时的预期路径,不该让服务起不来。
+	// Session geolocation (country/region for account.getAuthorizations). The
+	// protocol layer has no peer implementation of help.requestIpAddress, so when no
+	// endpoint is configured the resolver is nil and the list keeps returning the
+	// "Unknown" placeholder -- that is the expected path when disabled and must not
+	// prevent the service from starting.
 	geoIPResolver, err := geoip.New(geoip.Config{
 		Endpoints:          cfg.GeoIPEndpoints,
 		Timeout:            cfg.GeoIPTimeout,
@@ -1627,12 +1637,13 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	}
 	if geoIPResolver != nil {
 		defer func() { _ = geoIPResolver.Close() }()
-		// failover 链是有序的,启动时打出来,排查"为什么这条会话显示 Unknown"时能直接
-		// 看出当时主力是哪个。
-		logger.Info("会话地理归属已启用",
+		// The failover chain is ordered and printed at startup, so when diagnosing
+		// "why does this session show Unknown" you can see directly which backend was
+		// primary at the time.
+		logger.Info("session geolocation enabled",
 			zap.Strings("backends", geoip.EndpointNames(cfg.GeoIPEndpoints)))
 	} else {
-		logger.Info("会话地理归属未启用：account.getAuthorizations 继续回传 Unknown 占位文案")
+		logger.Info("session geolocation disabled: account.getAuthorizations keeps returning the Unknown placeholder")
 	}
 	router := rpc.New(rpc.Config{
 		DevStarsPaymentsEnabled:  cfg.DevStarsPaymentsEnabled,
@@ -1665,8 +1676,10 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		PublicAppScheme:          cfg.PublicAppScheme,
 		PublicAppLinkBase:        cfg.PublicAppLinkBase,
 		StarGiftTONStarsRate:     cfg.StarGiftTONStarsRate,
-		// PFS temp→perm 解析缓存：显式撤销会清缓存并断开连接，re-bind 即时失效；
-		// 配置 TTL 只承担跨进程/异常失效兜底，避免大连接数周期性打满 PG。
+		// PFS temp→perm resolution cache: an explicit revocation clears the cache and
+		// drops the connection, so a re-bind invalidates immediately; the configured
+		// TTL only serves as a fallback for cross-process/abnormal invalidation,
+		// avoiding a large connection count periodically saturating PG.
 		TempKeyResolveCacheTTL:         cfg.TempKeyResolveCacheTTL,
 		TempKeyResolveCacheMaxEntries:  cfg.TempKeyResolveCacheMaxEntries,
 		AuthUserCacheTTL:               cfg.AuthUserCacheTTL,
@@ -1927,8 +1940,9 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		moderationActionExecutor,
 		logger.Named("moderation").Named("actions"),
 	).Run(ctx)
-	// bot session 撤销、在线通知与 @ChatBot 流式草稿推送经 router 实现（需 tg.* 边界），
-	// router 创建后注入。
+	// Bot session revocation, online notifications and @ChatBot streaming draft
+	// pushes are implemented via the router (they need the tg.* boundary), injected
+	// after the router is created.
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionDelivery(router.TranscribedAudioDelivery)

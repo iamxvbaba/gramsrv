@@ -8,15 +8,16 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 回归：礼物实例行在所有权转移时被复用 —— id 保持不变、gift_date 被重置为
-// 转移时刻。资料页必须按收到时刻倒序，否则被转送的礼物会停在旧 id 的位置，
-// 而不是收礼人列表的顶部。
+// Regression: the gift instance row is reused when ownership is transferred — the id stays
+// the same and gift_date is reset to the transfer time. The profile page must order by received
+// time descending, otherwise a transferred gift stays at its old id's position instead of the
+// top of the recipient's list.
 func TestStarGiftProfileOrdersByReceivedDate(t *testing.T) {
 	ctx := context.Background()
 	owner := domain.Peer{Type: domain.PeerTypeUser, ID: 1002}
 	store := NewStarGiftStore()
 
-	// id 更小的行拿到最新的收到时刻（转移后的实例行）。
+	// The row with the smaller id gets the newest received time (the post-transfer instance row).
 	transferred, err := store.Create(ctx, domain.SavedStarGift{
 		Owner: owner, GiftID: 8001, RevisionID: 9001, MsgID: 200, Date: 1700000900,
 	})
@@ -43,7 +44,7 @@ func TestStarGiftProfileOrdersByReceivedDate(t *testing.T) {
 		t.Fatalf("date order = %v, want %v (newest received first)", got, want)
 	}
 
-	// 逐页行走：游标必须同时带日期，否则第二页按 id 续排会重复/漏项。
+	// Walk page by page: the cursor must carry the date too, otherwise paging by id on the second page duplicates or skips entries.
 	got = got[:0]
 	offset := ""
 	for pageNumber := 0; ; pageNumber++ {
@@ -65,16 +66,17 @@ func TestStarGiftProfileOrdersByReceivedDate(t *testing.T) {
 	}
 }
 
-// 回归：TDesktop 的礼物盒「Мои коллекционные」页签用
-// exclude_upgradable + exclude_unupgradable 取自己的收藏品。两个互斥条件若真的
-// 互相抵消，结果恒为空，页签永远不出现（data_star_gift.cpp:
-// MyUniqueGiftsSlice 里两个 flag 一起下发）。但放宽单个标志会破坏资料页的
-// Upgradeable / Limited 分类过滤，所以只在两个同时出现时整体放弃过滤。
+// Regression: TDesktop's gift box "My collectibles" tab uses
+// exclude_upgradable + exclude_unupgradable to fetch one's own collectibles. If the two mutually
+// exclusive conditions truly cancelled out, the result would always be empty and the tab would
+// never appear (in data_star_gift.cpp: MyUniqueGiftsSlice the two flags are sent together). But
+// relaxing a single flag would break the profile page's Upgradeable / Limited category filtering,
+// so filtering is dropped entirely only when both appear together.
 func TestStarGiftUpgradableFiltersDoNotCancelOut(t *testing.T) {
 	ctx := context.Background()
 	owner := domain.Peer{Type: domain.PeerTypeUser, ID: 1003}
 	store := NewStarGiftStore()
-	// 有库存的可升级礼物与已升级的收藏品。
+	// An upgradable gift with stock and an already-upgraded collectible.
 	store.SeedCatalog([]domain.StarGift{
 		{ID: 8001, RevisionID: 9001, Title: "Upgradable", UpgradeStars: 100, UpgradeIssued: 0, UpgradeTotal: 10},
 	})
@@ -91,7 +93,7 @@ func TestStarGiftUpgradableFiltersDoNotCancelOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create collectible: %v", err)
 	}
-	// 没有升级档的普通礼物：既不可升级，也不是收藏品。
+	// A plain gift with no upgrade tier: neither upgradable nor a collectible.
 	plain, err := store.Create(ctx, domain.SavedStarGift{
 		Owner: owner, GiftID: 8002, RevisionID: 9002, MsgID: 302, Date: 1700000100,
 	})
@@ -99,8 +101,8 @@ func TestStarGiftUpgradableFiltersDoNotCancelOut(t *testing.T) {
 		t.Fatalf("create plain gift: %v", err)
 	}
 
-	// 桌面端自有礼物请求的原样组合：exclude_unlimited + 两个互斥标志同时下发。
-	// 结果必须是自己的收藏品，而不是恒空的列表。
+	// The desktop client's own-gifts request exactly as sent: exclude_unlimited plus both mutually
+	// exclusive flags. The result must be one's own collectibles, not an always-empty list.
 	page, err := store.ListByOwnerFiltered(ctx, domain.SavedStarGiftFilter{
 		Owner: owner, ExcludeUnlimited: true, ExcludeUpgradable: true, ExcludeUnupgradable: true, Limit: 10,
 	})
@@ -111,8 +113,8 @@ func TestStarGiftUpgradableFiltersDoNotCancelOut(t *testing.T) {
 		t.Fatalf("own gifts = %+v, want exactly the collectible %d", page.Gifts, collectible)
 	}
 
-	// 单个标志必须保持原义：exclude_unupgradable 只留「可升级」，收藏品
-	// （没有可升级性）不通过——资料页的 Limited 分类依赖这条。
+	// A single flag must keep its original meaning: exclude_unupgradable keeps only "upgradable",
+	// so a collectible (which has no upgradability) does not pass — the profile page's Limited category relies on this.
 	page, err = store.ListByOwnerFiltered(ctx, domain.SavedStarGiftFilter{
 		Owner: owner, ExcludeUnupgradable: true, Limit: 10,
 	})
@@ -127,7 +129,7 @@ func TestStarGiftUpgradableFiltersDoNotCancelOut(t *testing.T) {
 		t.Fatalf("exclude_unupgradable = %v, want only [%d]", ids, upgradable)
 	}
 
-	// exclude_upgradable 单独使用仍然只排除可升级的普通礼物。
+	// Used alone, exclude_upgradable still only excludes upgradable plain gifts.
 	page, err = store.ListByOwnerFiltered(ctx, domain.SavedStarGiftFilter{
 		Owner: owner, ExcludeUpgradable: true, Limit: 10,
 	})

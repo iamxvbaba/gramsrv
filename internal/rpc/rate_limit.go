@@ -28,9 +28,12 @@ const (
 	defaultCatchupRateWindow            = time.Minute
 )
 
-// checkCatchupRateLimit 对 difference 类 catch-up RPC（getChannelDifference / getPeerDialogs）按
-// 每用户频率限速，超限返回 FLOOD_WAIT（设计 Phase 2 / §10.3）。keyPrefix 区分两类（各自独立计数），
-// 共用 cfg.CatchupRateLimit/Window 阈值。Limiter 未装配或阈值 <=0 时不限速（行为不变）。
+// checkCatchupRateLimit rate limits difference-type catch-up RPCs
+// (getChannelDifference / getPeerDialogs) per user, returning FLOOD_WAIT when
+// exceeded (design Phase 2 / §10.3). keyPrefix distinguishes the two kinds (each
+// counting independently) while sharing the cfg.CatchupRateLimit/Window threshold.
+// When the Limiter is not wired or the threshold is <=0 there is no rate limiting
+// (behavior unchanged).
 func (r *Router) checkCatchupRateLimit(ctx context.Context, userID int64, keyPrefix string) error {
 	if r.deps.Limiter == nil || userID == 0 {
 		return nil

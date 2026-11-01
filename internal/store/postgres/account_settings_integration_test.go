@@ -7,8 +7,8 @@ import (
 	"telesrv/internal/domain"
 )
 
-// TestAccountSettingsRoundTripPostgres 回归迁移 0004：账号级单例设置真实持久化
-// （globalPrivacy/accountTTL/sensitive/contactSignUp），含 not-found→默认、upsert 覆盖。
+// TestAccountSettingsRoundTripPostgres regression for migration 0004: account-level singleton settings are really persisted
+// (globalPrivacy/accountTTL/sensitive/contactSignUp), including not-found -> default and upsert overwrite.
 func TestAccountSettingsRoundTripPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -25,7 +25,7 @@ func TestAccountSettingsRoundTripPostgres(t *testing.T) {
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
 	})
 
-	// 未持久化：not found。
+	// Not persisted yet: not found.
 	if _, found, err := store.GetAccountSettings(ctx, u.ID); err != nil || found {
 		t.Fatalf("get before save = found %v err %v, want not found", found, err)
 	}
@@ -56,7 +56,7 @@ func TestAccountSettingsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("account settings round-trip = %+v, want %+v", got, want)
 	}
 
-	// upsert 覆盖：改若干字段再读回。
+	// upsert overwrite: change several fields and read back.
 	want.GlobalPrivacy.HideReadMarks = false
 	want.AccountTTLDays = 365
 	want.SensitiveContentEnabled = false

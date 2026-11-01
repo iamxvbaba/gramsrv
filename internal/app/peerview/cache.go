@@ -83,10 +83,13 @@ func (c *BatchCache) UsersForView(ctx context.Context, viewerUserID int64, ids [
 	return out, err
 }
 
-// Prime 预热某 viewer 的已投影用户（fan-out 跨 viewer 模板化把 per-recipient ForViewer 折叠成
-// 一次 ForViewers 后回填）。已存在的 id 不覆盖（保留同批已解析结果），避免预热与按需解析互相打架。
-// 预热的是「投影后、未叠加实时 presence」的用户——与 UsersForView 缓存层一致，presence 仍由
-// 上层在输出端叠加，故预热不破坏 presence 新鲜度。
+// Prime preheats the projected users of one viewer (the cross-viewer fan-out template folds the
+// per-recipient ForViewer into a single ForViewers call and then backfills). Existing ids are not
+// overwritten (the already-resolved results of the same batch are kept), so preheating and
+// on-demand resolution do not fight each other. What is preheated is the post-projection user set
+// before real-time presence is layered on — consistent with the UsersForView cache layer; presence
+// is still layered on at the output end by the upper layer, so preheating does not break presence
+// freshness.
 func (c *BatchCache) Prime(viewerUserID int64, users []domain.User) {
 	if c == nil || viewerUserID == 0 || len(users) == 0 {
 		return

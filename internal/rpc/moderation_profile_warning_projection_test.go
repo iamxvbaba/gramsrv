@@ -14,9 +14,10 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// getFullUser 里 SCAM/FAKE 账号的描述首行必须是服务端警告，其后才是 owner
-// 自己的文本；未标记的账号则原样返回（domain 层已有细粒度用例，这里守的是
-// 投影接线本身——提醒真的落进了 UserFull.About 这个字段）。
+// In getFullUser the first line of a SCAM/FAKE account's about must be the server warning,
+// followed by the owner's own text; unflagged accounts are returned verbatim (the domain layer
+// already has fine-grained cases; what is checked here is the projection wiring itself — that the
+// warning really lands in the UserFull.About field).
 func TestBuildUserFullProjectionPrependsModerationWarning(t *testing.T) {
 	visibleAbout := func() *userFullBatchPrivacy {
 		return &userFullBatchPrivacy{visible: map[domain.PrivacyKey]bool{domain.PrivacyKeyAbout: true}}
@@ -58,9 +59,9 @@ func TestBuildUserFullProjectionPrependsModerationWarning(t *testing.T) {
 	}
 }
 
-// Клиенты заполняют редактор bio тем же About, который пришёл из profile, поэтому
-// владельцу предупреждение отдавать нельзя — иначе серверная строка окажется в
-// поле, которое он сейчас правит, и уедет обратно через updateProfile.
+// Clients populate the bio editor with the same About that came from the profile, so the warning
+// must not be handed to the owner — otherwise the server-side line would land in the field they are
+// currently editing and go back out via updateProfile.
 func TestBuildUserFullProjectionSkipsModerationWarningForOwner(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 	self := domain.User{

@@ -12,10 +12,11 @@ import (
 
 func startParamInvalidErr() error { return tgerr.New(400, "START_PARAM_INVALID") }
 
-// onMessagesStartBot 处理 messages.startBot（公开 bot?start 深链与「启动 bot」
-// 入口）。语义：向 bot 发送一条可见的 "/start" 或 "/start <param>" 普通私聊消息，走标准
-// SendPrivateText 双盒+outbox，返回真实 Updates（I7）。bot 经此收到 start_param。
-// P3 仅私聊启动；peer 为群（加 bot 进群）后移（P4，群内 bot）。
+// onMessagesStartBot handles messages.startBot (the public bot?start deep link and the "start
+// bot" entry point). Semantics: send a visible ordinary private-chat message of "/start" or
+// "/start <param>" to the bot, going through the standard SendPrivateText double-box + outbox and
+// returning real Updates (I7). The bot receives start_param through this. P3 only supports
+// private-chat start; a group peer (adding the bot to a group) is deferred (P4, in-group bots).
 func (r *Router) onMessagesStartBot(ctx context.Context, req *tg.MessagesStartBotRequest) (tg.UpdatesClass, error) {
 	if req.RandomID == 0 {
 		return nil, randomIDEmptyErr()
@@ -37,8 +38,9 @@ func (r *Router) onMessagesStartBot(ctx context.Context, req *tg.MessagesStartBo
 	if !found || !bot.Bot {
 		return nil, botInvalidErr()
 	}
-	// P3 仅私聊启动：peer 必须解析为该 bot（深链 start 的 peer=bot）。群启动（加 bot
-	// 进群）属 P4 群内 bot，此处拒绝而非静默改写语义。
+	// P3 supports only private-chat start: the peer must resolve to this bot (the deep-link start
+	// peer=bot). A group start (adding the bot to a group) belongs to P4 in-group bots and is
+	// rejected here rather than silently rewriting the semantics.
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
 		return nil, err

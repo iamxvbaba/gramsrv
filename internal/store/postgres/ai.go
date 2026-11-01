@@ -13,7 +13,7 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// AIComposeStore 用 PostgreSQL 实现 store.AIComposeStore。
+// AIComposeStore implements store.AIComposeStore with PostgreSQL.
 type AIComposeStore struct {
 	db sqlcgen.DBTX
 }

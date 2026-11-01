@@ -1,4 +1,4 @@
--- v2 编号 0234；移植自 main 0205_star_gift_sold_out_backfill（main ebf2b23d），见 docs/main-v2-sync.md。
+-- v2 number 0234; ported from main 0205_star_gift_sold_out_backfill (main ebf2b23d), see docs/main-v2-sync.md.
 -- Backfill the sold-out flag for limited gifts whose inventory was already
 -- exhausted before the purchase/auction auto-flip landed. sold_out,
 -- first_sale_date and last_sale_date share the TL flag, and the RPC layer only

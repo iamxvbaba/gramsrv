@@ -1,4 +1,4 @@
--- v2 编号 0242；移植自 main 0213_private_dialog_ttl_snapshot（main e5971805），见 docs/main-v2-sync.md。
+-- v2 number 0242; ported from main 0213_private_dialog_ttl_snapshot (main e5971805), see docs/main-v2-sync.md.
 -- Existing dialog zero is a deliberate disabled timer. Only a new private
 -- conversation inherits its initiator's default; both dialog projections agree.
 -- Callers hold the ordered user locks while creating dialog/message rows.

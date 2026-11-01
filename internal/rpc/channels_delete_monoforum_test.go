@@ -16,10 +16,12 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestChannelsDeleteChannelCascadesMonoforumForbiddenRPC 锁定 Risk A 的 RPC 层契约:删除开启了
-// Direct Messages 的母广播频道时,响应与推送都必须为母频道 **和** 其关联 monoforum 各下发一条
-// ChannelForbidden 墓碑,且删后 getDialogs 两者都不再返回。否则在线客户端会留着 mono 会话
-// (isMonoforum=true 但 link 不可解析)继续渲染崩溃。
+// TestChannelsDeleteChannelCascadesMonoforumForbiddenRPC locks in the RPC-layer contract of Risk
+// A: when deleting a parent broadcast channel with Direct Messages enabled, both the response and
+// the pushes must send a ChannelForbidden tombstone for the parent channel **and** its linked
+// monoforum, and after deletion getDialogs must return neither. Otherwise online clients would
+// keep the mono conversation (isMonoforum=true but the link is unresolvable) and keep crashing on
+// render.
 func TestChannelsDeleteChannelCascadesMonoforumForbiddenRPC(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -122,7 +124,7 @@ func TestChannelsDeleteChannelCascadesMonoforumForbiddenRPC(t *testing.T) {
 		t.Fatalf("delete response missing ChannelForbidden for monoforum %d: %+v", monoID, respUpdates.Chats)
 	}
 
-	// 推送给接收方(含 owner 本人)的更新同样要带 mono 墓碑。
+	// The update pushed to recipients (including the owner itself) must likewise carry the mono tombstone.
 	pushed := sessions.snapshot()
 	pushedUpdates, ok := pushed.message.(*tg.Updates)
 	if !ok {

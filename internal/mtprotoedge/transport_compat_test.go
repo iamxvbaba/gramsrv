@@ -125,7 +125,8 @@ func TestQuickAckReadFlags(t *testing.T) {
 
 func TestCompatPaddedIntermediateWriteRoundTrip(t *testing.T) {
 	codec := &quickAckPaddedIntermediateCodec{}
-	// 连写多帧：验证复用写缓冲不串包，且 padding 后仍能被读端正确剥离。
+	// Write multiple frames in a row: verify the reused write buffer does not
+	// cross-contaminate packets, and padding is still correctly stripped by the reader.
 	for i := 0; i < 8; i++ {
 		var payload bin.Buffer
 		payload.PutInt32(int32(0x11220000 + i))

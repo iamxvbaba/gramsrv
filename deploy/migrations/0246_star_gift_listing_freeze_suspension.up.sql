@@ -1,26 +1,27 @@
--- v2 编号 0246；移植自 main 0217_star_gift_listing_freeze_suspension（main 3a84827a，B7b–7e），见 docs/main-v2-sync.md。
--- Заморозка аккаунта снимает с продажи все его маркет-листинги.
---
--- Строка листинга не удаляется: цена, валюта и время выставления должны пережить
--- цикл заморозки, поэтому листинг помечается suspended, а все чтения маркета
--- (payments.getResaleStarGifts, UniqueStarGiftValueInfo, resell_amount в
--- uniqueStarGift, проекции каталога) и покупка его игнорируют. Разморозка
--- возвращает ровно те строки, которые были выставлены до заморозки, обратно в
--- продажу с той же ценой. Переключение выполняется в той же транзакции, что и
--- сама заморозка (SetAccountFreeze), поэтому окна «аккаунт frozen, листинг ещё
--- в продаже» не существует.
+-- v2 number 0246; ported from main 0217_star_gift_listing_freeze_suspension (main 3a84827a, B7b–7e), see docs/main-v2-sync.md.
+-- Freezing an account unlists all of its market listings.
+-- 
+-- The listing row is not deleted: the price, currency and listing time must survive
+-- the freeze cycle, so the listing is marked suspended, and all market reads
+-- (payments.getResaleStarGifts, UniqueStarGiftValueInfo, resell_amount in
+-- uniqueStarGift, catalog projections) and purchases ignore it. Unfreezing returns
+-- exactly the rows that were listed before the freeze back for sale at the same
+-- price. The switch happens in the same transaction as the freeze itself
+-- (SetAccountFreeze), so a window of "account frozen, listing still on sale" does
+-- not exist.
 ALTER TABLE public.star_gift_listings
     ADD COLUMN suspended boolean NOT NULL DEFAULT false;
 
--- Частичный индекс обслуживает только переключение заморозки: замороженных
--- продавцов мало, а активных листингов много.
+-- The partial index serves only the freeze toggle: there are few frozen sellers but
+-- many active listings.
 CREATE INDEX star_gift_listings_seller_suspension_idx
     ON public.star_gift_listings(seller_peer_id)
     WHERE suspended AND seller_peer_type='user';
 
--- v2 编号 0246；移植自 main 0217（main 3a84827a，B7b–7e）。函数体以 v2 0186 定义为底
--- （含 externalization_pending 守卫），再加上 main 的冻结卖家检查；
--- 转入 suspended 由冻结事务本身完成，因此始终允许，frozen 检查只针对活跃挂单。
+-- v2 number 0246; ported from main 0217 (main 3a84827a, B7b–7e). The function body starts from the v2 0186
+-- definition (including the externalization_pending guard) and adds main's frozen-seller check;
+-- the freeze transaction itself performs the move to suspended, so that is always allowed, and the
+-- frozen check applies only to active listings.
 CREATE OR REPLACE FUNCTION public.telesrv_guard_star_gift_listing() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     gift_owner_type text;

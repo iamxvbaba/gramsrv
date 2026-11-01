@@ -29,9 +29,9 @@ const (
 )
 
 var (
-	// ErrUnavailable 表示 ASR 后端未配置（TELESRV_ASR_URL 为空），调用方回 TRANSCRIPTION_FAILED。
+	// ErrUnavailable means the ASR backend is not configured (TELESRV_ASR_URL is empty); the caller maps it to TRANSCRIPTION_FAILED.
 	ErrUnavailable = errors.New("transcription backend is not configured")
-	// ErrDocument 表示 voice 文档不可读或超限，无法送 ASR。
+	// ErrDocument means the voice document is unreadable or over the size limit and cannot be sent to ASR.
 	ErrDocument = errors.New("voice document is not available for transcription")
 )
 
@@ -56,8 +56,8 @@ type Service struct {
 	requestMu sync.Mutex
 	mu        sync.Mutex
 	inflight  map[int64][]jobRequest
-	// completionDelivery 把一位订阅者的 updateTranscribedAudio 编码成 durable
-	// delivery；由 runtime 在 router 创建后注入，避免 app 层反向依赖 rpc。
+	// completionDelivery encodes one subscriber's updateTranscribedAudio as a durable delivery; the
+	// runtime injects it after the router is created, so the app layer does not depend back on rpc.
 	completionDelivery CompletionDelivery
 }
 
@@ -89,7 +89,7 @@ func (s *Service) SetCompletionDelivery(build CompletionDelivery) {
 	s.completionDelivery = build
 }
 
-// Transcribe 返回当前已知状态：done 直接给文本，否则保证后台任务在跑并回 pending。
+// Transcribe returns the currently known state: if done it returns the text directly, otherwise it ensures the background task is running and returns pending.
 func (s *Service) Transcribe(
 	ctx context.Context,
 	userID int64,
@@ -135,7 +135,7 @@ func (s *Service) Transcribe(
 			return domain.TranscriptionResult{}, err
 		}
 		if !inserted {
-			// 并发首调已插行：重读，期间若已完成则直接回文本。
+			// A concurrent first call already inserted the row: re-read, and if it completed in the meantime return the text directly.
 			row, found, err = s.store.GetTranscription(ctx, document.ID)
 			if err != nil {
 				return domain.TranscriptionResult{}, err

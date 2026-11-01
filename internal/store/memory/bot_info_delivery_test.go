@@ -63,13 +63,13 @@ func TestBotInfoDeliveryAtomicLocalizationFallbackAndReplay(t *testing.T) {
 	}
 
 	version, changed, err = bots.UpdateBotInfoWithDelivery(ctx, bot.ID, domain.BotInfoUpdate{
-		LangCode: "zh-hans", SetName: true, Name: "本地名称",
+		LangCode: "zh-hans", SetName: true, Name: "Localized Name",
 	}, effects)
 	if err != nil || !changed || version != before.BotInfoVersion+2 {
 		t.Fatalf("localized update = version:%d changed:%v err:%v", version, changed, err)
 	}
 	localized, found, err := bots.GetBotInfo(ctx, bot.ID, "zh-hans")
-	if err != nil || !found || localized.Name != "本地名称" || localized.About != defaults.About || localized.Description != defaults.Description {
+	if err != nil || !found || localized.Name != "Localized Name" || localized.About != defaults.About || localized.Description != defaults.Description {
 		t.Fatalf("localized info = %+v found=%v err=%v", localized, found, err)
 	}
 	global, _, _ := bots.GetBotInfo(ctx, bot.ID, "")
