@@ -732,13 +732,19 @@ func tgStickerSet(set domain.StickerSet) tg.StickerSet {
 	return out
 }
 
+// tgStickerSetThumbs keeps only path outlines. upload.getFile serves no
+// inputStickerSetThumb location, yet clients build one for a cached size as
+// well as for downloadable ones and request it once the inline bytes leave
+// their cache. Android also shows a stripped size as the set icon instead of
+// the sticker. Without these sizes clients draw the icon from
+// thumb_document_id or the first sticker.
 func tgStickerSetThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 	if len(sizes) == 0 {
 		return nil
 	}
 	filtered := make([]domain.PhotoSize, 0, len(sizes))
 	for _, s := range sizes {
-		if s.Downloadable() {
+		if s.Kind != domain.PhotoSizeKindPath {
 			continue
 		}
 		filtered = append(filtered, s)
