@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -203,6 +204,61 @@ func TestCreateStickerSetClonesDocumentWhenReusedAcrossSets(t *testing.T) {
 	}
 	if id, _, ok := stickerDocs[0].StickerSetRef(); !ok || id != stickerSet.ID {
 		t.Fatalf("cloned doc set ref = %d/%v, want sticker set %d", id, ok, stickerSet.ID)
+	}
+}
+
+// Seed stickers carry inline cached previews that the document projection
+// advertises as downloadable sizes. A clone must keep a blob for each one, or
+// its thumbnail (also the set icon fallback) answers LOCATION_INVALID.
+func TestCreateStickerSetCloneCopiesCachedThumbBlob(t *testing.T) {
+	ctx := context.Background()
+	media := &fakeMediaStore{
+		docs: map[int64]domain.Document{
+			301: {
+				ID:         301,
+				AccessHash: 3001,
+				DCID:       2,
+				Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}},
+				Thumbs: []domain.PhotoSize{
+					{Kind: domain.PhotoSizeKindStripped, Type: "i", Bytes: []byte{1, 8, 8}},
+					{Kind: domain.PhotoSizeKindCached, Type: "m", W: 128, H: 128, Bytes: []byte{0xFF, 0xD8, 0xFF}},
+				},
+			},
+		},
+		sets: map[int64]domain.StickerSet{},
+		blobs: map[string]domain.FileBlob{
+			"doc:301:m": {LocationKey: "doc:301:m", Backend: "local", ObjectKey: "thumb-301-m", Size: 3, MimeType: "image/jpeg"},
+		},
+	}
+	svc := NewService(media, nil, 2)
+
+	if _, _, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID: 1000000001,
+		Title:         "Emoji Pack",
+		ShortName:     "emoji_pack",
+		Kind:          domain.StickerSetKindEmoji,
+		Items:         []domain.StickerSetItemInput{{DocumentID: 301, DocumentAccessHash: 3001, Emoji: "🙂"}},
+	}); err != nil {
+		t.Fatalf("create emoji set: %v", err)
+	}
+	stickerSet, stickerDocs, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID:   1000000001,
+		Title:           "Sticker Pack",
+		ShortName:       "sticker_pack",
+		ThumbDocumentID: 301,
+		ThumbAccessHash: 3001,
+		Items:           []domain.StickerSetItemInput{{DocumentID: 301, DocumentAccessHash: 3001, Emoji: "😄"}},
+	})
+	if err != nil {
+		t.Fatalf("create sticker set from existing emoji doc: %v", err)
+	}
+	clone := stickerDocs[0]
+	if clone.ID == 301 || stickerSet.ThumbDocumentID != clone.ID {
+		t.Fatalf("thumb document = %d, clone = %d, want the clone", stickerSet.ThumbDocumentID, clone.ID)
+	}
+	blob, ok := media.blobs[fmt.Sprintf("doc:%d:m", clone.ID)]
+	if !ok || blob.ObjectKey != "thumb-301-m" || blob.MimeType != "image/jpeg" {
+		t.Fatalf("clone m blob = %+v, %v, want a copy of doc:301:m", blob, ok)
 	}
 }
 

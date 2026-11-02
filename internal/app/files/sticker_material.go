@@ -69,7 +69,9 @@ func (s *Service) cloneStickerSetDocument(ctx context.Context, source domain.Doc
 	}
 
 	for _, thumb := range source.Thumbs {
-		if !thumb.Downloadable() || thumb.Type == "" {
+		// tgDocumentThumbs advertises a cached preview as a downloadable size,
+		// so the clone needs its blob as well.
+		if thumb.Type == "" || !thumb.Downloadable() && thumb.Kind != domain.PhotoSizeKindCached {
 			continue
 		}
 		oldKey := fmt.Sprintf("doc:%d:%s", oldID, thumb.Type)

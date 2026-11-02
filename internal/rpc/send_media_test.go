@@ -1259,15 +1259,48 @@ func TestStickerSetDoesNotExposeUnserviceableDownloadThumb(t *testing.T) {
 		ThumbDCID:    2,
 		ThumbVersion: 123,
 		Thumbs: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindCached, Type: "m", W: 100, H: 100, Bytes: []byte{4, 5, 6}},
+			{Kind: domain.PhotoSizeKindStripped, Type: "i", Bytes: []byte{1, 8, 8}},
 			{Kind: domain.PhotoSizeKindPath, Type: "j", Bytes: []byte{1, 2, 3}},
 			{Kind: domain.PhotoSizeKindDefault, Type: "a", W: 100, H: 100, Size: 4096},
 		},
 	})
 	thumbs, ok := set.GetThumbs()
 	if !ok || len(thumbs) != 1 {
-		t.Fatalf("thumbs = %#v, want only non-downloadable path thumb", thumbs)
+		t.Fatalf("thumbs = %#v, want only the path thumb", thumbs)
 	}
 	if _, ok := thumbs[0].(*tg.PhotoPathSize); !ok {
 		t.Fatalf("thumb[0] = %T, want PhotoPathSize", thumbs[0])
+	}
+}
+
+// A set whose thumbs are only inline previews (here copied from a seed
+// document) must not advertise a set-thumb location: TDesktop builds
+// inputStickerSetThumb for a cached size, and upload.getFile cannot serve it.
+func TestStickerSetWithInlineOnlyThumbsFallsBackToThumbDocument(t *testing.T) {
+	set := tgStickerSet(domain.StickerSet{
+		ID:              99,
+		AccessHash:      7,
+		Title:           "Set",
+		ShortName:       "set",
+		ThumbDocumentID: 555,
+		ThumbDCID:       2,
+		ThumbVersion:    1,
+		Thumbs: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindStripped, Type: "i", Bytes: []byte{1, 8, 8}},
+			{Kind: domain.PhotoSizeKindCached, Type: "m", W: 100, H: 100, Bytes: []byte{4, 5, 6}},
+		},
+	})
+	if thumbs, ok := set.GetThumbs(); ok {
+		t.Fatalf("thumbs = %#v, want none", thumbs)
+	}
+	if dc, ok := set.GetThumbDCID(); ok {
+		t.Fatalf("thumb_dc_id = %d, want unset", dc)
+	}
+	if version, ok := set.GetThumbVersion(); ok {
+		t.Fatalf("thumb_version = %d, want unset", version)
+	}
+	if id, ok := set.GetThumbDocumentID(); !ok || id != 555 {
+		t.Fatalf("thumb_document_id = %d, %v, want 555", id, ok)
 	}
 }
