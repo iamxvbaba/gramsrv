@@ -47,6 +47,7 @@ type fakeFiles struct {
 	getFileChunk       domain.FileChunk
 	getFileFound       bool
 	getFileCalls       int
+	ensureAvatarErr    error
 }
 
 type fakeProfilePhotoKey struct {
@@ -636,6 +637,24 @@ func (f *fakeFiles) CreateDocumentFromURL(_ context.Context, rawURL string) (dom
 func (f *fakeFiles) GetPhoto(_ context.Context, id int64) (domain.Photo, bool, error) {
 	p, ok := f.photos[id]
 	return p, ok, nil
+}
+func (f *fakeFiles) EnsureAvatarPhoto(_ context.Context, photo domain.Photo) (domain.Photo, error) {
+	if f.ensureAvatarErr != nil {
+		return domain.Photo{}, f.ensureAvatarErr
+	}
+	hasA, hasC := false, false
+	for _, s := range photo.Sizes {
+		switch s.Type {
+		case "a":
+			hasA = true
+		case "c":
+			hasC = true
+		}
+	}
+	if hasA && hasC {
+		return photo, nil
+	}
+	return f.putPhoto(domain.Photo{ID: 782, AccessHash: 7, DCID: 2, Sizes: fakeAvatarStaticSizes()}), nil
 }
 func (f *fakeFiles) GetDocument(_ context.Context, id int64) (domain.Document, bool, error) {
 	d, ok := f.docs[id]

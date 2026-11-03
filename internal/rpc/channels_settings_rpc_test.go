@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -301,6 +304,33 @@ func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
 	}, zaptest.NewLogger(t), clock.System)
 	input := &tg.InputChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
 
+	// Access hash mismatch must be rejected
+	if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: 999999}},
+	}); !tgerr.Is(err, "PHOTO_INVALID") {
+		t.Fatalf("channels.editPhoto with a wrong access hash err = %v, want PHOTO_INVALID", err)
+	}
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{err: domain.ErrPhotoInvalid, want: "PHOTO_INVALID"},
+		{err: errors.New("disk failure"), want: "INTERNAL_SERVER_ERROR"},
+	} {
+		files.ensureAvatarErr = tc.err
+		if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+			Channel: input,
+			Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
+		}); !tgerr.Is(err, tc.want) {
+			t.Fatalf("channels.editPhoto with EnsureAvatarPhoto error %v err = %v, want %s", tc.err, err, tc.want)
+		}
+	}
+	files.ensureAvatarErr = nil
+	if len(files.photos) != 1 {
+		t.Fatalf("rejected calls left %d photos, want only the message photo", len(files.photos))
+	}
+
 	setResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
 		Channel: input,
 		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
@@ -313,9 +343,31 @@ func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
 	if !ok {
 		t.Fatalf("set action = %T, want MessageActionChatEditPhoto", setAction)
 	}
+	// The message photo has no avatar sizes, so the channel gets a separate avatar photo and
+	// the message photo row stays as it was.
 	tgPhoto, ok := editPhoto.Photo.(*tg.Photo)
-	if !ok || tgPhoto.ID != photo.ID {
-		t.Fatalf("set action photo = %#v, want tg.Photo id %d", editPhoto.Photo, photo.ID)
+	if !ok || tgPhoto.ID == photo.ID {
+		t.Fatalf("set action photo = %#v, want a new avatar photo instead of %d", editPhoto.Photo, photo.ID)
+	}
+	avatarTypes := map[string]bool{}
+	for _, size := range tgPhoto.Sizes {
+		if size, ok := size.(*tg.PhotoSize); ok {
+			avatarTypes[size.Type] = true
+		}
+	}
+	if !avatarTypes["a"] || !avatarTypes["c"] {
+		t.Fatalf("set action photo sizes = %#v, want avatar sizes 'a' and 'c'", tgPhoto.Sizes)
+	}
+	if storedPhoto, found, err := files.GetPhoto(ctx, photo.ID); err != nil || !found || !reflect.DeepEqual(storedPhoto, photo) {
+		t.Fatalf("message photo = %+v found=%v err=%v, want unchanged %+v", storedPhoto, found, err, photo)
+	}
+
+	// Re-selecting the avatar photo keeps its id.
+	if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: tgPhoto.ID}},
+	}); !tgerr.Is(err, "CHAT_NOT_MODIFIED") {
+		t.Fatalf("channels.editPhoto with the current avatar err = %v, want CHAT_NOT_MODIFIED", err)
 	}
 
 	clearResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
