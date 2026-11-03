@@ -730,55 +730,64 @@ func uploadedFileRef(ownerUserID int64, file tg.InputFileClass) (domain.Uploaded
 
 // resolveInputChatPhoto resolves tg.InputChatPhoto into *domain.Photo (nil = clear the avatar).
 // Supports a new upload (InputChatUploadedPhoto) and referencing an existing photo
-// (InputChatPhoto{InputPhoto}). An existing photo without avatar sizes, such as a message
-// photo, is replaced by a separate avatar photo (Files.EnsureAvatarPhoto).
-func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input tg.InputChatPhotoClass) (*domain.Photo, error) {
+// (InputChatPhoto{InputPhoto}). An existing photo is only looked up and checked here and comes
+// back with existing set: it may still lack the avatar sizes, which chatAvatarPhoto adds once
+// the caller is known to be allowed to change the chat info.
+func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input tg.InputChatPhotoClass) (photo *domain.Photo, existing bool, err error) {
 	switch in := input.(type) {
 	case *tg.InputChatPhotoEmpty:
-		return nil, nil
+		return nil, false, nil
 	case *tg.InputChatUploadedPhoto:
 		if r.deps.Files == nil {
-			return nil, photoInvalidErr()
+			return nil, false, photoInvalidErr()
 		}
 		upload, mediaFlags, err := parseProfilePhotoUpload(in)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if mediaFlags == 0 {
-			return nil, photoInvalidErr()
+			return nil, false, photoInvalidErr()
 		}
 		photo, err := r.createProfilePhoto(ctx, userID, upload)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return &photo, nil
+		return &photo, false, nil
 	case *tg.InputChatPhoto:
 		switch id := in.ID.(type) {
 		case *tg.InputPhoto:
 			if r.deps.Files == nil {
-				return nil, photoInvalidErr()
+				return nil, false, photoInvalidErr()
 			}
 			photo, found, err := r.deps.Files.GetPhoto(ctx, id.ID)
 			if err != nil {
-				return nil, internalErr()
+				return nil, false, internalErr()
 			}
 			if !found {
-				return nil, photoInvalidErr()
+				return nil, false, photoInvalidErr()
 			}
 			if id.AccessHash != 0 && photo.AccessHash != 0 && id.AccessHash != photo.AccessHash {
-				return nil, photoInvalidErr()
+				return nil, false, photoInvalidErr()
 			}
-			avatar, err := r.deps.Files.EnsureAvatarPhoto(ctx, photo)
-			if err != nil {
-				return nil, photoUploadErr(err)
-			}
-			return &avatar, nil
+			return &photo, true, nil
 		default:
-			return nil, nil // InputPhotoEmpty -> clear
+			return nil, false, nil // InputPhotoEmpty -> clear
 		}
 	default:
-		return nil, photoInvalidErr()
+		return nil, false, photoInvalidErr()
 	}
+}
+
+// chatAvatarPhoto returns an existing photo from resolveInputChatPhoto as a chat avatar. A photo
+// without avatar sizes, such as a message photo, is replaced by a separate avatar photo
+// (Files.EnsureAvatarPhoto). That creates a photo, so callers run it only after the chat is
+// resolved and the caller's change-info right is checked: a rejected call must leave none.
+func (r *Router) chatAvatarPhoto(ctx context.Context, photo *domain.Photo) (*domain.Photo, error) {
+	avatar, err := r.deps.Files.EnsureAvatarPhoto(ctx, *photo)
+	if err != nil {
+		return nil, photoUploadErr(err)
+	}
+	return &avatar, nil
 }
 
 func photoUploadErr(err error) error {

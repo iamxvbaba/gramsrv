@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -485,5 +486,64 @@ func TestCommunityPhotoUploadAndDownloadLifecycle(t *testing.T) {
 	}
 	if _, ok := fullCleared.FullChat.(*tg.CommunityFull).ChatPhoto.(*tg.PhotoEmpty); !ok {
 		t.Fatalf("cleared fullChat ChatPhoto = %T, want *tg.PhotoEmpty", fullCleared.FullChat.(*tg.CommunityFull).ChatPhoto)
+	}
+}
+
+func TestCommunityEditPhotoChecksRightsBeforeDerivingAvatarRPC(t *testing.T) {
+	ctx := WithLayer(context.Background(), communitiesLayer)
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 711, Phone: "15552000011", FirstName: "Owner"})
+	member, _ := userStore.Create(ctx, domain.User{AccessHash: 712, Phone: "15552000012", FirstName: "Member"})
+	channelStore := memory.NewChannelStore()
+	channelService := appchannels.NewService(channelStore)
+	initial := communityRPCChannel(t, channelService, owner, "Initial", member)
+	communityService := appcommunities.NewService(memory.NewCommunityStore(userStore, channelStore, nil, nil))
+	files := &fakeFiles{}
+	photo := files.putPhoto(domain.Photo{
+		ID:         9921,
+		AccessHash: 9922,
+		DCID:       2,
+		Sizes: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindDefault, Type: "m", W: 320, H: 240, Size: 4096},
+			{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 800, H: 600, Size: 16384},
+		},
+	})
+	r := New(Config{DC: 2}, Deps{
+		Users:       appusers.NewService(userStore),
+		Channels:    channelService,
+		Communities: communityService,
+		Files:       files,
+	}, zaptest.NewLogger(t), clock.System)
+
+	createdResult, err := r.onCommunitiesCreate(WithUserID(ctx, owner.ID), &tg.CommunitiesCreateRequest{
+		Title: "Avatar Rights Community",
+		Peer:  &tg.InputPeerChannel{ChannelID: initial.ID, AccessHash: initial.AccessHash},
+	})
+	if err != nil {
+		t.Fatalf("communities.create: %v", err)
+	}
+	community := createdResult.(*tg.Updates).Chats[0].(*tg.Community)
+	req := &tg.ChannelsEditPhotoRequest{
+		Channel: &tg.InputChannel{ChannelID: community.ID, AccessHash: community.AccessHash},
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
+	}
+
+	if _, err := r.onChannelsEditPhoto(WithUserID(ctx, member.ID), req); !tgerr.Is(err, "CHAT_ADMIN_REQUIRED") {
+		t.Fatalf("member channels.editPhoto with a message photo err = %v, want CHAT_ADMIN_REQUIRED", err)
+	}
+	if len(files.photos) != 1 {
+		t.Fatalf("rejected call left %d photos, want only the message photo", len(files.photos))
+	}
+
+	setResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), req)
+	if err != nil {
+		t.Fatalf("owner channels.editPhoto with a message photo: %v", err)
+	}
+	chatPhoto, ok := setResult.(*tg.Updates).Chats[0].(*tg.Community).Photo.(*tg.ChatPhoto)
+	if !ok || chatPhoto.PhotoID == photo.ID || len(files.photos) != 2 {
+		t.Fatalf("community photo = %#v with %d photos, want a separate avatar photo", chatPhoto, len(files.photos))
+	}
+	if storedPhoto, found, err := files.GetPhoto(ctx, photo.ID); err != nil || !found || !reflect.DeepEqual(storedPhoto, photo) {
+		t.Fatalf("message photo = %+v found=%v err=%v, want unchanged %+v", storedPhoto, found, err, photo)
 	}
 }
