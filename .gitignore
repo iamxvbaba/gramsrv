@@ -33,3 +33,6 @@ tmp/
 # IDE
 .idea/
 .vscode/
+
+# Local rtd-edge drop-in test material (decoded RSA fixture + state).
+/deploy/docker/rtd-edge/
