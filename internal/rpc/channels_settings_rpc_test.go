@@ -301,12 +301,36 @@ func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
 	}, zaptest.NewLogger(t), clock.System)
 	input := &tg.InputChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
 
+	// Access hash mismatch must be rejected
+	if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: 999999}},
+	}); err == nil {
+		t.Fatal("expected error on access hash mismatch, got nil")
+	}
+
 	setResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
 		Channel: input,
 		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
 	})
 	if err != nil {
 		t.Fatalf("channels.editPhoto set: %v", err)
+	}
+	storedPhoto, found, err := files.GetPhoto(ctx, photo.ID)
+	if err != nil || !found {
+		t.Fatalf("files.GetPhoto(%d) found=%v err=%v", photo.ID, found, err)
+	}
+	hasA, hasC := false, false
+	for _, sz := range storedPhoto.Sizes {
+		if sz.Type == "a" {
+			hasA = true
+		}
+		if sz.Type == "c" {
+			hasC = true
+		}
+	}
+	if !hasA || !hasC {
+		t.Fatalf("storedPhoto.Sizes = %+v, want avatar sizes 'a' and 'c'", storedPhoto.Sizes)
 	}
 	setAction := requireChannelPhotoServiceAction(t, setResult, created.Channel.ID)
 	editPhoto, ok := setAction.(*tg.MessageActionChatEditPhoto)

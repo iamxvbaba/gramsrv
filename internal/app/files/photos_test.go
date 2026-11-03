@@ -734,3 +734,80 @@ func testJPEG(t *testing.T, w, h int) []byte {
 	}
 	return buf.Bytes()
 }
+
+func TestEnsureAvatarPhotoRendersMissingSizes(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	svc := NewService(media, blobs, 2)
+
+	jpegBytes := testJPEG(t, 400, 400)
+	objKey, err := blobs.Put(ctx, jpegBytes)
+	if err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	photoID := int64(8001)
+	if err := media.PutFileBlob(ctx, domain.FileBlob{
+		LocationKey: fmt.Sprintf("photo:%d:x", photoID),
+		Backend:     domain.MediaBackendLocalFS,
+		ObjectKey:   objKey,
+		Size:        int64(len(jpegBytes)),
+		MimeType:    "image/jpeg",
+	}); err != nil {
+		t.Fatalf("PutFileBlob: %v", err)
+	}
+
+	initialPhoto := domain.Photo{
+		ID:         photoID,
+		AccessHash: 12345,
+		DCID:       2,
+		Sizes: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 400, H: 400, Size: len(jpegBytes)},
+		},
+	}
+	if err := media.PutPhoto(ctx, initialPhoto); err != nil {
+		t.Fatalf("PutPhoto: %v", err)
+	}
+
+	ensured, err := svc.EnsureAvatarPhoto(ctx, initialPhoto)
+	if err != nil {
+		t.Fatalf("EnsureAvatarPhoto: %v", err)
+	}
+
+	hasS, hasA, hasC := false, false, false
+	for _, sz := range ensured.Sizes {
+		switch sz.Type {
+		case "s":
+			hasS = true
+		case "a":
+			hasA = true
+		case "c":
+			hasC = true
+		}
+	}
+	if !hasS || !hasA || !hasC {
+		t.Fatalf("ensured.Sizes = %+v, want s, a, c present", ensured.Sizes)
+	}
+
+	for _, sizeType := range []string{"s", "a", "c"} {
+		blob, found, err := media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photoID, sizeType))
+		if err != nil || !found {
+			t.Fatalf("blob photo:%d:%s found=%v err=%v", photoID, sizeType, found, err)
+		}
+		data, err := blobs.Get(ctx, blob.ObjectKey)
+		if err != nil || len(data) == 0 {
+			t.Fatalf("blobs.Get for photo:%d:%s err=%v len=%d", photoID, sizeType, err, len(data))
+		}
+	}
+
+	again, err := svc.EnsureAvatarPhoto(ctx, ensured)
+	if err != nil {
+		t.Fatalf("second EnsureAvatarPhoto: %v", err)
+	}
+	if len(again.Sizes) != len(ensured.Sizes) {
+		t.Fatalf("second call modified sizes: len=%d want=%d", len(again.Sizes), len(ensured.Sizes))
+	}
+}

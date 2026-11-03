@@ -787,6 +787,94 @@ func (s *Service) createAvatarPhoto(ctx context.Context, data []byte) (domain.Ph
 	return photo, nil
 }
 
+// EnsureAvatarPhoto ensures that a photo used as a chat, channel or profile avatar has
+// the required avatar sizes ('s', 'a', 'c'). When a photo originally uploaded as a message
+// photo (having only 'm'/'x' sizes) is selected as an avatar, this generates and persists
+// the missing avatar renditions so clients can download them without LOCATION_INVALID.
+func (s *Service) EnsureAvatarPhoto(ctx context.Context, photo domain.Photo) (domain.Photo, error) {
+	if photo.ID == 0 {
+		return photo, nil
+	}
+	hasA := false
+	hasC := false
+	for _, sz := range photo.Sizes {
+		if sz.Type == "a" {
+			hasA = true
+		}
+		if sz.Type == "c" {
+			hasC = true
+		}
+	}
+	if hasA && hasC {
+		return photo, nil
+	}
+
+	var data []byte
+	candidates := []string{"x", "y", "w", "m", "s"}
+	for _, pref := range candidates {
+		blob, found, err := s.media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photo.ID, pref))
+		if err == nil && found && blob.ObjectKey != "" {
+			bData, err := s.blobs.Get(ctx, blob.ObjectKey)
+			if err == nil && len(bData) > 0 {
+				data = bData
+				break
+			}
+		}
+	}
+	if len(data) == 0 {
+		for _, sz := range photo.Sizes {
+			if sz.Type != "" {
+				blob, found, err := s.media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photo.ID, sz.Type))
+				if err == nil && found && blob.ObjectKey != "" {
+					bData, err := s.blobs.Get(ctx, blob.ObjectKey)
+					if err == nil && len(bData) > 0 {
+						data = bData
+						break
+					}
+				}
+			}
+		}
+	}
+	if len(data) == 0 {
+		for _, sz := range photo.Sizes {
+			if len(sz.Bytes) > 0 {
+				data = sz.Bytes
+				break
+			}
+		}
+	}
+	if len(data) == 0 {
+		return photo, domain.ErrPhotoInvalid
+	}
+
+	specs := photoSizeSpecsForAvatar(data)
+	neededSpecs := make([]photoSizeSpec, 0, len(specs))
+	for _, spec := range specs {
+		present := false
+		for _, sz := range photo.Sizes {
+			if sz.Type == spec.Type {
+				present = true
+				break
+			}
+		}
+		if !present {
+			neededSpecs = append(neededSpecs, spec)
+		}
+	}
+
+	if len(neededSpecs) > 0 {
+		newSizes, err := s.putAvatarStaticSizes(ctx, photo.ID, data, neededSpecs)
+		if err != nil {
+			return photo, err
+		}
+		photo.Sizes = append(photo.Sizes, newSizes...)
+		if err := s.media.PutPhoto(ctx, photo); err != nil {
+			return photo, err
+		}
+	}
+	return photo, nil
+}
+
 func (s *Service) putPhotoStaticSizes(ctx context.Context, photoID int64, data []byte, specs []photoSizeSpec) ([]domain.PhotoSize, error) {
 	objectKey, err := s.blobs.Put(ctx, data)
 	if err != nil {

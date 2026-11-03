@@ -637,6 +637,24 @@ func (f *fakeFiles) GetPhoto(_ context.Context, id int64) (domain.Photo, bool, e
 	p, ok := f.photos[id]
 	return p, ok, nil
 }
+func (f *fakeFiles) EnsureAvatarPhoto(_ context.Context, photo domain.Photo) (domain.Photo, error) {
+	hasA, hasC := false, false
+	for _, s := range photo.Sizes {
+		if s.Type == "a" {
+			hasA = true
+		}
+		if s.Type == "c" {
+			hasC = true
+		}
+	}
+	if !hasA {
+		photo.Sizes = append(photo.Sizes, domain.PhotoSize{Kind: domain.PhotoSizeKindDefault, Type: "a", W: 160, H: 160, Size: 4096})
+	}
+	if !hasC {
+		photo.Sizes = append(photo.Sizes, domain.PhotoSize{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 16384})
+	}
+	return f.putPhoto(photo), nil
+}
 func (f *fakeFiles) GetDocument(_ context.Context, id int64) (domain.Document, bool, error) {
 	d, ok := f.docs[id]
 	return d, ok, nil

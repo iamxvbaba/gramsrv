@@ -1019,6 +1019,7 @@ type FilesService interface {
 	CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error)
 	CreateDocumentFromBytes(ctx context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error)
 	GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error)
+	EnsureAvatarPhoto(ctx context.Context, photo domain.Photo) (domain.Photo, error)
 	GetDocument(ctx context.Context, id int64) (domain.Document, bool, error)
 	UploadProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID int64, file domain.UploadedFileRef, date int) (domain.Photo, error)
 	UploadProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, file domain.UploadedFileRef, date int) (domain.Photo, error)

@@ -764,7 +764,14 @@ func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input 
 			if !found {
 				return nil, photoInvalidErr()
 			}
-			return &photo, nil
+			if id.AccessHash != 0 && photo.AccessHash != 0 && id.AccessHash != photo.AccessHash {
+				return nil, photoInvalidErr()
+			}
+			ensured, err := r.deps.Files.EnsureAvatarPhoto(ctx, photo)
+			if err != nil {
+				return nil, photoInvalidErr()
+			}
+			return &ensured, nil
 		default:
 			return nil, nil // InputPhotoEmpty -> clear
 		}
