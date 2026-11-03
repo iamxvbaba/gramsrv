@@ -43,7 +43,7 @@ func nullableOfficialGiftJSON(value []byte) any {
 }
 
 func (s *StarGiftStore) PublishCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error) {
-	write.SlugPrefix = strings.ToLower(strings.TrimSpace(write.SlugPrefix))
+	write.SlugPrefix = strings.TrimSpace(write.SlugPrefix)
 	write.Actor = strings.TrimSpace(write.Actor)
 	write.CommandID = strings.TrimSpace(write.CommandID)
 	if err := domain.ValidateStarGiftCollectibleWrite(write); err != nil {
@@ -453,7 +453,7 @@ WHERE c.gift_id=$1 AND a.id=$2`, table), giftID, attributeID).Scan(
 }
 
 func (s *StarGiftStore) UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error) {
-	return s.uniqueByPredicate(ctx, "u.slug=$1", strings.ToLower(strings.TrimSpace(slug)))
+	return s.uniqueByPredicate(ctx, "lower(u.slug)=$1", strings.ToLower(strings.TrimSpace(slug)))
 }
 
 func (s *StarGiftStore) UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error) {

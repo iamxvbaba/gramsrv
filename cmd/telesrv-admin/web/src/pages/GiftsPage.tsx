@@ -13,6 +13,7 @@ import type { CommandResult, OfficialStarGiftRow, StarGiftRow } from "../types";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 import { GiftAttributesModal } from "./GiftAttributesModal";
 import { GiftPackModal } from "./GiftPackModal";
+import { defaultGiftSlug, slugFromTitle } from "../lib/slug";
 
 type OfficialGiftCategory = "all" | "upgrade" | "craft" | "basic";
 
@@ -269,7 +270,7 @@ return {
 		per_user_total: Number(perUserLimit),
 		sort_order: Number(sortOrder),
 		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
-		supply_total: includeCollectible ? Number(supplyTotal) : 0, slug_prefix: slugPrefix.trim().toLowerCase(),
+		supply_total: includeCollectible ? Number(supplyTotal) : 0, slug_prefix: slugPrefix.trim(),
 		locked_until_date: lockedUntil
 	};
   }
@@ -283,7 +284,7 @@ return {
     setIncludeCollectible(gift.can_upgrade);
 		setUpgradeStars(gift.upgrade_stars);
     setSupplyTotal(String(gift.can_upgrade ? (gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)) : 0));
-    setSlugPrefix(`official-${gift.source_gift_id}`);
+    setSlugPrefix(defaultGiftSlug(gift.title ?? "", gift.source_gift_id));
     setPreview(null);
   }
 
@@ -427,7 +428,7 @@ return {
                   {includeCollectible && <div className="gift-fields-grid">
                     <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
-                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); setPreview(null); }} /></label>
+                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} placeholder={t("collectibles.slugAutoHint")} onChange={(e) => { setSlugPrefix(e.target.value); setPreview(null); }} /></label>
                   </div>}
                   {includeCollectible && <div className="gift-import-note"><span>{t("gifts.officialSupplyHint")}</span></div>}
                 </>}
@@ -446,7 +447,7 @@ return {
                 </label>
               </>}
               <div className="gift-fields-grid">
-                <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => { setTitle(e.target.value); setPreview(null); }} /></label>
+                <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => { const next = e.target.value; if (slugPrefix === "" || slugPrefix === slugFromTitle(title)) setSlugPrefix(slugFromTitle(next)); setTitle(next); setPreview(null); }} /></label>
                 <label><span>{t("gifts.stars")}</span><input type="number" min="1" value={stars} onChange={(e) => { setStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
