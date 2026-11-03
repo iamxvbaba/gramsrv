@@ -730,7 +730,8 @@ func uploadedFileRef(ownerUserID int64, file tg.InputFileClass) (domain.Uploaded
 
 // resolveInputChatPhoto resolves tg.InputChatPhoto into *domain.Photo (nil = clear the avatar).
 // Supports a new upload (InputChatUploadedPhoto) and referencing an existing photo
-// (InputChatPhoto{InputPhoto}).
+// (InputChatPhoto{InputPhoto}). An existing photo without avatar sizes, such as a message
+// photo, is replaced by a separate avatar photo (Files.EnsureAvatarPhoto).
 func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input tg.InputChatPhotoClass) (*domain.Photo, error) {
 	switch in := input.(type) {
 	case *tg.InputChatPhotoEmpty:
@@ -767,11 +768,11 @@ func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input 
 			if id.AccessHash != 0 && photo.AccessHash != 0 && id.AccessHash != photo.AccessHash {
 				return nil, photoInvalidErr()
 			}
-			ensured, err := r.deps.Files.EnsureAvatarPhoto(ctx, photo)
+			avatar, err := r.deps.Files.EnsureAvatarPhoto(ctx, photo)
 			if err != nil {
-				return nil, photoInvalidErr()
+				return nil, photoUploadErr(err)
 			}
-			return &ensured, nil
+			return &avatar, nil
 		default:
 			return nil, nil // InputPhotoEmpty -> clear
 		}

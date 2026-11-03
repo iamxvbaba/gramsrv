@@ -14,6 +14,7 @@ import (
 	"image/png"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -787,92 +788,78 @@ func (s *Service) createAvatarPhoto(ctx context.Context, data []byte) (domain.Ph
 	return photo, nil
 }
 
-// EnsureAvatarPhoto ensures that a photo used as a chat, channel or profile avatar has
-// the required avatar sizes ('s', 'a', 'c'). When a photo originally uploaded as a message
-// photo (having only 'm'/'x' sizes) is selected as an avatar, this generates and persists
-// the missing avatar renditions so clients can download them without LOCATION_INVALID.
+// EnsureAvatarPhoto returns a photo that can be set as a chat or channel avatar. A photo that
+// already has the avatar sizes ('a' and 'c'), such as a previous avatar, is returned unchanged.
+// Any other photo, such as a message photo with only 'm'/'x', gets a separate avatar photo
+// rendered from its largest stored size. The original row is never rewritten: photo rows are
+// immutable and messages keep their own copy of the sizes.
 func (s *Service) EnsureAvatarPhoto(ctx context.Context, photo domain.Photo) (domain.Photo, error) {
-	if photo.ID == 0 {
+	if hasAvatarSizes(photo) {
 		return photo, nil
 	}
-	hasA := false
-	hasC := false
-	for _, sz := range photo.Sizes {
-		if sz.Type == "a" {
+	data, err := s.avatarSourceBytes(ctx, photo)
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	return s.createAvatarPhoto(ctx, data)
+}
+
+func hasAvatarSizes(photo domain.Photo) bool {
+	hasA, hasC := false, false
+	for _, size := range photo.Sizes {
+		switch size.Type {
+		case "a":
 			hasA = true
-		}
-		if sz.Type == "c" {
+		case "c":
 			hasC = true
 		}
 	}
-	if hasA && hasC {
-		return photo, nil
-	}
+	return hasA && hasC
+}
 
-	var data []byte
-	candidates := []string{"x", "y", "w", "m", "s"}
-	for _, pref := range candidates {
-		blob, found, err := s.media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photo.ID, pref))
-		if err == nil && found && blob.ObjectKey != "" {
-			bData, err := s.blobs.Get(ctx, blob.ObjectKey)
-			if err == nil && len(bData) > 0 {
-				data = bData
-				break
-			}
+// avatarSourceBytes reads the largest stored image size of a photo, falling back to inline
+// cached bytes. Stripped and path sizes are not decodable images and are skipped. Message photo
+// bytes are stored without decoding, and this runs on every chat photo update, so a blob over
+// avatarSourceMaxBytes is skipped before it is read and an image over avatarSourceMaxPixels
+// before it is decoded; the next smaller size is tried instead.
+func (s *Service) avatarSourceBytes(ctx context.Context, photo domain.Photo) ([]byte, error) {
+	sizes := make([]domain.PhotoSize, 0, len(photo.Sizes))
+	for _, size := range photo.Sizes {
+		if size.Kind == domain.PhotoSizeKindDefault || size.Kind == domain.PhotoSizeKindProgressive {
+			sizes = append(sizes, size)
 		}
 	}
-	if len(data) == 0 {
-		for _, sz := range photo.Sizes {
-			if sz.Type != "" {
-				blob, found, err := s.media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photo.ID, sz.Type))
-				if err == nil && found && blob.ObjectKey != "" {
-					bData, err := s.blobs.Get(ctx, blob.ObjectKey)
-					if err == nil && len(bData) > 0 {
-						data = bData
-						break
-					}
-				}
-			}
-		}
-	}
-	if len(data) == 0 {
-		for _, sz := range photo.Sizes {
-			if len(sz.Bytes) > 0 {
-				data = sz.Bytes
-				break
-			}
-		}
-	}
-	if len(data) == 0 {
-		return photo, domain.ErrPhotoInvalid
-	}
-
-	specs := photoSizeSpecsForAvatar(data)
-	neededSpecs := make([]photoSizeSpec, 0, len(specs))
-	for _, spec := range specs {
-		present := false
-		for _, sz := range photo.Sizes {
-			if sz.Type == spec.Type {
-				present = true
-				break
-			}
-		}
-		if !present {
-			neededSpecs = append(neededSpecs, spec)
-		}
-	}
-
-	if len(neededSpecs) > 0 {
-		newSizes, err := s.putAvatarStaticSizes(ctx, photo.ID, data, neededSpecs)
+	slices.SortStableFunc(sizes, func(a, b domain.PhotoSize) int {
+		return b.W*b.H - a.W*a.H
+	})
+	for _, size := range sizes {
+		blob, found, err := s.media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photo.ID, size.Type))
 		if err != nil {
-			return photo, err
+			return nil, err
 		}
-		photo.Sizes = append(photo.Sizes, newSizes...)
-		if err := s.media.PutPhoto(ctx, photo); err != nil {
-			return photo, err
+		if !found || blob.ObjectKey == "" || blob.Size <= 0 || blob.Size > avatarSourceMaxBytes {
+			continue
+		}
+		data, total, err := s.blobs.GetRange(ctx, blob.ObjectKey, 0, blob.Size)
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) == blob.Size && total == blob.Size && avatarSourceDecodable(data) {
+			return data, nil
 		}
 	}
-	return photo, nil
+	for _, size := range photo.Sizes {
+		if size.Kind == domain.PhotoSizeKindCached && avatarSourceDecodable(size.Bytes) {
+			return size.Bytes, nil
+		}
+	}
+	return nil, domain.ErrPhotoInvalid
+}
+
+func avatarSourceDecodable(data []byte) bool {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return err == nil && cfg.Width > 0 && cfg.Height > 0 &&
+		int64(cfg.Width)*int64(cfg.Height) <= avatarSourceMaxPixels
 }
 
 func (s *Service) putPhotoStaticSizes(ctx context.Context, photoID int64, data []byte, specs []photoSizeSpec) ([]domain.PhotoSize, error) {
@@ -1119,6 +1106,10 @@ const (
 	avatarStillSize            = 640
 	avatarMarkupScale          = 0.70
 	avatarMarkupMaxSourceBytes = 2 << 20 // guard threshold for small emoji/sticker thumb objects.
+	// avatarSourceMaxBytes and avatarSourceMaxPixels bound the stored photo that EnsureAvatarPhoto
+	// reads and decodes (Telegram caps photos at 10 MB; the pixel cap matches maxWebpageImagePixels).
+	avatarSourceMaxBytes  = int64(10 << 20)
+	avatarSourceMaxPixels = int64(25_000_000)
 )
 
 // avatarVideoStill generates the static size bytes for an animated avatar. When the emoji/sticker

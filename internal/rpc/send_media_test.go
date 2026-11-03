@@ -47,6 +47,7 @@ type fakeFiles struct {
 	getFileChunk       domain.FileChunk
 	getFileFound       bool
 	getFileCalls       int
+	ensureAvatarErr    error
 }
 
 type fakeProfilePhotoKey struct {
@@ -638,22 +639,22 @@ func (f *fakeFiles) GetPhoto(_ context.Context, id int64) (domain.Photo, bool, e
 	return p, ok, nil
 }
 func (f *fakeFiles) EnsureAvatarPhoto(_ context.Context, photo domain.Photo) (domain.Photo, error) {
+	if f.ensureAvatarErr != nil {
+		return domain.Photo{}, f.ensureAvatarErr
+	}
 	hasA, hasC := false, false
 	for _, s := range photo.Sizes {
-		if s.Type == "a" {
+		switch s.Type {
+		case "a":
 			hasA = true
-		}
-		if s.Type == "c" {
+		case "c":
 			hasC = true
 		}
 	}
-	if !hasA {
-		photo.Sizes = append(photo.Sizes, domain.PhotoSize{Kind: domain.PhotoSizeKindDefault, Type: "a", W: 160, H: 160, Size: 4096})
+	if hasA && hasC {
+		return photo, nil
 	}
-	if !hasC {
-		photo.Sizes = append(photo.Sizes, domain.PhotoSize{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 16384})
-	}
-	return f.putPhoto(photo), nil
+	return f.putPhoto(domain.Photo{ID: 782, AccessHash: 7, DCID: 2, Sizes: fakeAvatarStaticSizes()}), nil
 }
 func (f *fakeFiles) GetDocument(_ context.Context, id int64) (domain.Document, bool, error) {
 	d, ok := f.docs[id]
