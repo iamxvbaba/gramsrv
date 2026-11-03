@@ -1,0 +1,8 @@
+# Normalize text files to LF on checkout.
+#
+# Shell scripts are the critical case: a CRLF shebang (`#!/bin/sh\r`) makes the
+# kernel look for an interpreter named "/bin/sh\r", so container entrypoints
+# die with:
+#   exec /usr/local/bin/telesrv-container-entrypoint failed: No such file or directory
+* text=auto eol=lf
+*.sh text eol=lf

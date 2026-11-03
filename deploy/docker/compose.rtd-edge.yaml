@@ -1,0 +1,51 @@
+# Overlay that replaces the gramsrv v2 Go edge with the rtd Rust edge while
+# keeping the rest of the v2 stack (postgres, redis, migrate, file, core)
+# unchanged.
+#
+# The edge image is published to ghcr.io/roon9e/rtd-edge (linux/amd64 and
+# linux/arm64) by the rtd repository's release workflow, so no local build is
+# needed. Then bring the stack up with this overlay:
+#
+#   docker compose -f compose.yaml -f compose.rtd-edge.yaml up -d \
+#     postgres redis migrate file core edge
+#
+# The rtd edge serves the same MTProto ingress on 0.0.0.0:2398 and forwards
+# admitted calls to the v2 core's CoreExecService at core:2440, presenting the
+# shared bearer token as gRPC `authorization` metadata.
+#
+# Like the v2 edge, the RSA identity is resolved onto the shared `edge_state`
+# volume by the image entrypoint: `TELESRV_RSA_IDENTITY_MODE=test` decodes the
+# published test key from the read-only `./assets` mount, `generated` creates a
+# fresh key on first run. The private key is never a file in the checkout.
+services:
+  edge:
+    image: ghcr.io/roon9e/rtd-edge:v0.1.0
+    # Do not rebuild with the Go edge's Dockerfile/target.
+    build: !reset null
+    environment:
+      RTD_EDGE_BIND: 0.0.0.0:2398
+      RTD_EDGE_DC: "2"
+      # The gramsrv v2 core re-admits the wire against the layer-229 schema, so
+      # the edge must admit bare requests under 229 rather than rtd's canonical 232.
+      RTD_EDGE_LAYER: "229"
+      RTD_EDGE_CORE: http://core:2440
+      RTD_EDGE_CORE_TOKEN: ${TELESRV_CORE_EXEC_TOKEN:?set TELESRV_CORE_EXEC_TOKEN in deploy/docker/.env}
+      RTD_EDGE_WEBSOCKET: "true"
+      # Resolve the RSA identity onto the shared `edge_state` volume (mounted by
+      # the base `edge` service), exactly like the v2 edge.
+      RTD_EDGE_STATE_DIR: /var/lib/telesrv-edge
+      RTD_EDGE_RSA_IDENTITY_MODE: ${TELESRV_RSA_IDENTITY_MODE:-test}
+      RTD_EDGE_TEST_KEY: /usr/share/telesrv/keys/test-server-rsa.pem.b64
+    # Only the dependencies the rtd edge actually uses (drop egress).
+    depends_on: !override
+      core:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      file:
+        condition: service_healthy
+    volumes:
+      # The published test RSA key, mounted read-only for `test` mode.
+      - ./assets:/usr/share/telesrv/keys:ro
+    # The Go edge's `telesrv-healthcheck` binary is not in the rtd image.
+    healthcheck: !reset null
