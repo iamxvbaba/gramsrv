@@ -190,34 +190,30 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Sidebar section | Tab | Path | Required right |
 | --- | --- | --- | --- |
 | Overview | Overview | `/` | `dashboard.read` |
-| Accounts | Accounts | `/accounts` | `accounts.read` |
-| Accounts | Account Rating | `/account-ratings` | `ratings.read` |
-| Accounts | Shared devices | `/accounts/shared-devices` | `accounts.read` |
-| Groups / Channels | Groups / Channels | `/channels` | `channels.read` |
-| Bots | Bots | `/bots` | `bots.read` |
+| Moderation | Messages | `/messages/private` | `messages.read` (also served at `/messages`) |
+| Moderation | Groups | `/messages/groups` | `messages.read` |
+| Moderation | Reports | `/moderation` | `moderation.review` |
+| Moderation | Shared devices | `/accounts/shared-devices` | `accounts.read` |
 | Verification | Official | `/verification` | `verification.review` |
 | Verification | Third-party | `/bot-verification` | `botverification.review` |
+| Content | Stickers | `/stickers` | `content.read` |
+| Content | Emoji | `/emoji` | `content.read` |
+| Content | GIFs | `/gif-catalog` | `content.read` |
+| Economy | Stars balances | `/stars` | `stars.read` |
+| Economy | Premium | `/monetization` | `premium.manage` (also served at `/star-issue`) |
+| Economy | Bot prices | `/prices` | `prices.manage` |
+| Economy | Donations | `/donations` | `donations.manage` |
+| Economy | Account Rating | `/account-ratings` | `ratings.read` |
 | Gifts | Star Gift Catalog | `/gifts` | `gifts.read` |
 | Gifts | Give Gifts | `/give-gifts` | `gifts.read` |
 | Gifts | Auctions & Drops | `/auctions` | `gifts.read` |
-| Commerce | Stars & Premium | `/monetization` | `premium.manage` (also served at `/star-issue`) |
-| Commerce | Prices | `/prices` | `prices.manage` |
-| Commerce | Stars balances | `/stars` | `stars.read` |
-| NFT Items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
-| NFT Items | NFT Numbers | `/collectible-phones` | `phones.read` |
-| NFT Items | NFT Gifts | `/nft-gifts` | `gifts.read` |
-| Media | Stickers | `/stickers` | `content.read` |
-| Media | Emoji | `/emoji` | `content.read` |
-| Media | GIFs | `/gif-catalog` | `content.read` |
-| Media | Storage | `/storage` | `storage.read` |
-| Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
-| Messages | Private | `/messages/private` | `messages.read` (also served at `/messages`) |
-| Messages | Groups | `/messages/groups` | `messages.read` |
-| Reports | Reports | `/moderation` | `moderation.review` |
-| Donations | Donations | `/donations` | `donations.manage` |
-| Audit log | Audit log | `/audit-log` | `audit.read` |
-| Operators | Operators | `/admin-users` | `admins.manage` |
-| Server Settings | Server Settings | `/server-settings` | `server.manage` |
+| NFT items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
+| NFT items | NFT Numbers | `/collectible-phones` | `phones.read` |
+| NFT items | NFT Gifts | `/nft-gifts` | `gifts.read` |
+| Server | Server Settings | `/server-settings` | `server.manage` |
+| Server | Storage | `/storage` | `storage.read` |
+| Server | Operators | `/admin-users` | `admins.manage` |
+| Server | Audit log | `/audit-log` | `audit.read` |
 <!-- END GENERATED:nav -->
 
 A section with one visible tab shows no tab bar, and its sidebar link points at
