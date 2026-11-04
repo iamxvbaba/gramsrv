@@ -127,7 +127,7 @@ Two consequences worth knowing before changing anything here:
 
 - **A section is rendered when the session holds *any* of its tabs' rights**, and
   its link resolves to the first visible tab. An operator holding only
-  `prices.manage` gets one Commerce row that opens on Prices. A section reduced
+  `prices.manage` gets one Economy row that opens on Bot prices. A section reduced
   to a single visible tab draws no tab bar at all.
 - **A page can never be advertised and then answer 403.** Before this table
   existed, twelve sidebar entries rendered unconditionally while every endpoint
@@ -143,9 +143,9 @@ prevent:
 
 1. **Decide whether it is a new section or a tab of an existing one.** If the
    page is a sibling of something already there -- it serves the same job over a
-   different slice -- it is a **tab**, not a second sidebar row. Commerce already
-   holds Prices and the Stars ledger; Media holds Storage; Accounts holds
-   Account Rating and Shared devices. A new sidebar row is only for a genuinely
+   different slice -- it is a **tab**, not a second sidebar row. Economy already
+   holds Premium, Prices, the Stars ledger, Donations and Ratings; Server holds
+   Storage, Operators and the Audit log. A new sidebar row is only for a genuinely
    new job.
 2. **Add it to `nav.ts`**, with the right its route enforces server-side. If you
    need a right that does not exist yet, add it to `permissions.tsx`
@@ -190,6 +190,10 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Sidebar section | Tab | Path | Required right |
 | --- | --- | --- | --- |
 | Overview | Overview | `/` | `dashboard.read` |
+| Users and chats | Accounts | `/accounts` | `accounts.read` |
+| Users and chats | Groups / Channels | `/channels` | `channels.read` |
+| Users and chats | Bots | `/bots` | `bots.read` |
+| Users and chats | Broadcasts | `/broadcasts` | `broadcasts.read` |
 | Moderation | Messages | `/messages/private` | `messages.read` (also served at `/messages`) |
 | Moderation | Groups | `/messages/groups` | `messages.read` |
 | Moderation | Reports | `/moderation` | `moderation.review` |
@@ -317,6 +321,9 @@ Every mutating request carries in its body:
 | GET | `/api/messages/detail` | Params: `owner_user_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
 | GET | `/api/messages/groups` | Params: `channel_id` (int64, req.), `before_date` (int64), `before_id` (int), `limit` (int). Response: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Params: `channel_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
+| GET | `/api/live/chats` | Params: `user_id` (int64, req.), `limit` (int). Response: `user_id`, `chats` (`PeerType`, `PeerID`, `TopMessageID`, `TopMessageDate`, `UnreadCount`). A user's dialogs for the live review console. |
+| GET | `/api/live/peers` | Params: `users` (comma-separated int64), `channels` (comma-separated int64). Response: `users` and `channels` maps of id to display name. |
+| GET | `/api/live/media` | Params: `key` (location key such as `photo:<id>` or `doc:<id>`). Proxies the internal admin API, which reads through the blob backend, sniffs the type and allowlists it; images render, other types download. |
 
 ## API: star gifts and collectibles
 

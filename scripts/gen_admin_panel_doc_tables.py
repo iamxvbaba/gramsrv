@@ -33,7 +33,7 @@ SERVER_GO = ROOT / "cmd/telesrv-admin/server.go"
 # dropped out of the table with no error at all. /messages/private is that
 # entry, and the docs silently lost the Messages section because of it.
 SECTION_RE = re.compile(
-    r'\{\s*id:\s*"(?P<id>[a-z]+)",\s*labelKey:\s*"(?P<label>[a-zA-Z.]+)",'
+    r'\{\s*(?://[^\n]*\n\s*)*id:\s*"(?P<id>[a-z0-9-]+)",\s*labelKey:\s*"(?P<label>[^"]+)",'
     r'\s*icon:\s*\w+,\s*tabs:\s*\['
 )
 TAB_RE = re.compile(
@@ -99,6 +99,16 @@ def parse_nav() -> list[tuple[str, str, list[tuple[str, str, str, list[str]]]]]:
         if not tabs:
             raise ValueError(f"nav section {m.group('id')!r} parsed to zero tabs")
         out.append((m.group("id"), m.group("label"), tabs))
+    # Every section object in nav.ts starts with an `id:`; if the regex matched
+    # fewer sections than there are ids, it silently skipped one (a comment or a
+    # hyphen in the id, say), which is exactly how these tables rot. Fail loudly
+    # instead of emitting docs that are missing a section.
+    declared = len(re.findall(r'\bid:\s*"', body))
+    if declared != len(out):
+        raise ValueError(
+            f"parsed {len(out)} nav sections but nav.ts declares {declared} 'id:' entries; "
+            "SECTION_RE missed a section"
+        )
     return out
 
 

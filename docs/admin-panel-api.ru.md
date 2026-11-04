@@ -143,7 +143,7 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 
 - **Раздел показывается, если у сессии есть право хотя бы на одну его вкладку**,
   а ссылка ведёт на первую доступную вкладку. Оператор с одним лишь
-  `prices.manage` увидит одну строку Commerce, открывающуюся на Prices. Раздел,
+  `prices.manage` увидит одну строку Economy, открывающуюся на Bot prices. Раздел,
   у которого доступна единственная вкладка, вообще не рисует полосу вкладок.
 - **Страница не может быть показана в меню и затем ответить 403.** До того как
   появилась эта таблица, двенадцать пунктов бокового меню отрисовывались
@@ -159,9 +159,9 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 
 1. **Решите, это новый раздел или вкладка существующего.** Если страница
    соседствует с уже имеющейся — делает ту же работу над другим срезом
-   данных, — это **вкладка**, а не вторая строка меню. В Commerce уже живут
-   Prices и журнал Stars, в Media — Storage, в Accounts — рейтинг аккаунтов и
-   общие устройства. Новая строка меню — только для действительно новой работы.
+   данных, — это **вкладка**, а не вторая строка меню. В Economy уже живут
+   Premium, Prices, журнал Stars, Donations и Ratings, в Server — Storage,
+   Operators и журнал аудита. Новая строка меню — только для действительно новой работы.
 2. **Добавьте её в `nav.ts`** вместе с правом, которое проверяет её маршрут на
    сервере. Если нужно право, которого ещё нет, добавьте его в
    `permissions.tsx` (`permissionLabels` **и** `permissionGroups`) и в
@@ -209,6 +209,10 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Sidebar section | Tab | Path | Required right |
 | --- | --- | --- | --- |
 | Overview | Overview | `/` | `dashboard.read` |
+| Users and chats | Accounts | `/accounts` | `accounts.read` |
+| Users and chats | Groups / Channels | `/channels` | `channels.read` |
+| Users and chats | Bots | `/bots` | `bots.read` |
+| Users and chats | Broadcasts | `/broadcasts` | `broadcasts.read` |
 | Moderation | Messages | `/messages/private` | `messages.read` (also served at `/messages`) |
 | Moderation | Groups | `/messages/groups` | `messages.read` |
 | Moderation | Reports | `/moderation` | `moderation.review` |
@@ -341,6 +345,9 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/messages/detail` | Параметры: `owner_user_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
 | GET | `/api/messages/groups` | Параметры: `channel_id` (int64, обяз.), `before_date` (int64), `before_id` (int), `limit` (int). Ответ: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Параметры: `channel_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
+| GET | `/api/live/chats` | Параметры: `user_id` (int64, обяз.), `limit` (int). Ответ: `user_id`, `chats` (`PeerType`, `PeerID`, `TopMessageID`, `TopMessageDate`, `UnreadCount`). Диалоги пользователя для консоли живого просмотра. |
+| GET | `/api/live/peers` | Параметры: `users` (int64 через запятую), `channels` (int64 через запятую). Ответ: словари `users` и `channels` вида id → отображаемое имя. |
+| GET | `/api/live/media` | Параметры: `key` (ключ расположения, например `photo:<id>` или `doc:<id>`). Проксирует внутренний admin API, который читает через блоб-бэкенд, определяет тип по содержимому и допускает только безопасные типы; изображения отображаются, остальное скачивается. |
 
 ## API: звёздные подарки и коллекционки
 
