@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate, localInputValue, titleFromFilename, toUnixSeconds } from "../lib/format";
@@ -330,7 +329,6 @@ return {
       <button className="btn" type="button" onClick={() => setPackOpen(true)}><PackagePlus size={15} /> {t("gifts.pack.title")}</button>
       <button className="btn primary" type="button" onClick={startImport}><Plus size={15} /> {t("gifts.add")}</button>
     </>}>
-      <SectionTabs sectionId="gifts" active="/gifts" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row gift-metrics">
         <Metric label={t("gifts.total")} value={String(gifts.length)} />

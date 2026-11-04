@@ -68,6 +68,8 @@ export type NavTab = {
   // bare path has to light the Messages row and mark the Private tab active
   // even though the sidebar link points at /messages/private.
   aliases?: string[];
+  // Set false on a tab shown in a second section that must not own its path.
+  active?: boolean;
 };
 
 export type NavSection = {
@@ -85,30 +87,32 @@ export const navSections: NavSection[] = [
     tabs: [{ path: "/", labelKey: "layout.dashboard", permission: permissionDashboardRead }]
   },
   {
-    id: "accounts",
-    labelKey: "layout.accounts",
+    // Grouping mirrors the desired left panel: one row per job area, its pages
+    // are the in-page tabs.
+    id: "users-chats",
+    labelKey: "nav.usersChats",
     icon: Users,
     tabs: [
       { path: "/accounts", labelKey: "layout.accounts", permission: permissionAccountsRead },
-      { path: "/account-ratings", labelKey: "layout.accountRatings", permission: permissionRatingsRead },
+      { path: "/channels", labelKey: "layout.channels", permission: permissionChannelsRead },
+      { path: "/bots", labelKey: "layout.bots", permission: permissionBotsRead },
+      { path: "/broadcasts", labelKey: "layout.broadcasts", permission: permissionBroadcastsRead }
+    ]
+  },
+  {
+    id: "moderation",
+    labelKey: "nav.moderation",
+    icon: ShieldAlert,
+    tabs: [
+      { path: "/messages/private", labelKey: "layout.messages", permission: permissionMessagesRead, aliases: ["/messages"] },
+      { path: "/messages/groups", labelKey: "layout.groupMessages", permission: permissionMessagesRead },
+      { path: "/moderation", labelKey: "layout.moderation", permission: permissionModerationReview },
       { path: "/accounts/shared-devices", labelKey: "layout.sharedDevices", permission: permissionAccountsRead }
     ]
   },
   {
-    id: "channels",
-    labelKey: "layout.channels",
-    icon: ShieldCheck,
-    tabs: [{ path: "/channels", labelKey: "layout.channels", permission: permissionChannelsRead }]
-  },
-  {
-    id: "bots",
-    labelKey: "layout.bots",
-    icon: Bot,
-    tabs: [{ path: "/bots", labelKey: "layout.bots", permission: permissionBotsRead }]
-  },
-  {
     id: "verification",
-    labelKey: "layout.verification",
+    labelKey: "nav.verification",
     icon: BadgeCheck,
     tabs: [
       { path: "/verification", labelKey: "verification.tabOfficial", permission: permissionVerificationReview },
@@ -116,8 +120,35 @@ export const navSections: NavSection[] = [
     ]
   },
   {
+    id: "content",
+    labelKey: "nav.content",
+    icon: Smile,
+    tabs: [
+      { path: "/stickers", labelKey: "layout.stickers", permission: permissionContentRead },
+      { path: "/emoji", labelKey: "layout.emoji", permission: permissionContentRead },
+      { path: "/gif-catalog", labelKey: "layout.gifCatalog", permission: permissionContentRead }
+    ]
+  },
+  {
+    id: "economy",
+    labelKey: "nav.economy",
+    icon: BadgeDollarSign,
+    tabs: [
+      { path: "/stars", labelKey: "layout.stars", permission: permissionStarsRead },
+      {
+        path: "/monetization",
+        labelKey: "nav.premium",
+        permission: permissionPremiumManage,
+        aliases: ["/star-issue"]
+      },
+      { path: "/prices", labelKey: "nav.botPrices", permission: permissionPricesManage },
+      { path: "/donations", labelKey: "layout.donations", permission: permissionDonationsManage },
+      { path: "/account-ratings", labelKey: "layout.accountRatings", permission: permissionRatingsRead }
+    ]
+  },
+  {
     id: "gifts",
-    labelKey: "layout.gifts",
+    labelKey: "nav.gifts",
     icon: Gift,
     tabs: [
       { path: "/gifts", labelKey: "gifts.pageTitle", permission: permissionGiftsRead },
@@ -126,26 +157,8 @@ export const navSections: NavSection[] = [
     ]
   },
   {
-    id: "commerce",
-    labelKey: "layout.commerce",
-    icon: BadgeDollarSign,
-    tabs: [
-      // The giveaway used to be a tab of its own: it is a single button, and a
-      // section tab is supposed to be a job. It lives on the Stars & Premium
-      // page next to the per-user grants now, and the old URL still opens it.
-      {
-        path: "/monetization",
-        labelKey: "layout.premium",
-        permission: permissionPremiumManage,
-        aliases: ["/star-issue"]
-      },
-      { path: "/prices", labelKey: "layout.prices", permission: permissionPricesManage },
-      { path: "/stars", labelKey: "layout.stars", permission: permissionStarsRead }
-    ]
-  },
-  {
     id: "nft",
-    labelKey: "layout.nftItems",
+    labelKey: "nav.nftItems",
     icon: AtSign,
     tabs: [
       { path: "/collectible-usernames", labelKey: "layout.collectibleUsernames", permission: permissionUsernamesRead },
@@ -154,60 +167,15 @@ export const navSections: NavSection[] = [
     ]
   },
   {
-    id: "media",
-    labelKey: "layout.media",
-    icon: Smile,
-    tabs: [
-      { path: "/stickers", labelKey: "layout.stickers", permission: permissionContentRead },
-      { path: "/emoji", labelKey: "layout.emoji", permission: permissionContentRead },
-      { path: "/gif-catalog", labelKey: "layout.gifCatalog", permission: permissionContentRead },
-      { path: "/storage", labelKey: "layout.storage", permission: permissionStorageRead }
-    ]
-  },
-  {
-    id: "broadcasts",
-    labelKey: "layout.broadcasts",
-    icon: Megaphone,
-    tabs: [{ path: "/broadcasts", labelKey: "layout.broadcasts", permission: permissionBroadcastsRead }]
-  },
-  {
-    id: "messages",
-    labelKey: "layout.messages",
-    icon: MessageSquareText,
-    tabs: [
-      { path: "/messages/private", labelKey: "layout.privateMessages", permission: permissionMessagesRead, aliases: ["/messages"] },
-      { path: "/messages/groups", labelKey: "layout.groupMessages", permission: permissionMessagesRead }
-    ]
-  },
-  {
-    id: "moderation",
-    labelKey: "layout.moderation",
-    icon: ShieldAlert,
-    tabs: [{ path: "/moderation", labelKey: "layout.moderation", permission: permissionModerationReview }]
-  },
-  {
-    id: "donations",
-    labelKey: "layout.donations",
-    icon: Wallet,
-    tabs: [{ path: "/donations", labelKey: "layout.donations", permission: permissionDonationsManage }]
-  },
-  {
-    id: "audit",
-    labelKey: "layout.auditLog",
-    icon: ScrollText,
-    tabs: [{ path: "/audit-log", labelKey: "layout.auditLog", permission: permissionAuditRead }]
-  },
-  {
-    id: "operators",
-    labelKey: "layout.adminUsers",
-    icon: UserCog,
-    tabs: [{ path: "/admin-users", labelKey: "layout.adminUsers", permission: permissionAdminsManage }]
-  },
-  {
     id: "server",
-    labelKey: "layout.serverSettings",
+    labelKey: "nav.server",
     icon: Settings,
-    tabs: [{ path: "/server-settings", labelKey: "layout.serverSettings", permission: permissionServerManage }]
+    tabs: [
+      { path: "/server-settings", labelKey: "layout.serverSettings", permission: permissionServerManage },
+      { path: "/storage", labelKey: "layout.storage", permission: permissionStorageRead },
+      { path: "/admin-users", labelKey: "layout.adminUsers", permission: permissionAdminsManage },
+      { path: "/audit-log", labelKey: "layout.auditLog", permission: permissionAuditRead }
+    ]
   }
 ];
 
@@ -230,10 +198,33 @@ export function sectionById(id: string): NavSection | undefined {
 export function sectionActive(section: NavSection, path: string, can: (permission: string) => boolean): boolean {
   return visibleTabs(section, can).some(
     (tab) =>
-      path === tab.path ||
-      path.startsWith(`${tab.path}/`) ||
-      (tab.aliases ?? []).some((alias) => path === alias || path.startsWith(`${alias}/`))
+      tab.active !== false &&
+      (path === tab.path ||
+        path.startsWith(`${tab.path}/`) ||
+        (tab.aliases ?? []).some((alias) => path === alias || path.startsWith(`${alias}/`)))
   );
+}
+
+// activeSectionId is the section whose tab bar belongs on this route, so the
+// shell can render SectionTabs once instead of every page rendering its own.
+// It picks the longest matching tab path, so /accounts/shared-devices lights
+// Moderation (its exact tab), not Users and chats (whose /accounts prefix also
+// matches).
+export function activeSectionId(path: string, can: (permission: string) => boolean): string | null {
+  let best: string | null = null;
+  let bestLen = -1;
+  for (const section of navSections) {
+    for (const tab of visibleTabs(section, can)) {
+      if (tab.active === false) continue;
+      for (const candidate of [tab.path, ...(tab.aliases ?? [])]) {
+        if ((path === candidate || path.startsWith(`${candidate}/`)) && candidate.length > bestLen) {
+          bestLen = candidate.length;
+          best = section.id;
+        }
+      }
+    }
+  }
+  return best;
 }
 
 // routePermission is the single answer to "what right does this URL need", so

@@ -6,7 +6,6 @@ import { useI18n } from "../i18n";
 import { formatBytes, formatQuantity } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { StorageStatsResponse } from "../types";
-import { SectionTabs } from "../components/SectionTabs";
 
 export function StoragePage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
@@ -44,7 +43,6 @@ export function StoragePage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
-      <SectionTabs sectionId="media" active="/storage" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("storage.physical")} value={stats ? formatBytes(stats.PhysicalBytes) : "-"} />

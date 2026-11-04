@@ -16,7 +16,6 @@ import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { UserPicker } from "../components/EntityPicker";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, PageFrame, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { Navigate } from "../routing";
@@ -187,7 +186,6 @@ export function PremiumPlansPage({ navigate }: { navigate: Navigate }) {
         <RefreshCw size={15} /> {t("common.refresh")}
       </button>
     }>
-      <SectionTabs sectionId="commerce" active="/monetization" navigate={navigate} />
       <section className="surface premium-operations-compact">
         <SectionHead title={t("premium.operations")} text={t("premium.operationsHint")} />
         <div className="premium-operation-bar">
