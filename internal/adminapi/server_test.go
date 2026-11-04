@@ -897,6 +897,10 @@ func (fakeService) StickerDocumentAnimation(context.Context, int64) ([]byte, str
 	return nil, "", false, nil
 }
 
+func (fakeService) LiveMedia(context.Context, string) ([]byte, string, bool, error) {
+	return nil, "", false, nil
+}
+
 func (fakeService) ImportStarGift(_ context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

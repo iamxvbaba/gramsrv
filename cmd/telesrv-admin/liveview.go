@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -22,30 +22,42 @@ type LiveChatRow struct {
 	UnreadCount    int    `json:"UnreadCount"`
 }
 
-// ListDialogsForUser returns a user's dialogs, most recent first.
-func (s *readStore) ListDialogsForUser(ctx context.Context, userID int64, limit int) ([]LiveChatRow, error) {
+// ListDialogsForUser returns one page of a user's dialogs, most recent first.
+// (beforeDate, beforePeerID) is a keyset cursor ordered by
+// (top_message_date, peer_id) so older dialogs are reachable; peer_id breaks
+// ties between dialogs sharing a top-message date.
+func (s *readStore) ListDialogsForUser(ctx context.Context, userID, beforeDate, beforePeerID int64, limit int) ([]LiveChatRow, bool, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	// Read one extra row to know whether a next page exists.
 	rows, err := s.pool.Query(ctx, `
 		SELECT peer_type, peer_id, top_message_id, top_message_date, unread_count
 		FROM dialogs
 		WHERE user_id = $1
-		ORDER BY top_message_date DESC
-		LIMIT $2`, userID, limit)
+			AND ($2::bigint = 0 OR (top_message_date, peer_id) < ($2::bigint, $3::bigint))
+		ORDER BY top_message_date DESC, peer_id DESC
+		LIMIT $4`, userID, beforeDate, beforePeerID, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	out := []LiveChatRow{}
 	for rows.Next() {
 		var row LiveChatRow
 		if err := rows.Scan(&row.PeerType, &row.PeerID, &row.TopMessageID, &row.TopMessageDate, &row.UnreadCount); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
 }
 
 func (s *server) handleLiveChatsAPI(w http.ResponseWriter, r *http.Request) {
@@ -53,18 +65,21 @@ func (s *server) handleLiveChatsAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
 		return
 	}
-	userID, _ := parseInt64(r.URL.Query().Get("user_id"))
+	q := r.URL.Query()
+	userID, _ := parseInt64(q.Get("user_id"))
 	if userID <= 0 {
 		writeAPIError(w, http.StatusBadRequest, "invalid user_id")
 		return
 	}
-	limit, _ := parseInt(r.URL.Query().Get("limit"))
-	chats, err := s.read.ListDialogsForUser(r.Context(), userID, limit)
+	limit, _ := parseInt(q.Get("limit"))
+	beforeDate, _ := parseInt64(q.Get("before_date"))
+	beforePeerID, _ := parseInt64(q.Get("before_peer_id"))
+	chats, hasMore, err := s.read.ListDialogsForUser(r.Context(), userID, beforeDate, beforePeerID, limit)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user_id": userID, "chats": chats})
+	writeJSON(w, http.StatusOK, map[string]any{"user_id": userID, "chats": chats, "has_more": hasMore})
 }
 
 // parseIDList parses "1,2,3" into ids, ignoring blanks.
@@ -157,60 +172,48 @@ func (s *server) handleLivePeersAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"users": outUsers, "channels": outChannels})
 }
 
-// LookupBlob maps a media location key (e.g. "photo:123:m", "doc:456") to the
-// stored blob object key and its mime type.
-func (s *readStore) LookupBlob(ctx context.Context, locationKey string) (string, string, error) {
-	var objectKey, mime string
-	err := s.pool.QueryRow(ctx,
-		`SELECT object_key, mime_type FROM file_blobs WHERE location_key = $1`, locationKey).
-		Scan(&objectKey, &mime)
-	return objectKey, mime, err
-}
-
-// blobFilePath mirrors internal LocalFS.pathFor: a short key lives under "_",
-// a full sha key is sharded by its first two byte-pairs.
-func blobFilePath(root, objectKey string) string {
-	if strings.HasPrefix(objectKey, "_") || len(objectKey) < 4 {
-		return filepath.Join(root, "_", objectKey)
-	}
-	return filepath.Join(root, objectKey[:2], objectKey[2:4], objectKey)
-}
-
-// handleLiveMediaAPI serves media bytes by location key (photo:/doc:/blob:).
+// handleLiveMediaAPI proxies a media blob from the internal admin API. The
+// panel never reads storage itself and never trusts the uploader's MIME: the
+// admin service reads through the blob backend, bounds the read and
+// sniffs/allowlists the type; this handler forwards that safely.
 func (s *server) handleLiveMediaAPI(w http.ResponseWriter, r *http.Request) {
-	if s.read == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
-		return
-	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
 		writeAPIError(w, http.StatusBadRequest, "missing key")
 		return
 	}
-	objectKey, mime, err := s.read.LookupBlob(r.Context(), key)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+"/v1/media?key="+url.QueryEscape(key), nil)
 	if err != nil {
-		// Photos/documents store sized variants (`photo:<id>:x`, `doc:<id>:m`);
-		// fall back to them when the bare key is not present.
-		for _, suffix := range []string{":x", ":m", ":c", ":a"} {
-			if k, m, e := s.read.LookupBlob(r.Context(), key+suffix); e == nil {
-				objectKey, mime, err = k, m, nil
-				break
-			}
-		}
-	}
-	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "media not found")
+		http.NotFound(w, r)
 		return
 	}
-	data, err := os.ReadFile(blobFilePath(s.cfg.DiskStatsPath, objectKey))
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "media file not found")
+		http.NotFound(w, r)
 		return
 	}
-	if strings.TrimSpace(mime) == "" {
-		mime = http.DetectContentType(data)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.NotFound(w, r)
+		return
 	}
-	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Cache-Control", "no-store")
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil || len(data) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("Content-Type", contentType)
+	if disposition := resp.Header.Get("Content-Disposition"); disposition != "" {
+		w.Header().Set("Content-Disposition", disposition)
+	}
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
 }
