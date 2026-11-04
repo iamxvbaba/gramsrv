@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useI18n } from "../i18n";
 import { formatUnix } from "../lib/format";
 
 // MessagePreview renders a conversation as chat bubbles -- the "live preview"
@@ -12,6 +13,7 @@ export type PreviewMessage = {
   deleted?: boolean;
   media?: boolean;
   mediaURL?: string;
+  mediaKind?: "photo" | "document";
   post?: boolean;
 };
 
@@ -21,7 +23,9 @@ export function MessagePreview({
   emptyLabel,
   nameOf,
   avatar,
-  focusID
+  focusID,
+  detailOf,
+  onOpenDetail
 }: {
   messages: PreviewMessage[];
   title: string;
@@ -29,7 +33,10 @@ export function MessagePreview({
   nameOf?: (from: number | string) => string;
   avatar?: ReactNode;
   focusID?: string | number;
+  detailOf?: (message: PreviewMessage) => string | undefined;
+  onOpenDetail?: (path: string) => void;
 }) {
+  const { t } = useI18n();
   const [zoom, setZoom] = useState<string | null>(null);
   return (
     <section className="msg-preview">
@@ -51,15 +58,29 @@ export function MessagePreview({
               >
                 <div className={`msg-preview-bubble${message.deleted ? " deleted" : ""}`}>
                   {!message.outgoing && !message.post && <div className="msg-preview-from">{nameOf ? nameOf(message.from) : message.from}</div>}
-                  {message.mediaURL ? (
+                  {message.mediaURL && message.mediaKind !== "document" ? (
                     <img className="msg-preview-photo" src={message.mediaURL} alt="" loading="lazy" onClick={() => setZoom(message.mediaURL ?? null)} />
+                  ) : message.mediaURL ? (
+                    <a className="msg-preview-media" href={message.mediaURL} target="_blank" rel="noreferrer">{t("common.download")}</a>
                   ) : message.media ? (
-                    <div className="msg-preview-media">media</div>
+                    <div className="msg-preview-media">{t("messages.media")}</div>
                   ) : null}
                   {message.body && <div className="msg-preview-text">{message.body}</div>}
                   <div className="msg-preview-meta">
+                    {detailOf && message.id !== undefined && onOpenDetail ? (
+                      <button
+                        type="button"
+                        className="msg-preview-link"
+                        onClick={() => {
+                          const path = detailOf(message);
+                          if (path) onOpenDetail(path);
+                        }}
+                      >
+                        {`#${message.id} · ${t("common.detail")}`}
+                      </button>
+                    ) : null}
                     {formatUnix(message.date)}
-                    {message.deleted ? " · deleted" : ""}
+                    {message.deleted ? ` · ${t("common.deleted")}` : ""}
                   </div>
                 </div>
               </div>

@@ -46,6 +46,12 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
     if (focus === "identity") setSection("identity");
     else if (focus === "login") setSection("messages");
   }, [focus]);
+  // ?focus=env lands on the first .env group once they are loaded.
+  useEffect(() => {
+    if (focus === "env" && section === "status" && groups.length > 0) {
+      setSection(`env:${groups[0].title}` as SettingsSection);
+    }
+  }, [focus, section, groups]);
 
   const q = needle.trim().toLowerCase();
   // A search looks through every .env field (key, description, group title) and
@@ -73,11 +79,11 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
         <nav className="settings-nav" aria-label={t("serverSettings.tabsLabel")}>
           <label className="searchbox settings-search">
             <Search size={15} />
-            <input value={needle} onChange={(event) => setNeedle(event.target.value)} placeholder={"Search settings"} aria-label={"Search settings"} />
+            <input value={needle} onChange={(event) => setNeedle(event.target.value)} placeholder={t("serverSettings.searchSettings")} aria-label={t("serverSettings.searchSettings")} />
           </label>
           {!q && (
             <>
-              <SettingsNavItem label={"Status"} active={section === "status"} onClick={() => setSection("status")} />
+              <SettingsNavItem label={t("serverSettings.statusLabel")} active={section === "status"} onClick={() => setSection("status")} />
               <SettingsNavItem label={t("serverSettings.identityTitle")} active={section === "identity"} onClick={() => setSection("identity")} />
               <SettingsNavItem label={t("nav.loginMessages")} active={section === "messages"} onClick={() => setSection("messages")} />
               {groups.length > 0 && <div className="settings-nav-label">{t("nav.configuration")}</div>}
@@ -97,10 +103,10 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
           {envError && <Alert>{envError}</Alert>}
           {q ? (
             matches.length === 0 ? (
-              <p className="about-text">{`Nothing in the configuration matches "${needle.trim()}".`}</p>
+              <p className="about-text">{`${t("serverSettings.noMatch")} "${needle.trim()}".`}</p>
             ) : (
               matches.map((group) => (
-                <EnvGroupPanel key={group.title} group={group} values={values} setValues={setValues} onSaved={loadEnv} />
+                <EnvGroupPanel key={group.title} group={group} values={values} setValues={setValues} onSaved={() => undefined} />
               ))
             )
           ) : section === "status" ? (
@@ -110,7 +116,7 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
           ) : section === "messages" ? (
             <LoginNotificationsSection />
           ) : activeGroup ? (
-            <EnvGroupPanel group={activeGroup} values={values} setValues={setValues} onSaved={loadEnv} />
+            <EnvGroupPanel group={activeGroup} values={values} setValues={setValues} onSaved={() => undefined} />
           ) : (
             <LoadingSurface label={"Loading settings..."} />
           )}

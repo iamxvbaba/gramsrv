@@ -6,7 +6,7 @@ import { MessagePreview } from "../components/MessagePreview";
 import { Alert, Badge, EmptyRow, Metric, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { channelKind, formatUnix } from "../lib/format";
-import { mediaLocationKey } from "../lib/media";
+import { mediaFields } from "../lib/media";
 import type { Navigate } from "../routing";
 import type { ChannelRow, GroupMessageListResponse } from "../types";
 
@@ -86,7 +86,7 @@ export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
           body: row.Body,
           deleted: row.Deleted,
           media: Boolean(row.Media && row.Media !== "{}"),
-          mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })(),
+          ...mediaFields(row.Media),
           post: row.Post
         }))}
       />

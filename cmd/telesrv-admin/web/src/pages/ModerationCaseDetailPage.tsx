@@ -2,11 +2,9 @@ import { ArrowLeft, CheckCircle2, ExternalLink, MessagesSquare, RefreshCw, Shiel
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
-import { MessagePreview, type PreviewMessage } from "../components/MessagePreview";
 import { useI18n, type TFunction } from "../i18n";
 import { permissionMessagesRead, useCan } from "../permissions";
 import { formatDate } from "../lib/format";
-import { mediaLocationKey } from "../lib/media";
 import { loadPeerNames, peerLabel, userName, type PeerNames } from "../lib/peerNames";
 import type { Navigate } from "../routing";
 import type { ModerationCaseDetail, ModerationReport, ModerationReportItem } from "../types";
@@ -31,65 +29,8 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [names, setNames] = useState<PeerNames | null>(null);
-  // Live conversation preview for a reported message, loaded from the same
-  // /api/messages(+/groups) routes the Messages console uses.
-  const [preview, setPreview] = useState<{ title: string; rows: PreviewMessage[] } | null>(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewError, setPreviewError] = useState("");
-
-  async function openPreview(activeReport: ModerationReport, evidence: ModerationReportItem) {
-    if (evidence.Kind !== "message" || !evidence.Peer) return;
-    setPreviewBusy(true);
-    setPreviewError("");
-    try {
-      if (evidence.Peer.Type === "channel") {
-        const data = await api.groupMessages(new URLSearchParams({ channel_id: String(evidence.Peer.ID), limit: "50" }));
-        setPreview({
-          title: `Channel ${evidence.Peer.ID}`,
-          rows: data.rows.map((row) => ({
-            id: row.ID,
-            date: row.Date,
-            from: row.SenderUserID,
-            body: row.Body,
-            deleted: row.Deleted,
-            media: Boolean(row.Media && row.Media !== "{}"),
-            mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })(),
-            post: row.Post
-          }))
-        });
-      } else {
-        const data = await api.messages(new URLSearchParams({
-          owner_user_id: String(activeReport.ReporterUserID),
-          peer_id: String(evidence.Peer.ID),
-          limit: "50"
-        }));
-        setPreview({
-          title: `${activeReport.ReporterUserID} ↔ ${evidence.Peer.ID}`,
-          rows: data.rows.map((row) => ({
-            id: `${row.OwnerUserID}-${row.BoxID}`,
-            date: row.Date,
-            from: row.FromUserID,
-            body: row.Body,
-            outgoing: row.Outgoing,
-            deleted: row.Deleted,
-            media: Boolean(row.Media && row.Media !== "{}"),
-            mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })()
-          }))
-        });
-      }
-    } catch (err) {
-      setPreviewError(errorMessage(err));
-    } finally {
-      setPreviewBusy(false);
-    }
-  }
 
   function selectReport(next: ModerationReport | null) {
-    // The reported content is shown as chat bubbles in the evidence list; do
-    // not also auto-load the whole conversation (that duplicates it). The
-    // conversation opens only on demand via "Preview messages".
-    setPreview(null);
-    setPreviewError("");
     setReport(next);
     if (!next) return;
     const ids = next.Items
@@ -281,7 +222,7 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
                       <Summary label={t("common.time")} value={formatDate(report.CreatedAt)} />
                     </div>
                     {report.Comment && <p className="about-text">{report.Comment}</p>}
-                    <ReportEvidence t={t} report={report} navigate={navigate} names={names} onPreview={(evidence) => { if (report) void openPreview(report, evidence); }} previewBusy={previewBusy} />
+                    <ReportEvidence t={t} report={report} navigate={navigate} names={names} />
                   </>
                 )}
               </div>
@@ -406,13 +347,11 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
 // message itself is one click away in the Messages console when the operator
 // has messages.read. Media held as evidence gets its own small table so an
 // operator can act on it.
-function ReportEvidence({ t, report, navigate, names, onPreview, previewBusy }: {
+function ReportEvidence({ t, report, navigate, names }: {
   t: TFunction;
   report: ModerationReport;
   navigate: Navigate;
   names: PeerNames | null;
-  onPreview: (evidence: ModerationReportItem) => void;
-  previewBusy: boolean;
 }) {
   const canReadMessages = useCan(permissionMessagesRead);
   // A message can show up more than once across report items; collapse identical
@@ -431,14 +370,7 @@ function ReportEvidence({ t, report, navigate, names, onPreview, previewBusy }: 
           other.Peer?.ID === item.Peer?.ID
       ) === index
   );
-  const kindLabel: Record<string, string> = {
-    story: "Story",
-    profile_photo: "Profile photo",
-    reaction: "Reaction on a message",
-    peer: "Whole profile",
-    encrypted_chat: "Secret chat",
-    sponsored: "Sponsored message"
-  };
+  const kindLabel = (kind: string) => moderationEnumLabel(t, "itemKind", kind);
   return (
     <div className="detail-stack">
       {evidenceItems.map((evidence, index) => {
@@ -451,9 +383,9 @@ function ReportEvidence({ t, report, navigate, names, onPreview, previewBusy }: 
         const label =
           evidence.Kind === "message"
             ? evidence.Peer?.Type === "channel"
-              ? "Channel message"
-              : "Private message"
-            : kindLabel[evidence.Kind] ?? evidence.Kind;
+              ? t("moderation.channelMessage")
+              : t("moderation.privateMessage")
+            : kindLabel(evidence.Kind);
         return (
           <div className="evidence-item" key={`${evidence.Kind}-${index}`}>
             <div className="evidence-head">
@@ -463,14 +395,16 @@ function ReportEvidence({ t, report, navigate, names, onPreview, previewBusy }: 
             </div>
             <div className="chat-row in">
               <div className={`chat-bubble${media && !body ? " media-only" : ""}`}>
-                {mediaHold ? (
+                {mediaHold && canReadMessages && mediaHold.Kind === "photo" ? (
                   <img className="evidence-media-img" src={api.mediaURL(mediaHold.StorageKey)} alt="" loading="lazy" />
+                ) : mediaHold && canReadMessages ? (
+                  <a className="msg-preview-media" href={api.mediaURL(mediaHold.StorageKey)} target="_blank" rel="noreferrer">{t("common.download")}</a>
                 ) : media ? (
                   <div className="evidence-media-placeholder">{media}</div>
                 ) : null}
                 {body && <div className="chat-text">{body}</div>}
                 <div className="chat-meta">
-                  {evidence.AuthorUserID ? <span>{`from ${userName(names, evidence.AuthorUserID)}`}</span> : null}
+                  {evidence.AuthorUserID ? <span>{`${t("messages.fromLabel")} ${userName(names, evidence.AuthorUserID)}`}</span> : null}
                 </div>
               </div>
             </div>
@@ -486,7 +420,7 @@ function ReportEvidence({ t, report, navigate, names, onPreview, previewBusy }: 
       })}
       {evidenceItems.length === 0 && <div className="empty-panel">{t("common.noResults")}</div>}
       <details className="section-block">
-        <summary>{"Raw report data"}</summary>
+        <summary>{t("moderation.rawReportData")}</summary>
         <JsonBlock value={JSON.stringify({ items: report.Items, media_holds: report.MediaHolds }, null, 2)} />
       </details>
     </div>

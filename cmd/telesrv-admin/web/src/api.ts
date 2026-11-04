@@ -242,14 +242,21 @@ export const api = {
   emoji: (params: URLSearchParams) => request<EmojiListResponse>(`/api/emoji?${params.toString()}`),
   emojiAnimation: (documentID: string) => request<Record<string, unknown>>(`/api/emoji/${encodeURIComponent(documentID)}/animation`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),
-  liveChats: (userID: number) => request<LiveChatListResponse>(`/api/live/chats?user_id=${encodeURIComponent(String(userID))}`),
+  liveChats: (userID: number, beforeDate?: number, beforePeerID?: number) => {
+    const params = new URLSearchParams({ user_id: String(userID) });
+    if (beforeDate && beforePeerID) {
+      params.set("before_date", String(beforeDate));
+      params.set("before_peer_id", String(beforePeerID));
+    }
+    return request<LiveChatListResponse>(`/api/live/chats?${params.toString()}`);
+  },
   livePeers: (users: number[], channels: number[]) => {
     const params = new URLSearchParams();
     if (users.length) params.set("users", users.join(","));
     if (channels.length) params.set("channels", channels.join(","));
     return request<LivePeerNames>(`/api/live/peers?${params.toString()}`);
   },
-  mediaURL: (key: string) => `/api/live/media?key=${encodeURIComponent(key)}`,
+  mediaURL: (key: string) => withBase(`/api/live/media?key=${encodeURIComponent(key)}`),
   message: (ownerUserID: number, msgID: number) => {
     const params = new URLSearchParams({ owner_user_id: String(ownerUserID), msg_id: String(msgID) });
     return request<MessageDetail>(`/api/messages/detail?${params.toString()}`);

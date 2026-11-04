@@ -1360,6 +1360,7 @@ export type LiveChatRow = {
 export type LiveChatListResponse = {
   user_id: number;
   chats: LiveChatRow[];
+  has_more: boolean;
 };
 
 

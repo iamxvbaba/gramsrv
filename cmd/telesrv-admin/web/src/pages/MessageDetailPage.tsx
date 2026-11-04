@@ -6,7 +6,7 @@ import { MessagePreview, type PreviewMessage } from "../components/MessagePrevie
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate, formatUnix } from "../lib/format";
-import { mediaLocationKey } from "../lib/media";
+import { mediaFields } from "../lib/media";
 import type { Navigate } from "../routing";
 import type { MessageDetail } from "../types";
 
@@ -51,7 +51,7 @@ export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserI
             outgoing: row.Outgoing,
             deleted: row.Deleted,
             media: Boolean(row.Media && row.Media !== "{}"),
-            mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })()
+            ...mediaFields(row.Media)
           }))
         );
       })

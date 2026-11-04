@@ -5,7 +5,7 @@ import { MessagePreview, type PreviewMessage } from "../components/MessagePrevie
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatUnix } from "../lib/format";
-import { mediaLocationKey } from "../lib/media";
+import { mediaFields } from "../lib/media";
 import type { Navigate } from "../routing";
 import type { GroupMessageDetail } from "../types";
 
@@ -45,7 +45,7 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
             body: row.Body,
             deleted: row.Deleted,
             media: Boolean(row.Media && row.Media !== "{}"),
-            mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })(),
+            ...mediaFields(row.Media),
             post: row.Post
           }))
         );
@@ -90,6 +90,27 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
           <Summary label={t("common.views")} value={String(msg.ViewsCount)} />
         </div>
         <MessagePreview title={t("messages.groupTitle")} emptyLabel={"No messages"} messages={preview} focusID={msg.ID} />
+        <section className="section-block">
+          <SectionHead title={t("messages.channelUpdateEvents")} text={t("messages.channelEventsSource")} />
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>PTS</th><th>{t("common.count")}</th><th>{t("common.type")}</th><th>{t("common.messageId")}</th><th>{t("common.sender")}</th><th>{t("common.time")}</th></tr></thead>
+              <tbody>
+                {detail.UpdateEvents.map((row) => (
+                  <tr key={`${row.PTS}-${row.Type}-${row.MessageID}`}>
+                    <td>{row.PTS}</td>
+                    <td>{row.PTSCount}</td>
+                    <td>{row.Type}</td>
+                    <td>{row.MessageID}</td>
+                    <td>{row.SenderUserID}</td>
+                    <td>{formatUnix(row.Date)}</td>
+                  </tr>
+                ))}
+                {detail.UpdateEvents.length === 0 && <EmptyRow colSpan={6} />}
+              </tbody>
+            </table>
+          </div>
+        </section>
         <details className="section-block">
           <summary>{"Raw records"}</summary>
           <section className="section-block">
