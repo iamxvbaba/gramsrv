@@ -1,15 +1,18 @@
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { MessagePreview, type PreviewMessage } from "../components/MessagePreview";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatUnix } from "../lib/format";
+import { mediaLocationKey } from "../lib/media";
 import type { Navigate } from "../routing";
 import type { GroupMessageDetail } from "../types";
 
 export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channelID: number; msgID: number; navigate: Navigate }) {
   const { t } = useI18n();
   const [detail, setDetail] = useState<GroupMessageDetail | null>(null);
+  const [preview, setPreview] = useState<PreviewMessage[]>([]);
   const [error, setError] = useState("");
 
   async function load() {
@@ -24,6 +27,34 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
   useEffect(() => {
     void load();
   }, [channelID, msgID]);
+
+  // Live conversation preview for the channel, from the same route the
+  // Messages console uses.
+  useEffect(() => {
+    if (!detail) return;
+    let cancelled = false;
+    api
+      .groupMessages(new URLSearchParams({ channel_id: String(detail.Message.ChannelID), limit: "50" }))
+      .then((data) => {
+        if (cancelled) return;
+        setPreview(
+          data.rows.map((row) => ({
+            id: row.ID,
+            date: row.Date,
+            from: row.SenderUserID,
+            body: row.Body,
+            deleted: row.Deleted,
+            media: Boolean(row.Media && row.Media !== "{}"),
+            mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })(),
+            post: row.Post
+          }))
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [detail]);
 
   if (error) {
     return <Alert>{error}</Alert>;
@@ -58,44 +89,27 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
           <Summary label={t("common.fromPeer")} value={`${msg.FromPeerType}:${msg.FromPeerID}`} mono />
           <Summary label={t("common.views")} value={String(msg.ViewsCount)} />
         </div>
-        <section className="section-block">
-          <SectionHead title={t("messages.channelMessageRow")} text={t("messages.channelMessagesSnapshot")} />
-          <JsonBlock value={detail.MessageJSON} />
-        </section>
-        <section className="section-block">
-          <SectionHead title={t("messages.channelRow")} text={t("messages.channelSnapshot")} />
-          <JsonBlock value={detail.ChannelJSON} />
-        </section>
-        <section className="section-block">
-          <SectionHead title={t("messages.channelUpdateEvents")} text={t("messages.channelEventsSource")} />
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr><th>PTS</th><th>{t("common.count")}</th><th>{t("common.type")}</th><th>{t("common.messageId")}</th><th>{t("common.sender")}</th><th>{t("common.time")}</th></tr></thead>
-              <tbody>
-                {detail.UpdateEvents.map((row) => (
-                  <tr key={`${row.PTS}-${row.Type}-${row.MessageID}`}>
-                    <td>{row.PTS}</td>
-                    <td>{row.PTSCount}</td>
-                    <td>{row.Type}</td>
-                    <td>{row.MessageID}</td>
-                    <td>{row.SenderUserID}</td>
-                    <td>{formatUnix(row.Date)}</td>
-                  </tr>
-                ))}
-                {detail.UpdateEvents.length === 0 && <EmptyRow colSpan={6} />}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section className="section-block">
-          <SectionHead title={t("messages.eventJson")} />
-          <div className="raw-grid">
-            {detail.UpdateEvents.map((row) => (
-              <JsonBlock key={`${row.PTS}-${row.Type}-json`} value={row.JSON} />
-            ))}
-            {detail.UpdateEvents.length === 0 && <div className="empty-panel">{t("common.noResults")}</div>}
-          </div>
-        </section>
+        <MessagePreview title={t("messages.groupTitle")} emptyLabel={"No messages"} messages={preview} focusID={msg.ID} />
+        <details className="section-block">
+          <summary>{"Raw records"}</summary>
+          <section className="section-block">
+            <SectionHead title={t("messages.channelMessageRow")} text={t("messages.channelMessagesSnapshot")} />
+            <JsonBlock value={detail.MessageJSON} />
+          </section>
+          <section className="section-block">
+            <SectionHead title={t("messages.channelRow")} text={t("messages.channelSnapshot")} />
+            <JsonBlock value={detail.ChannelJSON} />
+          </section>
+          <section className="section-block">
+            <SectionHead title={t("messages.eventJson")} />
+            <div className="raw-grid">
+              {detail.UpdateEvents.map((row) => (
+                <JsonBlock key={`${row.PTS}-${row.Type}-json`} value={row.JSON} />
+              ))}
+              {detail.UpdateEvents.length === 0 && <div className="empty-panel">{t("common.noResults")}</div>}
+            </div>
+          </section>
+        </details>
       </div>
     </PageFrame>
   );

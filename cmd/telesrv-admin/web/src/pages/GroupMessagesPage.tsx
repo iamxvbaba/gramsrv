@@ -2,9 +2,11 @@ import { ChevronRight, Search } from "lucide-react";
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import { ChannelPicker } from "../components/EntityPicker";
+import { MessagePreview } from "../components/MessagePreview";
 import { Alert, Badge, EmptyRow, Metric, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { channelKind, formatUnix } from "../lib/format";
+import { mediaLocationKey } from "../lib/media";
 import type { Navigate } from "../routing";
 import type { ChannelRow, GroupMessageListResponse } from "../types";
 
@@ -74,6 +76,20 @@ export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
         <Metric label={t("messages.channelPosts")} value={String(rows.filter((row) => row.Post).length)} />
         <Metric label={t("messages.channelGroup")} value={channel ? `${channel.Title || channelKind(channel, t)} (${channel.ID})` : "-"} />
       </div>
+      <MessagePreview
+        title={t("messages.groupTitle")}
+        emptyLabel={"No messages"}
+        messages={rows.map((row) => ({
+          id: row.ID,
+          date: row.Date,
+          from: row.SenderUserID,
+          body: row.Body,
+          deleted: row.Deleted,
+          media: Boolean(row.Media && row.Media !== "{}"),
+          mediaURL: (() => { const key = mediaLocationKey(row.Media); return key ? api.mediaURL(key) : undefined; })(),
+          post: row.Post
+        }))}
+      />
       <div className="table-wrap">
         <table className="data-table">
           <thead>

@@ -57,7 +57,9 @@ import type {
   UniqueStarGiftListResponse,
   VerificationApplicationDetail,
   VerificationApplicationListResponse,
-  VerificationCountsResponse
+  VerificationCountsResponse,
+  LiveChatListResponse,
+  LivePeerNames
 } from "./types";
 
 export class APIError extends Error {
@@ -240,6 +242,14 @@ export const api = {
   emoji: (params: URLSearchParams) => request<EmojiListResponse>(`/api/emoji?${params.toString()}`),
   emojiAnimation: (documentID: string) => request<Record<string, unknown>>(`/api/emoji/${encodeURIComponent(documentID)}/animation`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),
+  liveChats: (userID: number) => request<LiveChatListResponse>(`/api/live/chats?user_id=${encodeURIComponent(String(userID))}`),
+  livePeers: (users: number[], channels: number[]) => {
+    const params = new URLSearchParams();
+    if (users.length) params.set("users", users.join(","));
+    if (channels.length) params.set("channels", channels.join(","));
+    return request<LivePeerNames>(`/api/live/peers?${params.toString()}`);
+  },
+  mediaURL: (key: string) => `/api/live/media?key=${encodeURIComponent(key)}`,
   message: (ownerUserID: number, msgID: number) => {
     const params = new URLSearchParams({ owner_user_id: String(ownerUserID), msg_id: String(msgID) });
     return request<MessageDetail>(`/api/messages/detail?${params.toString()}`);
