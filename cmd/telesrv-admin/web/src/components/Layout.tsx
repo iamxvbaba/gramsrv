@@ -2,12 +2,13 @@ import { ChevronsLeft, ChevronsRight, LogOut, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
-import { navSections, sectionActive, visibleTabs } from "../nav";
+import { navSections, visibleTabs, activeSectionId, sectionById, matchTab } from "../nav";
 import { usePermissions } from "../permissions";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
 import { AppBackground } from "./AppBackground";
+import { SectionTabs } from "./SectionTabs";
 import { withBase } from "../lib/base";
 
 export function BootScreen() {
@@ -41,6 +42,16 @@ export function Shell({
 }) {
   const { t } = useI18n();
   const { can } = usePermissions();
+  const activeId = activeSectionId(route.path, can);
+  const activeSection = activeId ? sectionById(activeId) : undefined;
+  const sectionTabs = activeSection ? visibleTabs(activeSection, can) : [];
+  // Top bar naming: "Parent / tab" only where there is a tab bar; a
+  // single-tab section shows just its own title. Avoids the old
+  // subtitle/title duplication and any "console" text.
+  const showParent = sectionTabs.length > 1;
+  const parentLabel = activeSection ? t(activeSection.labelKey) : "";
+  const currentTab = matchTab(sectionTabs, route.path);
+  const titleLabel = currentTab ? t(currentTab.labelKey) : routeTitle(route.path, t);
 
   // Server identity (name/icon) is admin-editable per Server Settings ->
   // Server identity, and takes over the sidebar branding when set -- the
@@ -171,7 +182,7 @@ export function Shell({
                 icon={<Icon size={16} />}
                 href={tabs[0].path}
                 navigate={navigate}
-                active={sectionActive(section, route.path, can)}
+                active={section.id === activeId}
               >
                 {t(section.labelKey)}
               </NavLink>
@@ -195,8 +206,8 @@ export function Shell({
       <div className="workspace">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{routeSubtitle(route.path, t)}</div>
-            <h1>{routeTitle(route.path, t)}</h1>
+            {showParent && parentLabel && <div className="eyebrow">{parentLabel}</div>}
+            <h1>{titleLabel}</h1>
           </div>
           <div className="topbar-actions">
             <ThemeSwitch />
@@ -207,7 +218,10 @@ export function Shell({
             </button>
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content">
+          {activeId && <SectionTabs sectionId={activeId} active={route.path} navigate={navigate} />}
+          {children}
+        </main>
       </div>
       <AppBackground className="app-background--workspace" />
     </div>

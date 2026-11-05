@@ -1,5 +1,5 @@
-import { ChevronDown, CircleCheck, CircleOff, CircleX, Container, Database, ImagePlus, Layers, Loader2, RefreshCw, Server, Trash2, Upload, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, CircleCheck, CircleOff, CircleX, Container, Database, ImagePlus, Layers, Loader2, RefreshCw, Search, Server, Trash2, Upload, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -8,69 +8,144 @@ import { useI18n } from "../i18n";
 import type { DockerService, EnvGroup, ServerIdentity, ServerStatus } from "../types";
 import { withBase } from "../lib/base";
 
-// Server Settings: the panel's equivalent of owpengram's server-panel menu —
-// admin-editable server name/description/icon, login-notification template
-// overrides, .env editing, and a read-only "what is up right now" view. See
-// cmd/telesrv-admin/serversettings.go for the backend.
-//
-// Skip-list vs the reference: gramsrv ships restart/update as deploy scripts,
-// so there is no process/Docker control here — the Services tab only probes
-// reachability of Postgres / the optional Redis / the MTProto listener.
-//
-// Split into two tabs (deep-linkable with ?tab=settings|services) so the rarely
-// touched identity/.env sits apart from the operational status screen; the
-// settings tab accepts &focus=identity|login|env to jump a specific card.
+// Server Settings: a single settings screen (owpengram layout) — a section
+// list on the left plus a search across every .env field, one section on the
+// right. Deep-linkable with ?tab or &focus.
+type SettingsSection = "status" | "identity" | "messages" | `env:${string}`;
+
 export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
   const { t } = useI18n();
-  const initialTab = search?.get("tab") === "services" ? "services" : "settings";
-  const [tab, setTab] = useState<"settings" | "services">(initialTab);
+  const [section, setSection] = useState<SettingsSection>("status");
+  const [groups, setGroups] = useState<EnvGroup[]>([]);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [envError, setEnvError] = useState("");
+  const [needle, setNeedle] = useState("");
 
-  function switchTab(next: "settings" | "services") {
-    setTab(next);
-    const params = new URLSearchParams(window.location.search);
-    if (next === "services") {
-      params.set("tab", "services");
-    } else {
-      params.delete("tab");
+  const loadEnv = useCallback(async () => {
+    setEnvError("");
+    try {
+      const list = await api.serverEnv();
+      const next: Record<string, string> = {};
+      for (const group of list) {
+        for (const field of group.fields) {
+          next[field.key] = field.value;
+        }
+      }
+      setGroups(Array.isArray(list) ? list : []);
+      setValues(next);
+    } catch (err) {
+      setEnvError(errorMessage(err));
     }
-    const query = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-  }
+  }, []);
 
-  // ?focus=identity|login|env rolls the matching card into view once the page
-  // is mounted — a way to link an operator straight at "why didn't my login
-  // message change" without making them hunt the accordion.
+  useEffect(() => { void loadEnv(); }, [loadEnv]);
+
+  // ?focus=identity|login|env jumps to a section on load.
   const focus = search?.get("focus");
   useEffect(() => {
-    if (!focus) return;
-    const target = document.getElementById(`serversettings-${focus}`);
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (focus === "identity") setSection("identity");
+    else if (focus === "login") setSection("messages");
+  }, [focus]);
+  // ?focus=env lands on the first .env group once they are loaded. The jump is
+  // applied once, so picking another section afterwards (Status included)
+  // sticks while the URL still says ?focus=env.
+  const envFocusApplied = useRef(false);
+  useEffect(() => {
+    if (focus !== "env") {
+      envFocusApplied.current = false;
+      return;
     }
-  }, [focus, tab]);
+    if (envFocusApplied.current || groups.length === 0) return;
+    envFocusApplied.current = true;
+    const first = `env:${groups[0].title}` as SettingsSection;
+    setSection((current) => (current === "status" ? first : current));
+  }, [focus, groups]);
+
+  const q = needle.trim().toLowerCase();
+  // A search looks through every .env field (key, description, group title) and
+  // shows the matches together, whatever group they live in.
+  const matches = useMemo(() => {
+    if (!q) return [];
+    return groups
+      .map((group) => ({
+        ...group,
+        fields: group.fields.filter(
+          (field) =>
+            field.key.toLowerCase().includes(q) ||
+            (field.description ?? "").toLowerCase().includes(q) ||
+            group.title.toLowerCase().includes(q)
+        )
+      }))
+      .filter((group) => group.fields.length > 0);
+  }, [groups, q]);
+
+  const activeGroup = section.startsWith("env:") ? groups.find((group) => `env:${group.title}` === section) : undefined;
 
   return (
     <PageFrame title={t("route.serverSettings")} eyebrow={t("serverSettings.eyebrow")}>
-      <div className="tab-bar" role="tablist" aria-label={t("serverSettings.tabsLabel")}>
-        <button className={`tab-btn ${tab === "settings" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "settings"} onClick={() => switchTab("settings")}>
-          {t("serverSettings.tabSettings")}
-        </button>
-        <button className={`tab-btn ${tab === "services" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "services"} onClick={() => switchTab("services")}>
-          {t("serverSettings.tabServices")}
-        </button>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label={t("serverSettings.tabsLabel")}>
+          <label className="searchbox settings-search">
+            <Search size={15} />
+            <input value={needle} onChange={(event) => setNeedle(event.target.value)} placeholder={t("serverSettings.searchSettings")} aria-label={t("serverSettings.searchSettings")} />
+          </label>
+          {!q && (
+            <>
+              <SettingsNavItem label={t("serverSettings.statusLabel")} active={section === "status"} onClick={() => setSection("status")} />
+              <SettingsNavItem label={t("serverSettings.identityTitle")} active={section === "identity"} onClick={() => setSection("identity")} />
+              <SettingsNavItem label={t("nav.loginMessages")} active={section === "messages"} onClick={() => setSection("messages")} />
+              {groups.length > 0 && <div className="settings-nav-label">{t("nav.configuration")}</div>}
+              {groups.map((group) => (
+                <SettingsNavItem
+                  key={group.title}
+                  label={group.title}
+                  count={group.fields.length}
+                  active={section === `env:${group.title}`}
+                  onClick={() => setSection(`env:${group.title}` as SettingsSection)}
+                />
+              ))}
+            </>
+          )}
+        </nav>
+        <div className="settings-content">
+          {envError && <Alert>{envError}</Alert>}
+          {q ? (
+            matches.length === 0 ? (
+              <p className="about-text">{`${t("serverSettings.noMatch")} "${needle.trim()}".`}</p>
+            ) : (
+              matches.map((group) => (
+                <EnvGroupPanel key={group.title} group={group} values={values} setValues={setValues} onSaved={() => undefined} />
+              ))
+            )
+          ) : section === "status" ? (
+            <ServicesTab />
+          ) : section === "identity" ? (
+            <IdentitySection />
+          ) : section === "messages" ? (
+            <LoginNotificationsSection />
+          ) : activeGroup ? (
+            <EnvGroupPanel group={activeGroup} values={values} setValues={setValues} onSaved={() => undefined} />
+          ) : (
+            <LoadingSurface label={t("common.loading")} />
+          )}
+        </div>
       </div>
-      {tab === "settings" ? (
-        <div className="stacked-sections">
-          <IdentitySection />
-          <LoginNotificationsSection />
-          <EnvSection />
-        </div>
-      ) : (
-        <div className="stacked-sections">
-          <ServicesTab />
-        </div>
-      )}
     </PageFrame>
+  );
+}
+
+function SettingsNavItem({ label, count, active, onClick }: { label: string; count?: number; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`settings-nav-item ${active ? "active" : ""}`.trim()}
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      title={label}
+    >
+      <span className="settings-nav-text">{label}</span>
+      {typeof count === "number" && <span className="settings-nav-count">{count}</span>}
+    </button>
   );
 }
 
@@ -449,89 +524,51 @@ export function ServerIconModal({ hasIcon, onClose, onDone }: { hasIcon: boolean
 
 // --- .env editor -----------------------------------------------------
 
-function EnvSection() {
+function EnvGroupPanel({
+  group,
+  values,
+  setValues,
+  onSaved
+}: {
+  group: EnvGroup;
+  values: Record<string, string>;
+  setValues: Dispatch<SetStateAction<Record<string, string>>>;
+  onSaved: () => void;
+}) {
   const { t } = useI18n();
-  const [groups, setGroups] = useState<EnvGroup[]>([]);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [error, setError] = useState("");
-
-  async function load() {
-    setError("");
-    try {
-      const g = await api.serverEnv();
-      setGroups(Array.isArray(g) ? g : []);
-      const next: Record<string, string> = {};
-      for (const group of g) {
-        for (const field of group.fields) {
-          next[field.key] = field.value;
-        }
-      }
-      setValues(next);
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }
-
-  useEffect(() => { void load(); }, []);
-
-  const fieldCount = useMemo(() => groups.reduce((sum, g) => sum + g.fields.length, 0), [groups]);
-
   return (
-    <section id="serversettings-env" className="section-block scroll-anchor">
-      <SectionHead title={t("serverSettings.envTitle")} text={t("serverSettings.envCount", { count: fieldCount, groups: groups.length })} />
-      {error && <Alert>{error}</Alert>}
-      <div className="env-groups">
-        {groups.map((group) => {
-          const isOpen = !!open[group.title];
-          return (
-            <div key={group.title} className={`env-group ${isOpen ? "open" : ""}`}>
-              <button
-                className="env-group-toggle"
-                type="button"
-                aria-expanded={isOpen}
-                onClick={() => setOpen((prev) => ({ ...prev, [group.title]: !prev[group.title] }))}
-              >
-                <span className="env-group-toggle-text">
-                  <span className="env-group-toggle-title">{group.title}</span>
-                  <span className="env-group-toggle-count">
-                    {group.fields.length === 1
-                      ? t("serverSettings.fieldCountOne", { count: group.fields.length })
-                      : t("serverSettings.fieldCountMany", { count: group.fields.length })}
-                  </span>
-                </span>
-                <ChevronDown size={16} className="env-group-chevron" />
-              </button>
-              {isOpen && (
-                <div className="env-group-body">
-                  {group.description && <p className="env-group-desc">{group.description}</p>}
-                  {group.fields.map((field) => (
-                    <label key={field.key} className="form-field env-field">
-                      <span className="mono">{field.key}</span>
-                      {field.description && <span className="env-field-desc">{field.description}</span>}
-                      <input
-                        type={field.sensitive ? "password" : "text"}
-                        value={values[field.key] ?? ""}
-                        placeholder={field.default_value}
-                        onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="gift-table-actions env-save-row">
-        <ActionButton
-          tone="warn"
-          label={t("serverSettings.saveEnv")}
-          path="/api/actions/update-server-env"
-          payload={() => ({ values })}
-          onDone={() => void load()}
-        />
-      </div>
+    <section className="section-block settings-panel">
+      <SectionHead
+        title={group.title}
+        text={group.description}
+        action={
+          <ActionButton
+            tone="warn"
+            label={t("serverSettings.saveEnv")}
+            path="/api/actions/update-server-env"
+            payload={() => {
+              const changed: Record<string, string> = {};
+              for (const field of group.fields) {
+                changed[field.key] = values[field.key] ?? "";
+              }
+              return { values: changed };
+            }}
+            onDone={onSaved}
+          />
+        }
+      />
+      {group.fields.map((field) => (
+        <label key={field.key} className="form-field env-field">
+          <span className="mono">{field.key}</span>
+          {field.description && <span className="env-field-desc">{field.description}</span>}
+          <input
+            type={field.sensitive ? "password" : "text"}
+            value={values[field.key] ?? ""}
+            placeholder={field.default_value}
+            onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+          />
+        </label>
+      ))}
     </section>
   );
 }

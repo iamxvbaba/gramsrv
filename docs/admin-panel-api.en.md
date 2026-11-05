@@ -119,15 +119,16 @@ uses it to decide which sidebar sections to show and which pages to refuse — s
 The panel's sidebar, its in-page tab bars and its route table are three views of
 **one declaration**: `cmd/telesrv-admin/web/src/nav.ts`. That file lists every
 section, the paths that belong to it, and the right each of those paths enforces
-server-side. `Layout.tsx` renders the sidebar from it, `SectionTabs.tsx` reads
-each section's tab list from it, and `Routes.tsx` asks it a single question --
+server-side. `Layout.tsx` renders the sidebar from it and, above every page, the
+active section's tab bar through `SectionTabs.tsx`, which reads that section's
+tab list from it; `Routes.tsx` asks it a single question --
 `routePermission(path)` -- and gates the whole surface in one place.
 
 Two consequences worth knowing before changing anything here:
 
 - **A section is rendered when the session holds *any* of its tabs' rights**, and
   its link resolves to the first visible tab. An operator holding only
-  `prices.manage` gets one Commerce row that opens on Prices. A section reduced
+  `prices.manage` gets one Economy row that opens on Bot prices. A section reduced
   to a single visible tab draws no tab bar at all.
 - **A page can never be advertised and then answer 403.** Before this table
   existed, twelve sidebar entries rendered unconditionally while every endpoint
@@ -143,10 +144,10 @@ prevent:
 
 1. **Decide whether it is a new section or a tab of an existing one.** If the
    page is a sibling of something already there -- it serves the same job over a
-   different slice -- it is a **tab**, not a second sidebar row. Commerce already
-   holds Prices and the Stars ledger; Media holds Storage; Accounts holds
-   Account Rating and Shared devices. A new sidebar row is only for a genuinely
-   new job.
+   different slice -- it is a **tab**, not a second sidebar row. Economy already
+   holds Stars balances, Premium, Bot prices, Donations and Account Rating; Server
+   holds Storage, Operators and the Audit log. A new sidebar row is only for a
+   genuinely new job.
 2. **Add it to `nav.ts`**, with the right its route enforces server-side. If you
    need a right that does not exist yet, add it to `permissions.tsx`
    (`permissionLabels` *and* `permissionGroups`) and to `assignablePermissions()`
@@ -155,8 +156,11 @@ prevent:
 3. **Add the route** in `Routes.tsx`. Do **not** wrap it in `PermissionGate`: the
    gate is already applied from `routePermission`, and a hand-wrapped branch is
    the thing that let the old gaps accumulate.
-4. **Add the page** in `web/src/pages/`, render `<SectionTabs sectionId="..." active="..." navigate={navigate} />`
-   inside it, and take a `navigate` prop if it needs one.
+4. **Add the page** in `web/src/pages/`, and take a `navigate` prop if it needs
+   one. Do **not** render `<SectionTabs>` in it: the shell (`Layout.tsx`) already
+   draws the active section's tab bar above every page from `nav.ts`, so a page
+   that renders its own shows two. `gen_admin_panel_doc_tables.py --check` fails
+   on any `<SectionTabs` under `pages/`.
 5. **Translate it.** Every user-visible string goes through `useI18n()` and gets
    an entry in all three language blocks of `i18n.tsx`.
 6. **Rebuild the bundle.** `cmd/telesrv-admin/server.go` does
@@ -190,34 +194,34 @@ and the old URL still lands there rather than 404ing on a bookmark.
 | Sidebar section | Tab | Path | Required right |
 | --- | --- | --- | --- |
 | Overview | Overview | `/` | `dashboard.read` |
-| Accounts | Accounts | `/accounts` | `accounts.read` |
-| Accounts | Account Rating | `/account-ratings` | `ratings.read` |
-| Accounts | Shared devices | `/accounts/shared-devices` | `accounts.read` |
-| Groups / Channels | Groups / Channels | `/channels` | `channels.read` |
-| Bots | Bots | `/bots` | `bots.read` |
+| Users and chats | Accounts | `/accounts` | `accounts.read` |
+| Users and chats | Groups / Channels | `/channels` | `channels.read` |
+| Users and chats | Bots | `/bots` | `bots.read` |
+| Users and chats | Broadcasts | `/broadcasts` | `broadcasts.read` |
+| Moderation | Messages | `/messages/private` | `messages.read` (also served at `/messages`) |
+| Moderation | Groups | `/messages/groups` | `messages.read` |
+| Moderation | Reports | `/moderation` | `moderation.review` |
+| Moderation | Shared devices | `/accounts/shared-devices` | `accounts.read` |
 | Verification | Official | `/verification` | `verification.review` |
 | Verification | Third-party | `/bot-verification` | `botverification.review` |
+| Content | Stickers | `/stickers` | `content.read` |
+| Content | Emoji | `/emoji` | `content.read` |
+| Content | GIFs | `/gif-catalog` | `content.read` |
+| Economy | Stars balances | `/stars` | `stars.read` |
+| Economy | Premium | `/monetization` | `premium.manage` (also served at `/premium`, `/star-issue`) |
+| Economy | Bot prices | `/prices` | `prices.manage` |
+| Economy | Donations | `/donations` | `donations.manage` |
+| Economy | Account Rating | `/account-ratings` | `ratings.read` |
 | Gifts | Star Gift Catalog | `/gifts` | `gifts.read` |
 | Gifts | Give Gifts | `/give-gifts` | `gifts.read` |
 | Gifts | Auctions & Drops | `/auctions` | `gifts.read` |
-| Commerce | Stars & Premium | `/monetization` | `premium.manage` (also served at `/star-issue`) |
-| Commerce | Prices | `/prices` | `prices.manage` |
-| Commerce | Stars balances | `/stars` | `stars.read` |
-| NFT Items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
-| NFT Items | NFT Numbers | `/collectible-phones` | `phones.read` |
-| NFT Items | NFT Gifts | `/nft-gifts` | `gifts.read` |
-| Media | Stickers | `/stickers` | `content.read` |
-| Media | Emoji | `/emoji` | `content.read` |
-| Media | GIFs | `/gif-catalog` | `content.read` |
-| Media | Storage | `/storage` | `storage.read` |
-| Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
-| Messages | Private | `/messages/private` | `messages.read` (also served at `/messages`) |
-| Messages | Groups | `/messages/groups` | `messages.read` |
-| Reports | Reports | `/moderation` | `moderation.review` |
-| Donations | Donations | `/donations` | `donations.manage` |
-| Audit log | Audit log | `/audit-log` | `audit.read` |
-| Operators | Operators | `/admin-users` | `admins.manage` |
-| Server Settings | Server Settings | `/server-settings` | `server.manage` |
+| NFT items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
+| NFT items | NFT Numbers | `/collectible-phones` | `phones.read` |
+| NFT items | NFT Gifts | `/nft-gifts` | `gifts.read` |
+| Server | Server Settings | `/server-settings` | `server.manage` |
+| Server | Storage | `/storage` | `storage.read` |
+| Server | Operators | `/admin-users` | `admins.manage` |
+| Server | Audit log | `/audit-log` | `audit.read` |
 <!-- END GENERATED:nav -->
 
 A section with one visible tab shows no tab bar, and its sidebar link points at
@@ -321,6 +325,9 @@ Every mutating request carries in its body:
 | GET | `/api/messages/detail` | Params: `owner_user_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
 | GET | `/api/messages/groups` | Params: `channel_id` (int64, req.), `before_date` (int64), `before_id` (int), `limit` (int). Response: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Params: `channel_id` (int64, req.), `msg_id` (int, req.). Response: message card. |
+| GET | `/api/live/chats` | Params: `user_id` (int64, req.), `limit` (int, 1-200; any other value means 100), `before_date` (int64), `before_peer_id` (int64). Response: `user_id`, `chats` (`PeerType`, `PeerID`, `TopMessageID`, `TopMessageDate`, `UnreadCount`), `has_more`. A user's dialogs for the live review console, ordered by (`top_message_date`, `peer_id`) descending. `before_date` + `before_peer_id` is a keyset cursor: for the next page, pass the last row's `TopMessageDate` and `PeerID`. The cursor is present when `before_peer_id` > 0 (`before_date` may be 0). `has_more` is true when another page exists. Requires `messages.read`. |
+| GET | `/api/live/peers` | Params: `users` (comma-separated int64), `channels` (comma-separated int64). Response: `users` and `channels` maps of id to display name. Requires `messages.read`. |
+| GET | `/api/live/media` | Params: `key` (location key such as `photo:<id>` or `doc:<id>`). Proxies the internal admin API, which reads through the blob backend and sniffs the type from the bytes. Raster images (`image/jpeg`, `image/png`, `image/gif`, `image/webp`), `video/mp4` and `audio/*` are served inline with that type; anything else is `application/octet-stream` with `Content-Disposition: attachment`. Objects over 16 MiB return `413`, an empty `key` returns `400`, and an unknown key or a key outside `photo:`, `doc:` and `blob:` returns `404`. Served objects and the `413` reply carry `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` and `Cache-Control: no-store`. Requires `messages.read`. |
 
 ## API: star gifts and collectibles
 

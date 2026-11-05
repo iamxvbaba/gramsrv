@@ -2,7 +2,6 @@ import { CheckCircle2, Gavel, Loader2, RefreshCw, ShieldCheck, Timer, Upload, X 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
 import { useI18n, type TFunction } from "../i18n";
 import { formatUnix, localInputValue, titleFromFilename, toUnixSeconds } from "../lib/format";
@@ -107,7 +106,6 @@ export function AuctionsPage({ navigate }: { navigate: Navigate }) {
         <button className="btn" type="button" onClick={() => openAuthor("drop")}><Timer size={15} />{t("auctions.newDrop")}</button>
         <button className="btn primary" type="button" onClick={() => openAuthor("auction")}><Gavel size={15} />{t("auctions.newAuction")}</button>
       </>}>
-      <SectionTabs sectionId="gifts" active="/auctions" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("auctions.metricAuctions")} value={String(stats.auctions)} />

@@ -9,7 +9,6 @@ import { displayName, displayPhone, formatDate, formatUnix } from "../lib/format
 import { accountMetrics } from "../lib/metrics";
 import type { Navigate } from "../routing";
 import type { AccountListResponse } from "../types";
-import { SectionTabs } from "../components/SectionTabs";
 
 type AccountCursor = { beforeID: number; beforeActiveUS: number };
 
@@ -91,16 +90,12 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
       eyebrow={data?.listing === false ? t("account.queryResults") : t("account.recentActive")}
       actions={
         <>
-          <button className="btn icon-text" type="button" onClick={() => navigate("/accounts/shared-devices")}>
-            <Smartphone size={15} /> {t("account.sharedDevices")}
-          </button>
           <button className="btn" type="button" onClick={() => loadPage(cursor)} disabled={busy}>
             <RefreshCw size={15} /> {t("common.refresh")}
           </button>
         </>
       }
     >
-      <SectionTabs sectionId="accounts" active="/accounts" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("account.currentPage")} value={String(data?.rows.length ?? 0)} />

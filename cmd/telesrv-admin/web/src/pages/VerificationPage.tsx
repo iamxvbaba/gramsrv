@@ -1,7 +1,6 @@
 import { BadgeCheck, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { displayUsername, formatDate } from "../lib/format";
@@ -90,7 +89,6 @@ export function VerificationPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
-      <SectionTabs sectionId="verification" active="/verification" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         {statuses.map((item) => (

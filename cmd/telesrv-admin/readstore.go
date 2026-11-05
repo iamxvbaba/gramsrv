@@ -1471,8 +1471,13 @@ func prettyJSON(raw []byte) string {
 	if len(raw) == 0 {
 		return "{}"
 	}
+	// UseNumber keeps 64-bit ids exact: a plain Unmarshal turns them into
+	// float64 and silently rounds (a photo id like 4979042694612278089 became
+	// ...278000), which broke media lookups derived from this JSON.
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return string(raw)
 	}
 	out, err := json.MarshalIndent(v, "", "  ")

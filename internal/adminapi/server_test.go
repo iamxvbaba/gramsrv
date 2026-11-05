@@ -648,6 +648,70 @@ func TestOfficialStarGiftListItemExposesExplicitCapabilities(t *testing.T) {
 	}
 }
 
+type liveMediaStubService struct {
+	fakeService
+	data     []byte
+	mimeType string
+	found    bool
+	err      error
+	calls    int
+}
+
+func (s *liveMediaStubService) LiveMedia(context.Context, string) ([]byte, string, bool, error) {
+	s.calls++
+	return s.data, s.mimeType, s.found, s.err
+}
+
+// /v1/media bytes end up on the panel origin, so every successful response has
+// to carry the headers that keep a document from rendering as active content,
+// and anything outside the media allowlist has to download.
+func TestAdminAPILiveMediaHeaders(t *testing.T) {
+	html := []byte(`<html><script>alert(1)</script></html>`)
+	get := func(svc *liveMediaStubService, target string) *httptest.ResponseRecorder {
+		t.Helper()
+		srv := &Server{token: "secret", svc: svc}
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	checkSafety := func(rec *httptest.ResponseRecorder) {
+		t.Helper()
+		h := rec.Header()
+		if h.Get("X-Content-Type-Options") != "nosniff" ||
+			!strings.Contains(h.Get("Content-Security-Policy"), "sandbox") ||
+			h.Get("Cache-Control") != "no-store" {
+			t.Fatalf("safety headers = %v", h)
+		}
+	}
+
+	rec := get(&liveMediaStubService{data: html, mimeType: "application/octet-stream", found: true}, "/v1/media?key=doc:1")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/octet-stream" ||
+		rec.Header().Get("Content-Disposition") != "attachment" || !bytes.Equal(rec.Body.Bytes(), html) {
+		t.Fatalf("octet-stream status=%d headers=%v body=%q", rec.Code, rec.Header(), rec.Body.String())
+	}
+	checkSafety(rec)
+
+	rec = get(&liveMediaStubService{data: []byte("\x89PNG\r\n\x1a\n"), mimeType: "image/png", found: true}, "/v1/media?key=photo:1")
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" ||
+		rec.Header().Get("Content-Disposition") != "" {
+		t.Fatalf("image status=%d headers=%v", rec.Code, rec.Header())
+	}
+	checkSafety(rec)
+
+	if rec = get(&liveMediaStubService{err: admin.ErrLiveMediaTooLarge}, "/v1/media?key=doc:2"); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("too large status=%d body=%s, want 413", rec.Code, rec.Body.String())
+	}
+	if rec = get(&liveMediaStubService{}, "/v1/media?key=doc:3"); rec.Code != http.StatusNotFound {
+		t.Fatalf("not found status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+	missing := &liveMediaStubService{}
+	if rec = get(missing, "/v1/media"); rec.Code != http.StatusBadRequest || missing.calls != 0 {
+		t.Fatalf("missing key status=%d calls=%d, want 400 without a lookup", rec.Code, missing.calls)
+	}
+}
+
 type fakeService struct{}
 
 type resolveByPhoneService struct {
@@ -894,6 +958,10 @@ func (fakeService) RemoveStickerFromSet(_ context.Context, req admin.RemoveStick
 }
 
 func (fakeService) StickerDocumentAnimation(context.Context, int64) ([]byte, string, bool, error) {
+	return nil, "", false, nil
+}
+
+func (fakeService) LiveMedia(context.Context, string) ([]byte, string, bool, error) {
 	return nil, "", false, nil
 }
 

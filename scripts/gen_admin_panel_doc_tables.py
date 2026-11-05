@@ -33,7 +33,7 @@ SERVER_GO = ROOT / "cmd/telesrv-admin/server.go"
 # dropped out of the table with no error at all. /messages/private is that
 # entry, and the docs silently lost the Messages section because of it.
 SECTION_RE = re.compile(
-    r'\{\s*id:\s*"(?P<id>[a-z]+)",\s*labelKey:\s*"(?P<label>[a-zA-Z.]+)",'
+    r'\{\s*(?://[^\n]*\n\s*)*id:\s*"(?P<id>[a-z0-9-]+)",\s*labelKey:\s*"(?P<label>[^"]+)",'
     r'\s*icon:\s*\w+,\s*tabs:\s*\['
 )
 TAB_RE = re.compile(
@@ -48,8 +48,8 @@ def parse_aliases(rest: str) -> list[str]:
     """Return the extra paths a tab entry serves, if it lists any.
 
     A tab that carries aliases is served under a second URL as well: the
-    Messages tab answers to a bare /messages, and the Stars & Premium tab
-    still answers to the old /star-issue. The table prints those paths, so
+    Messages tab answers to a bare /messages, and the Premium tab still
+    answers to the old /star-issue. The table prints those paths, so
     the URL a bookmark points at is written down next to the one the tab
     lives at.
     """
@@ -99,6 +99,16 @@ def parse_nav() -> list[tuple[str, str, list[tuple[str, str, str, list[str]]]]]:
         if not tabs:
             raise ValueError(f"nav section {m.group('id')!r} parsed to zero tabs")
         out.append((m.group("id"), m.group("label"), tabs))
+    # Every section object in nav.ts starts with an `id:`; if the regex matched
+    # fewer sections than there are ids, it silently skipped one (a comment or a
+    # hyphen in the id, say), which is exactly how these tables rot. Fail loudly
+    # instead of emitting docs that are missing a section.
+    declared = len(re.findall(r'\bid:\s*"', body))
+    if declared != len(out):
+        raise ValueError(
+            f"parsed {len(out)} nav sections but nav.ts declares {declared} 'id:' entries; "
+            "SECTION_RE missed a section"
+        )
     return out
 
 
@@ -195,47 +205,20 @@ def parse_routes() -> list[tuple[str, str, str, str]]:
 # ------------------------------------------------------- section tab placement
 
 
-def _actions_region(text: str, offset: int) -> tuple[int, int] | None:
-    """Return the (start, end) of the nearest preceding `actions={...}` region.
+def pages_rendering_section_tabs() -> list[str]:
+    """Pages that render a <SectionTabs> of their own.
 
-    Braces are matched rather than lines counted because a prop value is a JSX
-    expression, not a fixed number of lines.
-    """
-    start = text.rfind("actions={", 0, offset)
-    if start < 0:
-        return None
-    depth = 0
-    for i in range(start + len("actions="), len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return (start, i)
-    return None
-
-
-def misplaced_section_tabs() -> list[str]:
-    """Pages whose <SectionTabs> sits inside PageFrame's `actions` prop.
-
-    PageFrame renders `actions` into the header's right-aligned action row and
-    everything else below the title, so the section sub-menu only belongs among
-    the children. Seven pages got it wrong once -- three of them nested the tab
-    bar inside a <button>, which is invalid HTML -- and nothing caught it,
-    because the component compiles and renders either way. It is checked here
-    for the same reason the tables are: a placement that is wrong but renders is
-    exactly the kind of drift that survives review.
+    The shell (components/Layout.tsx) draws the active section's tab bar above
+    every page from nav.ts, so a page that also renders <SectionTabs> shows the
+    bar twice. That compiles and renders either way, so it is checked here for
+    the same reason the tables are: drift that renders is exactly the kind that
+    survives review.
     """
     bad: list[str] = []
-    for page in sorted(WEB_PAGES.glob("*.tsx")):
-        text = page.read_text(encoding="utf-8")
-        offset = 0
-        for lineno, line in enumerate(text.splitlines(), 1):
+    for page in sorted(WEB_PAGES.rglob("*.tsx")):
+        for lineno, line in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
             if "<SectionTabs" in line:
-                region = _actions_region(text, offset)
-                if region and region[0] < offset < region[1]:
-                    bad.append(f"{page.name}:{lineno}")
-            offset += len(line) + 1
+                bad.append(f"{page.relative_to(ROOT).as_posix()}:{lineno}")
     return bad
 
 
@@ -392,20 +375,21 @@ def main() -> int:
             print("stale generated tables:\n  " + "\n  ".join(stale), file=sys.stderr)
             print("\nrun: python3 scripts/gen_admin_panel_doc_tables.py --write", file=sys.stderr)
             return 1
-        misplaced = misplaced_section_tabs()
-        if misplaced:
+        duplicated = pages_rendering_section_tabs()
+        if duplicated:
             print(
-                "<SectionTabs> inside a PageFrame actions prop:\n  " + "\n  ".join(misplaced),
+                "<SectionTabs> rendered inside a page:\n  " + "\n  ".join(duplicated),
                 file=sys.stderr,
             )
             print(
-                "\nSectionTabs renders into the header action row there. Move it to be"
-                " the first child of PageFrame instead.",
+                "\nThe shell (components/Layout.tsx) already renders the active section's"
+                " tab bar from nav.ts, so these pages show it twice. Remove <SectionTabs>"
+                " from each listed page.",
                 file=sys.stderr,
             )
             return 1
         print("generated admin-panel doc tables are current")
-        print("section tab bars are placed as PageFrame children")
+        print("no page renders its own section tab bar")
         return 0
 
     if args.write:

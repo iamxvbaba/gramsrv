@@ -134,16 +134,17 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 Боковое меню панели, вкладочные полосы внутри страниц и таблица маршрутов —
 три представления **одного объявления**: `cmd/telesrv-admin/web/src/nav.ts`.
 В нём перечислены все разделы, относящиеся к ним пути и право, которое каждый
-из этих путей проверяет на сервере. `Layout.tsx` рисует боковое меню из него,
-`SectionTabs.tsx` берёт оттуда список вкладок раздела, а `Routes.tsx` задаёт
-ему ровно один вопрос — `routePermission(path)` — и проверяет права одним
-местом на всю поверхность.
+из этих путей проверяет на сервере. `Layout.tsx` рисует из него боковое меню и,
+над каждой страницей, полосу вкладок активного раздела через `SectionTabs.tsx`,
+который берёт оттуда список вкладок раздела; `Routes.tsx` задаёт ему ровно один
+вопрос — `routePermission(path)` — и проверяет права одним местом на всю
+поверхность.
 
 Два следствия, о которых стоит знать до правок:
 
 - **Раздел показывается, если у сессии есть право хотя бы на одну его вкладку**,
   а ссылка ведёт на первую доступную вкладку. Оператор с одним лишь
-  `prices.manage` увидит одну строку Commerce, открывающуюся на Prices. Раздел,
+  `prices.manage` увидит одну строку Economy, открывающуюся на Bot prices. Раздел,
   у которого доступна единственная вкладка, вообще не рисует полосу вкладок.
 - **Страница не может быть показана в меню и затем ответить 403.** До того как
   появилась эта таблица, двенадцать пунктов бокового меню отрисовывались
@@ -159,9 +160,10 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 
 1. **Решите, это новый раздел или вкладка существующего.** Если страница
    соседствует с уже имеющейся — делает ту же работу над другим срезом
-   данных, — это **вкладка**, а не вторая строка меню. В Commerce уже живут
-   Prices и журнал Stars, в Media — Storage, в Accounts — рейтинг аккаунтов и
-   общие устройства. Новая строка меню — только для действительно новой работы.
+   данных, — это **вкладка**, а не вторая строка меню. В Economy уже живут
+   Stars balances, Premium, Bot prices, Donations и Account Rating, в Server —
+   Storage, Operators и журнал аудита. Новая строка меню — только для
+   действительно новой работы.
 2. **Добавьте её в `nav.ts`** вместе с правом, которое проверяет её маршрут на
    сервере. Если нужно право, которого ещё нет, добавьте его в
    `permissions.tsx` (`permissionLabels` **и** `permissionGroups`) и в
@@ -170,9 +172,11 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 3. **Добавьте маршрут** в `Routes.tsx`. **Не** оборачивайте его в
    `PermissionGate`: проверка уже применяется из `routePermission`, и именно
    ручная обёртка позволяла накапливаться старым пробелам.
-4. **Добавьте страницу** в `web/src/pages/`, отрисуйте внутри неё
-   `<SectionTabs sectionId="..." active="..." navigate={navigate} />` и примите
-   проп `navigate`, если он нужен.
+4. **Добавьте страницу** в `web/src/pages/` и примите проп `navigate`, если он
+   нужен. **Не** рисуйте в ней `<SectionTabs>`: оболочка (`Layout.tsx`) уже
+   выводит полосу вкладок активного раздела над каждой страницей из `nav.ts`, и
+   страница со своей полосой покажет две. `gen_admin_panel_doc_tables.py --check`
+   падает на любом `<SectionTabs` в `pages/`.
 5. **Переведите её.** Каждая пользовательская строка идёт через `useI18n()` и
    получает запись во всех трёх языковых блоках `i18n.tsx`.
 6. **Пересоберите бандл.** В `cmd/telesrv-admin/server.go` стоит
@@ -209,34 +213,34 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Sidebar section | Tab | Path | Required right |
 | --- | --- | --- | --- |
 | Overview | Overview | `/` | `dashboard.read` |
-| Accounts | Accounts | `/accounts` | `accounts.read` |
-| Accounts | Account Rating | `/account-ratings` | `ratings.read` |
-| Accounts | Shared devices | `/accounts/shared-devices` | `accounts.read` |
-| Groups / Channels | Groups / Channels | `/channels` | `channels.read` |
-| Bots | Bots | `/bots` | `bots.read` |
+| Users and chats | Accounts | `/accounts` | `accounts.read` |
+| Users and chats | Groups / Channels | `/channels` | `channels.read` |
+| Users and chats | Bots | `/bots` | `bots.read` |
+| Users and chats | Broadcasts | `/broadcasts` | `broadcasts.read` |
+| Moderation | Messages | `/messages/private` | `messages.read` (also served at `/messages`) |
+| Moderation | Groups | `/messages/groups` | `messages.read` |
+| Moderation | Reports | `/moderation` | `moderation.review` |
+| Moderation | Shared devices | `/accounts/shared-devices` | `accounts.read` |
 | Verification | Official | `/verification` | `verification.review` |
 | Verification | Third-party | `/bot-verification` | `botverification.review` |
+| Content | Stickers | `/stickers` | `content.read` |
+| Content | Emoji | `/emoji` | `content.read` |
+| Content | GIFs | `/gif-catalog` | `content.read` |
+| Economy | Stars balances | `/stars` | `stars.read` |
+| Economy | Premium | `/monetization` | `premium.manage` (also served at `/premium`, `/star-issue`) |
+| Economy | Bot prices | `/prices` | `prices.manage` |
+| Economy | Donations | `/donations` | `donations.manage` |
+| Economy | Account Rating | `/account-ratings` | `ratings.read` |
 | Gifts | Star Gift Catalog | `/gifts` | `gifts.read` |
 | Gifts | Give Gifts | `/give-gifts` | `gifts.read` |
 | Gifts | Auctions & Drops | `/auctions` | `gifts.read` |
-| Commerce | Stars & Premium | `/monetization` | `premium.manage` (also served at `/star-issue`) |
-| Commerce | Prices | `/prices` | `prices.manage` |
-| Commerce | Stars balances | `/stars` | `stars.read` |
-| NFT Items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
-| NFT Items | NFT Numbers | `/collectible-phones` | `phones.read` |
-| NFT Items | NFT Gifts | `/nft-gifts` | `gifts.read` |
-| Media | Stickers | `/stickers` | `content.read` |
-| Media | Emoji | `/emoji` | `content.read` |
-| Media | GIFs | `/gif-catalog` | `content.read` |
-| Media | Storage | `/storage` | `storage.read` |
-| Broadcasts | Broadcasts | `/broadcasts` | `broadcasts.read` |
-| Messages | Private | `/messages/private` | `messages.read` (also served at `/messages`) |
-| Messages | Groups | `/messages/groups` | `messages.read` |
-| Reports | Reports | `/moderation` | `moderation.review` |
-| Donations | Donations | `/donations` | `donations.manage` |
-| Audit log | Audit log | `/audit-log` | `audit.read` |
-| Operators | Operators | `/admin-users` | `admins.manage` |
-| Server Settings | Server Settings | `/server-settings` | `server.manage` |
+| NFT items | NFT Usernames | `/collectible-usernames` | `usernames.read` |
+| NFT items | NFT Numbers | `/collectible-phones` | `phones.read` |
+| NFT items | NFT Gifts | `/nft-gifts` | `gifts.read` |
+| Server | Server Settings | `/server-settings` | `server.manage` |
+| Server | Storage | `/storage` | `storage.read` |
+| Server | Operators | `/admin-users` | `admins.manage` |
+| Server | Audit log | `/audit-log` | `audit.read` |
 <!-- END GENERATED:nav -->
 
 Раздел с одной доступной вкладкой не рисует полосу вкладок, и его ссылка в
@@ -345,6 +349,9 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/messages/detail` | Параметры: `owner_user_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
 | GET | `/api/messages/groups` | Параметры: `channel_id` (int64, обяз.), `before_date` (int64), `before_id` (int), `limit` (int). Ответ: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Параметры: `channel_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
+| GET | `/api/live/chats` | Параметры: `user_id` (int64, обяз.), `limit` (int, 1-200; любое другое значение означает 100), `before_date` (int64), `before_peer_id` (int64). Ответ: `user_id`, `chats` (`PeerType`, `PeerID`, `TopMessageID`, `TopMessageDate`, `UnreadCount`), `has_more`. Диалоги пользователя для консоли живого просмотра, по убыванию (`top_message_date`, `peer_id`). `before_date` + `before_peer_id` — keyset-курсор: для следующей страницы передайте `TopMessageDate` и `PeerID` последней строки. Курсор задан, когда `before_peer_id` > 0 (`before_date` может быть 0). `has_more` равен true, если есть следующая страница. Требует `messages.read`. |
+| GET | `/api/live/peers` | Параметры: `users` (int64 через запятую), `channels` (int64 через запятую). Ответ: словари `users` и `channels` вида id → отображаемое имя. Требует `messages.read`. |
+| GET | `/api/live/media` | Параметры: `key` (ключ расположения, например `photo:<id>` или `doc:<id>`). Проксирует внутренний admin API, который читает через блоб-бэкенд и определяет тип по самим байтам. Растровые изображения (`image/jpeg`, `image/png`, `image/gif`, `image/webp`), `video/mp4` и `audio/*` отдаются inline с этим типом; всё остальное — как `application/octet-stream` с `Content-Disposition: attachment`. Объекты больше 16 МиБ возвращают `413`, пустой `key` — `400`, неизвестный ключ или ключ вне `photo:`, `doc:` и `blob:` — `404`. Отданные объекты и ответ `413` несут `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` и `Cache-Control: no-store`. Требует `messages.read`. |
 
 ## API: звёздные подарки и коллекционки
 

@@ -1844,7 +1844,7 @@ td.evidence-message-cell {
 }
 
 /* Server Settings' Settings/Services tab bar. */
-/* A section with five tabs (Commerce) does not fit a 390px screen at
+/* A section with five tabs (Economy) does not fit a 390px screen at
    fit-content: the bar was overflowing the page and pushing the whole layout
    wide. It scrolls horizontally instead, which keeps every tab reachable on a
    phone and keeps the bar visually a bar rather than a clipped edge. */
@@ -1991,3 +1991,568 @@ td.evidence-message-cell {
   align-items: center;
   gap: 8px;
 }
+
+/* Section tab bar: never let the selector collapse, keep buttons centered, and
+   never show a vertical scrollbar (only horizontal when it must scroll). */
+.tab-bar {
+  min-height: 40px;
+  align-items: center;
+  overflow-y: hidden;
+}
+
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Login-notification template fields need a real height. */
+.template-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 9px 12px;
+}
+
+
+/* Action row on a page whose title now lives in the top bar. */
+.page-title-row--actions {
+  justify-content: flex-end;
+}
+
+
+/* Live conversation preview (message review). */
+.msg-preview {
+  margin-bottom: 16px;
+  background: var(--bg-accent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.msg-preview-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 700;
+}
+.msg-preview-list {
+  display: grid;
+  gap: 6px;
+  max-height: 360px;
+  padding: 12px;
+  overflow-y: auto;
+}
+.msg-preview-empty {
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+.msg-preview-row {
+  display: flex;
+}
+.msg-preview-row.out {
+  justify-content: flex-end;
+}
+.msg-preview-row.post {
+  justify-content: center;
+}
+.msg-preview-bubble {
+  max-width: min(520px, 78%);
+  padding: 6px 10px;
+  background: var(--panel-strong);
+  border-radius: 14px 14px 14px 5px;
+}
+.msg-preview-row.out .msg-preview-bubble {
+  background: var(--brand-tint);
+  border-radius: 14px 14px 5px 14px;
+}
+.msg-preview-row.post .msg-preview-bubble {
+  max-width: 100%;
+  border-radius: 14px;
+}
+.msg-preview-bubble.deleted {
+  opacity: 0.7;
+  outline: 1px dashed var(--danger-border);
+}
+.msg-preview-from {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.msg-preview-media {
+  color: var(--brand-strong);
+  font-size: 12px;
+}
+.msg-preview-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.msg-preview-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+
+/* Server Settings as a settings app: section list + env search. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+.settings-nav {
+  position: sticky;
+  top: 72px;
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.settings-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+.settings-nav-label {
+  margin: 12px 8px 4px;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.settings-nav-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.settings-nav-item:hover {
+  color: var(--heading);
+  background: var(--panel-subtle);
+}
+.settings-nav-item.active {
+  color: var(--heading);
+  background: var(--panel-strong);
+  font-weight: 600;
+}
+.settings-nav-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-nav-count {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.settings-content {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+@media (max-width: 1100px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-nav {
+    position: static;
+  }
+}
+
+
+/* Reported content as chat bubbles (moderation review). */
+.evidence-item {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--bg-accent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.evidence-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.evidence-kind {
+  padding: 2px 8px;
+  color: var(--brand-tint-text);
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-border);
+  border-radius: 999px;
+  font-weight: 600;
+}
+.evidence-chat {
+  color: var(--muted);
+}
+.evidence-id {
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+}
+.chat-row {
+  display: flex;
+}
+.chat-row.in {
+  justify-content: flex-start;
+}
+.chat-row.out {
+  justify-content: flex-end;
+}
+.chat-bubble {
+  max-width: min(520px, 88%);
+  padding: 8px 12px;
+  background: var(--panel-strong);
+  border-radius: 14px 14px 14px 5px;
+}
+.chat-bubble.media-only {
+  padding: 4px;
+}
+.chat-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.chat-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.evidence-media-placeholder {
+  display: grid;
+  min-width: 220px;
+  min-height: 120px;
+  place-items: center;
+  color: var(--muted);
+  background: var(--panel-subtle);
+  border-radius: 10px;
+  text-transform: capitalize;
+}
+.evidence-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+
+/* Live review console. */
+.live-review {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+.live-review-list {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  max-height: 70vh;
+  padding: 10px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.live-review-list-head {
+  padding: 0 4px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.live-review-empty {
+  padding: 12px 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.live-review-item {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  color: var(--text-soft);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.live-review-item:hover {
+  background: var(--panel-subtle);
+}
+.live-review-item.active {
+  color: var(--heading);
+  background: var(--brand-tint);
+  border-color: var(--brand-tint-border);
+}
+.live-review-item-title {
+  font-weight: 600;
+}
+.live-review-item-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.live-review-messages {
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  .live-review {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+/* Messenger layout for reading a user's chats live. */
+.messenger {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  min-height: 60vh;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.messenger-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+.messenger-search {
+  margin: 10px;
+}
+.messenger-items {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  flex: 1;
+  min-height: 0;
+  padding: 0 6px 8px;
+  overflow-y: auto;
+}
+.messenger-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.messenger-item:hover {
+  background: var(--panel-subtle);
+}
+.messenger-item.active {
+  background: var(--brand-tint);
+}
+.messenger-item-body {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.messenger-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.messenger-item-top strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--heading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messenger-preview {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messenger-unread {
+  flex: none;
+  min-width: 20px;
+  padding: 1px 6px;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.messenger-chat {
+  min-width: 0;
+  padding: 12px;
+  background: var(--bg-accent);
+}
+.messenger-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  height: 100%;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+@media (max-width: 900px) {
+  .messenger {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .messenger-list {
+    max-height: 40vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+
+.msg-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.msg-preview-head .avatar-photo-img,
+.msg-preview-head .avatar-fallback,
+.messenger-item .avatar-photo-img,
+.messenger-item .avatar-fallback,
+.live-review-item .avatar-photo-img,
+.live-review-item .avatar-fallback {
+  flex: none;
+  border-radius: 50%;
+}
+
+
+/* Messenger sizing: left list and right conversation share one fixed height. */
+.messenger {
+  height: 72vh;
+}
+.messenger-list {
+  min-width: 0;
+}
+.messenger-search {
+  width: auto;
+  min-width: 0;
+}
+.messenger-search input {
+  min-width: 0;
+}
+.messenger-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.messenger-chat .msg-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin-bottom: 0;
+}
+.messenger-chat .msg-preview-list {
+  flex: 1;
+  max-height: none;
+}
+
+
+.msg-preview-photo {
+  display: block;
+  max-width: min(360px, 100%);
+  border-radius: 8px;
+}
+.evidence-media-img {
+  display: block;
+  max-width: min(420px, 100%);
+  border-radius: 10px;
+}
+
+
+/* Keep message rows content-sized instead of stretching to fill the pane. */
+.msg-preview-list {
+  align-content: start;
+}
+.msg-preview-row {
+  align-items: flex-start;
+}
+.messenger-chat .msg-preview-list {
+  align-content: start;
+}
+
+
+.msg-preview-photo {
+  cursor: zoom-in;
+}
+.msg-preview-row.focus .msg-preview-bubble {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+}
+
+
+/* Cap the media bubble so a large image cannot stretch the row. */
+.msg-preview-row.post .msg-preview-bubble {
+  max-width: min(100%, 360px);
+}
+.msg-preview-photo {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+}
+.evidence-media-img {
+  max-height: 300px;
+  object-fit: contain;
+}
+
+
+.messenger-more {
+  margin: 6px;
+}
+.msg-preview-link {
+  margin-right: 6px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.msg-preview-link:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+

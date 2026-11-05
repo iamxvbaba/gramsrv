@@ -4671,6 +4671,99 @@ func isSafeStickerPreviewImageType(value string) bool {
 	}
 }
 
+// maxLiveMediaBytes caps one live-review media read. A message can carry a
+// multi-GB document, so the read is bounded. The panel renders only photos as
+// an <img>; a document is a download link the operator has to click.
+const maxLiveMediaBytes = 16 << 20
+
+// ErrLiveMediaTooLarge reports a live-review media object above
+// maxLiveMediaBytes. LiveMedia returns it from a size probe, before reading the
+// object, so the caller can tell "too large" apart from "not found".
+var ErrLiveMediaTooLarge = errors.New("live media is larger than 16 MiB")
+
+// LiveMedia returns the bytes behind a media location key for the live review
+// console. The MIME type is sniffed from the bytes, never taken from the
+// uploader: raster images and playable video/audio keep their type, everything
+// else is reported as application/octet-stream so it can never execute as
+// active content on the panel origin.
+func (s *Service) LiveMedia(ctx context.Context, locationKey string) ([]byte, string, bool, error) {
+	if s == nil || s.photos == nil || locationKey == "" {
+		return nil, "", false, nil
+	}
+	if !safeLiveMediaKey(locationKey) {
+		return nil, "", false, nil
+	}
+	// Photos/documents store sized variants ("photo:<id>:x", "doc:<id>:m");
+	// try the bare key first, then the known suffixes. Each candidate is probed
+	// with a one-byte read, which reports the object's total size without
+	// reading its body, so an oversized object is rejected before any large
+	// read.
+	var key string
+	var total int64
+	for _, candidate := range []string{locationKey, locationKey + ":x", locationKey + ":m", locationKey + ":c", locationKey + ":a"} {
+		probe, ok, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{LocationKey: candidate, Limit: 1})
+		if err != nil {
+			return nil, "", false, err
+		}
+		if ok {
+			key, total = candidate, probe.Total
+			break
+		}
+	}
+	if key == "" || total <= 0 {
+		return nil, "", false, nil
+	}
+	if total > maxLiveMediaBytes {
+		return nil, "", false, ErrLiveMediaTooLarge
+	}
+	chunk, found, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{LocationKey: key, Limit: int(total)})
+	if err != nil {
+		return nil, "", false, err
+	}
+	if !found || chunk.Total != total || int64(len(chunk.Bytes)) != chunk.Total {
+		return nil, "", false, nil
+	}
+	detected := http.DetectContentType(chunk.Bytes)
+	switch {
+	case safeLiveMediaImageType(detected), safeLiveMediaPlaybackType(detected):
+		return chunk.Bytes, detected, true, nil
+	default:
+		return chunk.Bytes, "application/octet-stream", true, nil
+	}
+}
+
+// safeLiveMediaKey limits a media lookup to the known location-key namespaces
+// (photo/document/blob) and their characters, so the key can not be an
+// arbitrary path or a crafted value.
+func safeLiveMediaKey(key string) bool {
+	switch {
+	case strings.HasPrefix(key, "photo:"), strings.HasPrefix(key, "doc:"), strings.HasPrefix(key, "blob:"):
+	default:
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == ':', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return len(key) <= 512
+}
+
+func safeLiveMediaImageType(value string) bool {
+	switch value {
+	case "image/webp", "image/png", "image/jpeg", "image/gif":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeLiveMediaPlaybackType(value string) bool {
+	return value == "video/mp4" || strings.HasPrefix(value, "audio/")
+}
+
 func (s *Service) GifCatalog(ctx context.Context) ([]domain.GifCatalogEntry, error) {
 	if s == nil || s.gifCatalog == nil {
 		return nil, domain.ErrGifCatalogUnavailable

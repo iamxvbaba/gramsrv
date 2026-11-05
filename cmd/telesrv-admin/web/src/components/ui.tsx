@@ -17,15 +17,17 @@ export function PageFrame({
   children: ReactNode;
   actions?: ReactNode;
 }) {
+  // The page title/eyebrow now live in the top bar (parent / tab); only the
+  // action row stays on the page so pages do not repeat the caption.
+  void title;
+  void eyebrow;
   return (
     <div className="page-frame">
-      <div className="page-title-row">
-        <div>
-          {eyebrow && <div className="eyebrow">{eyebrow}</div>}
-          <h2>{title}</h2>
+      {actions && (
+        <div className="page-title-row page-title-row--actions">
+          <div className="page-actions">{actions}</div>
         </div>
-        {actions && <div className="page-actions">{actions}</div>}
-      </div>
+      )}
       {children}
     </div>
   );

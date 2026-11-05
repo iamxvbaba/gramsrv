@@ -79,6 +79,7 @@ type Service interface {
 	AddStickerToSet(ctx context.Context, req admin.AddStickerToSetRequest) (admin.CommandResult, error)
 	RemoveStickerFromSet(ctx context.Context, req admin.RemoveStickerFromSetRequest) (admin.CommandResult, error)
 	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
+	LiveMedia(ctx context.Context, locationKey string) ([]byte, string, bool, error)
 	ImportStarGift(ctx context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error)
 	ImportGiftPack(ctx context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error)
 	ImportOfficialStarGift(ctx context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error)
@@ -255,6 +256,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
 	mux.HandleFunc("POST /v1/accounts/set-username", s.authenticated(s.handleSetUsername))
 	mux.HandleFunc("GET /v1/accounts/{id}/avatar", s.authenticated(s.handleAccountAvatar))
+	mux.HandleFunc("GET /v1/media", s.authenticated(s.handleLiveMedia))
 	mux.HandleFunc("POST /v1/accounts/set-profile", s.authenticated(s.handleSetProfile))
 	mux.HandleFunc("POST /v1/accounts/set-phone", s.authenticated(s.handleSetPhone))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
@@ -613,6 +615,43 @@ func (s *Server) handleAccountAvatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleLiveMedia(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "missing key")
+		return
+	}
+	data, mimeType, found, err := s.svc.LiveMedia(r.Context(), key)
+	if errors.Is(err, admin.ErrLiveMediaTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "media is larger than 16 MiB")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	// The MIME type is sniffed from the bytes, never trusted from the uploader;
+	// nosniff + sandbox stop the browser turning a document into active content
+	// on the panel origin, and anything not an allowlisted media type downloads
+	// instead of rendering.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("Content-Type", mimeType)
+	if mimeType == "application/octet-stream" {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
+	// Private message media must not stay fresh in a browser cache after the
+	// session ends or loses messages.read.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

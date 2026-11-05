@@ -2,7 +2,6 @@ import { Loader2, RefreshCw, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, PageFrame } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatQuantity } from "../lib/format";
@@ -81,7 +80,6 @@ export function PricesPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
-      <SectionTabs sectionId="commerce" active="/prices" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
 
       <section className="section-block">

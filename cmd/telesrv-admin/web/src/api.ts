@@ -57,7 +57,9 @@ import type {
   UniqueStarGiftListResponse,
   VerificationApplicationDetail,
   VerificationApplicationListResponse,
-  VerificationCountsResponse
+  VerificationCountsResponse,
+  LiveChatListResponse,
+  LivePeerNames
 } from "./types";
 
 export class APIError extends Error {
@@ -240,6 +242,23 @@ export const api = {
   emoji: (params: URLSearchParams) => request<EmojiListResponse>(`/api/emoji?${params.toString()}`),
   emojiAnimation: (documentID: string) => request<Record<string, unknown>>(`/api/emoji/${encodeURIComponent(documentID)}/animation`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),
+  // The dialog cursor is present when before_peer_id is: a dialog without a
+  // top message has top_message_date 0, so before_date may legitimately be 0.
+  liveChats: (userID: number, beforeDate?: number, beforePeerID?: number) => {
+    const params = new URLSearchParams({ user_id: String(userID) });
+    if (beforePeerID !== undefined && beforePeerID > 0) {
+      params.set("before_date", String(beforeDate ?? 0));
+      params.set("before_peer_id", String(beforePeerID));
+    }
+    return request<LiveChatListResponse>(`/api/live/chats?${params.toString()}`);
+  },
+  livePeers: (users: number[], channels: number[]) => {
+    const params = new URLSearchParams();
+    if (users.length) params.set("users", users.join(","));
+    if (channels.length) params.set("channels", channels.join(","));
+    return request<LivePeerNames>(`/api/live/peers?${params.toString()}`);
+  },
+  mediaURL: (key: string) => withBase(`/api/live/media?key=${encodeURIComponent(key)}`),
   message: (ownerUserID: number, msgID: number) => {
     const params = new URLSearchParams({ owner_user_id: String(ownerUserID), msg_id: String(msgID) });
     return request<MessageDetail>(`/api/messages/detail?${params.toString()}`);
