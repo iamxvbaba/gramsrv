@@ -208,7 +208,9 @@ func (c *Cache[K, V]) getOrLoad(ctx context.Context, key K, currentHash int64, v
 		}
 		result := res.(loadResult[V])
 		if result.stored {
-			return result.value, nil
+			// Singleflight shares result.value with every waiter, so each caller
+			// needs its own clone even though the cached entry is already isolated.
+			return c.cloneValue(result.value), nil
 		}
 		// The store was refused by the epoch guard (an invalidation happened during
 		// the load): this load's value may be stale. Re-check the cache -- use a
