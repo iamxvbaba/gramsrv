@@ -1,18 +1,19 @@
 import { useI18n } from "../i18n";
-import { sectionById, visibleTabs, type NavTab } from "../nav";
+import { matchTab, sectionById, visibleTabs, type NavTab } from "../nav";
 import { usePermissions } from "../permissions";
 import type { Navigate } from "../routing";
 import { AppLink } from "./AppLink";
 
 // SectionTabs renders the in-page sub-menu shared by the consolidated sidebar
-// entries (Accounts, Commerce, Verification, Gifts, Media, NFT Items): the
-// sidebar link is flat, and the tabs inside the page switch between the sibling
-// routes. Same visual language as Server Settings' Settings/Services bar.
+// entries (Users and chats, Moderation, Verification, Content, Economy, Gifts,
+// NFT items, Server): the sidebar link is flat, and the tabs inside the page
+// switch between the sibling routes. Same visual language as Server Settings'
+// Settings/Services bar.
 //
 // The tab list comes from the nav table, so it is permission-filtered by the
 // same `can` the sidebar used: an operator who holds only prices.manage sees
-// the Prices tab in the Commerce bar and nothing else. A section reduced to one
-// visible tab draws no bar at all rather than a single lonely button.
+// the Bot prices tab in the Economy bar and nothing else. A section reduced to
+// one visible tab draws no bar at all rather than a single lonely button.
 export type SectionTab = { path: string; labelKey: string };
 
 export function SectionTabs({
@@ -34,6 +35,10 @@ export function SectionTabs({
   if (tabs.length < 2) {
     return null;
   }
+  // The tab that owns the route is lit on its detail pages too (/accounts/42,
+  // /messages/groups/detail), and /messages lights the private tab through its
+  // alias.
+  const current = matchTab(tabs, active);
   return (
     <div className="tab-bar" role="tablist" aria-label={t("sectionTabs.label")}>
       {tabs.map((tab) => (
@@ -41,17 +46,11 @@ export function SectionTabs({
           key={tab.path}
           href={tab.path}
           navigate={navigate}
-          className={`tab-btn ${isActive(tab, active) ? "active" : ""}`}
+          className={`tab-btn ${tab === current ? "active" : ""}`}
         >
           {t(tab.labelKey)}
         </AppLink>
       ))}
     </div>
   );
-}
-
-// isActive lets a tab claim an alias path, so /messages (which renders the
-// private view) marks the Private tab active instead of lighting none of them.
-function isActive(tab: NavTab, active: string): boolean {
-  return active === tab.path || (tab.aliases ?? []).includes(active);
 }

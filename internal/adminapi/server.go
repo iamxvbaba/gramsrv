@@ -626,6 +626,10 @@ func (s *Server) handleLiveMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, mimeType, found, err := s.svc.LiveMedia(r.Context(), key)
+	if errors.Is(err, admin.ErrLiveMediaTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "media is larger than 16 MiB")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -644,7 +648,9 @@ func (s *Server) handleLiveMedia(w http.ResponseWriter, r *http.Request) {
 	if mimeType == "application/octet-stream" {
 		w.Header().Set("Content-Disposition", "attachment")
 	}
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	// Private message media must not stay fresh in a browser cache after the
+	// session ends or loses messages.read.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)

@@ -78,9 +78,10 @@ export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
       </div>
       <MessagePreview
         title={t("messages.groupTitle")}
-        emptyLabel={"No messages"}
+        emptyLabel={t("messages.noMessages")}
         messages={rows.map((row) => ({
           id: row.ID,
+          displayID: row.ID,
           date: row.Date,
           from: row.SenderUserID,
           body: row.Body,

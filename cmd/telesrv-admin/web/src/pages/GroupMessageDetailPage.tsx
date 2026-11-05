@@ -28,18 +28,26 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
     void load();
   }, [channelID, msgID]);
 
-  // Live conversation preview for the channel, from the same route the
-  // Messages console uses.
+  // Live conversation preview ending at this message (inclusive): the 50
+  // messages up to and including it, from the same route the Messages console
+  // uses. The cursor is strict, (date, id) < (before_date, before_id), so
+  // id + 1 keeps the message itself in the page.
   useEffect(() => {
     if (!detail) return;
     let cancelled = false;
     api
-      .groupMessages(new URLSearchParams({ channel_id: String(detail.Message.ChannelID), limit: "50" }))
+      .groupMessages(new URLSearchParams({
+        channel_id: String(detail.Message.ChannelID),
+        before_date: String(detail.Message.Date),
+        before_id: String(detail.Message.ID + 1),
+        limit: "50"
+      }))
       .then((data) => {
         if (cancelled) return;
         setPreview(
           data.rows.map((row) => ({
             id: row.ID,
+            displayID: row.ID,
             date: row.Date,
             from: row.SenderUserID,
             body: row.Body,
@@ -89,7 +97,7 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
           <Summary label={t("common.fromPeer")} value={`${msg.FromPeerType}:${msg.FromPeerID}`} mono />
           <Summary label={t("common.views")} value={String(msg.ViewsCount)} />
         </div>
-        <MessagePreview title={t("messages.groupTitle")} emptyLabel={"No messages"} messages={preview} focusID={msg.ID} />
+        <MessagePreview title={t("messages.groupTitle")} emptyLabel={t("messages.noMessages")} messages={preview} focusID={msg.ID} />
         <section className="section-block">
           <SectionHead title={t("messages.channelUpdateEvents")} text={t("messages.channelEventsSource")} />
           <div className="table-wrap">
@@ -112,7 +120,7 @@ export function GroupMessageDetailPage({ channelID, msgID, navigate }: { channel
           </div>
         </section>
         <details className="section-block">
-          <summary>{"Raw records"}</summary>
+          <summary>{t("messages.rawRecords")}</summary>
           <section className="section-block">
             <SectionHead title={t("messages.channelMessageRow")} text={t("messages.channelMessagesSnapshot")} />
             <JsonBlock value={detail.MessageJSON} />

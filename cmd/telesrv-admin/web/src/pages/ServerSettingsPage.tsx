@@ -1,5 +1,5 @@
 import { ChevronDown, CircleCheck, CircleOff, CircleX, Container, Database, ImagePlus, Layers, Loader2, RefreshCw, Search, Server, Trash2, Upload, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -46,12 +46,20 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
     if (focus === "identity") setSection("identity");
     else if (focus === "login") setSection("messages");
   }, [focus]);
-  // ?focus=env lands on the first .env group once they are loaded.
+  // ?focus=env lands on the first .env group once they are loaded. The jump is
+  // applied once, so picking another section afterwards (Status included)
+  // sticks while the URL still says ?focus=env.
+  const envFocusApplied = useRef(false);
   useEffect(() => {
-    if (focus === "env" && section === "status" && groups.length > 0) {
-      setSection(`env:${groups[0].title}` as SettingsSection);
+    if (focus !== "env") {
+      envFocusApplied.current = false;
+      return;
     }
-  }, [focus, section, groups]);
+    if (envFocusApplied.current || groups.length === 0) return;
+    envFocusApplied.current = true;
+    const first = `env:${groups[0].title}` as SettingsSection;
+    setSection((current) => (current === "status" ? first : current));
+  }, [focus, groups]);
 
   const q = needle.trim().toLowerCase();
   // A search looks through every .env field (key, description, group title) and
@@ -118,7 +126,7 @@ export function ServerSettingsPage({ search }: { search?: URLSearchParams }) {
           ) : activeGroup ? (
             <EnvGroupPanel group={activeGroup} values={values} setValues={setValues} onSaved={() => undefined} />
           ) : (
-            <LoadingSurface label={"Loading settings..."} />
+            <LoadingSurface label={t("common.loading")} />
           )}
         </div>
       </div>

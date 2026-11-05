@@ -1844,7 +1844,7 @@ td.evidence-message-cell {
 }
 
 /* Server Settings' Settings/Services tab bar. */
-/* A section with five tabs (Commerce) does not fit a 390px screen at
+/* A section with five tabs (Economy) does not fit a 390px screen at
    fit-content: the bar was overflowing the page and pushing the whole layout
    wide. It scrolls horizontally instead, which keeps every tab reachable on a
    phone and keeps the bar visually a bar rather than a clipped edge. */

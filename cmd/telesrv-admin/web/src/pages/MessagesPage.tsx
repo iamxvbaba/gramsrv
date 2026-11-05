@@ -30,6 +30,7 @@ function privatePreview(rows: {
 }[]): PreviewMessage[] {
   return rows.map((row) => ({
     id: `${row.OwnerUserID}-${row.BoxID}`,
+    displayID: row.BoxID,
     date: row.Date,
     from: row.FromUserID,
     body: row.Body,
@@ -51,6 +52,7 @@ function groupPreview(rows: {
 }[]): PreviewMessage[] {
   return rows.map((row) => ({
     id: row.ID,
+    displayID: row.ID,
     date: row.Date,
     from: row.SenderUserID,
     body: row.Body,
@@ -81,6 +83,10 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
   const [justClear, setJustClear] = useState(false);
   // Guards against a slow response for chat A rendering under chat B.
   const requestRef = useRef(0);
+  // Guards the dialog list the same way: a slow page for owner A must not
+  // replace or extend owner B's list. Kept apart from requestRef so opening a
+  // chat does not drop a pending "Load more chats".
+  const listRef = useRef(0);
 
   function resolveNames(peers: LiveChatRow[], ownerID: number, senderIDs: number[]) {
     void loadPeerNames(
@@ -93,9 +99,11 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
 
   async function chooseOwner(next: AccountRow | null) {
     requestRef.current++;
+    const ticket = ++listRef.current;
     setOwner(next);
     setChats([]);
     setHasMoreChats(false);
+    setLoadingChats(false);
     setActive(null);
     setMessages([]);
     setOldest(null);
@@ -105,29 +113,33 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
     setLoadingChats(true);
     try {
       const res = await api.liveChats(next.ID);
+      if (ticket !== listRef.current) return;
       setChats(res.chats);
       setHasMoreChats(res.has_more);
       resolveNames(res.chats, next.ID, []);
     } catch (err) {
-      setError(errorMessage(err));
+      if (ticket === listRef.current) setError(errorMessage(err));
     } finally {
-      setLoadingChats(false);
+      if (ticket === listRef.current) setLoadingChats(false);
     }
   }
 
   async function loadMoreChats() {
     if (!owner || chats.length === 0) return;
+    const ticket = ++listRef.current;
+    const ownerID = owner.ID;
     const last = chats[chats.length - 1];
     setLoadingChats(true);
     try {
-      const res = await api.liveChats(owner.ID, last.TopMessageDate, last.PeerID);
+      const res = await api.liveChats(ownerID, last.TopMessageDate, last.PeerID);
+      if (ticket !== listRef.current) return;
       setChats((prev) => [...prev, ...res.chats]);
       setHasMoreChats(res.has_more);
-      resolveNames(res.chats, owner.ID, []);
+      resolveNames(res.chats, ownerID, []);
     } catch (err) {
-      setError(errorMessage(err));
+      if (ticket === listRef.current) setError(errorMessage(err));
     } finally {
-      setLoadingChats(false);
+      if (ticket === listRef.current) setLoadingChats(false);
     }
   }
 
@@ -183,7 +195,9 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
         setOldest(null);
         return;
       }
-      setMessages((prev) => [...result.rows, ...prev]);
+      // Rows are newest first (MessagePreview reverses them for display), so
+      // the older page goes after the ones already shown.
+      setMessages((prev) => [...prev, ...result.rows]);
       setOldest(result.rows.length >= PAGE ? result.cursor : null);
       resolveNames([chat], owner?.ID ?? 0, result.senders);
     } catch (err) {
@@ -202,8 +216,7 @@ function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
     if (active.PeerType === "channel" || active.PeerType === "chat") {
       return `/messages/groups/detail?channel_id=${active.PeerID}&msg_id=${message.id}`;
     }
-    const box = String(message.id).split("-")[1];
-    return box ? `/messages/private/detail?owner_user_id=${owner.ID}&msg_id=${box}` : undefined;
+    return `/messages/private/detail?owner_user_id=${owner.ID}&msg_id=${message.displayID}`;
   };
 
   return (
@@ -315,8 +328,12 @@ export function MessagesPage({ navigate, tab, path }: {
   path: string;
 }) {
   void path;
+  const { t } = useI18n();
   return (
-    <PageFrame title={tab === "groups" ? "Groups" : "Messages"}>
+    <PageFrame
+      title={tab === "groups" ? t("messages.groupTitle") : t("messages.privateTitle")}
+      eyebrow={tab === "groups" ? t("messages.groupEyebrow") : t("messages.privateEyebrow")}
+    >
       {tab === "private" ? <PrivateMessagesTab navigate={navigate} /> : <GroupMessagesTab navigate={navigate} />}
     </PageFrame>
   );

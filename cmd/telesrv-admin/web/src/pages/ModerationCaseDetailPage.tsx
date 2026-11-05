@@ -206,7 +206,7 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
                       className={`btn${report?.ID === reportID ? " primary" : ""}`}
                       onClick={async () => selectReport(await api.moderationReport(reportID))}
                     >
-                      {`Report ${index + 1} · #${reportID}`}
+                      {t("moderation.reportTab", { index: index + 1, id: reportID })}
                     </button>
                   ))}
                 </div>

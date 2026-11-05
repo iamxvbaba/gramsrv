@@ -1,11 +1,16 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 import { formatUnix } from "../lib/format";
 
 // MessagePreview renders a conversation as chat bubbles -- the "live preview"
 // an operator wants when reviewing what was said, next to the raw table.
 export type PreviewMessage = {
+  // id is unique across the list (React key, focus); a private message's is
+  // "<owner>-<box>". displayID is what the operator sees and can paste into
+  // "Delete selected": the box id for a private message, the message id for a
+  // group one.
   id: string | number;
+  displayID: string | number;
   date: number;
   from: number | string;
   body: string;
@@ -38,13 +43,30 @@ export function MessagePreview({
 }) {
   const { t } = useI18n();
   const [zoom, setZoom] = useState<string | null>(null);
+  // A detail page's preview ends at the focused message, so it is the last row
+  // (or would be, if it was deleted from a group): keep the list scrolled to the
+  // end, also while lazy photos load, until the operator scrolls it.
+  const listRef = useRef<HTMLDivElement>(null);
+  const userScrolled = useRef(false);
+  const followFocus = () => {
+    const list = listRef.current;
+    if (focusID === undefined || !list || userScrolled.current) return;
+    list.scrollTop = list.scrollHeight;
+  };
+  useEffect(() => {
+    userScrolled.current = false;
+    followFocus();
+  }, [messages, focusID]);
+  const stopFollowing = () => {
+    userScrolled.current = true;
+  };
   return (
     <section className="msg-preview">
       <div className="msg-preview-head">
         {avatar}
         <span>{title}</span>
       </div>
-      <div className="msg-preview-list">
+      <div className="msg-preview-list" ref={listRef} onWheel={stopFollowing} onTouchMove={stopFollowing} onKeyDown={stopFollowing}>
         {messages.length === 0 ? (
           <div className="msg-preview-empty">{emptyLabel}</div>
         ) : (
@@ -59,7 +81,7 @@ export function MessagePreview({
                 <div className={`msg-preview-bubble${message.deleted ? " deleted" : ""}`}>
                   {!message.outgoing && !message.post && <div className="msg-preview-from">{nameOf ? nameOf(message.from) : message.from}</div>}
                   {message.mediaURL && message.mediaKind !== "document" ? (
-                    <img className="msg-preview-photo" src={message.mediaURL} alt="" loading="lazy" onClick={() => setZoom(message.mediaURL ?? null)} />
+                    <img className="msg-preview-photo" src={message.mediaURL} alt="" loading="lazy" onLoad={followFocus} onClick={() => setZoom(message.mediaURL ?? null)} />
                   ) : message.mediaURL ? (
                     <a className="msg-preview-media" href={message.mediaURL} target="_blank" rel="noreferrer">{t("common.download")}</a>
                   ) : message.media ? (
@@ -76,7 +98,7 @@ export function MessagePreview({
                           if (path) onOpenDetail(path);
                         }}
                       >
-                        {`#${message.id} · ${t("common.detail")}`}
+                        {`#${message.displayID} · ${t("common.detail")}`}
                       </button>
                     ) : null}
                     {formatUnix(message.date)}

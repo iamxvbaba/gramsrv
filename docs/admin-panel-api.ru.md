@@ -134,10 +134,11 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 Боковое меню панели, вкладочные полосы внутри страниц и таблица маршрутов —
 три представления **одного объявления**: `cmd/telesrv-admin/web/src/nav.ts`.
 В нём перечислены все разделы, относящиеся к ним пути и право, которое каждый
-из этих путей проверяет на сервере. `Layout.tsx` рисует боковое меню из него,
-`SectionTabs.tsx` берёт оттуда список вкладок раздела, а `Routes.tsx` задаёт
-ему ровно один вопрос — `routePermission(path)` — и проверяет права одним
-местом на всю поверхность.
+из этих путей проверяет на сервере. `Layout.tsx` рисует из него боковое меню и,
+над каждой страницей, полосу вкладок активного раздела через `SectionTabs.tsx`,
+который берёт оттуда список вкладок раздела; `Routes.tsx` задаёт ему ровно один
+вопрос — `routePermission(path)` — и проверяет права одним местом на всю
+поверхность.
 
 Два следствия, о которых стоит знать до правок:
 
@@ -160,8 +161,9 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 1. **Решите, это новый раздел или вкладка существующего.** Если страница
    соседствует с уже имеющейся — делает ту же работу над другим срезом
    данных, — это **вкладка**, а не вторая строка меню. В Economy уже живут
-   Premium, Prices, журнал Stars, Donations и Ratings, в Server — Storage,
-   Operators и журнал аудита. Новая строка меню — только для действительно новой работы.
+   Stars balances, Premium, Bot prices, Donations и Account Rating, в Server —
+   Storage, Operators и журнал аудита. Новая строка меню — только для
+   действительно новой работы.
 2. **Добавьте её в `nav.ts`** вместе с правом, которое проверяет её маршрут на
    сервере. Если нужно право, которого ещё нет, добавьте его в
    `permissions.tsx` (`permissionLabels` **и** `permissionGroups`) и в
@@ -170,9 +172,11 @@ GET-эндпоинтах страницы, а manage — на каждое де�
 3. **Добавьте маршрут** в `Routes.tsx`. **Не** оборачивайте его в
    `PermissionGate`: проверка уже применяется из `routePermission`, и именно
    ручная обёртка позволяла накапливаться старым пробелам.
-4. **Добавьте страницу** в `web/src/pages/`, отрисуйте внутри неё
-   `<SectionTabs sectionId="..." active="..." navigate={navigate} />` и примите
-   проп `navigate`, если он нужен.
+4. **Добавьте страницу** в `web/src/pages/` и примите проп `navigate`, если он
+   нужен. **Не** рисуйте в ней `<SectionTabs>`: оболочка (`Layout.tsx`) уже
+   выводит полосу вкладок активного раздела над каждой страницей из `nav.ts`, и
+   страница со своей полосой покажет две. `gen_admin_panel_doc_tables.py --check`
+   падает на любом `<SectionTabs` в `pages/`.
 5. **Переведите её.** Каждая пользовательская строка идёт через `useI18n()` и
    получает запись во всех трёх языковых блоках `i18n.tsx`.
 6. **Пересоберите бандл.** В `cmd/telesrv-admin/server.go` стоит
@@ -223,7 +227,7 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | Content | Emoji | `/emoji` | `content.read` |
 | Content | GIFs | `/gif-catalog` | `content.read` |
 | Economy | Stars balances | `/stars` | `stars.read` |
-| Economy | Premium | `/monetization` | `premium.manage` (also served at `/star-issue`) |
+| Economy | Premium | `/monetization` | `premium.manage` (also served at `/premium`, `/star-issue`) |
 | Economy | Bot prices | `/prices` | `prices.manage` |
 | Economy | Donations | `/donations` | `donations.manage` |
 | Economy | Account Rating | `/account-ratings` | `ratings.read` |
@@ -345,9 +349,9 @@ URL по-прежнему приводит туда, а не в 404 по зак�
 | GET | `/api/messages/detail` | Параметры: `owner_user_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
 | GET | `/api/messages/groups` | Параметры: `channel_id` (int64, обяз.), `before_date` (int64), `before_id` (int), `limit` (int). Ответ: `channel_id`, `before_date`, `before_id`, `limit`, `rows`. |
 | GET | `/api/messages/groups/detail` | Параметры: `channel_id` (int64, обяз.), `msg_id` (int, обяз.). Ответ: карточка сообщения. |
-| GET | `/api/live/chats` | Параметры: `user_id` (int64, обяз.), `limit` (int). Ответ: `user_id`, `chats` (`PeerType`, `PeerID`, `TopMessageID`, `TopMessageDate`, `UnreadCount`). Диалоги пользователя для консоли живого просмотра. |
-| GET | `/api/live/peers` | Параметры: `users` (int64 через запятую), `channels` (int64 через запятую). Ответ: словари `users` и `channels` вида id → отображаемое имя. |
-| GET | `/api/live/media` | Параметры: `key` (ключ расположения, например `photo:<id>` или `doc:<id>`). Проксирует внутренний admin API, который читает через блоб-бэкенд, определяет тип по содержимому и допускает только безопасные типы; изображения отображаются, остальное скачивается. |
+| GET | `/api/live/chats` | Параметры: `user_id` (int64, обяз.), `limit` (int, 1-200; любое другое значение означает 100), `before_date` (int64), `before_peer_id` (int64). Ответ: `user_id`, `chats` (`PeerType`, `PeerID`, `TopMessageID`, `TopMessageDate`, `UnreadCount`), `has_more`. Диалоги пользователя для консоли живого просмотра, по убыванию (`top_message_date`, `peer_id`). `before_date` + `before_peer_id` — keyset-курсор: для следующей страницы передайте `TopMessageDate` и `PeerID` последней строки. Курсор задан, когда `before_peer_id` > 0 (`before_date` может быть 0). `has_more` равен true, если есть следующая страница. Требует `messages.read`. |
+| GET | `/api/live/peers` | Параметры: `users` (int64 через запятую), `channels` (int64 через запятую). Ответ: словари `users` и `channels` вида id → отображаемое имя. Требует `messages.read`. |
+| GET | `/api/live/media` | Параметры: `key` (ключ расположения, например `photo:<id>` или `doc:<id>`). Проксирует внутренний admin API, который читает через блоб-бэкенд и определяет тип по самим байтам. Растровые изображения (`image/jpeg`, `image/png`, `image/gif`, `image/webp`), `video/mp4` и `audio/*` отдаются inline с этим типом; всё остальное — как `application/octet-stream` с `Content-Disposition: attachment`. Объекты больше 16 МиБ возвращают `413`, пустой `key` — `400`, неизвестный ключ или ключ вне `photo:`, `doc:` и `blob:` — `404`. Отданные объекты и ответ `413` несут `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` и `Cache-Control: no-store`. Требует `messages.read`. |
 
 ## API: звёздные подарки и коллекционки
 

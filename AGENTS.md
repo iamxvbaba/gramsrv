@@ -50,11 +50,12 @@ The rules that keep it that way:
 
 - **A sibling page is a tab, not a second sidebar row.** If the new page does the
   same job as an existing one over a different slice, add it to that section's
-  `tabs` array. Commerce holds Prices and the Stars ledger; Media holds Storage;
-  Accounts holds Account Rating and Shared devices. A new row is only for a
-  genuinely new job. A section with a single visible tab draws no tab bar.
+  `tabs` array. Economy holds Stars balances, Premium, Bot prices, Donations and
+  Account Rating; Server holds Storage, Operators and the Audit log. A new row is
+  only for a genuinely new job. A section with a single visible tab draws no tab
+  bar.
 - **A tab that is a single button is not a tab.** The Stars giveaway was a page
-  with one field and one button; it now lives at the bottom of the Stars &
+  with one field and one button; it now lives at the bottom of the Economy >
   Premium page, in its own warned frame, and the old `/star-issue` URL is an
   alias of that tab (`aliases` in `nav.ts` keeps the sidebar row and the tab bar
   lit on it).

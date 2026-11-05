@@ -2,7 +2,7 @@ import { ChevronsLeft, ChevronsRight, LogOut, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
-import { navSections, sectionActive, visibleTabs, activeSectionId, sectionById } from "../nav";
+import { navSections, visibleTabs, activeSectionId, sectionById, matchTab } from "../nav";
 import { usePermissions } from "../permissions";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
@@ -50,12 +50,7 @@ export function Shell({
   // subtitle/title duplication and any "console" text.
   const showParent = sectionTabs.length > 1;
   const parentLabel = activeSection ? t(activeSection.labelKey) : "";
-  const currentTab = sectionTabs.find(
-    (tab) =>
-      route.path === tab.path ||
-      route.path.startsWith(`${tab.path}/`) ||
-      (tab.aliases ?? []).some((alias) => route.path === alias || route.path.startsWith(`${alias}/`))
-  );
+  const currentTab = matchTab(sectionTabs, route.path);
   const titleLabel = currentTab ? t(currentTab.labelKey) : routeTitle(route.path, t);
 
   // Server identity (name/icon) is admin-editable per Server Settings ->

@@ -4672,10 +4672,14 @@ func isSafeStickerPreviewImageType(value string) bool {
 }
 
 // maxLiveMediaBytes caps one live-review media read. A message can carry a
-// multi-GB document, and the panel renders bubbles eagerly, so the read is
-// bounded (the panel also shows documents as a placeholder rather than an
-// <img>).
+// multi-GB document, so the read is bounded. The panel renders only photos as
+// an <img>; a document is a download link the operator has to click.
 const maxLiveMediaBytes = 16 << 20
+
+// ErrLiveMediaTooLarge reports a live-review media object above
+// maxLiveMediaBytes. LiveMedia returns it from a size probe, before reading the
+// object, so the caller can tell "too large" apart from "not found".
+var ErrLiveMediaTooLarge = errors.New("live media is larger than 16 MiB")
 
 // LiveMedia returns the bytes behind a media location key for the live review
 // console. The MIME type is sniffed from the bytes, never taken from the
@@ -4690,23 +4694,33 @@ func (s *Service) LiveMedia(ctx context.Context, locationKey string) ([]byte, st
 		return nil, "", false, nil
 	}
 	// Photos/documents store sized variants ("photo:<id>:x", "doc:<id>:m");
-	// try the bare key first, then the known suffixes.
-	var chunk domain.FileChunk
-	var found bool
-	for _, key := range []string{locationKey, locationKey + ":x", locationKey + ":m", locationKey + ":c", locationKey + ":a"} {
-		c, ok, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{
-			LocationKey: key,
-			Limit:       maxLiveMediaBytes + 1,
-		})
+	// try the bare key first, then the known suffixes. Each candidate is probed
+	// with a one-byte read, which reports the object's total size without
+	// reading its body, so an oversized object is rejected before any large
+	// read.
+	var key string
+	var total int64
+	for _, candidate := range []string{locationKey, locationKey + ":x", locationKey + ":m", locationKey + ":c", locationKey + ":a"} {
+		probe, ok, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{LocationKey: candidate, Limit: 1})
 		if err != nil {
 			return nil, "", false, err
 		}
 		if ok {
-			chunk, found = c, true
+			key, total = candidate, probe.Total
 			break
 		}
 	}
-	if !found || chunk.Total <= 0 || chunk.Total > maxLiveMediaBytes || int64(len(chunk.Bytes)) != chunk.Total {
+	if key == "" || total <= 0 {
+		return nil, "", false, nil
+	}
+	if total > maxLiveMediaBytes {
+		return nil, "", false, ErrLiveMediaTooLarge
+	}
+	chunk, found, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{LocationKey: key, Limit: int(total)})
+	if err != nil {
+		return nil, "", false, err
+	}
+	if !found || chunk.Total != total || int64(len(chunk.Bytes)) != chunk.Total {
 		return nil, "", false, nil
 	}
 	detected := http.DetectContentType(chunk.Bytes)

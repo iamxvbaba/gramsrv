@@ -25,7 +25,10 @@ type LiveChatRow struct {
 // ListDialogsForUser returns one page of a user's dialogs, most recent first.
 // (beforeDate, beforePeerID) is a keyset cursor ordered by
 // (top_message_date, peer_id) so older dialogs are reachable; peer_id breaks
-// ties between dialogs sharing a top-message date.
+// ties between dialogs sharing a top-message date. A dialog can have
+// top_message_date 0 (a row created by a scheduled message, a TTL or a chat
+// theme before any message), so a zero beforeDate is a real cursor value: only
+// beforePeerID 0 means "first page".
 func (s *readStore) ListDialogsForUser(ctx context.Context, userID, beforeDate, beforePeerID int64, limit int) ([]LiveChatRow, bool, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -35,7 +38,7 @@ func (s *readStore) ListDialogsForUser(ctx context.Context, userID, beforeDate, 
 		SELECT peer_type, peer_id, top_message_id, top_message_date, unread_count
 		FROM dialogs
 		WHERE user_id = $1
-			AND ($2::bigint = 0 OR (top_message_date, peer_id) < ($2::bigint, $3::bigint))
+			AND ($3::bigint = 0 OR (top_message_date, peer_id) < ($2::bigint, $3::bigint))
 		ORDER BY top_message_date DESC, peer_id DESC
 		LIMIT $4`, userID, beforeDate, beforePeerID, limit+1)
 	if err != nil {
@@ -194,6 +197,15 @@ func (s *server) handleLiveMediaAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "sandbox")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = io.WriteString(w, "This file is larger than 16 MiB and can't be opened from the review console.")
+		return
+	}
 	if resp.StatusCode != http.StatusOK {
 		http.NotFound(w, r)
 		return
@@ -213,7 +225,9 @@ func (s *server) handleLiveMediaAPI(w http.ResponseWriter, r *http.Request) {
 	if disposition := resp.Header.Get("Content-Disposition"); disposition != "" {
 		w.Header().Set("Content-Disposition", disposition)
 	}
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	// Private message media must not stay fresh in a browser cache after the
+	// session ends or loses messages.read.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
 }

@@ -139,7 +139,7 @@ export const navSections: NavSection[] = [
         path: "/monetization",
         labelKey: "nav.premium",
         permission: permissionPremiumManage,
-        aliases: ["/star-issue"]
+        aliases: ["/premium", "/star-issue"]
       },
       { path: "/prices", labelKey: "nav.botPrices", permission: permissionPricesManage },
       { path: "/donations", labelKey: "layout.donations", permission: permissionDonationsManage },
@@ -190,19 +190,35 @@ export function sectionById(id: string): NavSection | undefined {
   return navSections.find((section) => section.id === id);
 }
 
-// sectionActive answers "which sidebar row is lit", including detail routes
-// that belong to a tab rather than being one: /accounts/42 lights Accounts,
-// /account-ratings/42 lights it too, and /messages/groups/detail lights
-// Messages. Prefix matching per tab is what makes a section with one tab
-// (/channels) still light up on /channels/42.
-export function sectionActive(section: NavSection, path: string, can: (permission: string) => boolean): boolean {
-  return visibleTabs(section, can).some(
-    (tab) =>
-      tab.active !== false &&
-      (path === tab.path ||
-        path.startsWith(`${tab.path}/`) ||
-        (tab.aliases ?? []).some((alias) => path === alias || path.startsWith(`${alias}/`)))
-  );
+// tabMatchLength is how specifically a tab claims a path: the length of its
+// longest path or alias that is the path itself or a "<candidate>/" prefix of
+// it, or -1 if none is. Prefix matching is what lets a detail route belong to
+// its tab: /accounts/42 to /accounts, /messages/groups/detail to /messages/groups.
+function tabMatchLength(tab: NavTab, path: string): number {
+  if (tab.active === false) return -1;
+  let best = -1;
+  for (const candidate of [tab.path, ...(tab.aliases ?? [])]) {
+    if ((path === candidate || path.startsWith(`${candidate}/`)) && candidate.length > best) {
+      best = candidate.length;
+    }
+  }
+  return best;
+}
+
+// matchTab is the tab among tabs that owns path: the longest match wins, so
+// /messages/groups belongs to its own tab even though the /messages alias of
+// the private tab also matches it.
+export function matchTab(tabs: NavTab[], path: string): NavTab | undefined {
+  let best: NavTab | undefined;
+  let bestLen = -1;
+  for (const tab of tabs) {
+    const length = tabMatchLength(tab, path);
+    if (length > bestLen) {
+      bestLen = length;
+      best = tab;
+    }
+  }
+  return best;
 }
 
 // activeSectionId is the section whose tab bar belongs on this route, so the
@@ -215,12 +231,10 @@ export function activeSectionId(path: string, can: (permission: string) => boole
   let bestLen = -1;
   for (const section of navSections) {
     for (const tab of visibleTabs(section, can)) {
-      if (tab.active === false) continue;
-      for (const candidate of [tab.path, ...(tab.aliases ?? [])]) {
-        if ((path === candidate || path.startsWith(`${candidate}/`)) && candidate.length > bestLen) {
-          bestLen = candidate.length;
-          best = section.id;
-        }
+      const length = tabMatchLength(tab, path);
+      if (length > bestLen) {
+        bestLen = length;
+        best = section.id;
       }
     }
   }
