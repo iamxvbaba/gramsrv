@@ -243,6 +243,15 @@ func parseBotAPIHTML(input string) (string, []domain.MessageEntity, error) {
 						if ok {
 							entities = append(entities, resolved)
 						}
+					case "code":
+						if len(entities) > 0 && frame.language != "" {
+							last := &entities[len(entities)-1]
+							if last.Type == domain.MessageEntityPre && last.Offset == frame.offset && last.Length == length {
+								last.Language = frame.language
+								break
+							}
+						}
+						entities = append(entities, entity)
 					case "pre":
 						if len(entities) > 0 {
 							last := &entities[len(entities)-1]
