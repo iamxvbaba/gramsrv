@@ -108,7 +108,7 @@ func (f *telegramLoginRPCFixture) authorization(t *testing.T, match bool) telegr
 }
 
 func TestTelegramLoginRPCsAcrossExactLayerProfiles(t *testing.T) {
-	for profile := tlprofile.Profile225; profile <= tlprofile.Profile232; profile++ {
+	for profile := tlprofile.Profile225; profile <= tlprofile.Profile233; profile++ {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			f := newTelegramLoginRPCFixture(t)
 
