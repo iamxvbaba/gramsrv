@@ -42,6 +42,12 @@ what the server does and the deliberate limits.
 - `messages.setBotWidgetQueryAnswer(query_id, result?)` unblocks the waiter.
   Only the owning bot may resolve a query id; anything else is
   `QUERY_ID_INVALID`. A missing answer ends in `BOT_RESPONSE_TIMEOUT`.
+- The pending registry is shared across nodes through a Redis store (mirroring
+  `BotCallbackRegistryStore`): a `getBotWidgetQueryAnswer` and the bot's
+  `setBotWidgetQueryAnswer` may land on different nodes. Without a shared store
+  configured it falls back to process-local.
+- `updateBotWidgetQuery.wallet_card` carries the querying user's wallet card
+  (address/balance) when a wallet is bound.
 
 ## Transcription files
 
@@ -53,12 +59,10 @@ what the server does and the deliberate limits.
 
 ## Deliberate limits
 
-- The bot query registry is process-local (like the pre-checkout registry); a
-  multi-node deployment must be single-node for the bot's answer to land, or the
-  registry must gain a shared store like `BotCallbackRegistryStore`.
 - `channels.toggleForum` models only the list and tabs layouts: enabling a forum
   with `sidebar=true` fails closed (the author's Layer 233 decision is unchanged),
   and `channel.forum_sidebar` is never emitted.
-- `updateBotWidgetQuery.wallet_card` is not populated; TON widget signing is not
-  implemented (`wallet.tonConnect*` still refuses).
+- TON widget signing is not implemented: `wallet.tonConnect*` still refuses with
+  `WALLET_UNAVAILABLE`. The query type still carries the client-supplied
+  `UserWallet` through to the bot, and the server adds the user's `wallet_card`.
 
