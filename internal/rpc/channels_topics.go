@@ -6,7 +6,16 @@ import (
 	"telesrv/internal/domain"
 )
 
+// onChannelsToggleForum applies channels.toggleForum. Layer 233 adds the
+// required sidebar layout flag, but the server models only the list and tabs
+// layouts and never emits channel.forum_sidebar. Enabling a forum with the
+// sidebar layout therefore fails closed before any write instead of silently
+// storing another layout. Historical profiles arrive with sidebar=false (the
+// td default), and disabling a forum ignores the layout flags, as it does tabs.
 func (r *Router) onChannelsToggleForum(ctx context.Context, req *tg.ChannelsToggleForumRequest) (tg.UpdatesClass, error) {
+	if req.Enabled && req.Sidebar {
+		return nil, notImplementedErr()
+	}
 	return r.applyChannelAdminStateMutation(ctx, req.Channel, func(ctx context.Context, userID, channelID int64) (domain.Channel, error) {
 		return r.deps.Channels.SetForum(ctx, userID, channelID, req.Enabled, req.Tabs)
 	})

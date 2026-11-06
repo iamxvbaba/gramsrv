@@ -106,7 +106,7 @@ func TestAccountGetTmpPasswordErrors(t *testing.T) {
 func TestAccountGetTmpPasswordExactLayerAdmission(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1_800_000_000, 0)})
 	request := &tg.AccountGetTmpPasswordRequest{Password: &tg.InputCheckPasswordEmpty{}, Period: 600}
-	for profile := tlprofile.Profile225; profile <= tlprofile.Profile232; profile++ {
+	for profile := tlprofile.Profile225; profile <= tlprofile.Profile233; profile++ {
 		wire := encodeExactLayerRPC(t, profile, request)
 		admitted, err := r.AdmitLayer(profile, &wire, tlprofile.Limits{})
 		if err != nil {
