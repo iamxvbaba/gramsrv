@@ -1256,6 +1256,9 @@ type Deps struct {
 	// Widgets persists shared bot web-widget definitions (Layer 233); when nil,
 	// the widget RPCs return NOT_IMPLEMENTED.
 	Widgets store.WidgetStore
+	// WidgetQueries coordinates bot widget queries across nodes; when nil the
+	// pending registry stays process-local.
+	WidgetQueries store.WidgetQueryStore
 	Limiter                      RateLimiter
 	Metrics                      Metrics
 	SecretChats                  SecretChatService

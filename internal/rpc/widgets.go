@@ -386,12 +386,12 @@ func (r *Router) onMessagesGetBotWidgetQueryAnswer(ctx context.Context, req *tg.
 	if err != nil {
 		return nil, err
 	}
-	queryID, pending, err := r.widgets.register(botID, userID)
+	queryID, pending, err := r.widgets.registerContext(ctx, r.clock.Now(), botID, userID, widgetQueryTimeout)
 	if err != nil {
 		r.log.Warn("register bot widget query", zap.Error(err))
 		return nil, internalErr()
 	}
-	defer r.widgets.deregister(queryID)
+	defer r.widgets.deregisterContext(context.Background(), botID, queryID)
 
 	update := &tg.UpdateBotWidgetQuery{
 		QueryID: queryID, QueryType: req.QueryType, UserID: userID,
@@ -401,27 +401,62 @@ func (r *Router) onMessagesGetBotWidgetQueryAnswer(ctx context.Context, req *tg.
 	if widget.WidgetID != 0 {
 		update.SetWidgetID(widget.WidgetID)
 	}
+	if card, ok := r.widgetWalletCard(ctx, userID); ok {
+		update.SetWalletCard(card)
+	}
 	r.pushUserMessage(ctx, botID, "push bot widget query", &tg.Updates{
 		Updates: []tg.UpdateClass{update},
 		Date:    int(r.clock.Now().Unix()),
 	})
-	return r.waitBotWidgetQueryAnswer(ctx, pending)
+	return r.waitBotWidgetQueryAnswer(ctx, botID, queryID, pending)
 }
 
-func (r *Router) waitBotWidgetQueryAnswer(ctx context.Context, pending *pendingWidgetQuery) (*tg.MessagesBotWidgetQueryAnswer, error) {
+// widgetWalletCard projects the querying user's wallet into the bot-facing
+// updateBotWidgetQuery.wallet_card. A widget without a bound wallet carries no
+// card (the query type still conveys the client-side UserWallet for signing).
+func (r *Router) widgetWalletCard(ctx context.Context, userID int64) (tg.WalletCard, bool) {
+	if r.deps.Wallet == nil || userID == 0 {
+		return tg.WalletCard{}, false
+	}
+	link, balance, ok, err := r.deps.Wallet.State(ctx, userID)
+	if err != nil || !ok || link.Address == "" {
+		return tg.WalletCard{}, false
+	}
+	return tg.WalletCard{Address: link.Address, Balance: balance}, true
+}
+
+func widgetQueryAnswerResult(ans domain.BotWidgetQueryAnswer) *tg.MessagesBotWidgetQueryAnswer {
+	out := &tg.MessagesBotWidgetQueryAnswer{}
+	if ans.Result != "" {
+		out.SetResult(ans.Result)
+	}
+	return out
+}
+
+func (r *Router) waitBotWidgetQueryAnswer(ctx context.Context, botUserID, queryID int64, pending *pendingWidgetQuery) (*tg.MessagesBotWidgetQueryAnswer, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, widgetQueryTimeout)
 	defer cancel()
-	select {
-	case ans := <-pending.ch:
-		out := &tg.MessagesBotWidgetQueryAnswer{}
-		if ans.Result != "" {
-			out.SetResult(ans.Result)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case ans := <-pending.ch:
+			return widgetQueryAnswerResult(ans), nil
+		case <-ticker.C:
+			ans, found, err := r.widgets.sharedAnswer(waitCtx, botUserID, queryID)
+			if err != nil {
+				r.log.Warn("read shared bot widget query answer",
+					zap.Int64("bot_user_id", botUserID), zap.Int64("query_id", queryID), zap.Error(err))
+				continue
+			}
+			if found {
+				return widgetQueryAnswerResult(ans), nil
+			}
+		case <-pending.done:
+			return nil, botResponseTimeoutErr()
+		case <-waitCtx.Done():
+			return nil, botResponseTimeoutErr()
 		}
-		return out, nil
-	case <-pending.done:
-		return nil, botResponseTimeoutErr()
-	case <-waitCtx.Done():
-		return nil, botResponseTimeoutErr()
 	}
 }
 
@@ -434,7 +469,11 @@ func (r *Router) onMessagesSetBotWidgetQueryAnswer(ctx context.Context, req *tg.
 	if utf8.RuneCountInString(result) > maxWidgetAnswerLen {
 		return false, messageTooLongErr()
 	}
-	if !r.widgets.resolve(botID, req.QueryID, domain.BotWidgetQueryAnswer{Result: result}) {
+	resolved, err := r.widgets.resolveContext(ctx, botID, req.QueryID, domain.BotWidgetQueryAnswer{Result: result})
+	if err != nil {
+		return false, internalErr()
+	}
+	if !resolved {
 		return false, queryIDInvalidErr()
 	}
 	return true, nil

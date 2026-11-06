@@ -1135,6 +1135,7 @@ func run(logger *zap.Logger) error {
 	tempAuthKeyStore := postgres.NewTempAuthKeyBindingStore(pool)
 	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
 	widgetStore := postgres.NewWidgetStore(pool)
+	widgetQueryStore := redisstore.NewWidgetQueryStore(rdb)
 	codeStore := redisstore.NewCodeStore(rdb)
 	authDeliveryReportService := authdiagnosticsapp.NewService(codeStore, authDeliveryReportStore)
 	clientTelemetryService := clienttelemetryapp.NewService(clientTelemetryStore)
@@ -2028,6 +2029,7 @@ func run(logger *zap.Logger) error {
 		Metrics:                      metricRegistry,
 		Inline:                       inlineRegistryStore,
 		Widgets:                      widgetStore,
+		WidgetQueries:                widgetQueryStore,
 		Limiter:                      rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	readModelListener := postgres.NewReadModelChangeListener(cfg.PostgresDSN, postgres.ReadModelCacheSet{
@@ -2239,6 +2241,7 @@ func run(logger *zap.Logger) error {
 	}()
 	go router.RunInlineBotPushSubscriber(ctx)
 	go router.RunBotCallbackAnswerSubscriber(ctx)
+	go router.RunBotWidgetQueryAnswerSubscriber(ctx)
 	go router.RunEphemeralPushSubscriber(ctx)
 	// Watchers only exist when the feature is switched on AND the wallet is
 	// provisioned. EnabledChains can still return a chain whose rpc_url an
