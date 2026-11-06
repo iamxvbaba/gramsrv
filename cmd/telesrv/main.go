@@ -1134,6 +1134,7 @@ func run(logger *zap.Logger) error {
 	aiComposeStore := postgres.NewAIComposeStore(pool)
 	tempAuthKeyStore := postgres.NewTempAuthKeyBindingStore(pool)
 	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
+	widgetStore := postgres.NewWidgetStore(pool)
 	codeStore := redisstore.NewCodeStore(rdb)
 	authDeliveryReportService := authdiagnosticsapp.NewService(codeStore, authDeliveryReportStore)
 	clientTelemetryService := clienttelemetryapp.NewService(clientTelemetryStore)
@@ -2026,6 +2027,7 @@ func run(logger *zap.Logger) error {
 		Sessions:                     activeSessions,
 		Metrics:                      metricRegistry,
 		Inline:                       inlineRegistryStore,
+		Widgets:                      widgetStore,
 		Limiter:                      rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	readModelListener := postgres.NewReadModelChangeListener(cfg.PostgresDSN, postgres.ReadModelCacheSet{

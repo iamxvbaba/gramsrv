@@ -1245,6 +1245,9 @@ type Deps struct {
 	LangPack                     LangPackService
 	Sessions                     SessionBinder
 	Inline                       store.InlineRegistryStore
+	// Widgets persists shared bot web-widget definitions (Layer 233); when nil,
+	// the widget RPCs return NOT_IMPLEMENTED.
+	Widgets store.WidgetStore
 	Limiter                      RateLimiter
 	Metrics                      Metrics
 	SecretChats                  SecretChatService
