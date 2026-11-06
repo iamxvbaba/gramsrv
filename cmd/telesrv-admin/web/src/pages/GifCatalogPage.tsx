@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { Navigate } from "../routing";
@@ -40,7 +39,6 @@ export function GifCatalogPage({ navigate }: { navigate: Navigate }) {
   return (
     <PageFrame title={t("gifCatalog.title")} eyebrow={t("gifCatalog.eyebrow")}
       actions={<><button className="btn" type="button" disabled={busy} onClick={() => void load()}><RefreshCw size={15} />{t("common.refresh")}</button><button className="btn primary" type="button" onClick={() => setCreateOpen(true)}><Plus size={15} />{t("gifCatalog.add")}</button></>}>
-      <SectionTabs sectionId="media" active="/gif-catalog" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row"><Metric label={t("gifCatalog.entries")} value={`${rows.length} / 50`} /><Metric label={t("common.enabled")} value={String(enabled)} tone="good" /></div>
       <div className="toolbar"><label>{t("gifCatalog.filterCategory")} <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">{t("gifCatalog.allCategories")}</option>{gifCategories.map((category) => <option key={category} value={category}>{t(`gifCatalog.category.${category}`)}</option>)}</select></label></div>

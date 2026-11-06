@@ -2,15 +2,18 @@ import { ArrowLeft, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
+import { MessagePreview, type PreviewMessage } from "../components/MessagePreview";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate, formatUnix } from "../lib/format";
+import { mediaFields } from "../lib/media";
 import type { Navigate } from "../routing";
 import type { MessageDetail } from "../types";
 
 export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserID: number; msgID: number; navigate: Navigate }) {
   const { t } = useI18n();
   const [detail, setDetail] = useState<MessageDetail | null>(null);
+  const [preview, setPreview] = useState<PreviewMessage[]>([]);
   const [error, setError] = useState("");
 
   async function load() {
@@ -25,6 +28,43 @@ export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserI
   useEffect(() => {
     void load();
   }, [ownerUserID, msgID]);
+
+  // Live conversation preview ending at this message (inclusive): the 50
+  // messages up to and including it, from the same route the Messages console
+  // uses. The cursor is strict, (date, box_id) < (before_date, before_id), so
+  // box_id + 1 keeps the message itself in the page.
+  useEffect(() => {
+    if (!detail) return;
+    let cancelled = false;
+    api
+      .messages(new URLSearchParams({
+        owner_user_id: String(detail.Message.OwnerUserID),
+        peer_id: String(detail.Message.PeerID),
+        before_date: String(detail.Message.Date),
+        before_id: String(detail.Message.BoxID + 1),
+        limit: "50"
+      }))
+      .then((data) => {
+        if (cancelled) return;
+        setPreview(
+          data.rows.map((row) => ({
+            id: `${row.OwnerUserID}-${row.BoxID}`,
+            displayID: row.BoxID,
+            date: row.Date,
+            from: row.FromUserID,
+            body: row.Body,
+            outgoing: row.Outgoing,
+            deleted: row.Deleted,
+            media: Boolean(row.Media && row.Media !== "{}"),
+            ...mediaFields(row.Media)
+          }))
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [detail]);
 
   if (error) {
     return <Alert>{error}</Alert>;
@@ -60,20 +100,24 @@ export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserI
               <Summary label={t("messages.messageSender")} value={String(msg.MessageSenderID)} mono />
               <Summary label={t("common.time")} value={formatUnix(msg.Date)} />
             </div>
-            <section className="section-block">
-              <SectionHead title={t("messages.messageBox")} text={t("messages.messageBoxesSnapshot")} />
-              <JsonBlock value={detail.MessageJSON} />
-            </section>
-            <div className="raw-grid">
+            <MessagePreview title={t("messages.privateTitle")} emptyLabel={t("messages.noMessages")} messages={preview} focusID={`${msg.OwnerUserID}-${msg.BoxID}`} />
+            <details className="section-block">
+              <summary>{t("messages.rawRecords")}</summary>
               <section className="section-block">
-                <SectionHead title={t("messages.dialogRow")} text={t("messages.dialogSnapshot")} />
-                <JsonBlock value={detail.DialogJSON} />
+                <SectionHead title={t("messages.messageBox")} text={t("messages.messageBoxesSnapshot")} />
+                <JsonBlock value={detail.MessageJSON} />
               </section>
-              <section className="section-block">
-                <SectionHead title={t("messages.privateRow")} text={t("messages.privateSnapshot")} />
-                <JsonBlock value={detail.PrivateJSON} />
-              </section>
-            </div>
+              <div className="raw-grid">
+                <section className="section-block">
+                  <SectionHead title={t("messages.dialogRow")} text={t("messages.dialogSnapshot")} />
+                  <JsonBlock value={detail.DialogJSON} />
+                </section>
+                <section className="section-block">
+                  <SectionHead title={t("messages.privateRow")} text={t("messages.privateSnapshot")} />
+                  <JsonBlock value={detail.PrivateJSON} />
+                </section>
+              </div>
+            </details>
             <section className="section-block">
               <SectionHead title={t("messages.userUpdateEvents")} text={t("messages.userEventsSource")} />
               <div className="table-wrap">

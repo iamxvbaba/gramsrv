@@ -291,7 +291,7 @@
   }
 }
 
-/* The Stars packages on the Commerce > Shop prices page. A read-only strip:
+/* The Stars packages on the Economy > Bot prices page. A read-only strip:
    each package is one Telegram-Star amount and the server Stars it credits is
    that amount times the rate, so there is nothing per-package to edit. The
    figures recompute from the rate input as it is typed, which is the whole

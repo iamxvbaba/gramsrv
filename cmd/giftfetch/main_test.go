@@ -374,6 +374,34 @@ func TestCollectRarityKinds(t *testing.T) {
 	}
 }
 
+func TestGiftTitleFallsBackForRegularGifts(t *testing.T) {
+	tests := []struct {
+		name string
+		gift *tg.StarGift
+		want string
+	}{
+		{"telegram title wins", &tg.StarGift{ID: 5170250947678437525, Title: "Chill Flame"}, "Chill Flame"},
+		{"regular gift uses artwork name", &tg.StarGift{ID: 5170250947678437525}, "Gift Box"},
+		{"unknown regular gift stays empty", &tg.StarGift{ID: 123}, ""},
+	}
+	for _, test := range tests {
+		if got := giftTitle(test.gift); got != test.want {
+			t.Fatalf("%s: giftTitle=%q want %q", test.name, got, test.want)
+		}
+	}
+	// The named IDs must cover every regular gift and must not duplicate each other.
+	seen := map[string]struct{}{}
+	for id, title := range regularGiftTitles {
+		if strings.TrimSpace(title) == "" || id <= 0 {
+			t.Fatalf("invalid regular gift title entry %d=%q", id, title)
+		}
+		if _, duplicate := seen[title]; duplicate {
+			t.Fatalf("duplicate regular gift title %q", title)
+		}
+		seen[title] = struct{}{}
+	}
+}
+
 func testGiftDocument(id int64) *tg.Document {
 	return &tg.Document{
 		ID:       id,

@@ -7,7 +7,6 @@ import { displayName, displayUsername, formatQuantity, formatSigned, formatUnix 
 import type { Navigate } from "../routing";
 import type { StarsLedgerEntryRow, StarsLedgerResponse } from "../types";
 import { GrantedBadge } from "./StarsPage";
-import { SectionTabs } from "../components/SectionTabs";
 
 export function StarsDetailPage({ userID, navigate }: { userID: string; navigate: Navigate }) {
   const { t } = useI18n();
@@ -67,7 +66,6 @@ export function StarsDetailPage({ userID, navigate }: { userID: string; navigate
         </>
       }
     >
-      <SectionTabs sectionId="commerce" active="/stars" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <SplitLayout
         main={

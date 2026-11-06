@@ -98,3 +98,56 @@ func writeTestManifest(t *testing.T, dir string, manifest Manifest) string {
 	}
 	return path
 }
+
+func TestValidateDesktopChecksReusedPackageSize(t *testing.T) {
+	filesDir := t.TempDir()
+	data := []byte("package")
+	const filename = "shared-update"
+	if err := os.WriteFile(filepath.Join(filesDir, filename), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(data)
+	release := DesktopRelease{Build: 7007000, File: filename, SHA256: hex.EncodeToString(hash[:])}
+	for _, tc := range []struct {
+		name    string
+		size    int64
+		wantErr bool
+	}{
+		{name: "size omitted", size: 0},
+		{name: "matching size", size: 7},
+		{name: "mismatching size", size: 8, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := &Catalog{
+				manifest: Manifest{Desktop: map[string]map[string]DesktopRelease{
+					"win64": {"stable": release},
+				}},
+				files: make(map[string]fileRecord),
+			}
+			if err := catalog.validateDesktop(filesDir); err != nil {
+				t.Fatal(err)
+			}
+			// Deterministically exercise a second reference to an already verified
+			// file, independent of Go's map iteration order across channels.
+			second := release
+			second.Size = tc.size
+			catalog.manifest.Desktop = map[string]map[string]DesktopRelease{
+				"win64": {"beta": second},
+			}
+			err := catalog.validateDesktop(filesDir)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("reused package with incorrect size was accepted")
+				}
+				if want := `desktop.win64.beta: package "shared-update" size = 7, want 8`; err.Error() != want {
+					t.Fatalf("error = %q, want %q", err, want)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.files) != 1 {
+				t.Fatalf("verified files = %d, want 1", len(catalog.files))
+			}
+		})
+	}
+}

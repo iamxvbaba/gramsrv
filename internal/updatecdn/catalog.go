@@ -163,6 +163,9 @@ func (c *Catalog) validateDesktop(filesDir string) error {
 				if !strings.EqualFold(existing.sha256, release.SHA256) {
 					return fmt.Errorf("%s.file %q is reused with another SHA256", prefix, release.File)
 				}
+				if release.Size > 0 && release.Size != existing.size {
+					return fmt.Errorf("%s: package %q size = %d, want %d", prefix, release.File, existing.size, release.Size)
+				}
 				continue
 			}
 

@@ -6,7 +6,6 @@ import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatQuantity } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { StarsAccountRow } from "../types";
-import { SectionTabs } from "../components/SectionTabs";
 
 export function StarsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
@@ -61,7 +60,6 @@ export function StarsPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
-      <SectionTabs sectionId="commerce" active="/stars" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("stars.metricLoaded")} value={String(rows.length)} />

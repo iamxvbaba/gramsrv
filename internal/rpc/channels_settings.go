@@ -429,13 +429,23 @@ func (r *Router) onChannelsEditPhoto(ctx context.Context, req *tg.ChannelsEditPh
 	if err != nil {
 		return nil, internalErr()
 	}
-	photo, err := r.resolveInputChatPhoto(ctx, userID, req.Photo)
+	photo, existing, err := r.resolveInputChatPhoto(ctx, userID, req.Photo)
 	if err != nil {
 		return nil, err
 	}
+	// The store checks the change-info right again in its transaction; checking it here first
+	// keeps a rejected call from deriving an avatar for an existing photo.
 	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); ok {
 		if err != nil {
 			return nil, err
+		}
+		if existing {
+			if !community.Self.CanChangeInfo() {
+				return nil, communityErr(domain.ErrCommunityAdminRequired)
+			}
+			if photo, err = r.chatAvatarPhoto(ctx, photo); err != nil {
+				return nil, err
+			}
 		}
 		date := int(r.clock.Now().Unix())
 		view, _, err := r.deps.Communities.SetPhoto(ctx, userID, community.Community.ID, photo, date, r.communityDeliveryEffects(ctx, userID, date))
@@ -450,6 +460,14 @@ func (r *Router) onChannelsEditPhoto(ctx context.Context, req *tg.ChannelsEditPh
 	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
 	if err != nil {
 		return nil, err
+	}
+	if existing {
+		if _, err := r.deps.Channels.GetChannelForChangeInfo(ctx, userID, channelID); err != nil {
+			return nil, channelAdminErr(err)
+		}
+		if photo, err = r.chatAvatarPhoto(ctx, photo); err != nil {
+			return nil, err
+		}
 	}
 	res, err := r.deps.Channels.SetPhoto(ctx, userID, channelID, photo, int(r.clock.Now().Unix()))
 	if err != nil {

@@ -241,7 +241,6 @@ func ValidateBaseURL(raw string) (string, error) {
 	if parsed.Fragment != "" {
 		return "", fmt.Errorf("fragment is not allowed")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
@@ -251,12 +250,11 @@ func Build(baseURL, path string, query url.Values) string {
 		baseURL = DefaultPublicBaseURL
 	}
 	parsed, _ := url.Parse(baseURL)
-	basePath := strings.TrimRight(parsed.Path, "/")
 	path = strings.TrimLeft(path, "/")
 	if path != "" {
-		parsed.Path = basePath + "/" + path
-	} else if basePath != "" {
-		parsed.Path = basePath
+		// Preserve escaped separators in the base while escaping the new path once.
+		parsed.RawPath = parsed.EscapedPath() + "/" + (&url.URL{Path: path}).EscapedPath()
+		parsed.Path += "/" + path
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String()

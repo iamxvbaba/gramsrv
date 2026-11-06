@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -301,6 +304,33 @@ func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
 	}, zaptest.NewLogger(t), clock.System)
 	input := &tg.InputChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
 
+	// Access hash mismatch must be rejected
+	if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: 999999}},
+	}); !tgerr.Is(err, "PHOTO_INVALID") {
+		t.Fatalf("channels.editPhoto with a wrong access hash err = %v, want PHOTO_INVALID", err)
+	}
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{err: domain.ErrPhotoInvalid, want: "PHOTO_INVALID"},
+		{err: errors.New("disk failure"), want: "INTERNAL_SERVER_ERROR"},
+	} {
+		files.ensureAvatarErr = tc.err
+		if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+			Channel: input,
+			Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
+		}); !tgerr.Is(err, tc.want) {
+			t.Fatalf("channels.editPhoto with EnsureAvatarPhoto error %v err = %v, want %s", tc.err, err, tc.want)
+		}
+	}
+	files.ensureAvatarErr = nil
+	if len(files.photos) != 1 {
+		t.Fatalf("rejected calls left %d photos, want only the message photo", len(files.photos))
+	}
+
 	setResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
 		Channel: input,
 		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
@@ -313,9 +343,31 @@ func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
 	if !ok {
 		t.Fatalf("set action = %T, want MessageActionChatEditPhoto", setAction)
 	}
+	// The message photo has no avatar sizes, so the channel gets a separate avatar photo and
+	// the message photo row stays as it was.
 	tgPhoto, ok := editPhoto.Photo.(*tg.Photo)
-	if !ok || tgPhoto.ID != photo.ID {
-		t.Fatalf("set action photo = %#v, want tg.Photo id %d", editPhoto.Photo, photo.ID)
+	if !ok || tgPhoto.ID == photo.ID {
+		t.Fatalf("set action photo = %#v, want a new avatar photo instead of %d", editPhoto.Photo, photo.ID)
+	}
+	avatarTypes := map[string]bool{}
+	for _, size := range tgPhoto.Sizes {
+		if size, ok := size.(*tg.PhotoSize); ok {
+			avatarTypes[size.Type] = true
+		}
+	}
+	if !avatarTypes["a"] || !avatarTypes["c"] {
+		t.Fatalf("set action photo sizes = %#v, want avatar sizes 'a' and 'c'", tgPhoto.Sizes)
+	}
+	if storedPhoto, found, err := files.GetPhoto(ctx, photo.ID); err != nil || !found || !reflect.DeepEqual(storedPhoto, photo) {
+		t.Fatalf("message photo = %+v found=%v err=%v, want unchanged %+v", storedPhoto, found, err, photo)
+	}
+
+	// Re-selecting the avatar photo keeps its id.
+	if _, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: tgPhoto.ID}},
+	}); !tgerr.Is(err, "CHAT_NOT_MODIFIED") {
+		t.Fatalf("channels.editPhoto with the current avatar err = %v, want CHAT_NOT_MODIFIED", err)
 	}
 
 	clearResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
@@ -328,6 +380,138 @@ func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
 	clearAction := requireChannelPhotoServiceAction(t, clearResult, created.Channel.ID)
 	if _, ok := clearAction.(*tg.MessageActionChatDeletePhoto); !ok {
 		t.Fatalf("clear action = %T, want MessageActionChatDeletePhoto", clearAction)
+	}
+}
+
+func TestChannelsEditPhotoChecksRightsBeforeDerivingAvatarRPC(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, err := userStore.Create(ctx, domain.User{AccessHash: 93, Phone: "15550009103", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	member, err := userStore.Create(ctx, domain.User{AccessHash: 94, Phone: "15550009104", FirstName: "Member"})
+	if err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	channelService := appchannels.NewService(memory.NewChannelStore())
+	created, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{
+		Title:         "Photo Rights RPC",
+		Megagroup:     true,
+		MemberUserIDs: []int64{member.ID},
+		Date:          1700001910,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	files := &fakeFiles{}
+	photo := files.putPhoto(domain.Photo{
+		ID:         9911,
+		AccessHash: 9912,
+		DCID:       2,
+		Date:       1700001911,
+		Sizes: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindStripped, Type: "i", Bytes: []byte{4, 5, 6}},
+			{Kind: domain.PhotoSizeKindDefault, Type: "m", W: 320, H: 240, Size: 4096},
+			{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 800, H: 600, Size: 16384},
+		},
+	})
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(userStore),
+		Channels: channelService,
+		Files:    files,
+	}, zaptest.NewLogger(t), clock.System)
+	messagePhoto := func() *tg.InputChatPhoto {
+		return &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}}
+	}
+	bogusID := created.Channel.ID + 1000
+
+	for _, tc := range []struct {
+		name string
+		call func() (tg.UpdatesClass, error)
+		want string
+	}{
+		{
+			name: "member channels.editPhoto",
+			call: func() (tg.UpdatesClass, error) {
+				return r.onChannelsEditPhoto(WithUserID(ctx, member.ID), &tg.ChannelsEditPhotoRequest{
+					Channel: &tg.InputChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash},
+					Photo:   messagePhoto(),
+				})
+			},
+			want: "CHAT_ADMIN_REQUIRED",
+		},
+		{
+			name: "member messages.editChatPhoto",
+			call: func() (tg.UpdatesClass, error) {
+				return r.onMessagesEditChatPhoto(WithUserID(ctx, member.ID), &tg.MessagesEditChatPhotoRequest{
+					ChatID: created.Channel.ID,
+					Photo:  messagePhoto(),
+				})
+			},
+			want: "CHAT_ADMIN_REQUIRED",
+		},
+		{
+			name: "bogus channels.editPhoto",
+			call: func() (tg.UpdatesClass, error) {
+				return r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+					Channel: &tg.InputChannel{ChannelID: bogusID, AccessHash: created.Channel.AccessHash},
+					Photo:   messagePhoto(),
+				})
+			},
+			want: "CHANNEL_INVALID",
+		},
+		{
+			name: "bogus messages.editChatPhoto",
+			call: func() (tg.UpdatesClass, error) {
+				return r.onMessagesEditChatPhoto(WithUserID(ctx, owner.ID), &tg.MessagesEditChatPhotoRequest{
+					ChatID: bogusID,
+					Photo:  messagePhoto(),
+				})
+			},
+			want: "CHANNEL_INVALID",
+		},
+	} {
+		if _, err := tc.call(); !tgerr.Is(err, tc.want) {
+			t.Fatalf("%s with a message photo err = %v, want %s", tc.name, err, tc.want)
+		}
+		if len(files.photos) != 1 {
+			t.Fatalf("%s left %d photos, want only the message photo", tc.name, len(files.photos))
+		}
+	}
+	if view, err := channelService.GetChannel(ctx, owner.ID, created.Channel.ID); err != nil || view.Channel.PhotoID != 0 {
+		t.Fatalf("channel photo after rejected calls = %d err=%v, want none", view.Channel.PhotoID, err)
+	}
+
+	setResult, err := r.onMessagesEditChatPhoto(WithUserID(ctx, owner.ID), &tg.MessagesEditChatPhotoRequest{
+		ChatID: created.Channel.ID,
+		Photo:  messagePhoto(),
+	})
+	if err != nil {
+		t.Fatalf("messages.editChatPhoto set: %v", err)
+	}
+	editPhoto, ok := requireChannelPhotoServiceAction(t, setResult, created.Channel.ID).(*tg.MessageActionChatEditPhoto)
+	if !ok {
+		t.Fatalf("set action = %#v, want MessageActionChatEditPhoto", editPhoto)
+	}
+	avatar, ok := editPhoto.Photo.(*tg.Photo)
+	if !ok || avatar.ID == photo.ID {
+		t.Fatalf("set action photo = %#v, want a new avatar photo instead of %d", editPhoto.Photo, photo.ID)
+	}
+	avatarTypes := map[string]bool{}
+	for _, size := range avatar.Sizes {
+		if size, ok := size.(*tg.PhotoSize); ok {
+			avatarTypes[size.Type] = true
+		}
+	}
+	if !avatarTypes["s"] || !avatarTypes["a"] || !avatarTypes["c"] {
+		t.Fatalf("set action photo sizes = %#v, want avatar sizes s, a and c", avatar.Sizes)
+	}
+	if storedPhoto, found, err := files.GetPhoto(ctx, photo.ID); err != nil || !found || !reflect.DeepEqual(storedPhoto, photo) {
+		t.Fatalf("message photo = %+v found=%v err=%v, want unchanged %+v", storedPhoto, found, err, photo)
+	}
+	if view, err := channelService.GetChannel(ctx, owner.ID, created.Channel.ID); err != nil || view.Channel.PhotoID != avatar.ID {
+		t.Fatalf("channel photo = %d err=%v, want avatar %d", view.Channel.PhotoID, err, avatar.ID)
 	}
 }
 

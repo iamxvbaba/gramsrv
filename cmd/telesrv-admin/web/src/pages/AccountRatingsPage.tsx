@@ -6,7 +6,6 @@ import { useI18n } from "../i18n";
 import { displayUsername, formatDate, formatQuantity, toNumeric } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { AccountRatingRow } from "../types";
-import { SectionTabs } from "../components/SectionTabs";
 
 export function AccountRatingsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
@@ -62,7 +61,6 @@ export function AccountRatingsPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
-      <SectionTabs sectionId="accounts" active="/account-ratings" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("rating.metricLoaded")} value={String(rows.length)} />

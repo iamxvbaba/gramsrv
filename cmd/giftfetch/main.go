@@ -782,6 +782,31 @@ func collectRarity(class tg.StarGiftAttributeRarityClass) (rarityManifest, error
 	}
 }
 
+// starGift.title is optional; Telegram does not send a title for "regular gifts" (clients just draw the sticker),
+// and early limited gifts that sold out may omit it too. When the title is missing, the admin import shows "Unnamed official gift",
+// so here we fill in the pattern names used on the Telegram store for the fixed regular gifts; the IDs are stable and do not change between fetches.
+var regularGiftTitles = map[int64]string{
+	5170145012310081615: "Heart",
+	5170250947678437525: "Gift Box",
+	5168103777563050263: "Rose",
+	5170144170496491616: "Cake",
+	5170314324215857265: "Bouquet",
+	5170564780938756245: "Rocket",
+	6028601630662853006: "Champagne",
+	5168043875654172773: "Trophy",
+	5170690322832818290: "Ring",
+	5170521118301225164: "Diamond",
+	5992502615223568003: "Bear",
+}
+
+// giftTitle prefers the title sent by Telegram and falls back to the pattern name only for regular gifts without a title.
+func giftTitle(gift *tg.StarGift) string {
+	if title := strings.TrimSpace(gift.Title); title != "" {
+		return title
+	}
+	return regularGiftTitles[gift.ID]
+}
+
 func collectGift(index int, class tg.StarGiftClass, addDocument addDocumentFunc) (giftManifest, error) {
 	switch gift := class.(type) {
 	case *tg.StarGift:
@@ -817,7 +842,7 @@ func collectGift(index int, class tg.StarGiftClass, addDocument addDocumentFunc)
 			GiftsPerRound:       gift.GiftsPerRound,
 			AuctionStartDate:    gift.AuctionStartDate,
 			UpgradeVariants:     gift.UpgradeVariants,
-			Title:               gift.Title,
+			Title:               giftTitle(gift),
 			DocumentIDs:         []int64{doc.ID},
 		}
 		if background, ok := gift.GetBackground(); ok {

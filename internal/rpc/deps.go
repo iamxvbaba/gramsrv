@@ -815,6 +815,7 @@ type FilesService interface {
 	CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error)
 	CreateDocumentFromBytes(ctx context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error)
 	GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error)
+	EnsureAvatarPhoto(ctx context.Context, photo domain.Photo) (domain.Photo, error)
 	GetDocument(ctx context.Context, id int64) (domain.Document, bool, error)
 	SetCurrentProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID, photoID int64, date int, effects store.DeliveryEffectsBuilder[store.ProfilePhotoMutation]) (store.ProfilePhotoMutation, bool, error)
 	SetCurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int, effects store.DeliveryEffectsBuilder[store.ProfilePhotoMutation]) (store.ProfilePhotoMutation, bool, error)

@@ -89,6 +89,60 @@ func TestValidateStarGiftCollectibleDraftOfficialProvenance(t *testing.T) {
 	}
 }
 
+// Telegram sends attributes with permille=0 for sold-out limited gifts (in the pool
+// but never drawn): they must pass validation, but a whole pool of zero weights is
+// still invalid because there is nothing left to draw.
+func TestValidateStarGiftCollectibleDraftAcceptsZeroPermille(t *testing.T) {
+	write := validCollectibleDraft()
+	write.Models[0].RarityPermille = 0
+	write.Patterns[0].RarityPermille = 0
+	write.Backdrops = append(write.Backdrops, StarGiftCollectibleAttribute{Kind: StarGiftCollectibleBackdrop,
+		Name: "Retired Backdrop", BackdropID: 2, RarityKind: StarGiftRarityPermille, RarityPermille: 0})
+	if err := ValidateStarGiftCollectibleDraft(write); err != nil {
+		t.Fatalf("zero-weight attributes: %v", err)
+	}
+
+	zeroOnly := validCollectibleDraft()
+	for i := range zeroOnly.Models {
+		if zeroOnly.Models[i].RarityKind == StarGiftRarityPermille {
+			zeroOnly.Models[i].RarityPermille = 0
+		}
+	}
+	if err := ValidateStarGiftCollectibleDraft(zeroOnly); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("all-zero model pool err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+
+	negative := validCollectibleDraft()
+	negative.Patterns[0].RarityPermille = -1
+	if err := ValidateStarGiftCollectibleDraft(negative); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("negative permille err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+}
+
+// The upgrade preview samples only attributes with weight > 0: zero-weight
+// backdrops cannot supply the two backdrops the preview needs, otherwise the
+// preview shows only one backdrop and TDesktop's upgrade animation never stops;
+// but zero-weight backdrops still participate in backdrop_id deduplication.
+func TestValidateStarGiftCollectibleDraftCountsOnlyDrawableBackdrops(t *testing.T) {
+	retired := StarGiftCollectibleAttribute{Kind: StarGiftCollectibleBackdrop, Name: "Retired Backdrop",
+		BackdropID: 2, RarityKind: StarGiftRarityPermille, RarityPermille: 0}
+
+	oneDrawable := validCollectibleDraft()
+	oneDrawable.Backdrops[1].RarityPermille = 0
+	oneDrawable.Backdrops = append(oneDrawable.Backdrops, retired)
+	if err := ValidateStarGiftCollectibleDraft(oneDrawable); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("one drawable backdrop err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+
+	duplicate := validCollectibleDraft()
+	duplicateRetired := retired
+	duplicateRetired.BackdropID = duplicate.Backdrops[0].BackdropID
+	duplicate.Backdrops = append(duplicate.Backdrops, duplicateRetired)
+	if err := ValidateStarGiftCollectibleDraft(duplicate); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("zero-weight backdrop reusing a backdrop_id err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+}
+
 func TestValidateStarGiftCollectibleDraftRejectsImplicitRarity(t *testing.T) {
 	write := validCollectibleDraft()
 	write.Models[0].RarityKind = ""

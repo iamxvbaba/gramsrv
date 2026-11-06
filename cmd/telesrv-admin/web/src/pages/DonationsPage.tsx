@@ -2,7 +2,6 @@ import { ChevronDown, Loader2, RefreshCw, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate } from "../lib/format";
@@ -157,7 +156,6 @@ export function DonationsPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
-      <SectionTabs sectionId="donations" active="/donations" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
 
       <div className="metric-row">

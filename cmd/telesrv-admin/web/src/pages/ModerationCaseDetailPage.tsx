@@ -1,10 +1,11 @@
-import { ArrowLeft, CheckCircle2, ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ExternalLink, MessagesSquare, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n, type TFunction } from "../i18n";
 import { permissionMessagesRead, useCan } from "../permissions";
 import { formatDate } from "../lib/format";
+import { loadPeerNames, peerLabel, userName, type PeerNames } from "../lib/peerNames";
 import type { Navigate } from "../routing";
 import type { ModerationCaseDetail, ModerationReport, ModerationReportItem } from "../types";
 import {
@@ -27,6 +28,7 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
   const [revokeMessages, setRevokeMessages] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [names, setNames] = useState<PeerNames | null>(null);
 
   function selectReport(next: ModerationReport | null) {
     setReport(next);
@@ -37,6 +39,9 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
       .filter((value) => Number.isSafeInteger(value) && value > 0);
     setMessageIDs(ids.join(", "));
     setOwnerUserID(String(next.ReporterUserID));
+    const userIds = next.Items.map((item) => (item.Peer?.Type === "user" ? Number(item.Peer?.ID ?? 0) : item.AuthorUserID));
+    const channelIds = next.Items.filter((item) => item.Peer?.Type === "channel").map((item) => Number(item.Peer?.ID ?? 0));
+    void loadPeerNames(userIds, channelIds).then(setNames).catch(() => undefined);
   }
 
   async function load() {
@@ -195,9 +200,13 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
               <SectionHead title={t("moderation.evidence")} text={t("moderation.evidenceHint")} />
               <div className="detail-stack">
                 <div className="toolbar">
-                  {detail.ReportIDs.map((reportID) => (
-                    <button className="btn" key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
-                      #{reportID}
+                  {detail.ReportIDs.map((reportID, index) => (
+                    <button
+                      key={reportID}
+                      className={`btn${report?.ID === reportID ? " primary" : ""}`}
+                      onClick={async () => selectReport(await api.moderationReport(reportID))}
+                    >
+                      {t("moderation.reportTab", { index: index + 1, id: reportID })}
                     </button>
                   ))}
                 </div>
@@ -213,7 +222,7 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
                       <Summary label={t("common.time")} value={formatDate(report.CreatedAt)} />
                     </div>
                     {report.Comment && <p className="about-text">{report.Comment}</p>}
-                    <ReportEvidence t={t} report={report} navigate={navigate} />
+                    <ReportEvidence t={t} report={report} navigate={navigate} names={names} />
                   </>
                 )}
               </div>
@@ -338,83 +347,82 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
 // message itself is one click away in the Messages console when the operator
 // has messages.read. Media held as evidence gets its own small table so an
 // operator can act on it.
-function ReportEvidence({ t, report, navigate }: { t: TFunction; report: ModerationReport; navigate: Navigate }) {
+function ReportEvidence({ t, report, navigate, names }: {
+  t: TFunction;
+  report: ModerationReport;
+  navigate: Navigate;
+  names: PeerNames | null;
+}) {
   const canReadMessages = useCan(permissionMessagesRead);
+  // A message can show up more than once across report items; collapse identical
+  // (kind, peer, id) entries so the evidence list has no duplicates.
+  const evidenceItems = report.Items.filter(
+    (item, index) =>
+      // Service messages (channel created, pinned, etc.) are not the reported
+      // user content and must not show as evidence.
+      !(item.Kind === "message" && messageEvidenceIsService(item.Evidence)) &&
+      report.Items.findIndex(
+        (other) =>
+          other.Kind === item.Kind &&
+          other.ItemID === item.ItemID &&
+          other.SecondaryID === item.SecondaryID &&
+          other.Peer?.Type === item.Peer?.Type &&
+          other.Peer?.ID === item.Peer?.ID
+      ) === index
+  );
+  const kindLabel = (kind: string) => moderationEnumLabel(t, "itemKind", kind);
   return (
     <div className="detail-stack">
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead><tr>
-            <th>{t("moderation.itemKind")}</th>
-            <th>{t("moderation.peer")}</th>
-            <th>{t("moderation.itemID")}</th>
-            <th>{t("moderation.secondaryID")}</th>
-            <th>{t("audit.actor")}</th>
-            <th>{t("messages.body")}</th>
-            <th>{t("moderation.snapshot")}</th>
-          </tr></thead>
-          <tbody>
-            {report.Items.map((evidence, index) => {
-              const body = messageEvidenceBody(evidence.Evidence);
-              const media = messageEvidenceMedia(evidence.Evidence);
-              const openLink = messageConsoleLink(report, evidence);
-              return (
-              <tr key={`${evidence.Kind}-${index}`}>
-                <td><Badge>{moderationEnumLabel(t, "itemKind", evidence.Kind)}</Badge></td>
-                <td className="mono">{evidence.Peer ? moderationTargetLabel(t, evidence.Peer.Type, evidence.Peer.ID) : "-"}</td>
-                <td className="mono">{evidence.ItemID || "-"}</td>
-                <td className="mono">{evidence.SecondaryID || "-"}</td>
-                <td className="mono">{evidence.AuthorUserID || "-"}</td>
-                <td className="evidence-message-cell">
-                  <div className="evidence-message" title={body ?? undefined}>
-                    {body || (media ? `[${media}]` : "-")}
-                  </div>
-                  {openLink && canReadMessages && (
-                    <button className="evidence-open" type="button" onClick={() => navigate(openLink)}>
-                      <ExternalLink size={12} /> {t("moderation.openMessage")}
-                    </button>
-                  )}
-                </td>
-                <td>
-                  {evidence.Evidence != null
-                    ? (
-                      <details>
-                        <summary>{t("moderation.snapshot")}</summary>
-                        <JsonBlock value={JSON.stringify(evidence.Evidence, null, 2)} />
-                      </details>
-                    )
-                    : "-"}
-                </td>
-              </tr>
-              );
-            })}
-            {report.Items.length === 0 && <EmptyRow colSpan={7} />}
-          </tbody>
-        </table>
-      </div>
-      {report.MediaHolds.length > 0 && (
-        <>
-          <div className="dock-title">{t("moderation.mediaHolds")}</div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr>
-                <th>{t("moderation.mediaItem")}</th>
-                <th>{t("moderation.mediaKind")}</th>
-                <th>{t("moderation.storageKey")}</th>
-              </tr></thead>
-              <tbody>
-                {report.MediaHolds.map((hold, index) => (
-                  <tr key={`${hold.StorageKey}-${index}`}>
-                    <td>#{hold.ItemIndex}</td>
-                    <td>{moderationEnumLabel(t, "mediaKind", hold.Kind)}</td>
-                    <td className="mono">{hold.StorageKey}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {evidenceItems.map((evidence, index) => {
+        const body = messageEvidenceBody(evidence.Evidence);
+        const media = messageEvidenceMedia(evidence.Evidence);
+        const openLink = messageConsoleLink(report, evidence);
+        const ordinal = report.Items.indexOf(evidence);
+        const holds = report.MediaHolds.filter((hold) => hold.ItemIndex === ordinal);
+        const mediaHold = holds.find((hold) => hold.StorageKey.endsWith(":x")) ?? holds[0];
+        const label =
+          evidence.Kind === "message"
+            ? evidence.Peer?.Type === "channel"
+              ? t("moderation.channelMessage")
+              : t("moderation.privateMessage")
+            : kindLabel(evidence.Kind);
+        return (
+          <div className="evidence-item" key={`${evidence.Kind}-${index}`}>
+            <div className="evidence-head">
+              <span className="evidence-kind">{label}</span>
+              {evidence.Peer && <span className="evidence-chat">{peerLabel(names, evidence.Peer.Type, Number(evidence.Peer.ID))}</span>}
+              {evidence.ItemID ? <span className="evidence-id">{`#${evidence.ItemID}`}</span> : null}
+            </div>
+            <div className="chat-row in">
+              <div className={`chat-bubble${media && !body ? " media-only" : ""}`}>
+                {mediaHold && canReadMessages && mediaHold.Kind === "photo" ? (
+                  <img className="evidence-media-img" src={api.mediaURL(mediaHold.StorageKey)} alt="" loading="lazy" />
+                ) : mediaHold && canReadMessages ? (
+                  <a className="msg-preview-media" href={api.mediaURL(mediaHold.StorageKey)} target="_blank" rel="noreferrer">{t("common.download")}</a>
+                ) : media ? (
+                  <div className="evidence-media-placeholder">{media}</div>
+                ) : null}
+                {body && <div className="chat-text">{body}</div>}
+                <div className="chat-meta">
+                  {evidence.AuthorUserID ? <span>{`${t("messages.fromLabel")} ${userName(names, evidence.AuthorUserID)}`}</span> : null}
+                </div>
+              </div>
+            </div>
+            {(openLink && canReadMessages) && (
+              <div className="evidence-actions">
+                <button className="evidence-open" type="button" onClick={() => navigate(openLink)}>
+                  <ExternalLink size={12} /> {t("moderation.openMessage")}
+                </button>
+              </div>
+            )}
           </div>
-        </>
-      )}
+        );
+      })}
+      {evidenceItems.length === 0 && <div className="empty-panel">{t("common.noResults")}</div>}
+      <details className="section-block">
+        <summary>{t("moderation.rawReportData")}</summary>
+        <JsonBlock value={JSON.stringify({ items: report.Items, media_holds: report.MediaHolds }, null, 2)} />
+      </details>
     </div>
   );
 }
@@ -450,6 +458,13 @@ function messageEvidenceMedia(evidence: unknown): string | null {
     if (typeof kind === "string" && kind) return kind;
   }
   return null;
+}
+
+// messageEvidenceIsService reports whether a frozen snapshot is a service
+// message (an `action` such as channel_create) rather than user content.
+function messageEvidenceIsService(evidence: unknown): boolean {
+  if (!evidence || typeof evidence !== "object") return false;
+  return (evidence as Record<string, unknown>).action != null;
 }
 
 // messageConsoleLink deep-links a reported message into the Messages console

@@ -1789,6 +1789,23 @@ func TestPublishStarGiftCollectiblesAllowsDeterministicModelAndPattern(t *testin
 	}
 }
 
+// Official snapshots send permille=0 attributes for sold-out limited gifts, which the import must accept; a negative weight is still invalid.
+func TestOfficialRarityAcceptsZeroPermille(t *testing.T) {
+	zero := 0
+	kind, permille, err := officialRarity(officialgifts.Rarity{Kind: "permille", Permille: &zero})
+	if err != nil || kind != domain.StarGiftRarityPermille || permille != 0 {
+		t.Fatalf("zero permille = (%q, %d, %v)", kind, permille, err)
+	}
+	negative := -1
+	if _, _, err := officialRarity(officialgifts.Rarity{Kind: "permille", Permille: &negative}); err == nil {
+		t.Fatal("negative permille was accepted")
+	}
+	missing := officialgifts.Rarity{Kind: "permille"}
+	if _, _, err := officialRarity(missing); err == nil {
+		t.Fatal("missing permille was accepted")
+	}
+}
+
 func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testing.T) {
 	permille := 922
 	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{
