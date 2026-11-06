@@ -428,6 +428,26 @@ func (s *Service) RecordMessagePoll(ctx context.Context, authKeyID [8]byte, user
 	})
 }
 
+// RecordMessageWidgetData appends the durable pts-bearing updateMessageWidgetData
+// event for a widget public/chat data change. The message snapshot carries the
+// new widget media; difference/dispatch rebuilds it via the message box JOIN.
+func (s *Service) RecordMessageWidgetData(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
+	if userID == 0 {
+		userID = msg.OwnerUserID
+	}
+	date := msg.Date
+	if date == 0 {
+		date = int(time.Now().Unix())
+	}
+	return s.recordEvent(ctx, authKeyID, [8]byte{}, userID, domain.UpdateEvent{
+		Type:     domain.UpdateEventMessageWidgetData,
+		Date:     date,
+		Message:  msg,
+		Peer:     msg.Peer,
+		PtsCount: 1,
+	}, false, 0)
+}
+
 // RecordStory records a story snapshot change for offline difference replay.
 func (s *Service) RecordStory(ctx context.Context, stateAuthKeyID [8]byte, userID int64, story domain.Story, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 && story.Owner.Type == domain.PeerTypeUser {
