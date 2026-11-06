@@ -628,6 +628,14 @@ type UserEmojiStatusUpdatesService interface {
 	RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]byte, userID int64, status domain.UserEmojiStatus, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 }
 
+// MessageWidgetDataUpdatesService is the optional durable widget-data update
+// extension used by messages.editMessageWidgetData (Layer 233). Keeping it
+// separate preserves lightweight test/service implementations of UpdatesService
+// and makes the widget-data event purely additive.
+type MessageWidgetDataUpdatesService interface {
+	RecordMessageWidgetData(ctx context.Context, stateAuthKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
+}
+
 // ContactsService abstracts contact-list queries.
 type ContactsService interface {
 	GetContacts(ctx context.Context, userID int64, hash int64) (domain.ContactList, bool, error)
@@ -1245,6 +1253,9 @@ type Deps struct {
 	LangPack                     LangPackService
 	Sessions                     SessionBinder
 	Inline                       store.InlineRegistryStore
+	// Widgets persists shared bot web-widget definitions (Layer 233); when nil,
+	// the widget RPCs return NOT_IMPLEMENTED.
+	Widgets store.WidgetStore
 	Limiter                      RateLimiter
 	Metrics                      Metrics
 	SecretChats                  SecretChatService

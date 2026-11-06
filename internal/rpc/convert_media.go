@@ -104,6 +104,11 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 			return &tg.MessageMediaEmpty{}
 		}
 		return tgTodoMedia(*m.Todo)
+	case domain.MessageMediaKindWidget:
+		if m.Widget == nil {
+			return &tg.MessageMediaEmpty{}
+		}
+		return tgWidgetMedia(*m.Widget)
 	case domain.MessageMediaKindGeoLive:
 		if m.GeoLive == nil {
 			return &tg.MessageMediaEmpty{}
