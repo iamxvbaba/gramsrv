@@ -306,8 +306,11 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		}
 		return nil
 	}
+	if r.deps.Messages == nil {
+		return false, messageIDInvalidErr()
+	}
 	if target, found, err := r.privateMessageFromInlineID(ctx, botID, req.ID); err != nil {
-		return false, internalErr()
+		return false, err
 	} else if found {
 		widget := cloneMessageWidget(widgetMediaOf(target.Media))
 		if err := apply(widget); err != nil {
@@ -324,7 +327,7 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		return true, nil
 	}
 	if channel, msg, found, err := r.channelMessageFromInlineID(ctx, botID, req.ID); err != nil {
-		return false, internalErr()
+		return false, err
 	} else if found {
 		if r.deps.Channels == nil {
 			return false, messageIDInvalidErr()
@@ -333,14 +336,19 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		if err := apply(widget); err != nil {
 			return false, err
 		}
-		if _, err := r.deps.Channels.EditMessage(ctx, botID, domain.EditChannelMessageRequest{
-			UserID: botID, ChannelID: channel.ID, ID: msg.ID,
+		// EditInlineBotMessage authorizes through ViaBotEditBotID with the
+		// message sender as the acting user, so it works when the bot is not a
+		// member; then fan the edit out to the channel members.
+		res, err := r.deps.Channels.EditInlineBotMessage(ctx, botID, domain.EditChannelMessageRequest{
+			UserID: msg.SenderUserID, ChannelID: channel.ID, ID: msg.ID,
 			Message: msg.Body, Entities: append([]domain.MessageEntity(nil), msg.Entities...),
 			Media:    &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
 			EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
-		}); err != nil {
+		})
+		if err != nil {
 			return false, channelEditErr(err)
 		}
+		r.enqueueChannelEditMessageFanout(ctx, msg.SenderUserID, res)
 		return true, nil
 	}
 	return false, messageIDInvalidErr()
