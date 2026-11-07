@@ -123,8 +123,12 @@ func (r *Router) sendStarGiftResaleForm(ctx context.Context, userID, formID int6
 	if err != nil {
 		return nil, err
 	}
+	var listingAmount domain.StarGiftAmount
+	if gift.ResellAmount != nil && gift.ResellAmount.Currency != amount.Currency {
+		listingAmount = *gift.ResellAmount
+	}
 	result, err := r.deps.Gifts.PurchaseResale(ctx, domain.StarGiftResalePurchaseRequest{BuyerUserID: userID,
-		Slug: gift.Slug, To: to, Amount: amount, FormID: formID, CommandKey: fmt.Sprintf("resale:%d:%d", gift.ID, formID),
+		Slug: gift.Slug, To: to, Amount: amount, ListingAmount: listingAmount, FormID: formID, CommandKey: fmt.Sprintf("resale:%d:%d", gift.ID, formID),
 		Date: int(r.clock.Now().Unix()), RecipientUnsaved: recipientUnsaved,
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
 	if err != nil {
@@ -150,14 +154,19 @@ func (r *Router) starGiftResaleTarget(ctx context.Context, userID int64, inv *tg
 	if err != nil {
 		return domain.UniqueStarGift{}, domain.Peer{}, domain.StarGiftAmount{}, err
 	}
-	wantCurrency := domain.StarGiftCurrencyStars
-	if inv.Ton {
-		wantCurrency = domain.StarGiftCurrencyTON
-	}
-	if gift.ResellAmount.Currency != wantCurrency || gift.Owner == to {
+	if gift.Owner == to {
 		return domain.UniqueStarGift{}, domain.Peer{}, domain.StarGiftAmount{}, starGiftInvalidErr()
 	}
-	return gift, to, *gift.ResellAmount, nil
+	listing := *gift.ResellAmount
+	switch {
+	case inv.Ton && listing.Currency == domain.StarGiftCurrencyTON, !inv.Ton && listing.Currency == domain.StarGiftCurrencyStars:
+		return gift, to, listing, nil
+	case inv.Ton && listing.Currency == domain.StarGiftCurrencyStars && !gift.ResaleTonOnly:
+		// Clients may pay a Stars listing in TON, as in Telegram: the buyer
+		// is charged the TON equivalent and the seller still gets the Stars.
+		return gift, to, domain.StarGiftAmount{Currency: domain.StarGiftCurrencyTON, Amount: domain.StarsToNanoTON(listing.Amount)}, nil
+	}
+	return domain.UniqueStarGift{}, domain.Peer{}, domain.StarGiftAmount{}, starGiftInvalidErr()
 }
 
 func (r *Router) starGiftAuctionBidPaymentForm(ctx context.Context, userID int64, inv *tg.InputInvoiceStarGiftAuctionBid) (tg.PaymentsPaymentFormClass, error) {
