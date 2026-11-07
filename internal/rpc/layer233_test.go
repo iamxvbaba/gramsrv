@@ -253,8 +253,9 @@ func TestLayer233EditWidgetDataIsBotOwned(t *testing.T) {
 	}
 }
 
-// File-based transcription is not wired; the method must still be registered and
-// fail with TRANSCRIPTION_FAILED rather than the compatibility trace.
+// File-based transcription is wired (TranscribeFile) but needs the ASR backend
+// and the Files service: without them it still fails with TRANSCRIPTION_FAILED,
+// and the method is explicitly registered rather than falling to the trace.
 func TestLayer233TranscriptionFileUnavailable(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 	ctx := context.Background()

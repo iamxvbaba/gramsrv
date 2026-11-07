@@ -1,5 +1,5 @@
 CREATE TABLE public.bot_widgets (
-    widget_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    widget_id BIGINT PRIMARY KEY,
     bot_user_id BIGINT NOT NULL,
     html TEXT NOT NULL DEFAULT '',
     payload BYTEA NOT NULL DEFAULT '\x',

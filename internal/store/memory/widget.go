@@ -2,6 +2,10 @@ package memory
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"fmt"
+	"math"
 	"sync"
 
 	"telesrv/internal/domain"
@@ -10,12 +14,27 @@ import (
 // WidgetStore is the in-memory WidgetStore used by rpc tests.
 type WidgetStore struct {
 	mu      sync.Mutex
-	nextID  int64
 	widgets map[int64]domain.BotWidget
 }
 
 func NewWidgetStore() *WidgetStore {
 	return &WidgetStore{widgets: make(map[int64]domain.BotWidget)}
+}
+
+// randomWidgetID returns an unpredictable non-zero widget id, matching the
+// PostgreSQL store (ids are referenced by inputMediaWidgetID and must not be
+// enumerable).
+func randomWidgetID() (int64, error) {
+	for i := 0; i < 8; i++ {
+		var buf [8]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			return 0, err
+		}
+		if id := int64(binary.LittleEndian.Uint64(buf[:]) & math.MaxInt64); id != 0 {
+			return id, nil
+		}
+	}
+	return 0, fmt.Errorf("random widget id")
 }
 
 func cloneBotWidget(w domain.BotWidget) domain.BotWidget {
@@ -26,17 +45,19 @@ func cloneBotWidget(w domain.BotWidget) domain.BotWidget {
 func (s *WidgetStore) CreateWidget(_ context.Context, widget domain.BotWidget) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.nextID == 0 {
-		s.nextID = 1
+	for attempt := 0; attempt < 32; attempt++ {
+		id, err := randomWidgetID()
+		if err != nil {
+			return 0, err
+		}
+		if _, exists := s.widgets[id]; exists {
+			continue
+		}
+		widget.WidgetID = id
+		s.widgets[id] = cloneBotWidget(widget)
+		return id, nil
 	}
-	for s.widgets[s.nextID].WidgetID != 0 {
-		s.nextID++
-	}
-	id := s.nextID
-	s.nextID++
-	widget.WidgetID = id
-	s.widgets[id] = cloneBotWidget(widget)
-	return id, nil
+	return 0, fmt.Errorf("allocate widget id")
 }
 
 func (s *WidgetStore) GetWidget(_ context.Context, widgetID int64) (domain.BotWidget, bool, error) {
