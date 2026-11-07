@@ -17,6 +17,8 @@ what the server does and the deliberate limits.
   `setInlineBotResults` and sends that fail later leave no row.
 - `inputMediaWidgetID` resolves that definition by id and attaches it to the
   message as an `is_copy` widget. `chat_data` from the input is kept.
+- `invert_media` from an inline widget input is carried through accept, the
+  `botInlineMessageWidget` projection and the sent `message.invert_media`.
 - Accepted through `messages.sendMedia` / `sendMultiMedia` / `uploadMedia`, and
   through inline bot results (`inputBotInlineMessageWidget` /
   `inputBotInlineMessageWidgetID` → `botInlineMessageWidget`). Not accepted on
