@@ -570,17 +570,22 @@ func (r *Router) botWidgetQueryUpdate(
 		chatInstance := widgetChatInstance(botID, userID, peer)
 		if peer.Type == domain.PeerTypeUser {
 			// Translate to the bot's own view: peer = the querying user, msg_id
-			// = the bot's copy box id (mirrors resolveBotCallbackQuery).
-			if target.private != nil && target.private.UID != 0 {
-				if provider, ok := r.deps.Messages.(privateMessageByUIDService); ok {
-					if botMessage, found, err := provider.GetMessageByUID(ctx, botID, target.private.UID); err == nil && found &&
-						botMessage.OwnerUserID == botID &&
-						botMessage.Peer == (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
-						updatePeer = botMessage.Peer
-						updateMsgID = botMessage.ID
-					}
-				}
+			// = the bot's copy box id (mirrors resolveBotCallbackQuery). A failed
+			// translation must not fall back to the querier's ids, so fail closed.
+			if target.private == nil || target.private.UID == 0 {
+				return nil, dataInvalidErr()
 			}
+			provider, ok := r.deps.Messages.(privateMessageByUIDService)
+			if !ok {
+				return nil, dataInvalidErr()
+			}
+			botMessage, found, err := provider.GetMessageByUID(ctx, botID, target.private.UID)
+			if err != nil || !found || botMessage.OwnerUserID != botID ||
+				botMessage.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+				return nil, dataInvalidErr()
+			}
+			updatePeer = botMessage.Peer
+			updateMsgID = botMessage.ID
 		}
 		update := &tg.UpdateBotWidgetQuery{
 			QueryID: queryID, QueryType: req.QueryType, UserID: userID,

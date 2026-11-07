@@ -35,3 +35,20 @@ func TestBotWidgetQueryForwardedRoutesToCopyQuery(t *testing.T) {
 		t.Fatalf("copy query = %+v", copyQuery)
 	}
 }
+
+// A private query whose UID translation fails must fail closed rather than send
+// updateBotWidgetQuery with the querier's peer/box id.
+func TestBotWidgetQueryPrivateTranslationFailsClosed(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	widget := &domain.MessageWidget{CanQuery: true}
+	target := widgetMessageTarget{
+		senderBotID: 999, // the bot sent it, but the bot's copy cannot be resolved
+		media:       &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
+	}
+	req := &tg.MessagesGetBotWidgetQueryAnswerRequest{QueryType: &tg.WidgetQueryTypeData{}}
+
+	if _, err := r.botWidgetQueryUpdate(context.Background(), 42,
+		domain.Peer{Type: domain.PeerTypeUser, ID: 42}, req, target, widget, 999, 7); err == nil {
+		t.Fatal("private translation failure returned an update instead of failing closed")
+	}
+}
