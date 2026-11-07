@@ -148,10 +148,6 @@ func (h *Handler) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	etag := `"sha256-` + record.sha256 + `"`
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
 	f, err := os.Open(record.path)
 	if err != nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "package unavailable")
