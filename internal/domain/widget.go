@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"hash/fnv"
 	"time"
 )
 
@@ -43,6 +44,36 @@ type MessageWidget struct {
 // IsZero reports whether the widget snapshot carries no usable definition.
 func (w *MessageWidget) IsZero() bool {
 	return w == nil || (w.WidgetID == 0 && len(w.Payload) == 0)
+}
+
+// WidgetDataHash is the server-computed public_data hash
+// (messageMediaWidget.public_data_hash). Clients echo it back to
+// messages.getWidgetPublicData and get widgetPublicDataNotModified on a match.
+func WidgetDataHash(data string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(data))
+	return int64(h.Sum64())
+}
+
+// ApplyWidgetDataPatch mutates a widget media snapshot with a public/chat data
+// patch and reports whether anything changed. It returns false when the media is
+// not a widget or the requested fields already hold the given values.
+func ApplyWidgetDataPatch(media *MessageMedia, patch *MessageWidgetDataPatch) bool {
+	if media == nil || patch == nil || media.Widget == nil {
+		return false
+	}
+	widget := media.Widget
+	changed := false
+	if patch.PublicData != nil && widget.PublicData != *patch.PublicData {
+		widget.PublicData = *patch.PublicData
+		widget.PublicDataHash = WidgetDataHash(*patch.PublicData)
+		changed = true
+	}
+	if patch.ChatData != nil && widget.ChatData != *patch.ChatData {
+		widget.ChatData = *patch.ChatData
+		changed = true
+	}
+	return changed
 }
 
 // BotWidget is the persisted definition and mutable public data of a shared

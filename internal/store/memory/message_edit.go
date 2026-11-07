@@ -31,7 +31,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	}
 	authorEdit := target.Out && target.From.ID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
-	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {
+	if !authorEdit && !viaBotEdit && !req.WebPageResolve && req.WidgetData == nil && !validMemoryTodoParticipantEdit(req, target) {
 		return res, domain.ErrMessageAuthorRequired
 	}
 	// WebPageResolve: server-internal in-place link-preview replacement. Idempotent — it
@@ -39,6 +39,12 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	// matching id; it swaps media only, leaves body/entities/edit_date untouched, and emits a web_page event.
 	if req.WebPageResolve {
 		if req.Media == nil || !domain.IsPendingWebPageMedia(target.Media, req.ExpectedWebPageID) {
+			return res, domain.ErrMessageNotModified
+		}
+	}
+	if req.WidgetData != nil {
+		probe := cloneRequestedPeerMedia(target.Media)
+		if !domain.ApplyWidgetDataPatch(probe, req.WidgetData) {
 			return res, domain.ErrMessageNotModified
 		}
 	}
@@ -54,13 +60,29 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 		return res, domain.ErrMessageEmpty
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(target.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
+	if req.Media == nil && req.WidgetData == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	messageSenderID := target.From.ID
 	for userID, messages := range s.m {
 		for i, msg := range messages {
 			if msg.UID == target.UID && msg.From.ID == messageSenderID {
+				if req.WidgetData != nil {
+					media := cloneRequestedPeerMedia(msg.Media)
+					if media == nil {
+						continue
+					}
+					_ = domain.ApplyWidgetDataPatch(media, req.WidgetData)
+					msg.Media = media
+					msg.Pts = s.nextPtsLocked(userID)
+					s.m[userID][i] = msg
+					res.Edited = append(res.Edited, domain.EditedMessageForUser{
+						UserID:  userID,
+						Message: cloneMessage(msg),
+						Event:   messageWidgetDataEvent(msg),
+					})
+					continue
+				}
 				if req.WebPageResolve {
 					media := *req.Media
 					msg.Media = &media

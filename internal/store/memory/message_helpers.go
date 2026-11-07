@@ -247,6 +247,21 @@ func webPageEvent(msg domain.Message) domain.UpdateEvent {
 	}
 }
 
+func messageWidgetDataEvent(msg domain.Message) domain.UpdateEvent {
+	if msg.ID == 0 {
+		return domain.UpdateEvent{}
+	}
+	return domain.UpdateEvent{
+		UserID:   msg.OwnerUserID,
+		Type:     domain.UpdateEventMessageWidgetData,
+		Pts:      msg.Pts,
+		PtsCount: 1,
+		Date:     msg.Date,
+		Message:  cloneMessage(msg),
+		Peer:     msg.Peer,
+	}
+}
+
 func equalMessageEntities(a, b []domain.MessageEntity) bool {
 	if len(a) != len(b) {
 		return false

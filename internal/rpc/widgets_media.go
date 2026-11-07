@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"hash/fnv"
 
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
@@ -22,9 +21,7 @@ const (
 // widgetDataHash is the server-computed public_data hash (messageMediaWidget.public_data_hash).
 // Clients echo it back to messages.getWidgetPublicData and get widgetPublicDataNotModified on a match.
 func widgetDataHash(data string) int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(data))
-	return int64(h.Sum64())
+	return domain.WidgetDataHash(data)
 }
 
 // domainWidgetFromInline converts inputMediaWidget: the markup is stored on the

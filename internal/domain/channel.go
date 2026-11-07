@@ -2005,6 +2005,10 @@ type EditChannelMessageRequest struct {
 	// replace only when the target's current media is still a pending link preview with ID==ExpectedWebPageID.
 	WebPageResolve    bool
 	ExpectedWebPageID int64
+	// WidgetData patches only a bot widget's public/chat data in place
+	// (messages.editMessageWidgetData) without marking the message edited; a
+	// ChannelMessageWidgetData event is generated instead of edit_channel_message.
+	WidgetData *MessageWidgetDataPatch
 }
 
 // EditChannelMessageResult describes one channel edit update.

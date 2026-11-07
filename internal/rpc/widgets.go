@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"time"
 	"unicode/utf8"
 
@@ -235,22 +236,38 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 		return nil, peerIDInvalidErr()
 	}
 	sessionID, _ := SessionIDFrom(ctx)
+	patch := &domain.MessageWidgetDataPatch{}
+	if hasPublic {
+		v := publicData
+		patch.PublicData = &v
+	}
+	if hasChat {
+		v := chatData
+		patch.ChatData = &v
+	}
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
 		OwnerUserID: userID, Peer: peer, ID: req.ID,
-		Message: target.body, Entities: target.entities, Media: newMedia,
+		WidgetData:      patch,
 		EditDate:        now,
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionID,
 	})
 	if err != nil {
+		if errors.Is(err, domain.ErrMessageNotModified) {
+			return nil, widgetDataNotModifiedErr()
+		}
 		return nil, messageEditErr(err)
 	}
 	self := res.Self()
 	if self.Event.Pts == 0 || self.Message.ID == 0 {
 		return nil, messageIDInvalidErr()
 	}
-	users := r.usersForMessageUpdate(ctx, userID, self.Message)
-	chats := r.chatsForMessageUpdate(ctx, userID, self.Message)
-	return tgEditMessageUpdates(self.Event, self.Message, users, chats), nil
+	// The store generated a message_widget_data event (not edit_message): return
+	// the schema-native updateMessageWidgetData to the caller.
+	update := tgOtherUpdateFromEvent(self.Event)
+	if update == nil {
+		return nil, messageIDInvalidErr()
+	}
+	return &tg.Updates{Updates: []tg.UpdateClass{update}, Date: self.Event.Date}, nil
 }
 
 func (r *Router) onMessagesEditWidgetData(ctx context.Context, req *tg.MessagesEditWidgetDataRequest) (bool, error) {
