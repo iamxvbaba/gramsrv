@@ -135,8 +135,9 @@ func widgetChatType(peer domain.Peer) string {
 	return "channel"
 }
 
-// effectiveWidgetPublicData resolves the widget-level public data (shared widget
-// definition) over the per-message snapshot.
+// effectiveWidgetPublicData resolves the effective public data: the per-message
+// snapshot takes precedence (so editMessageWidgetData is observable), falling
+// back to the shared widget definition when the message carries none.
 func (r *Router) effectiveWidgetPublicData(ctx context.Context, widget *domain.MessageWidget) (int64, string, int) {
 	if widget == nil {
 		return 0, "", 0
@@ -145,10 +146,10 @@ func (r *Router) effectiveWidgetPublicData(ctx context.Context, widget *domain.M
 	if widget.WidgetID != 0 && r.deps.Widgets != nil {
 		def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID)
 		if err == nil && found {
-			if def.PublicData != "" {
+			period = def.CacheTime
+			if data == "" {
 				data, hash = def.PublicData, def.PublicDataHash
 			}
-			period = def.CacheTime
 		}
 	}
 	return hash, data, period
@@ -268,7 +269,11 @@ func (r *Router) onMessagesEditWidgetData(ctx context.Context, req *tg.MessagesE
 	if def.BotUserID != userID {
 		return false, widgetIDInvalidErr()
 	}
-	if err := r.deps.Widgets.SetWidgetPublicData(ctx, req.WidgetID, req.PublicData, widgetDataHash(req.PublicData), req.CacheTime); err != nil {
+	cacheTime := def.CacheTime
+	if ct, ok := req.GetCacheTime(); ok {
+		cacheTime = ct
+	}
+	if err := r.deps.Widgets.SetWidgetPublicData(ctx, req.WidgetID, req.PublicData, widgetDataHash(req.PublicData), cacheTime); err != nil {
 		if err == domain.ErrWidgetNotFound {
 			return false, widgetIDInvalidErr()
 		}

@@ -235,7 +235,8 @@ func TestLayer233EditWidgetDataIsBotOwned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWidget: %v", err)
 	}
-	req := &tg.MessagesEditWidgetDataRequest{WidgetID: id, PublicData: "new", CacheTime: 60}
+	req := &tg.MessagesEditWidgetDataRequest{WidgetID: id, PublicData: "new"}
+	req.SetCacheTime(60)
 
 	if ok, err := r.onMessagesEditWidgetData(WithUserID(ctx, 9), req); err == nil || ok {
 		t.Fatalf("non-owner edit = %v, %v; want a refusal", ok, err)
