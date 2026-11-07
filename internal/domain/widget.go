@@ -1,14 +1,37 @@
 package domain
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"hash/fnv"
+	"math"
 	"time"
 )
 
 // ErrWidgetNotFound is returned by a widget store when the requested shared
 // widget id does not exist.
 var ErrWidgetNotFound = errors.New("widget not found")
+
+// RandomWidgetID returns an unpredictable non-zero shared-widget id. Ids are
+// referenced by inputMediaWidgetID without an access hash, so a sequential id
+// would let anyone enumerate every shared widget.
+func RandomWidgetID() int64 {
+	for {
+		var buf [8]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			// crypto/rand does not fail in practice; degrade to a time-seeded id
+			// rather than refusing to create a widget.
+			if id := time.Now().UnixNano() | 1; id != 0 {
+				return id
+			}
+			continue
+		}
+		if id := int64(binary.LittleEndian.Uint64(buf[:]) & math.MaxInt64); id != 0 {
+			return id
+		}
+	}
+}
 
 // MessageWidget is the persisted snapshot of a bot web widget attached to a
 // message (TL messageMediaWidget). Width/Height/HTML/Payload describe the
@@ -19,6 +42,11 @@ type MessageWidget struct {
 	// WidgetID references a shared widget definition (bot_widgets). Zero for a
 	// one-off inline widget that only carries HTML/Payload on the message.
 	WidgetID int64 `json:"widget_id,omitempty"`
+	// OwnerBotID is the bot that owns the shared definition (bot_widgets.bot_user_id).
+	// It is carried on the media so the row can be created in the committed send
+	// transaction instead of while the input is parsed. It is never projected to
+	// clients.
+	OwnerBotID int64 `json:"owner_bot_id,omitempty"`
 	// AllowQueries mirrors inputMediaWidget.allow_queries: the widget may send
 	// queries to its bot.
 	AllowQueries bool `json:"allow_queries,omitempty"`

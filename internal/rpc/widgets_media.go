@@ -63,21 +63,12 @@ func (r *Router) domainWidgetFromInline(ctx context.Context, userID int64, in *t
 		if r.deps.Widgets == nil {
 			return nil, notImplementedErr()
 		}
-		id, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{
-			BotUserID:      userID,
-			HTML:           in.HTML,
-			Payload:        append([]byte(nil), widget.Payload...),
-			Width:          in.Width,
-			Height:         in.Height,
-			AllowQueries:   in.AllowQueries,
-			PublicData:     widget.PublicData,
-			PublicDataHash: widget.PublicDataHash,
-		})
-		if err != nil {
-			r.log.Warn("create widget failed", zap.Error(err))
-			return nil, internalErr()
-		}
-		widget.WidgetID = id
+		// The shared definition is carried on the media snapshot and persisted in
+		// the committed send transaction (see the postgres send path): creating it
+		// here would leave an orphan row for uploadMedia, setInlineBotResults and
+		// sends that fail later.
+		widget.WidgetID = domain.RandomWidgetID()
+		widget.OwnerBotID = userID
 	}
 	return &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget}, nil
 }
@@ -105,6 +96,7 @@ func (r *Router) domainWidgetFromID(ctx context.Context, userID int64, in *tg.In
 	}
 	widget := &domain.MessageWidget{
 		WidgetID:       def.WidgetID,
+		OwnerBotID:     def.BotUserID,
 		AllowQueries:   def.AllowQueries,
 		SharedWidget:   true,
 		IsCopy:         true,

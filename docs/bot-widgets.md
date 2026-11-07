@@ -11,8 +11,10 @@ what the server does and the deliberate limits.
 - Widget media may only be authored by **bots**: a non-bot sender is rejected
   with `MEDIA_INVALID`, so a client-rendered widget can never become a query
   target.
-- When `shared_widget` is set, the widget definition is also persisted in the
-  `bot_widgets` table and gets a server-assigned `widget_id`.
+- When `shared_widget` is set, the message gets a server-assigned random
+  `widget_id` and the definition is persisted in the `bot_widgets` table **in the
+  committed send transaction** (not while the input is parsed), so `uploadMedia`,
+  `setInlineBotResults` and sends that fail later leave no row.
 - `inputMediaWidgetID` resolves that definition by id and attaches it to the
   message as an `is_copy` widget. `chat_data` from the input is kept.
 - Accepted through `messages.sendMedia` / `sendMultiMedia` / `uploadMedia`, and

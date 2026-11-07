@@ -2,11 +2,8 @@ package postgres
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -29,26 +26,28 @@ func NewWidgetStore(db sqlcgen.DBTX) *WidgetStore {
 // randomWidgetID returns an unpredictable non-zero widget id: ids are referenced
 // by inputMediaWidgetID, so a sequential id would let a bot enumerate every
 // shared widget.
-func randomWidgetID() (int64, error) {
-	for i := 0; i < 8; i++ {
-		var buf [8]byte
-		if _, err := rand.Read(buf[:]); err != nil {
-			return 0, err
-		}
-		if id := int64(binary.LittleEndian.Uint64(buf[:]) & math.MaxInt64); id != 0 {
-			return id, nil
-		}
-	}
-	return 0, fmt.Errorf("random widget id")
+func randomWidgetID() int64 {
+	return domain.RandomWidgetID()
 }
 
 func (s *WidgetStore) CreateWidget(ctx context.Context, widget domain.BotWidget) (int64, error) {
-	for attempt := 0; attempt < 32; attempt++ {
-		id, err := randomWidgetID()
-		if err != nil {
+	if widget.WidgetID != 0 {
+		// Preassigned id: the shared definition is normally persisted in the
+		// committed send transaction, but honoring an explicit id keeps direct
+		// callers (and tests) able to pin it. Idempotent on a duplicate id.
+		if _, err := s.db.Exec(ctx, `
+INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (widget_id) DO NOTHING`,
+			widget.WidgetID, widget.BotUserID, widget.HTML, widget.Payload, widget.Width, widget.Height,
+			widget.AllowQueries, widget.PublicData, widget.PublicDataHash, widget.CacheTime); err != nil {
 			return 0, err
 		}
-		_, err = s.db.Exec(ctx, `
+		return widget.WidgetID, nil
+	}
+	for attempt := 0; attempt < 32; attempt++ {
+		id := randomWidgetID()
+		_, err := s.db.Exec(ctx, `
 INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 			id, widget.BotUserID, widget.HTML, widget.Payload, widget.Width, widget.Height,

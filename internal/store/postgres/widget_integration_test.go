@@ -66,3 +66,54 @@ func TestWidgetStoreIntegration(t *testing.T) {
 		t.Fatalf("SetWidgetPublicData(missing) = %v, want ErrWidgetNotFound", err)
 	}
 }
+
+// TestSharedWidgetDefinitionCreatedOnSendIntegration verifies the shared widget
+// row is created inside the committed private send transaction (not while input
+// is parsed), with the owner bot and markup carried on the media snapshot.
+// Requires TELESRV_TEST_POSTGRES_DSN.
+func TestSharedWidgetDefinitionCreatedOnSendIntegration(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	users := NewUserStore(pool)
+	sender, err := users.Create(ctx, domain.User{AccessHash: 53, Phone: "+1670" + suffix + "11", FirstName: "WSender"})
+	if err != nil {
+		t.Fatalf("create sender: %v", err)
+	}
+	recipient, err := users.Create(ctx, domain.User{AccessHash: 54, Phone: "+1670" + suffix + "12", FirstName: "WRecipient"})
+	if err != nil {
+		t.Fatalf("create recipient: %v", err)
+	}
+	widgetID := domain.RandomWidgetID()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM bot_widgets WHERE widget_id = $1", widgetID)
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
+	})
+
+	messages := NewMessageStore(pool)
+	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID: sender.ID, RecipientUserID: recipient.ID, RandomID: 778899,
+		Message: "widget", Date: 1700000500,
+		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: &domain.MessageWidget{
+			WidgetID: widgetID, OwnerBotID: sender.ID, SharedWidget: true,
+			Payload: []byte("<b>w</b>"), Width: 10, Height: 10, AllowQueries: true,
+			PublicData: "p", PublicDataHash: domain.WidgetDataHash("p"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText(widget): %v", err)
+	}
+	if sent.SenderMessage.Media == nil || sent.SenderMessage.Media.Widget == nil || sent.SenderMessage.Media.Widget.WidgetID != widgetID {
+		t.Fatalf("sent media widget = %+v", sent.SenderMessage.Media)
+	}
+
+	def, found, err := NewWidgetStore(pool).GetWidget(ctx, widgetID)
+	if err != nil || !found {
+		t.Fatalf("GetWidget after send = %v, %v; want the persisted definition", found, err)
+	}
+	if def.BotUserID != sender.ID || string(def.Payload) != "<b>w</b>" || def.Width != 10 || def.Height != 10 ||
+		!def.AllowQueries || def.PublicData != "p" || def.PublicDataHash != domain.WidgetDataHash("p") {
+		t.Fatalf("persisted widget = %+v", def)
+	}
+}

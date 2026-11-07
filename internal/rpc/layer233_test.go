@@ -196,6 +196,15 @@ func TestLayer233WidgetMediaRoundTrip(t *testing.T) {
 
 	idInput := &tg.InputMediaWidgetID{WidgetID: media.Widget.WidgetID}
 	idInput.SetChatData("chat2")
+	// The shared definition is persisted by the committed send, not while the
+	// input is parsed; emulate that commit before resolving it by id.
+	if _, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{
+		WidgetID: media.Widget.WidgetID, BotUserID: 42, HTML: "<b>widget</b>",
+		Payload: media.Widget.Payload, Width: 320, Height: 200, AllowQueries: true,
+		PublicData: "public", PublicDataHash: media.Widget.PublicDataHash,
+	}); err != nil {
+		t.Fatalf("persist shared widget definition: %v", err)
+	}
 	copied, err := r.resolveInputMedia(ctx, 43, idInput)
 	if err != nil {
 		t.Fatalf("resolveInputMedia(inputMediaWidgetID): %v", err)

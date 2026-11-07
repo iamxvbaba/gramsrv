@@ -45,6 +45,14 @@ func cloneBotWidget(w domain.BotWidget) domain.BotWidget {
 func (s *WidgetStore) CreateWidget(_ context.Context, widget domain.BotWidget) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if widget.WidgetID != 0 {
+		// Preassigned id (normally persisted by a committed send); keep an existing
+		// definition rather than overwriting it.
+		if _, exists := s.widgets[widget.WidgetID]; !exists {
+			s.widgets[widget.WidgetID] = cloneBotWidget(widget)
+		}
+		return widget.WidgetID, nil
+	}
 	for attempt := 0; attempt < 32; attempt++ {
 		id, err := randomWidgetID()
 		if err != nil {
