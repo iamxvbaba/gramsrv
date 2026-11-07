@@ -52,6 +52,7 @@ func (r *Router) domainWidgetFromInline(ctx context.Context, userID int64, in *t
 		}
 		widget.PublicData = publicData
 		widget.PublicDataHash = widgetDataHash(publicData)
+		widget.PublicDataSet = true
 	}
 	if chatData, ok := in.GetChatData(); ok {
 		if len(chatData) > maxWidgetDataBytes {
@@ -119,12 +120,11 @@ func (r *Router) domainWidgetFromID(ctx context.Context, userID int64, in *tg.In
 // tgWidgetMedia projects a stored widget snapshot to TL messageMediaWidget.
 func tgWidgetMedia(w domain.MessageWidget) tg.MessageMediaClass {
 	out := &tg.MessageMediaWidget{
-		IsCopy:          w.IsCopy,
-		CanQuery:        w.CanQuery,
-		BackgroundQuery: w.BackgroundQuery,
-		Width:           w.Width,
-		Height:          w.Height,
-		Payload:         append([]byte(nil), w.Payload...),
+		IsCopy:   w.IsCopy,
+		CanQuery: w.CanQuery,
+		Width:    w.Width,
+		Height:   w.Height,
+		Payload:  append([]byte(nil), w.Payload...),
 	}
 	if w.WidgetID != 0 {
 		out.SetWidgetID(w.WidgetID)

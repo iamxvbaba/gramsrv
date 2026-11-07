@@ -1086,7 +1086,7 @@ func FilterChannelUpdateEventForAvailableMinID(event ChannelUpdateEvent, availab
 		return event, true
 	}
 	switch event.Type {
-	case ChannelUpdateNewMessage, ChannelUpdateEditMessage:
+	case ChannelUpdateNewMessage, ChannelUpdateEditMessage, ChannelUpdateWidgetData:
 		if event.Message.ID != 0 && event.Message.ID <= availableMinID {
 			return event, false
 		}

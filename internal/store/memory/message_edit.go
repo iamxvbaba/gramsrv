@@ -31,7 +31,13 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	}
 	authorEdit := target.Out && target.From.ID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
-	if !authorEdit && !viaBotEdit && !req.WebPageResolve && req.WidgetData == nil && !validMemoryTodoParticipantEdit(req, target) {
+	if req.WidgetData != nil {
+		// A widget data patch is only ever the bot that sent the message (or the
+		// via bot); an ordinary recipient must not rewrite a bot's widget.
+		if !authorEdit && !viaBotEdit {
+			return res, domain.ErrMessageAuthorRequired
+		}
+	} else if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {
 		return res, domain.ErrMessageAuthorRequired
 	}
 	// WebPageResolve: server-internal in-place link-preview replacement. Idempotent — it
@@ -76,10 +82,14 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 					msg.Media = media
 					msg.Pts = s.nextPtsLocked(userID)
 					s.m[userID][i] = msg
+					event := messageWidgetDataEvent(msg)
+					if req.EditDate != 0 {
+						event.Date = req.EditDate
+					}
 					res.Edited = append(res.Edited, domain.EditedMessageForUser{
 						UserID:  userID,
 						Message: cloneMessage(msg),
-						Event:   messageWidgetDataEvent(msg),
+						Event:   event,
 					})
 					continue
 				}

@@ -56,22 +56,19 @@ type MessageWidget struct {
 	// IsCopy marks a widget message created via inputMediaWidgetID.
 	IsCopy bool `json:"is_copy,omitempty"`
 	// CanQuery mirrors messageMediaWidget.can_query.
-	CanQuery bool `json:"can_query,omitempty"`
-	// BackgroundQuery asks the client to run the query in the background.
-	BackgroundQuery bool   `json:"background_query,omitempty"`
-	Width           int    `json:"width,omitempty"`
-	Height          int    `json:"height,omitempty"`
-	Payload         []byte `json:"payload,omitempty"`
+	CanQuery bool   `json:"can_query,omitempty"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
+	Payload  []byte `json:"payload,omitempty"`
 	// PublicData/PublicDataHash are the per-message public data snapshot.
 	PublicData     string `json:"public_data,omitempty"`
 	PublicDataHash int64  `json:"public_data_hash,omitempty"`
+	// PublicDataSet distinguishes "no per-message public data" (fall back to the
+	// shared definition) from an explicit override, including an explicit clear
+	// to "". Without it, editWidgetData is invisible and "" cannot be cleared.
+	PublicDataSet bool `json:"public_data_set,omitempty"`
 	// ChatData is the per-chat data snapshot for this message.
 	ChatData string `json:"chat_data,omitempty"`
-}
-
-// IsZero reports whether the widget snapshot carries no usable definition.
-func (w *MessageWidget) IsZero() bool {
-	return w == nil || (w.WidgetID == 0 && len(w.Payload) == 0)
 }
 
 // WidgetDataHash is the server-computed public_data hash
@@ -92,9 +89,10 @@ func ApplyWidgetDataPatch(media *MessageMedia, patch *MessageWidgetDataPatch) bo
 	}
 	widget := media.Widget
 	changed := false
-	if patch.PublicData != nil && widget.PublicData != *patch.PublicData {
+	if patch.PublicData != nil && (!widget.PublicDataSet || widget.PublicData != *patch.PublicData) {
 		widget.PublicData = *patch.PublicData
 		widget.PublicDataHash = WidgetDataHash(*patch.PublicData)
+		widget.PublicDataSet = true
 		changed = true
 	}
 	if patch.ChatData != nil && widget.ChatData != *patch.ChatData {

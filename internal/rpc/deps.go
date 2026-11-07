@@ -1017,6 +1017,10 @@ type FilesService interface {
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)
 	CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error)
+	// UploadedFileSize returns the summed size of an uploaded file's stored
+	// parts without assembling them, so callers can bound work (e.g.
+	// transcription) before materializing a document.
+	UploadedFileSize(ctx context.Context, file domain.UploadedFileRef) (int64, error)
 	CreateDocumentFromBytes(ctx context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error)
 	GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error)
 	EnsureAvatarPhoto(ctx context.Context, photo domain.Photo) (domain.Photo, error)

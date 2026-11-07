@@ -14,13 +14,13 @@ import (
 )
 
 type stubTranscriptions struct {
-	res     domain.TranscriptionResult
-	err     error
-	calls   int
-	peer    domain.Peer
-	msgID   int
-	docID   int64
-	handler func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string)
+	res         domain.TranscriptionResult
+	err         error
+	calls       int
+	peer        domain.Peer
+	msgID       int
+	docID       int64
+	handler     func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string)
 	fileHandler func(ctx context.Context, userID int64, transcriptionID int64, text string)
 }
 

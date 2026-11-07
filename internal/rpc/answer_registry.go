@@ -24,7 +24,6 @@ type pendingAnswer[A any] struct {
 	ch        chan A
 	done      chan struct{}
 	botUserID int64
-	userID    int64
 }
 
 // answerRegistry implements the shared "register a waiter, deliver exactly one
@@ -51,7 +50,6 @@ func (r *answerRegistry[A]) registerContext(ctx context.Context, now time.Time, 
 			ch:        make(chan A, 1),
 			done:      make(chan struct{}),
 			botUserID: botUserID,
-			userID:    userID,
 		}
 		r.mu.Lock()
 		queryID := randomNonZeroInt64()

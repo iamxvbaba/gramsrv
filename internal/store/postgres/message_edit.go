@@ -83,7 +83,13 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	}
 	authorEdit := target.Outgoing && target.MessageSenderID == req.OwnerUserID && target.FromUserID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
-	if !authorEdit && !viaBotEdit && !req.WebPageResolve && req.WidgetData == nil && !validTodoParticipantEdit(req, target, oldEntities) {
+	if req.WidgetData != nil {
+		// A widget data patch is only ever the bot that sent the message (or the
+		// via bot); an ordinary recipient/admin must not rewrite a bot's widget.
+		if !authorEdit && !viaBotEdit {
+			return res, domain.ErrMessageAuthorRequired
+		}
+	} else if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
@@ -226,12 +232,16 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 			}
 			msg.Media = targetMedia
 			msg.Pts = pts
+			eventDate := req.EditDate
+			if eventDate == 0 {
+				eventDate = nowUnix()
+			}
 			event := domain.UpdateEvent{
 				UserID:   msg.OwnerUserID,
 				Type:     domain.UpdateEventMessageWidgetData,
 				Pts:      pts,
 				PtsCount: 1,
-				Date:     msg.Date,
+				Date:     eventDate,
 				Message:  msg,
 				Peer:     msg.Peer,
 			}

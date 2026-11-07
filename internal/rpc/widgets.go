@@ -132,6 +132,16 @@ func widgetMediaOf(media *domain.MessageMedia) *domain.MessageWidget {
 	return media.Widget
 }
 
+// widgetChatInstance is the chat_instance for widget queries. A private chat
+// hashes the querier (never the chat partner), so the bot cannot recover the
+// other party's identity; group/channel chats hash the peer.
+func widgetChatInstance(botID, userID int64, peer domain.Peer) int64 {
+	if peer.Type == domain.PeerTypeUser {
+		return chatInstanceFor(botID, userID)
+	}
+	return chatInstanceForPeer(botID, peer)
+}
+
 // widgetChatTypeFor maps a peer to the chat_type carried by the widget query
 // updates; a megagroup channel reports "supergroup".
 func (r *Router) widgetChatTypeFor(ctx context.Context, userID int64, peer domain.Peer) string {
@@ -158,7 +168,9 @@ func (r *Router) effectiveWidgetPublicData(ctx context.Context, widget *domain.M
 		def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID)
 		if err == nil && found {
 			period = def.CacheTime
-			if data == "" {
+			// Fall back to the shared definition only when the message has no
+			// explicit per-message override; an explicit "" must stay cleared.
+			if !widget.PublicDataSet {
 				data, hash = def.PublicData, def.PublicDataHash
 			}
 		}
@@ -203,6 +215,11 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 	}
 	target, found := r.loadWidgetMessage(ctx, userID, peer, req.ID)
 	if !found {
+		return nil, messageIDInvalidErr()
+	}
+	// Only the bot that sent the message (or its via bot) may rewrite the widget
+	// data; a recipient or channel admin must not.
+	if !r.userIsBot(ctx, userID) || (userID != target.senderBotID && userID != target.viaBotID) {
 		return nil, messageIDInvalidErr()
 	}
 	original := widgetMediaOf(target.media)
@@ -270,12 +287,15 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 		return nil, messageIDInvalidErr()
 	}
 	// The store generated a message_widget_data event (not edit_message): return
-	// the schema-native updateMessageWidgetData to the caller.
+	// the schema-native updateMessageWidgetData to the caller. updateMessageWidgetData
+	// is dropped by td for profiles 225-232, so carry an empty updateDeleteMessages
+	// filler with the same pts to keep old clients' watermark contiguous.
 	update := tgOtherUpdateFromEvent(self.Event)
 	if update == nil {
 		return nil, messageIDInvalidErr()
 	}
-	return &tg.Updates{Updates: []tg.UpdateClass{update}, Date: self.Event.Date}, nil
+	updates := appendAuxPtsBookkeeping([]tg.UpdateClass{update}, self.Event)
+	return &tg.Updates{Updates: updates, Date: self.Event.Date}, nil
 }
 
 func (r *Router) onMessagesEditWidgetData(ctx context.Context, req *tg.MessagesEditWidgetDataRequest) (bool, error) {
@@ -331,35 +351,33 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 	if len(publicData) > maxWidgetDataBytes || len(chatData) > maxWidgetDataBytes {
 		return false, mediaInvalidErr()
 	}
-	apply := func(widget *domain.MessageWidget) error {
-		if widget == nil {
-			return messageIDInvalidErr()
-		}
-		if hasPublic {
-			widget.PublicData = publicData
-			widget.PublicDataHash = widgetDataHash(publicData)
-		}
-		if hasChat {
-			widget.ChatData = chatData
-		}
-		return nil
-	}
 	if r.deps.Messages == nil {
 		return false, messageIDInvalidErr()
+	}
+	patch := &domain.MessageWidgetDataPatch{}
+	if hasPublic {
+		v := publicData
+		patch.PublicData = &v
+	}
+	if hasChat {
+		v := chatData
+		patch.ChatData = &v
 	}
 	if target, found, err := r.privateMessageFromInlineID(ctx, botID, req.ID); err != nil {
 		return false, err
 	} else if found {
-		widget := cloneMessageWidget(widgetMediaOf(target.Media))
-		if err := apply(widget); err != nil {
-			return false, err
+		if widgetMediaOf(target.Media) == nil {
+			return false, messageIDInvalidErr()
 		}
+		// Reuse the in-place widget-data patch: the message is not marked edited,
+		// invert_media is preserved, and an unchanged patch reports not-modified.
 		if _, err := r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
 			OwnerUserID: target.OwnerUserID, Peer: target.Peer, ID: target.ID,
-			Message: target.Body, Entities: append([]domain.MessageEntity(nil), target.Entities...),
-			Media:    &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
-			EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
+			WidgetData: patch, ViaBotEditBotID: botID,
 		}); err != nil {
+			if errors.Is(err, domain.ErrMessageNotModified) {
+				return false, widgetDataNotModifiedErr()
+			}
 			return false, messageEditErr(err)
 		}
 		return true, nil
@@ -370,20 +388,20 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		if r.deps.Channels == nil {
 			return false, messageIDInvalidErr()
 		}
-		widget := cloneMessageWidget(widgetMediaOf(msg.Media))
-		if err := apply(widget); err != nil {
-			return false, err
+		if widgetMediaOf(msg.Media) == nil {
+			return false, messageIDInvalidErr()
 		}
 		// EditInlineBotMessage authorizes through ViaBotEditBotID with the
 		// message sender as the acting user, so it works when the bot is not a
-		// member; then fan the edit out to the channel members.
+		// member; then fan the patch out to the channel members.
 		res, err := r.deps.Channels.EditInlineBotMessage(ctx, botID, domain.EditChannelMessageRequest{
 			UserID: msg.SenderUserID, ChannelID: channel.ID, ID: msg.ID,
-			Message: msg.Body, Entities: append([]domain.MessageEntity(nil), msg.Entities...),
-			Media:    &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
-			EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
+			WidgetData: patch, ViaBotEditBotID: botID,
 		})
 		if err != nil {
+			if errors.Is(err, domain.ErrMessageNotModified) {
+				return false, widgetDataNotModifiedErr()
+			}
 			return false, channelEditErr(err)
 		}
 		r.enqueueChannelEditMessageFanout(ctx, msg.SenderUserID, res)
@@ -400,27 +418,39 @@ func (r *Router) widgetQueryBotID(ctx context.Context, target widgetMessageTarge
 	if widget == nil {
 		return 0, dataInvalidErr()
 	}
-	sharedOwner := func() (int64, bool) {
+	sharedOwner := func() (int64, bool, error) {
 		if widget.WidgetID == 0 || r.deps.Widgets == nil {
-			return 0, false
+			return 0, false, nil
 		}
 		def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID)
-		if err != nil || !found || def.BotUserID == 0 || !r.userIsBot(ctx, def.BotUserID) {
-			return 0, false
+		if err != nil {
+			// Fail closed: a lookup error must not silently reassign the widget to
+			// a different bot.
+			return 0, false, internalErr()
 		}
-		return def.BotUserID, true
+		if !found || def.BotUserID == 0 || !r.userIsBot(ctx, def.BotUserID) {
+			return 0, false, nil
+		}
+		return def.BotUserID, true, nil
 	}
 	// A copy belongs to the shared definition's bot; a via_bot message to the
 	// inline bot; otherwise to the bot that sent the message.
 	if widget.IsCopy {
-		if bot, ok := sharedOwner(); ok {
-			return bot, nil
+		bot, ok, err := sharedOwner()
+		if err != nil {
+			return 0, err
 		}
+		if !ok {
+			return 0, dataInvalidErr()
+		}
+		return bot, nil
 	}
 	if target.viaBotID != 0 && r.userIsBot(ctx, target.viaBotID) {
 		return target.viaBotID, nil
 	}
-	if bot, ok := sharedOwner(); ok {
+	if bot, ok, err := sharedOwner(); err != nil {
+		return 0, err
+	} else if ok {
 		return bot, nil
 	}
 	if target.senderBotID != 0 && r.userIsBot(ctx, target.senderBotID) {
@@ -514,7 +544,7 @@ func (r *Router) botWidgetQueryUpdate(
 		}
 		update := &tg.UpdateInlineBotWidgetQuery{
 			QueryID: queryID, QueryType: req.QueryType, UserID: userID,
-			InlineMessageID: inlineID, ChatInstance: chatInstanceForPeer(botID, peer),
+			InlineMessageID: inlineID, ChatInstance: widgetChatInstance(botID, userID, peer),
 			ChatType: r.widgetChatTypeFor(ctx, userID, peer), Data: append([]byte(nil), req.Data...),
 		}
 		if widget.WidgetID != 0 {
@@ -523,10 +553,22 @@ func (r *Router) botWidgetQueryUpdate(
 		attachWallet(update.SetWalletCard)
 		return update, nil
 	default:
+		// Only a message the owning bot itself sent may be answered with the
+		// querier's chat context. A forwarded/shared widget must not reveal it.
+		if target.senderBotID != botID {
+			if widget.WidgetID != 0 {
+				update := &tg.UpdateBotWidgetCopyQuery{
+					QueryID: queryID, QueryType: req.QueryType, UserID: userID,
+					Data: append([]byte(nil), req.Data...), WidgetID: widget.WidgetID,
+				}
+				attachWallet(update.SetWalletCard)
+				return update, nil
+			}
+			return nil, dataInvalidErr()
+		}
 		updatePeer, updateMsgID := peer, req.MsgID
-		chatInstance := chatInstanceForPeer(botID, peer)
+		chatInstance := widgetChatInstance(botID, userID, peer)
 		if peer.Type == domain.PeerTypeUser {
-			chatInstance = chatInstanceFor(botID, userID)
 			// Translate to the bot's own view: peer = the querying user, msg_id
 			// = the bot's copy box id (mirrors resolveBotCallbackQuery).
 			if target.private != nil && target.private.UID != 0 {
@@ -654,8 +696,11 @@ func (r *Router) onMessagesTranscribeAudioFile(ctx context.Context, req *tg.Mess
 		return nil, tgerr400("TRANSCRIPTION_FAILED")
 	}
 	// Reject an oversized upload before CreateDocumentFromUpload persists a
-	// permanent document (the ASR job's own 25 MiB check runs too late).
-	if ref.Parts <= 0 || int64(ref.Parts)*uploadPartBytes > maxTranscriptionFileBytes {
+	// permanent document (the ASR job's own 25 MiB check runs too late). Bound the
+	// summed stored part size: assuming 512 KiB parts would reject ordinary
+	// 64 KiB-part uploads near 3 MiB.
+	size, err := r.deps.Files.UploadedFileSize(ctx, ref)
+	if err != nil || size <= 0 || size > maxTranscriptionFileBytes {
 		return nil, tgerr400("TRANSCRIPTION_FAILED")
 	}
 	document, err := r.deps.Files.CreateDocumentFromUpload(ctx, ref, domain.DocumentSpec{

@@ -1050,6 +1050,23 @@ func (s *ChannelStore) getChannelMessage(ctx context.Context, db sqlcgen.DBTX, c
 	return msg, err
 }
 
+// lockChannelMessageMedia locks the message row and returns its current media, so
+// a read-modify-write patch (widget data) cannot lose a concurrent update.
+func (s *ChannelStore) lockChannelMessageMedia(ctx context.Context, db sqlcgen.DBTX, channelID int64, id int) (*domain.MessageMedia, error) {
+	if channelID == 0 || id == 0 {
+		return nil, domain.ErrMessageIDInvalid
+	}
+	var mediaJSON string
+	err := db.QueryRow(ctx, `SELECT media FROM channel_messages WHERE channel_id = $1 AND id = $2 FOR UPDATE`, channelID, id).Scan(&mediaJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrMessageIDInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeMessageMedia(mediaJSON)
+}
+
 type messageHistoryLoad int
 
 func messageHistoryLoadType(addOffset, limit int) messageHistoryLoad {

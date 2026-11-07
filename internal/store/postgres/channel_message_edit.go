@@ -115,6 +115,24 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 		// In-place channel widget data patch: only the media jsonb is rewritten
 		// (body/entities/edit_date untouched, so the message is not marked edited);
 		// reserves channel pts + appends a channel_widget_data event.
+		viaBotEditRequested := req.ViaBotEditBotID != 0
+		viaBotEdit := viaBotEditRequested && msg.ViaBotID == req.ViaBotEditBotID
+		if viaBotEditRequested && !viaBotEdit {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+		}
+		// Only the bot that sent the message (or the via bot) may rewrite its
+		// widget data; admins and ordinary members must not.
+		if msg.SenderUserID != req.UserID && !viaBotEdit {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+		}
+		// Re-read the media under a row lock: concurrent patches must not both
+		// start from stale media and lose a field (the pts reservation alone does
+		// not serialize the read-modify-write).
+		lockedMedia, err := s.lockChannelMessageMedia(ctx, tx, req.ChannelID, req.ID)
+		if err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+		msg.Media = lockedMedia
 		if !domain.ApplyWidgetDataPatch(msg.Media, req.WidgetData) {
 			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 		}
@@ -132,13 +150,20 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 			return domain.EditChannelMessageResult{}, fmt.Errorf("update channel widget data media: %w", err)
 		}
 		msg.Pts = pts
+		// Store a compact event (only id + widget media, which is all
+		// updateMessageWidgetData needs) and stamp it with the patch time so
+		// retention cannot prune a fresh patch. The full message is returned.
+		eventDate := nowUnix()
 		event := domain.ChannelUpdateEvent{
-			ChannelID:    req.ChannelID,
-			Type:         domain.ChannelUpdateWidgetData,
-			Pts:          pts,
-			PtsCount:     1,
-			Date:         msg.Date,
-			Message:      msg,
+			ChannelID: req.ChannelID,
+			Type:      domain.ChannelUpdateWidgetData,
+			Pts:       pts,
+			PtsCount:  1,
+			Date:      eventDate,
+			Message: domain.ChannelMessage{
+				ChannelID: req.ChannelID, ID: req.ID, Pts: pts, Date: eventDate,
+				SenderUserID: req.UserID, Media: msg.Media,
+			},
 			SenderUserID: req.UserID,
 		}
 		if err := insertChannelEventTx(ctx, tx, event); err != nil {

@@ -15,6 +15,11 @@ import (
 func TestLayer233EditMessageWidgetDataChannelPatch(t *testing.T) {
 	f := newRPCChannelFixture(t)
 	owner := f.user(23311, "15550023311", "Owner")
+	// The widget sender must be a bot: widget data may only be patched by the bot
+	// that sent the message (or its via bot). Delegate everything else to the real
+	// users service.
+	realUsers := f.router.deps.Users
+	f.router.deps.Users = widgetBotUsers{UsersService: realUsers, bots: map[int64]bool{owner.ID: true}}
 	channel := createLayer233Megagroup(t, f, owner, "Widget channel")
 
 	sent, err := f.channels.SendChannelMessage(f.ctx, domain.SendChannelMessageRequest{
@@ -35,12 +40,24 @@ func TestLayer233EditMessageWidgetDataChannelPatch(t *testing.T) {
 		t.Fatalf("editMessageWidgetData(channel): %v", err)
 	}
 	container, ok := updates.(*tg.Updates)
-	if !ok || len(container.Updates) != 1 {
-		t.Fatalf("channel patch updates = %#v, want one update", updates)
+	if !ok || len(container.Updates) != 2 {
+		t.Fatalf("channel patch updates = %#v, want the widget update plus a pts filler", updates)
 	}
-	update, ok := container.Updates[0].(*tg.UpdateMessageWidgetData)
-	if !ok {
-		t.Fatalf("channel patch update = %T, want *tg.UpdateMessageWidgetData", container.Updates[0])
+	var update *tg.UpdateMessageWidgetData
+	filler := false
+	for _, u := range container.Updates {
+		switch typed := u.(type) {
+		case *tg.UpdateMessageWidgetData:
+			update = typed
+		case *tg.UpdateDeleteChannelMessages:
+			filler = true
+		}
+	}
+	if update == nil {
+		t.Fatalf("channel patch update missing *tg.UpdateMessageWidgetData in %#v", container.Updates)
+	}
+	if !filler {
+		t.Fatalf("channel patch missing the empty-channel-delete pts filler in %#v", container.Updates)
 	}
 	peerChannel, ok := update.Peer.(*tg.PeerChannel)
 	if !ok || peerChannel.ChannelID != channel.ID {
