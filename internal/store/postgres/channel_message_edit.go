@@ -111,6 +111,50 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 		recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 		return domain.EditChannelMessageResult{Channel: channel, Message: msg, Event: event, Recipients: recipients}, nil
 	}
+	if req.WidgetData != nil {
+		// In-place channel widget data patch: only the media jsonb is rewritten
+		// (body/entities/edit_date untouched, so the message is not marked edited);
+		// reserves channel pts + appends a channel_widget_data event.
+		if !domain.ApplyWidgetDataPatch(msg.Media, req.WidgetData) {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+		}
+		mediaJSON, err := encodeMessageMedia(msg.Media)
+		if err != nil {
+			return domain.EditChannelMessageResult{}, fmt.Errorf("encode channel widget data media: %w", err)
+		}
+		pts, err := s.reserveChannelPts(ctx, tx, req.ChannelID)
+		if err != nil {
+			return domain.EditChannelMessageResult{}, fmt.Errorf("allocate channel widget data pts: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE channel_messages SET media = $3, pts = $4, updated_at = now()
+WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err != nil {
+			return domain.EditChannelMessageResult{}, fmt.Errorf("update channel widget data media: %w", err)
+		}
+		msg.Pts = pts
+		event := domain.ChannelUpdateEvent{
+			ChannelID:    req.ChannelID,
+			Type:         domain.ChannelUpdateWidgetData,
+			Pts:          pts,
+			PtsCount:     1,
+			Date:         msg.Date,
+			Message:      msg,
+			SenderUserID: req.UserID,
+		}
+		if err := insertChannelEventTx(ctx, tx, event); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE channels SET pts = $2, updated_at = now() WHERE id = $1`, req.ChannelID, pts); err != nil {
+			return domain.EditChannelMessageResult{}, fmt.Errorf("update channel widget data pts: %w", err)
+		}
+		channel.Pts = pts
+		if err := tx.Commit(ctx); err != nil {
+			return domain.EditChannelMessageResult{}, fmt.Errorf("commit channel widget data: %w", err)
+		}
+		committed = true
+		recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
+		return domain.EditChannelMessageResult{Channel: channel, Message: msg, Event: event, Recipients: recipients}, nil
+	}
 	// Participant todo collaboration (append/toggle) is equivalent to producing new content/a service message in the channel,
 	// so it must satisfy the same permissions as normal sending: a member muted by send_messages, or a
 	// broadcast subscriber without posting rights, must not bypass the send restriction via OthersCanComplete/Append.

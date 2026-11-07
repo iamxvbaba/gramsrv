@@ -205,6 +205,29 @@ func tgChannelUpdate(viewerUserID int64, event domain.ChannelUpdateEvent) tg.Upd
 			Pts:       event.Pts,
 			PtsCount:  event.PtsCount,
 		}
+	case domain.ChannelUpdateWidgetData:
+		// In-place channel widget data patch: updateMessageWidgetData carries the
+		// channel peer plus the new public/chat data; the client swaps the widget
+		// data in place without touching edit_date.
+		widget := widgetMediaOf(event.Message.Media)
+		if widget == nil || event.Message.ID <= 0 {
+			return nil
+		}
+		peer := tgPeer(domain.Peer{Type: domain.PeerTypeChannel, ID: event.ChannelID})
+		if peer == nil {
+			return nil
+		}
+		update := &tg.UpdateMessageWidgetData{
+			Peer: peer, MsgID: event.Message.ID, Pts: event.Pts, PtsCount: event.PtsCount,
+		}
+		if widget.PublicData != "" {
+			update.SetPublicData(widget.PublicData)
+			update.SetPublicDataHash(widget.PublicDataHash)
+		}
+		if widget.ChatData != "" {
+			update.SetChatData(widget.ChatData)
+		}
+		return update
 	case domain.ChannelUpdateDeleteMessages:
 		if len(event.MessageIDs) == 0 {
 			return nil

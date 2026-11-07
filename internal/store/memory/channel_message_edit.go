@@ -67,6 +67,37 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 			Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
 		}, nil
 	}
+	// WidgetData: in-place patch of a channel widget's public/chat data (server-internal;
+	// the unchanged-data guard is the authorization). Only the media changes; body/entities/
+	// edit_date are untouched and the event is channel_widget_data.
+	if req.WidgetData != nil {
+		patchMedia := cloneRequestedPeerMedia(msg.Media)
+		if !domain.ApplyWidgetDataPatch(patchMedia, req.WidgetData) {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+		}
+		pts := s.nextChannelPtsLocked(req.ChannelID)
+		msg.Media = patchMedia
+		msg.Pts = pts
+		s.messages[req.ChannelID][idx] = msg
+		channel.Pts = pts
+		s.channels[req.ChannelID] = channel
+		event := domain.ChannelUpdateEvent{
+			ChannelID:    req.ChannelID,
+			Type:         domain.ChannelUpdateWidgetData,
+			Pts:          pts,
+			PtsCount:     1,
+			Date:         msg.Date,
+			Message:      cloneChannelMessage(msg),
+			SenderUserID: req.UserID,
+		}
+		s.appendChannelEventLocked(event)
+		return domain.EditChannelMessageResult{
+			Channel:    channel,
+			Message:    cloneChannelMessage(msg),
+			Event:      cloneChannelEvent(event),
+			Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
+		}, nil
+	}
 	// Participant todo collaboration must satisfy the same permissions as normal sending;
 	// a muted member / a subscriber without posting rights must not bypass the posting
 	// restriction via OthersCanComplete/Append (aligned with postgres).

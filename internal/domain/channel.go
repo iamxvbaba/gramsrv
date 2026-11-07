@@ -1054,7 +1054,13 @@ const (
 	// replaced in place with the resolved card (correlated by webPage id, not marked "edited"). It is isomorphic to edit_channel_message
 	// (carrying channel pts + the message snapshot) and reuses difference/fan-out, differing only in the tg projection constructor.
 	ChannelUpdateWebPage ChannelUpdateEventType = "channel_web_page"
-	ChannelUpdateNoop    ChannelUpdateEventType = "noop"
+	// ChannelUpdateWidgetData maps updateMessageWidgetData for a channel message: a
+	// bot web widget's public/chat data is patched in place (body/entities/edit_date
+	// untouched, so the message is not marked edited). Like channel_web_page it is
+	// isomorphic to edit_channel_message (channel pts + message snapshot) and reuses
+	// difference/fan-out, differing only in the tg projection constructor.
+	ChannelUpdateWidgetData ChannelUpdateEventType = "channel_widget_data"
+	ChannelUpdateNoop       ChannelUpdateEventType = "noop"
 )
 
 // ChannelUpdateEvent is the channel-scoped durable update log entry.

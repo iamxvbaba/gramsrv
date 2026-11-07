@@ -27,10 +27,11 @@ what the server does and the deliberate limits.
   `messages.widgetPublicDataNotModified{period}` when the client already has the
   current `hash`. Per-message data takes precedence over the shared definition.
 - `messages.editMessageWidgetData(peer, id, public_data?, chat_data?)` patches the
-  widget data **in place** for a private message: only the media JSONB is
-  rewritten (body/entities/edit_date untouched, the message is not marked
-  edited), a compact pts-bearing `updateMessageWidgetData` is recorded/dispatched,
-  and unchanged data returns `WIDGET_DATA_NOT_MODIFIED`.
+  widget data **in place** for both private and channel messages: only the media
+  JSONB is rewritten (body/entities/edit_date untouched, the message is not marked
+  edited), a compact pts-bearing `updateMessageWidgetData` is recorded/dispatched
+  (account pts for private, channel pts + a `channel_widget_data` durable event
+  for channels), and unchanged data returns `WIDGET_DATA_NOT_MODIFIED`.
 - `messages.editInlineBotMessageWidgetData(id, public_data?, chat_data?)` does
   the same for inline-bot messages owned by the calling bot (channel messages use
   `EditInlineBotMessage` + fanout).
@@ -66,8 +67,6 @@ what the server does and the deliberate limits.
 
 ## Deliberate limits
 
-- Channel `messages.editMessageWidgetData` still uses the full message-edit path
-  (the patch-only store branch is not implemented for channels).
 - `channels.toggleForum` models only the list and tabs layouts: enabling a forum
   with `sidebar=true` fails closed (the author's Layer 233 decision is unchanged),
   and `channel.forum_sidebar` is never emitted.

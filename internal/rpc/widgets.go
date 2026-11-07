@@ -220,18 +220,29 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 	if original == nil || (original.PublicData == widget.PublicData && original.PublicDataHash == widget.PublicDataHash && original.ChatData == widget.ChatData) {
 		return nil, widgetDataNotModifiedErr()
 	}
-	newMedia := &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget}
 	now := int(r.clock.Now().Unix())
+	patch := &domain.MessageWidgetDataPatch{}
+	if hasPublic {
+		v := publicData
+		patch.PublicData = &v
+	}
+	if hasChat {
+		v := chatData
+		patch.ChatData = &v
+	}
 	if peer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
 		}
 		res, err := r.deps.Channels.EditMessage(ctx, userID, domain.EditChannelMessageRequest{
 			UserID: userID, ChannelID: peer.ID, ID: req.ID,
-			Message: target.body, Entities: target.entities, Media: newMedia,
-			EditDate: now,
+			WidgetData: patch,
+			EditDate:   now,
 		})
 		if err != nil {
+			if errors.Is(err, domain.ErrMessageNotModified) {
+				return nil, widgetDataNotModifiedErr()
+			}
 			return nil, channelEditErr(err)
 		}
 		updates := r.channelEditMessageUpdates(ctx, userID, res)
@@ -242,15 +253,6 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 		return nil, peerIDInvalidErr()
 	}
 	sessionID, _ := SessionIDFrom(ctx)
-	patch := &domain.MessageWidgetDataPatch{}
-	if hasPublic {
-		v := publicData
-		patch.PublicData = &v
-	}
-	if hasChat {
-		v := chatData
-		patch.ChatData = &v
-	}
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
 		OwnerUserID: userID, Peer: peer, ID: req.ID,
 		WidgetData:      patch,
