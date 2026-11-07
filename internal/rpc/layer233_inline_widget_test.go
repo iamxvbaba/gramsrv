@@ -17,7 +17,7 @@ func TestLayer233InlineWidgetResultRoundTrip(t *testing.T) {
 
 	raw := &tg.InputBotInlineResult{
 		ID: "widget", Type: "article",
-		SendMessage: &tg.InputBotInlineMessageWidget{Width: 300, Height: 150, HTML: "<b>w</b>", AllowQueries: true, SharedWidget: true},
+		SendMessage: &tg.InputBotInlineMessageWidget{Width: 300, Height: 150, HTML: "<b>w</b>", AllowQueries: true, SharedWidget: true, InvertMedia: true},
 	}
 	result, err := r.domainInlineResultFromTG(ctx, 7, raw)
 	if err != nil {
@@ -25,6 +25,9 @@ func TestLayer233InlineWidgetResultRoundTrip(t *testing.T) {
 	}
 	if result.Media == nil || result.Media.Kind != domain.MessageMediaKindWidget || result.Media.Widget == nil {
 		t.Fatalf("inline widget media = %#v", result.Media)
+	}
+	if !result.Media.InvertMedia {
+		t.Fatal("inline widget input invert_media was dropped")
 	}
 	if result.Media.Widget.WidgetID == 0 {
 		t.Fatal("inline shared widget did not get a widget id")
@@ -51,6 +54,9 @@ func TestLayer233InlineWidgetResultRoundTrip(t *testing.T) {
 	}
 	if id, ok := widgetMsg.GetWidgetID(); !ok || id != result.Media.Widget.WidgetID {
 		t.Fatalf("botInlineMessageWidget widget_id = %d, %v", id, ok)
+	}
+	if !widgetMsg.GetInvertMedia() {
+		t.Fatal("botInlineMessageWidget invert_media was dropped")
 	}
 
 	idRaw := &tg.InputBotInlineResult{

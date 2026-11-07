@@ -535,6 +535,7 @@ func (r *Router) domainInlineResultFromTG(ctx context.Context, botID int64, raw 
 			if err != nil {
 				return domain.BotInlineResult{}, err
 			}
+			media.InvertMedia = msg.InvertMedia
 			markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
 			if err != nil {
 				return domain.BotInlineResult{}, replyMarkupErr(err)
@@ -561,6 +562,7 @@ func (r *Router) domainInlineResultFromTG(ctx context.Context, botID int64, raw 
 			if err != nil {
 				return domain.BotInlineResult{}, err
 			}
+			media.InvertMedia = msg.InvertMedia
 			markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
 			if err != nil {
 				return domain.BotInlineResult{}, replyMarkupErr(err)
@@ -1280,6 +1282,9 @@ func tgBotInlineMediaMessage(in domain.BotInlineResult) tg.BotInlineMessageClass
 		}
 		if widget.WidgetID != 0 {
 			msg.SetWidgetID(widget.WidgetID)
+		}
+		if in.Media.InvertMedia {
+			msg.SetInvertMedia(true)
 		}
 		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
 			msg.SetReplyMarkup(markup)
