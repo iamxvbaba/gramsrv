@@ -265,7 +265,7 @@ func (s *Service) filterBotChannelDifference(ctx context.Context, userID int64, 
 
 func (s *Service) filterBotChannelEvent(ctx context.Context, botUserID int64, event domain.ChannelUpdateEvent) (domain.ChannelUpdateEvent, bool) {
 	switch event.Type {
-	case domain.ChannelUpdateNewMessage, domain.ChannelUpdateEditMessage:
+	case domain.ChannelUpdateNewMessage, domain.ChannelUpdateEditMessage, domain.ChannelUpdateWidgetData:
 		if event.Message.ID == 0 {
 			return event, true
 		}

@@ -33,6 +33,9 @@ var (
 	ErrUnavailable = errors.New("transcription backend is not configured")
 	// ErrDocument means the voice document is unreadable or over the size limit and cannot be sent to ASR.
 	ErrDocument = errors.New("voice document is not available for transcription")
+	// ErrTranscriptionFailed means a previous upload transcription failed; file
+	// jobs are terminal and are not retried by a polling client.
+	ErrTranscriptionFailed = errors.New("file transcription previously failed")
 )
 
 type FileSource interface {
@@ -45,6 +48,9 @@ type jobRequest struct {
 	userID          int64
 	peer            domain.Peer
 	msgID           int
+	// file marks an upload-based job (messages.transcribeAudioFile) whose
+	// completion is delivered as updateTranscribedAudioFile, not a message one.
+	file bool
 }
 
 type Service struct {
@@ -60,6 +66,8 @@ type Service struct {
 	// injected by main after the router is created, to avoid the app layer depending on rpc
 	// in the reverse direction.
 	completed func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string)
+	// fileCompleted pushes updateTranscribedAudioFile for an upload job.
+	fileCompleted func(ctx context.Context, userID int64, transcriptionID int64, text string)
 }
 
 func NewService(
@@ -85,6 +93,12 @@ func (s *Service) SetCompletionHandler(handler func(ctx context.Context, userID 
 	s.completed = handler
 }
 
+func (s *Service) SetFileCompletionHandler(handler func(ctx context.Context, userID int64, transcriptionID int64, text string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fileCompleted = handler
+}
+
 // Transcribe returns the currently known state: if done it returns the text directly, otherwise it ensures the background task is running and returns pending.
 func (s *Service) Transcribe(
 	ctx context.Context,
@@ -92,6 +106,29 @@ func (s *Service) Transcribe(
 	peer domain.Peer,
 	msgID int,
 	document domain.Document,
+) (domain.TranscriptionResult, error) {
+	return s.transcribe(ctx, userID, peer, msgID, document, false)
+}
+
+// TranscribeFile transcribes an uploaded file (messages.transcribeAudioFile).
+// A previously failed file job is terminal (ErrTranscriptionFailed) and never
+// starts another ASR job, so a polling client cannot consume the global ASR
+// slots; on success the file completion handler pushes updateTranscribedAudioFile.
+func (s *Service) TranscribeFile(
+	ctx context.Context,
+	userID int64,
+	document domain.Document,
+) (domain.TranscriptionResult, error) {
+	return s.transcribe(ctx, userID, domain.Peer{}, 0, document, true)
+}
+
+func (s *Service) transcribe(
+	ctx context.Context,
+	userID int64,
+	peer domain.Peer,
+	msgID int,
+	document domain.Document,
+	file bool,
 ) (domain.TranscriptionResult, error) {
 	if s == nil || s.url == "" {
 		return domain.TranscriptionResult{}, ErrUnavailable
@@ -108,12 +145,17 @@ func (s *Service) Transcribe(
 	if found && row.Status == domain.TranscriptionStatusDone {
 		return domain.TranscriptionResult{TranscriptionID: row.TranscriptionID, Text: row.Text}, nil
 	}
+	if found && row.Status == domain.TranscriptionStatusFailed && file {
+		// Terminal for upload jobs: do not reset and re-run ASR on every poll.
+		return domain.TranscriptionResult{}, ErrTranscriptionFailed
+	}
 	job := jobRequest{
 		documentID:      document.ID,
 		transcriptionID: row.TranscriptionID,
 		userID:          userID,
 		peer:            peer,
 		msgID:           msgID,
+		file:            file,
 	}
 	if !found {
 		job.transcriptionID, err = newTranscriptionID()
@@ -220,13 +262,21 @@ func (s *Service) run(parent context.Context, document domain.Document, job jobR
 	}
 	s.mu.Lock()
 	completed := s.completed
+	fileCompleted := s.fileCompleted
 	subscribers := append([]jobRequest(nil), s.inflight[job.documentID]...)
 	s.mu.Unlock()
-	if completed != nil {
-		for _, subscriber := range subscribers {
-			if subscriber.userID != 0 && subscriber.msgID > 0 {
-				completed(dbCtx, subscriber.userID, subscriber.peer, subscriber.msgID, job.transcriptionID, text)
+	for _, subscriber := range subscribers {
+		if subscriber.userID == 0 {
+			continue
+		}
+		if subscriber.file {
+			if fileCompleted != nil {
+				fileCompleted(dbCtx, subscriber.userID, job.transcriptionID, text)
 			}
+			continue
+		}
+		if subscriber.msgID > 0 && completed != nil {
+			completed(dbCtx, subscriber.userID, subscriber.peer, subscriber.msgID, job.transcriptionID, text)
 		}
 	}
 

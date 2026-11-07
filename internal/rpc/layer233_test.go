@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 // Layer 233 is the canonical profile of the published schema. The server must
@@ -132,31 +133,146 @@ func TestLayer233ToggleForumSidebarFailsClosed(t *testing.T) {
 	assertLayer233ForumState(t, f, channel.ID, false, false)
 }
 
-// Layer 233 widget messages are not modeled. The send paths reject the new
-// input constructors, so the server never stores or emits messageMediaWidget
-// and never owes the pts-bearing updateMessageWidgetData that td drops for
-// 225-232.
-func TestLayer233WidgetInputsAreRejected(t *testing.T) {
+// The Layer 233 methods must be explicitly registered so clients get a scoped
+// error instead of the unhandled-RPC compatibility trace.
+func TestLayer233WidgetMethodsRegistered(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
-	ctx := WithUserID(context.Background(), 1000000001)
-	for _, input := range []tg.InputMediaClass{
-		&tg.InputMediaWidget{Width: 320, Height: 240, HTML: "<p>widget</p>"},
-		&tg.InputMediaWidgetID{WidgetID: 7},
-	} {
-		if _, err := r.resolveInputMedia(ctx, 1000000001, input); !tgerr.Is(err, "MEDIA_INVALID") {
-			t.Fatalf("%T err = %v, want MEDIA_INVALID", input, err)
+	methods := []tlprofile.SemanticID{
+		tlprofile.SemanticMethodMessagesGetWidgetPublicData,
+		tlprofile.SemanticMethodMessagesEditMessageWidgetData,
+		tlprofile.SemanticMethodMessagesEditWidgetData,
+		tlprofile.SemanticMethodMessagesEditInlineBotMessageWidgetData,
+		tlprofile.SemanticMethodMessagesGetBotWidgetQueryAnswer,
+		tlprofile.SemanticMethodMessagesSetBotWidgetQueryAnswer,
+		tlprofile.SemanticMethodMessagesGetTranscriptionLangs,
+		tlprofile.SemanticMethodMessagesTranscribeAudioFile,
+	}
+	for _, method := range methods {
+		if !r.dispatcher.Has(method) {
+			t.Fatalf("Layer 233 method %#016x is not registered", uint64(method))
 		}
 	}
-	for _, message := range []tg.InputBotInlineMessageClass{
-		&tg.InputBotInlineMessageWidget{Width: 320, Height: 240, HTML: "<p>widget</p>"},
-		&tg.InputBotInlineMessageWidgetID{WidgetID: 7},
+}
+
+// inputMediaWidget is stored on the message and, when shared, as a reusable
+// widget definition that inputMediaWidgetID resolves by id.
+func TestLayer233WidgetMediaRoundTrip(t *testing.T) {
+	r := newWidgetTestRouter(t, 42, 43)
+	ctx := context.Background()
+
+	in := &tg.InputMediaWidget{Width: 320, Height: 200, HTML: "<b>widget</b>", AllowQueries: true, SharedWidget: true}
+	in.SetPublicData("public")
+	in.SetChatData("chat")
+	media, err := r.resolveInputMedia(ctx, 42, in)
+	if err != nil {
+		t.Fatalf("resolveInputMedia(inputMediaWidget): %v", err)
+	}
+	if media == nil || media.Kind != domain.MessageMediaKindWidget || media.Widget == nil {
+		t.Fatalf("widget media = %#v", media)
+	}
+	if media.Widget.WidgetID == 0 {
+		t.Fatal("shared widget did not get a server-assigned id")
+	}
+	if media.Widget.PublicData != "public" || media.Widget.PublicDataHash == 0 || media.Widget.ChatData != "chat" {
+		t.Fatalf("widget data snapshot = %#v", media.Widget)
+	}
+
+	tl, ok := tgMessageMedia(media).(*tg.MessageMediaWidget)
+	if !ok {
+		t.Fatalf("widget projection = %T", tgMessageMedia(media))
+	}
+	if tl.Width != 320 || tl.Height != 200 || !tl.CanQuery {
+		t.Fatalf("messageMediaWidget = %#v", tl)
+	}
+	if payload := string(tl.Payload); payload != "<b>widget</b>" {
+		t.Fatalf("messageMediaWidget.Payload = %q", payload)
+	}
+	if data, ok := tl.GetPublicData(); !ok || data != "public" {
+		t.Fatalf("messageMediaWidget public_data = %q, %v", data, ok)
+	}
+	if id, ok := tl.GetWidgetID(); !ok || id != media.Widget.WidgetID {
+		t.Fatalf("messageMediaWidget widget_id = %d, %v", id, ok)
+	}
+
+	idInput := &tg.InputMediaWidgetID{WidgetID: media.Widget.WidgetID}
+	idInput.SetChatData("chat2")
+	// The shared definition is persisted by the committed send, not while the
+	// input is parsed; emulate that commit before resolving it by id.
+	if _, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{
+		WidgetID: media.Widget.WidgetID, BotUserID: 42,
+		Payload: media.Widget.Payload, Width: 320, Height: 200, AllowQueries: true,
+		PublicData: "public", PublicDataHash: media.Widget.PublicDataHash,
+	}); err != nil {
+		t.Fatalf("persist shared widget definition: %v", err)
+	}
+	copied, err := r.resolveInputMedia(ctx, 43, idInput)
+	if err != nil {
+		t.Fatalf("resolveInputMedia(inputMediaWidgetID): %v", err)
+	}
+	if copied.Widget == nil || !copied.Widget.IsCopy || copied.Widget.WidgetID != media.Widget.WidgetID {
+		t.Fatalf("copied widget = %#v", copied.Widget)
+	}
+	if copied.Widget.ChatData != "chat2" || copied.Widget.PublicData != "public" {
+		t.Fatalf("copied widget data = %#v", copied.Widget)
+	}
+	if string(copied.Widget.Payload) != "<b>widget</b>" {
+		t.Fatalf("copied widget payload = %q", string(copied.Widget.Payload))
+	}
+}
+
+// Widget media may only be authored by bots: a client-rendered widget from an
+// ordinary account must be rejected instead of becoming a query target.
+func TestLayer233WidgetInputsRequireBot(t *testing.T) {
+	r := newWidgetTestRouter(t)
+	ctx := context.Background()
+	for _, input := range []tg.InputMediaClass{
+		&tg.InputMediaWidget{Width: 320, Height: 200, HTML: "<b>x</b>", AllowQueries: true, SharedWidget: true},
+		&tg.InputMediaWidgetID{WidgetID: 1},
 	} {
-		result := &tg.InputBotInlineResult{ID: "widget", Type: "article", SendMessage: message}
-		if _, err := r.domainInlineResultFromTG(ctx, 1000000002, result); !tgerr.Is(err, "SEND_MESSAGE_TYPE_INVALID") {
-			t.Fatalf("inline result with %T err = %v, want SEND_MESSAGE_TYPE_INVALID", message, err)
+		if _, err := r.resolveInputMedia(ctx, 99, input); !tgerr.Is(err, "MEDIA_INVALID") {
+			t.Fatalf("%T from a non-bot sender = %v, want MEDIA_INVALID", input, err)
 		}
-		if _, _, _, err := domainInlineMediaAutoMessage(1000000002, message); !tgerr.Is(err, "SEND_MESSAGE_TYPE_INVALID") {
-			t.Fatalf("inline media result with %T err = %v, want SEND_MESSAGE_TYPE_INVALID", message, err)
-		}
+	}
+}
+
+// Only the owning bot may replace a shared widget's public data.
+func TestLayer233EditWidgetDataIsBotOwned(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	r.deps.Widgets = memory.NewWidgetStore()
+	ctx := context.Background()
+	id, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{BotUserID: 7, Payload: []byte("<b>x</b>"), PublicData: "old", PublicDataHash: widgetDataHash("old")})
+	if err != nil {
+		t.Fatalf("CreateWidget: %v", err)
+	}
+	req := &tg.MessagesEditWidgetDataRequest{WidgetID: id, PublicData: "new"}
+	req.SetCacheTime(60)
+
+	if ok, err := r.onMessagesEditWidgetData(WithUserID(ctx, 9), req); err == nil || ok {
+		t.Fatalf("non-owner edit = %v, %v; want a refusal", ok, err)
+	}
+	if ok, err := r.onMessagesEditWidgetData(WithUserID(ctx, 7), req); err != nil || !ok {
+		t.Fatalf("owner edit = %v, %v; want true", ok, err)
+	}
+	def, found, err := r.deps.Widgets.GetWidget(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("GetWidget = %v, %v", found, err)
+	}
+	if def.PublicData != "new" || def.PublicDataHash != widgetDataHash("new") || def.CacheTime != 60 {
+		t.Fatalf("widget public data = %#v", def)
+	}
+}
+
+// File-based transcription is wired (TranscribeFile) but needs the ASR backend
+// and the Files service: without them it still fails with TRANSCRIPTION_FAILED,
+// and the method is explicitly registered rather than falling to the trace.
+func TestLayer233TranscriptionFileUnavailable(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	ctx := context.Background()
+	if _, err := r.onMessagesTranscribeAudioFile(ctx, &tg.MessagesTranscribeAudioFileRequest{}); err == nil {
+		t.Fatal("transcribeAudioFile succeeded without an ASR backend")
+	}
+	langs, err := r.onMessagesGetTranscriptionLangs(WithUserID(ctx, 7), &tg.MessagesGetTranscriptionLangsRequest{})
+	if err != nil || langs == nil {
+		t.Fatalf("getTranscriptionLangs = %v, %v; want an empty list", langs, err)
 	}
 }

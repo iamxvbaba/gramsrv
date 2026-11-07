@@ -1,0 +1,80 @@
+package rpc
+
+import (
+	"testing"
+
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+
+	"telesrv/internal/domain"
+)
+
+// messages.editMessageWidgetData on a channel message patches only the widget's
+// public/chat data in place and projects the schema-native updateMessageWidgetData
+// (carrying the channel peer) instead of updateEditChannelMessage.
+func TestLayer233EditMessageWidgetDataChannelPatch(t *testing.T) {
+	f := newRPCChannelFixture(t)
+	owner := f.user(23311, "15550023311", "Owner")
+	// The widget sender must be a bot: widget data may only be patched by the bot
+	// that sent the message (or its via bot). Delegate everything else to the real
+	// users service.
+	realUsers := f.router.deps.Users
+	f.router.deps.Users = widgetBotUsers{UsersService: realUsers, bots: map[int64]bool{owner.ID: true}}
+	channel := createLayer233Megagroup(t, f, owner, "Widget channel")
+
+	sent, err := f.channels.SendChannelMessage(f.ctx, domain.SendChannelMessageRequest{
+		UserID: owner.ID, ChannelID: channel.ID, Message: "widget", Date: 1700000000,
+		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: &domain.MessageWidget{
+			WidgetID: 5, PublicData: "a", PublicDataHash: widgetDataHash("a"), ChatData: "chat-a",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("send channel widget message: %v", err)
+	}
+
+	req := &tg.MessagesEditMessageWidgetDataRequest{Peer: inputPeerChannel(channel), ID: sent.Message.ID}
+	req.SetPublicData("b")
+	req.SetChatData("chat-b")
+	updates, err := f.router.onMessagesEditMessageWidgetData(f.userCtx(owner), req)
+	if err != nil {
+		t.Fatalf("editMessageWidgetData(channel): %v", err)
+	}
+	container, ok := updates.(*tg.Updates)
+	if !ok || len(container.Updates) != 2 {
+		t.Fatalf("channel patch updates = %#v, want the widget update plus a pts filler", updates)
+	}
+	var update *tg.UpdateMessageWidgetData
+	filler := false
+	for _, u := range container.Updates {
+		switch typed := u.(type) {
+		case *tg.UpdateMessageWidgetData:
+			update = typed
+		case *tg.UpdateDeleteChannelMessages:
+			filler = true
+		}
+	}
+	if update == nil {
+		t.Fatalf("channel patch update missing *tg.UpdateMessageWidgetData in %#v", container.Updates)
+	}
+	if !filler {
+		t.Fatalf("channel patch missing the empty-channel-delete pts filler in %#v", container.Updates)
+	}
+	peerChannel, ok := update.Peer.(*tg.PeerChannel)
+	if !ok || peerChannel.ChannelID != channel.ID {
+		t.Fatalf("update peer = %#v, want peerChannel{%d}", update.Peer, channel.ID)
+	}
+	if update.MsgID != sent.Message.ID {
+		t.Fatalf("update msg_id = %d, want %d", update.MsgID, sent.Message.ID)
+	}
+	if data, ok := update.GetPublicData(); !ok || data != "b" {
+		t.Fatalf("update public_data = %q, %v", data, ok)
+	}
+	if data, ok := update.GetChatData(); !ok || data != "chat-b" {
+		t.Fatalf("update chat_data = %q, %v", data, ok)
+	}
+
+	// Reapplying the same data is a no-op reported as WIDGET_DATA_NOT_MODIFIED.
+	if _, err := f.router.onMessagesEditMessageWidgetData(f.userCtx(owner), req); !tgerr.Is(err, "WIDGET_DATA_NOT_MODIFIED") {
+		t.Fatalf("reapply err = %v, want WIDGET_DATA_NOT_MODIFIED", err)
+	}
+}

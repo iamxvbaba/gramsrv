@@ -606,6 +606,18 @@ type EditMessageRequest struct {
 	// otherwise return ErrMessageNotModified (the message was deleted/changed/resolved).
 	WebPageResolve    bool
 	ExpectedWebPageID int64
+	// WidgetData patches only a bot widget's public/chat data in place
+	// (messages.editMessageWidgetData). Like WebPageResolve it leaves
+	// body/entities/edit_date untouched, so the message is not marked edited and
+	// updateMessageWidgetData is generated instead of edit_message.
+	WidgetData *MessageWidgetDataPatch
+}
+
+// MessageWidgetDataPatch is the in-place widget data change carried by an edit.
+// A nil Public/Char pointer field means "leave unchanged".
+type MessageWidgetDataPatch struct {
+	PublicData *string
+	ChatData   *string
 }
 
 // EditedMessageForUser describes the effect of one edit on a given owner's perspective.

@@ -578,6 +578,21 @@ type BotVerifierSetting struct {
 	Version                    int64
 }
 
+type BotWidget struct {
+	WidgetID       int64
+	BotUserID      int64
+	Html           string
+	Payload        []byte
+	Width          int32
+	Height         int32
+	AllowQueries   bool
+	PublicData     string
+	PublicDataHash int64
+	CacheTime      int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type Broadcast struct {
 	ID                      int64
 	Message                 string
@@ -1949,6 +1964,13 @@ type PasskeyCredential struct {
 	Transports   []string
 	CreatedAt    pgtype.Timestamptz
 	LastUsedAt   pgtype.Timestamptz
+}
+
+type PeerMainTab struct {
+	PeerType  string
+	PeerID    int64
+	Tab       string
+	UpdatedAt pgtype.Timestamptz
 }
 
 type PeerStarGift struct {

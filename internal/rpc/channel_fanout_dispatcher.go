@@ -1215,7 +1215,11 @@ func channelEditMessageFanoutPeerRefs(res domain.EditChannelMessageResult) (map[
 // omit the nudge when Event.Pts==0 or report a pts lower than the real one. max() is correct in
 // all three forms (Event only/ServiceEvent only/both).
 func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUserID int64, res domain.EditChannelMessageResult) {
-	r.enqueueBotAPIChannelEditMessageUpdate(ctx, originUserID, res)
+	// A widget-data patch is not a content edit: it must not surface as a Bot API
+	// edited_channel_post (no text/media/entities changed).
+	if res.Event.Type != domain.ChannelUpdateWidgetData {
+		r.enqueueBotAPIChannelEditMessageUpdate(ctx, originUserID, res)
+	}
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelEditMessageFanoutOwnerIDs(res)
 	usernamePeers := channelEditMessageFanoutUsernamePeers(res)

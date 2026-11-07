@@ -604,6 +604,11 @@ func insertChannelMessageWithFingerprintTx(ctx context.Context, tx pgx.Tx, msg d
 	if err != nil {
 		return err
 	}
+	// A shared widget definition is created only here, in the committed send
+	// transaction, not while the input was parsed.
+	if err := ensureSharedWidgetDefinitionTx(ctx, tx, msg.Media); err != nil {
+		return err
+	}
 	media, err := encodeMessageMedia(msg.Media)
 	if err != nil {
 		return err
