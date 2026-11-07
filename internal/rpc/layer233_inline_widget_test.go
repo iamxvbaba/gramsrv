@@ -4,19 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
-	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/store/memory"
 )
 
 // Inline bot results accept widget messages and project back to
 // botInlineMessageWidget.
 func TestLayer233InlineWidgetResultRoundTrip(t *testing.T) {
-	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
-	r.deps.Widgets = memory.NewWidgetStore()
+	r := newWidgetTestRouter(t, 7)
 	ctx := context.Background()
 
 	raw := &tg.InputBotInlineResult{

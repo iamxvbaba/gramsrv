@@ -58,6 +58,10 @@ type widgetMessageTarget struct {
 	entities []domain.MessageEntity
 	// senderBotID is the bot that owns the widget message (sender of the message).
 	senderBotID int64
+	// viaBotID is the inline bot when the message was posted via a bot.
+	viaBotID int64
+	private  *domain.Message
+	channel  *domain.ChannelMessage
 }
 
 // cloneMessageWidget deep-copies a widget snapshot so a mutation never aliases
@@ -84,9 +88,10 @@ func (r *Router) loadWidgetMessage(ctx context.Context, userID int64, peer domai
 		}
 		for _, msg := range history.Messages {
 			if msg.ID == msgID && widgetMediaOf(msg.Media) != nil {
+				stored := msg
 				return widgetMessageTarget{
 					media: msg.Media, body: msg.Body, entities: msg.Entities,
-					senderBotID: msg.SenderUserID,
+					senderBotID: msg.SenderUserID, viaBotID: msg.ViaBotID, channel: &stored,
 				}, true
 			}
 		}
@@ -104,9 +109,10 @@ func (r *Router) loadWidgetMessage(ctx context.Context, userID int64, peer domai
 				if msg.From.Type == domain.PeerTypeUser {
 					senderBotID = msg.From.ID
 				}
+				stored := msg
 				return widgetMessageTarget{
 					media: msg.Media, body: msg.Body, entities: msg.Entities,
-					senderBotID: senderBotID,
+					senderBotID: senderBotID, viaBotID: msg.ViaBotID, private: &stored,
 				}, true
 			}
 		}
@@ -235,15 +241,6 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 	}
 	users := r.usersForMessageUpdate(ctx, userID, self.Message)
 	chats := r.chatsForMessageUpdate(ctx, userID, self.Message)
-	// Emit the schema-native durable updateMessageWidgetData alongside the edit
-	// update: the edit re-sends the message (so the client's snapshot refreshes),
-	// while this event is the pts-bearing widget-data stream entry (difference,
-	// offline replay and proactive delivery).
-	if svc, ok := r.deps.Updates.(MessageWidgetDataUpdatesService); ok {
-		if _, _, err := svc.RecordMessageWidgetData(ctx, rawAuthKeyIDForOrigin(ctx), userID, self.Message); err != nil {
-			r.log.Warn("record message widget data", zap.Error(err))
-		}
-	}
 	return tgEditMessageUpdates(self.Event, self.Message, users, chats), nil
 }
 
@@ -319,7 +316,7 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		if _, err := r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
 			OwnerUserID: target.OwnerUserID, Peer: target.Peer, ID: target.ID,
 			Message: target.Body, Entities: append([]domain.MessageEntity(nil), target.Entities...),
-			Media: &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
+			Media:    &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
 			EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
 		}); err != nil {
 			return false, messageEditErr(err)
@@ -339,7 +336,7 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		if _, err := r.deps.Channels.EditMessage(ctx, botID, domain.EditChannelMessageRequest{
 			UserID: botID, ChannelID: channel.ID, ID: msg.ID,
 			Message: msg.Body, Entities: append([]domain.MessageEntity(nil), msg.Entities...),
-			Media: &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
+			Media:    &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget},
 			EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
 		}); err != nil {
 			return false, channelEditErr(err)
@@ -349,12 +346,16 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 	return false, messageIDInvalidErr()
 }
 
-// widgetQueryBotID resolves the bot that owns the queried widget.
+// widgetQueryBotID resolves the bot that owns the queried widget. Every path
+// requires the resolved owner to actually be a bot: a non-bot widget owner must
+// never receive another user's query.
 func (r *Router) widgetQueryBotID(ctx context.Context, target widgetMessageTarget) (int64, error) {
 	widget := widgetMediaOf(target.media)
 	if widget != nil && widget.WidgetID != 0 && r.deps.Widgets != nil {
-		if def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID); err == nil && found && def.BotUserID != 0 {
-			return def.BotUserID, nil
+		if def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID); err == nil && found {
+			if def.BotUserID != 0 && r.userIsBot(ctx, def.BotUserID) {
+				return def.BotUserID, nil
+			}
 		}
 	}
 	if target.senderBotID != 0 && r.userIsBot(ctx, target.senderBotID) {
@@ -401,14 +402,30 @@ func (r *Router) onMessagesGetBotWidgetQueryAnswer(ctx context.Context, req *tg.
 	if widget.WidgetID != 0 {
 		update.SetWidgetID(widget.WidgetID)
 	}
-	if card, ok := r.widgetWalletCard(ctx, userID); ok {
-		update.SetWalletCard(card)
+	if widgetQueryWantsWallet(req.QueryType) {
+		if card, ok := r.widgetWalletCard(ctx, userID); ok {
+			update.SetWalletCard(card)
+		}
 	}
 	r.pushUserMessage(ctx, botID, "push bot widget query", &tg.Updates{
 		Updates: []tg.UpdateClass{update},
 		Date:    int(r.clock.Now().Unix()),
 	})
 	return r.waitBotWidgetQueryAnswer(ctx, botID, queryID, pending)
+}
+
+// widgetQueryWantsWallet reports whether the query type opts into receiving the
+// querying user's wallet card. The schema puts the opt-in on the query type, so
+// an ordinary data query must not leak the wallet to the bot.
+func widgetQueryWantsWallet(queryType tg.WidgetQueryTypeClass) bool {
+	switch q := queryType.(type) {
+	case *tg.WidgetQueryTypeData:
+		return q != nil && (q.WithWallet || q.Flags.Has(0))
+	case *tg.WidgetQueryTypeSignData, *tg.WidgetQueryTypeSentTransaction:
+		return true
+	default:
+		return false
+	}
 }
 
 // widgetWalletCard projects the querying user's wallet into the bot-facing

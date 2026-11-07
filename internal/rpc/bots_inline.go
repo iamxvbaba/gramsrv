@@ -557,7 +557,7 @@ func (r *Router) domainInlineResultFromTG(ctx context.Context, botID int64, raw 
 			if chatData, ok := msg.GetChatData(); ok {
 				mediaInput.SetChatData(chatData)
 			}
-			media, err := r.domainWidgetFromID(ctx, mediaInput)
+			media, err := r.domainWidgetFromID(ctx, botID, mediaInput)
 			if err != nil {
 				return domain.BotInlineResult{}, err
 			}

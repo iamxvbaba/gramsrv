@@ -157,8 +157,7 @@ func TestLayer233WidgetMethodsRegistered(t *testing.T) {
 // inputMediaWidget is stored on the message and, when shared, as a reusable
 // widget definition that inputMediaWidgetID resolves by id.
 func TestLayer233WidgetMediaRoundTrip(t *testing.T) {
-	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
-	r.deps.Widgets = memory.NewWidgetStore()
+	r := newWidgetTestRouter(t, 42, 43)
 	ctx := context.Background()
 
 	in := &tg.InputMediaWidget{Width: 320, Height: 200, HTML: "<b>widget</b>", AllowQueries: true, SharedWidget: true}
@@ -209,6 +208,21 @@ func TestLayer233WidgetMediaRoundTrip(t *testing.T) {
 	}
 	if string(copied.Widget.Payload) != "<b>widget</b>" {
 		t.Fatalf("copied widget payload = %q", string(copied.Widget.Payload))
+	}
+}
+
+// Widget media may only be authored by bots: a client-rendered widget from an
+// ordinary account must be rejected instead of becoming a query target.
+func TestLayer233WidgetInputsRequireBot(t *testing.T) {
+	r := newWidgetTestRouter(t)
+	ctx := context.Background()
+	for _, input := range []tg.InputMediaClass{
+		&tg.InputMediaWidget{Width: 320, Height: 200, HTML: "<b>x</b>", AllowQueries: true, SharedWidget: true},
+		&tg.InputMediaWidgetID{WidgetID: 1},
+	} {
+		if _, err := r.resolveInputMedia(ctx, 99, input); !tgerr.Is(err, "MEDIA_INVALID") {
+			t.Fatalf("%T from a non-bot sender = %v, want MEDIA_INVALID", input, err)
+		}
 	}
 }
 

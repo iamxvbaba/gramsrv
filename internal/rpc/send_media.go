@@ -951,7 +951,7 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 	case *tg.InputMediaWidget:
 		return r.domainWidgetFromInline(ctx, userID, in)
 	case *tg.InputMediaWidgetID:
-		return r.domainWidgetFromID(ctx, in)
+		return r.domainWidgetFromID(ctx, userID, in)
 	default:
 		// poll (see messages_polls.go for the separate path) / geoLive / todo / game /
 		// invoice / paid media / external etc. are not wired up; see

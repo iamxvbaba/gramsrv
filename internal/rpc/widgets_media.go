@@ -28,8 +28,13 @@ func widgetDataHash(data string) int64 {
 }
 
 // domainWidgetFromInline converts inputMediaWidget: the markup is stored on the
-// message, and (when shared_widget) as a reusable widget definition.
+// message, and (when shared_widget) as a reusable widget definition. Widgets
+// may only be authored by bots: client-rendered HTML must not turn an ordinary
+// account into a query target that receives other users' data.
 func (r *Router) domainWidgetFromInline(ctx context.Context, userID int64, in *tg.InputMediaWidget) (*domain.MessageMedia, error) {
+	if !r.userIsBot(ctx, userID) {
+		return nil, mediaInvalidErr()
+	}
 	if in == nil || len(in.HTML) == 0 || len(in.HTML) > maxWidgetHTMLBytes {
 		return nil, mediaInvalidErr()
 	}
@@ -82,8 +87,12 @@ func (r *Router) domainWidgetFromInline(ctx context.Context, userID int64, in *t
 }
 
 // domainWidgetFromID converts inputMediaWidgetID: the definition is resolved by
-// its server-assigned widget id and copied onto the message as is_copy.
-func (r *Router) domainWidgetFromID(ctx context.Context, in *tg.InputMediaWidgetID) (*domain.MessageMedia, error) {
+// its server-assigned widget id and copied onto the message as is_copy. Only
+// bots may send widget media.
+func (r *Router) domainWidgetFromID(ctx context.Context, userID int64, in *tg.InputMediaWidgetID) (*domain.MessageMedia, error) {
+	if !r.userIsBot(ctx, userID) {
+		return nil, mediaInvalidErr()
+	}
 	if in == nil || in.WidgetID == 0 {
 		return nil, mediaInvalidErr()
 	}

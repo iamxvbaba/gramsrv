@@ -628,14 +628,6 @@ type UserEmojiStatusUpdatesService interface {
 	RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]byte, userID int64, status domain.UserEmojiStatus, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 }
 
-// MessageWidgetDataUpdatesService is the optional durable widget-data update
-// extension used by messages.editMessageWidgetData (Layer 233). Keeping it
-// separate preserves lightweight test/service implementations of UpdatesService
-// and makes the widget-data event purely additive.
-type MessageWidgetDataUpdatesService interface {
-	RecordMessageWidgetData(ctx context.Context, stateAuthKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
-}
-
 // ContactsService abstracts contact-list queries.
 type ContactsService interface {
 	GetContacts(ctx context.Context, userID int64, hash int64) (domain.ContactList, bool, error)
@@ -1259,11 +1251,11 @@ type Deps struct {
 	// WidgetQueries coordinates bot widget queries across nodes; when nil the
 	// pending registry stays process-local.
 	WidgetQueries store.WidgetQueryStore
-	Limiter                      RateLimiter
-	Metrics                      Metrics
-	SecretChats                  SecretChatService
-	Stars                        StarsService
-	Gifts                        GiftsService
+	Limiter       RateLimiter
+	Metrics       Metrics
+	SecretChats   SecretChatService
+	Stars         StarsService
+	Gifts         GiftsService
 	// Wallet is the Layer 230 in-app TON wallet; when nil, wallet.* returns WALLET_UNAVAILABLE.
 	Wallet WalletService
 	// MainTabs stores account/channel setMainProfileTab; nil keeps the default tab.

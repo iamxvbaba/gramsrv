@@ -492,30 +492,6 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			return nil
 		}
 		return tgUpdateMessagePoll(pollPeer, event.Message.ID, media.Poll)
-	case domain.UpdateEventMessageWidgetData:
-		if event.Message.ID <= 0 || event.Message.ID > domain.MaxMessageBoxID {
-			return nil
-		}
-		widgetPeer := event.Message.Peer
-		if widgetPeer.Type == "" || widgetPeer.ID == 0 {
-			widgetPeer = event.Peer
-		}
-		peer := tgPeer(widgetPeer)
-		widget := widgetMediaOf(event.Message.Media)
-		if peer == nil || widget == nil {
-			return nil
-		}
-		update := &tg.UpdateMessageWidgetData{
-			Peer: peer, MsgID: event.Message.ID, Pts: event.Pts, PtsCount: event.PtsCount,
-		}
-		if widget.PublicData != "" {
-			update.SetPublicData(widget.PublicData)
-			update.SetPublicDataHash(widget.PublicDataHash)
-		}
-		if widget.ChatData != "" {
-			update.SetChatData(widget.ChatData)
-		}
-		return update
 	case domain.UpdateEventDialogFilter:
 		update := &tg.UpdateDialogFilter{ID: event.FilterID}
 		if event.DialogFilter != nil {
