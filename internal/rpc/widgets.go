@@ -351,12 +351,31 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 // never receive another user's query.
 func (r *Router) widgetQueryBotID(ctx context.Context, target widgetMessageTarget) (int64, error) {
 	widget := widgetMediaOf(target.media)
-	if widget != nil && widget.WidgetID != 0 && r.deps.Widgets != nil {
-		if def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID); err == nil && found {
-			if def.BotUserID != 0 && r.userIsBot(ctx, def.BotUserID) {
-				return def.BotUserID, nil
-			}
+	if widget == nil {
+		return 0, dataInvalidErr()
+	}
+	sharedOwner := func() (int64, bool) {
+		if widget.WidgetID == 0 || r.deps.Widgets == nil {
+			return 0, false
 		}
+		def, found, err := r.deps.Widgets.GetWidget(ctx, widget.WidgetID)
+		if err != nil || !found || def.BotUserID == 0 || !r.userIsBot(ctx, def.BotUserID) {
+			return 0, false
+		}
+		return def.BotUserID, true
+	}
+	// A copy belongs to the shared definition's bot; a via_bot message to the
+	// inline bot; otherwise to the bot that sent the message.
+	if widget.IsCopy {
+		if bot, ok := sharedOwner(); ok {
+			return bot, nil
+		}
+	}
+	if target.viaBotID != 0 && r.userIsBot(ctx, target.viaBotID) {
+		return target.viaBotID, nil
+	}
+	if bot, ok := sharedOwner(); ok {
+		return bot, nil
 	}
 	if target.senderBotID != 0 && r.userIsBot(ctx, target.senderBotID) {
 		return target.senderBotID, nil
@@ -394,24 +413,98 @@ func (r *Router) onMessagesGetBotWidgetQueryAnswer(ctx context.Context, req *tg.
 	}
 	defer r.widgets.deregisterContext(context.Background(), botID, queryID)
 
-	update := &tg.UpdateBotWidgetQuery{
-		QueryID: queryID, QueryType: req.QueryType, UserID: userID,
-		Peer: tgPeer(peer), MsgID: req.MsgID, ChatInstance: chatInstanceForPeer(botID, peer),
-		ChatType: widgetChatType(peer), Data: append([]byte(nil), req.Data...),
-	}
-	if widget.WidgetID != 0 {
-		update.SetWidgetID(widget.WidgetID)
-	}
-	if widgetQueryWantsWallet(req.QueryType) {
-		if card, ok := r.widgetWalletCard(ctx, userID); ok {
-			update.SetWalletCard(card)
-		}
+	update, err := r.botWidgetQueryUpdate(ctx, userID, peer, req, target, widget, botID, queryID)
+	if err != nil {
+		return nil, err
 	}
 	r.pushUserMessage(ctx, botID, "push bot widget query", &tg.Updates{
 		Updates: []tg.UpdateClass{update},
 		Date:    int(r.clock.Now().Unix()),
 	})
 	return r.waitBotWidgetQueryAnswer(ctx, botID, queryID, pending)
+}
+
+// botWidgetQueryUpdate builds the query update for the resolved owner:
+// updateBotWidgetCopyQuery for an is_copy widget (no peer/msg_id),
+// updateInlineBotWidgetQuery routed to the inline bot for a via_bot message,
+// and updateBotWidgetQuery for a message the bot itself sent (translated to the
+// bot's own view in private chats).
+func (r *Router) botWidgetQueryUpdate(
+	ctx context.Context,
+	userID int64,
+	peer domain.Peer,
+	req *tg.MessagesGetBotWidgetQueryAnswerRequest,
+	target widgetMessageTarget,
+	widget *domain.MessageWidget,
+	botID int64,
+	queryID int64,
+) (tg.UpdateClass, error) {
+	attachWallet := func(set func(tg.WalletCard)) {
+		if !widgetQueryWantsWallet(req.QueryType) {
+			return
+		}
+		if card, ok := r.widgetWalletCard(ctx, userID); ok {
+			set(card)
+		}
+	}
+	switch {
+	case widget.IsCopy && widget.WidgetID != 0:
+		update := &tg.UpdateBotWidgetCopyQuery{
+			QueryID: queryID, QueryType: req.QueryType, UserID: userID,
+			Data: append([]byte(nil), req.Data...), WidgetID: widget.WidgetID,
+		}
+		attachWallet(update.SetWalletCard)
+		return update, nil
+	case target.viaBotID != 0:
+		var inlineID tg.InputBotInlineMessageIDClass
+		switch {
+		case target.channel != nil:
+			inlineID = r.inputInlineMessageIDForChannelMessage(botID, *target.channel)
+		case target.private != nil:
+			inlineID = r.inputInlineMessageIDForPrivateMessage(botID, *target.private)
+		}
+		if inlineID == nil {
+			return nil, dataInvalidErr()
+		}
+		update := &tg.UpdateInlineBotWidgetQuery{
+			QueryID: queryID, QueryType: req.QueryType, UserID: userID,
+			InlineMessageID: inlineID, ChatInstance: chatInstanceForPeer(botID, peer),
+			ChatType: widgetChatType(peer), Data: append([]byte(nil), req.Data...),
+		}
+		if widget.WidgetID != 0 {
+			update.SetWidgetID(widget.WidgetID)
+		}
+		attachWallet(update.SetWalletCard)
+		return update, nil
+	default:
+		updatePeer, updateMsgID := peer, req.MsgID
+		chatInstance := chatInstanceForPeer(botID, peer)
+		if peer.Type == domain.PeerTypeUser {
+			chatInstance = chatInstanceFor(botID, userID)
+			// Translate to the bot's own view: peer = the querying user, msg_id
+			// = the bot's copy box id (mirrors resolveBotCallbackQuery).
+			if target.private != nil && target.private.UID != 0 {
+				if provider, ok := r.deps.Messages.(privateMessageByUIDService); ok {
+					if botMessage, found, err := provider.GetMessageByUID(ctx, botID, target.private.UID); err == nil && found &&
+						botMessage.OwnerUserID == botID &&
+						botMessage.Peer == (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+						updatePeer = botMessage.Peer
+						updateMsgID = botMessage.ID
+					}
+				}
+			}
+		}
+		update := &tg.UpdateBotWidgetQuery{
+			QueryID: queryID, QueryType: req.QueryType, UserID: userID,
+			Peer: tgPeer(updatePeer), MsgID: updateMsgID, ChatInstance: chatInstance,
+			ChatType: widgetChatType(peer), Data: append([]byte(nil), req.Data...),
+		}
+		if widget.WidgetID != 0 {
+			update.SetWidgetID(widget.WidgetID)
+		}
+		attachWallet(update.SetWalletCard)
+		return update, nil
+	}
 }
 
 // widgetQueryWantsWallet reports whether the query type opts into receiving the
