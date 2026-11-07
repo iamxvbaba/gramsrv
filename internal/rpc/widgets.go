@@ -19,6 +19,10 @@ import (
 const (
 	widgetQueryTimeout = 25 * time.Second
 	maxWidgetAnswerLen = 4 << 10
+	// uploadPartBytes / maxTranscriptionFileBytes bound messages.transcribeAudioFile
+	// before it materializes a permanent document from the upload.
+	uploadPartBytes           = 512 << 10
+	maxTranscriptionFileBytes = 25 << 20
 )
 
 func widgetDataNotModifiedErr() error { return tgerr.New(400, "WIDGET_DATA_NOT_MODIFIED") }
@@ -194,7 +198,8 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 	if !found {
 		return nil, messageIDInvalidErr()
 	}
-	widget := cloneMessageWidget(widgetMediaOf(target.media))
+	original := widgetMediaOf(target.media)
+	widget := cloneMessageWidget(original)
 	if widget == nil {
 		return nil, messageIDInvalidErr()
 	}
@@ -204,6 +209,9 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 	}
 	if hasChat {
 		widget.ChatData = chatData
+	}
+	if original == nil || (original.PublicData == widget.PublicData && original.PublicDataHash == widget.PublicDataHash && original.ChatData == widget.ChatData) {
+		return nil, widgetDataNotModifiedErr()
 	}
 	newMedia := &domain.MessageMedia{Kind: domain.MessageMediaKindWidget, Widget: widget}
 	now := int(r.clock.Now().Unix())
@@ -618,6 +626,11 @@ func (r *Router) onMessagesTranscribeAudioFile(ctx context.Context, req *tg.Mess
 	}
 	ref, ok := uploadedFileRef(userID, req.File)
 	if !ok {
+		return nil, tgerr400("TRANSCRIPTION_FAILED")
+	}
+	// Reject an oversized upload before CreateDocumentFromUpload persists a
+	// permanent document (the ASR job's own 25 MiB check runs too late).
+	if ref.Parts <= 0 || int64(ref.Parts)*uploadPartBytes > maxTranscriptionFileBytes {
 		return nil, tgerr400("TRANSCRIPTION_FAILED")
 	}
 	document, err := r.deps.Files.CreateDocumentFromUpload(ctx, ref, domain.DocumentSpec{

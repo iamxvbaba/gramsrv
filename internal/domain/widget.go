@@ -29,13 +29,10 @@ type MessageWidget struct {
 	// CanQuery mirrors messageMediaWidget.can_query.
 	CanQuery bool `json:"can_query,omitempty"`
 	// BackgroundQuery asks the client to run the query in the background.
-	BackgroundQuery bool `json:"background_query,omitempty"`
-	Width           int  `json:"width,omitempty"`
-	Height          int  `json:"height,omitempty"`
-	// HTML is the widget markup stored for widgets defined inline. It is never
-	// re-exposed on the message (messageMediaWidget carries payload instead).
-	HTML    string `json:"html,omitempty"`
-	Payload []byte `json:"payload,omitempty"`
+	BackgroundQuery bool   `json:"background_query,omitempty"`
+	Width           int    `json:"width,omitempty"`
+	Height          int    `json:"height,omitempty"`
+	Payload         []byte `json:"payload,omitempty"`
 	// PublicData/PublicDataHash are the per-message public data snapshot.
 	PublicData     string `json:"public_data,omitempty"`
 	PublicDataHash int64  `json:"public_data_hash,omitempty"`
@@ -45,7 +42,7 @@ type MessageWidget struct {
 
 // IsZero reports whether the widget snapshot carries no usable definition.
 func (w *MessageWidget) IsZero() bool {
-	return w == nil || (w.WidgetID == 0 && w.HTML == "" && len(w.Payload) == 0)
+	return w == nil || (w.WidgetID == 0 && len(w.Payload) == 0)
 }
 
 // BotWidget is the persisted definition and mutable public data of a shared

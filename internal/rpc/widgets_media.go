@@ -47,7 +47,6 @@ func (r *Router) domainWidgetFromInline(ctx context.Context, userID int64, in *t
 		CanQuery:     in.AllowQueries,
 		Width:        in.Width,
 		Height:       in.Height,
-		HTML:         in.HTML,
 		Payload:      []byte(in.HTML),
 	}
 	if publicData, ok := in.GetPublicData(); ok {
@@ -115,7 +114,6 @@ func (r *Router) domainWidgetFromID(ctx context.Context, userID int64, in *tg.In
 		CanQuery:       def.AllowQueries,
 		Width:          def.Width,
 		Height:         def.Height,
-		HTML:           def.HTML,
 		Payload:        append([]byte(nil), def.Payload...),
 		PublicData:     def.PublicData,
 		PublicDataHash: def.PublicDataHash,
