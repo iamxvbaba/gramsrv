@@ -1078,7 +1078,11 @@ type EphemeralService interface {
 // configured, the caller returns TRANSCRIPTION_FAILED.
 type TranscriptionService interface {
 	Transcribe(ctx context.Context, userID int64, peer domain.Peer, msgID int, document domain.Document) (domain.TranscriptionResult, error)
+	// TranscribeFile transcribes an uploaded file; a previously failed file job
+	// is terminal and the caller maps it to TRANSCRIPTION_FAILED.
+	TranscribeFile(ctx context.Context, userID int64, document domain.Document) (domain.TranscriptionResult, error)
 	SetCompletionHandler(handler func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string))
+	SetFileCompletionHandler(handler func(ctx context.Context, userID int64, transcriptionID int64, text string))
 }
 
 // WelcomeMessageService owns the independent durable Layer 229 peer templates.

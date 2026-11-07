@@ -98,8 +98,7 @@ func voiceDocumentOf(id int, media *domain.MessageMedia, msgID int) (domain.Docu
 // PushTranscribedAudioUpdate pushes the completed transcription final text to the requester's
 // online sessions. Called by the transcription.Service completion callback (background ctx, no
 // session affiliation).
-func (r *Router) PushTranscribedAudioUpdate(
-	ctx context.Context,
+func (r *Router) PushTranscribedAudioUpdate(ctx context.Context,
 	userID int64,
 	peer domain.Peer,
 	msgID int,
@@ -113,6 +112,21 @@ func (r *Router) PushTranscribedAudioUpdate(
 		Updates: []tg.UpdateClass{&tg.UpdateTranscribedAudio{
 			Peer:            tgPeer(peer),
 			MsgID:           msgID,
+			TranscriptionID: transcriptionID,
+			Text:            text,
+		}},
+		Date: int(r.clock.Now().Unix()),
+	})
+}
+
+// PushTranscribedAudioFileUpdate pushes the completed upload transcription to the
+// requester's online sessions (messages.transcribeAudioFile completion).
+func (r *Router) PushTranscribedAudioFileUpdate(ctx context.Context, userID int64, transcriptionID int64, text string) {
+	if userID == 0 || transcriptionID == 0 {
+		return
+	}
+	r.pushUserUpdates(ctx, userID, &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateTranscribedAudioFile{
 			TranscriptionID: transcriptionID,
 			Text:            text,
 		}},

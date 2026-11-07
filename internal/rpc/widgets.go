@@ -640,10 +640,9 @@ func (r *Router) onMessagesTranscribeAudioFile(ctx context.Context, req *tg.Mess
 	if err != nil {
 		return nil, tgerr400("TRANSCRIPTION_FAILED")
 	}
-	// File transcription has no message to push updateTranscribedAudio against;
-	// it caches by document id (peer/msg_id stay zero) and the client re-calls
-	// until Text is populated.
-	res, err := r.deps.Transcriptions.Transcribe(ctx, userID, domain.Peer{}, 0, document)
+	// File transcription caches by document id and pushes updateTranscribedAudioFile
+	// to the requester on completion; a failed file job is terminal.
+	res, err := r.deps.Transcriptions.TranscribeFile(ctx, userID, document)
 	if err != nil {
 		return nil, tgerr400("TRANSCRIPTION_FAILED")
 	}

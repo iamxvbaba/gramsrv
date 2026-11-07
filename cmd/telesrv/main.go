@@ -2186,6 +2186,7 @@ func run(logger *zap.Logger) error {
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
+	transcriptionService.SetFileCompletionHandler(router.PushTranscribedAudioFileUpdate)
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),

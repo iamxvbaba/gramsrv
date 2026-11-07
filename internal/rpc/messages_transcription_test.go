@@ -21,6 +21,23 @@ type stubTranscriptions struct {
 	msgID   int
 	docID   int64
 	handler func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string)
+	fileHandler func(ctx context.Context, userID int64, transcriptionID int64, text string)
+}
+
+func (s *stubTranscriptions) TranscribeFile(
+	_ context.Context,
+	_ int64,
+	document domain.Document,
+) (domain.TranscriptionResult, error) {
+	s.calls++
+	s.docID = document.ID
+	return s.res, s.err
+}
+
+func (s *stubTranscriptions) SetFileCompletionHandler(
+	handler func(ctx context.Context, userID int64, transcriptionID int64, text string),
+) {
+	s.fileHandler = handler
 }
 
 func (s *stubTranscriptions) Transcribe(
