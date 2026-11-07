@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store/postgres/sqlcgen"
 )
 
 // ensureSharedWidgetDefinitionTx persists the shared definition of a bot web
@@ -25,11 +26,9 @@ func ensureSharedWidgetDefinitionTx(ctx context.Context, tx pgx.Tx, media *domai
 	if !widget.SharedWidget || widget.WidgetID == 0 || widget.OwnerBotID == 0 {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `
-INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
-ON CONFLICT (widget_id) DO NOTHING`,
-		widget.WidgetID, widget.OwnerBotID, string(widget.Payload), widget.Payload,
-		widget.Width, widget.Height, widget.AllowQueries, widget.PublicData, widget.PublicDataHash)
-	return err
+	return sqlcgen.New(tx).CreateBotWidgetIfAbsent(ctx, sqlcgen.CreateBotWidgetIfAbsentParams{
+		WidgetID: widget.WidgetID, BotUserID: widget.OwnerBotID, Html: string(widget.Payload),
+		Payload: widget.Payload, Width: int32(widget.Width), Height: int32(widget.Height),
+		AllowQueries: widget.AllowQueries, PublicData: widget.PublicData, PublicDataHash: widget.PublicDataHash,
+	})
 }

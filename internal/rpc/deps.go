@@ -1249,8 +1249,9 @@ type Deps struct {
 	LangPack                     LangPackService
 	Sessions                     SessionBinder
 	Inline                       store.InlineRegistryStore
-	// Widgets persists shared bot web-widget definitions (Layer 233); when nil,
-	// the widget RPCs return NOT_IMPLEMENTED.
+	// Widgets persists shared bot web-widget definitions (Layer 233). When nil,
+	// widget authoring and editWidgetData return NOT_IMPLEMENTED, while
+	// getWidgetPublicData and query routing fall back to per-message data.
 	Widgets store.WidgetStore
 	// WidgetQueries coordinates bot widget queries across nodes; when nil the
 	// pending registry stays process-local.

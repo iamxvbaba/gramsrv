@@ -30,28 +30,29 @@ func randomWidgetID() int64 {
 	return domain.RandomWidgetID()
 }
 
+func createBotWidgetParams(widgetID int64, widget domain.BotWidget) sqlcgen.CreateBotWidgetParams {
+	return sqlcgen.CreateBotWidgetParams{
+		WidgetID: widgetID, BotUserID: widget.BotUserID, Html: widget.HTML, Payload: widget.Payload,
+		Width: int32(widget.Width), Height: int32(widget.Height), AllowQueries: widget.AllowQueries,
+		PublicData: widget.PublicData, PublicDataHash: widget.PublicDataHash, CacheTime: int32(widget.CacheTime),
+	}
+}
+
 func (s *WidgetStore) CreateWidget(ctx context.Context, widget domain.BotWidget) (int64, error) {
+	queries := sqlcgen.New(s.db)
 	if widget.WidgetID != 0 {
 		// Preassigned id: the shared definition is normally persisted in the
 		// committed send transaction, but honoring an explicit id keeps direct
 		// callers (and tests) able to pin it. Idempotent on a duplicate id.
-		if _, err := s.db.Exec(ctx, `
-INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-ON CONFLICT (widget_id) DO NOTHING`,
-			widget.WidgetID, widget.BotUserID, widget.HTML, widget.Payload, widget.Width, widget.Height,
-			widget.AllowQueries, widget.PublicData, widget.PublicDataHash, widget.CacheTime); err != nil {
+		if err := queries.CreateBotWidgetIfAbsent(ctx,
+			sqlcgen.CreateBotWidgetIfAbsentParams(createBotWidgetParams(widget.WidgetID, widget))); err != nil {
 			return 0, err
 		}
 		return widget.WidgetID, nil
 	}
 	for attempt := 0; attempt < 32; attempt++ {
 		id := randomWidgetID()
-		_, err := s.db.Exec(ctx, `
-INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			id, widget.BotUserID, widget.HTML, widget.Payload, widget.Width, widget.Height,
-			widget.AllowQueries, widget.PublicData, widget.PublicDataHash, widget.CacheTime)
+		err := queries.CreateBotWidget(ctx, createBotWidgetParams(id, widget))
 		if err == nil {
 			return id, nil
 		}
@@ -65,33 +66,28 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 }
 
 func (s *WidgetStore) GetWidget(ctx context.Context, widgetID int64) (domain.BotWidget, bool, error) {
-	row := s.db.QueryRow(ctx, `
-SELECT widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time
-FROM bot_widgets
-WHERE widget_id = $1`, widgetID)
-	var widget domain.BotWidget
-	err := row.Scan(
-		&widget.WidgetID, &widget.BotUserID, &widget.HTML, &widget.Payload, &widget.Width, &widget.Height,
-		&widget.AllowQueries, &widget.PublicData, &widget.PublicDataHash, &widget.CacheTime,
-	)
+	row, err := sqlcgen.New(s.db).GetBotWidget(ctx, widgetID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.BotWidget{}, false, nil
 	}
 	if err != nil {
 		return domain.BotWidget{}, false, err
 	}
-	return widget, true, nil
+	return domain.BotWidget{
+		WidgetID: row.WidgetID, BotUserID: row.BotUserID, HTML: row.Html, Payload: row.Payload,
+		Width: int(row.Width), Height: int(row.Height), AllowQueries: row.AllowQueries,
+		PublicData: row.PublicData, PublicDataHash: row.PublicDataHash, CacheTime: int(row.CacheTime),
+	}, true, nil
 }
 
 func (s *WidgetStore) SetWidgetPublicData(ctx context.Context, widgetID int64, publicData string, hash int64, cacheTime int) error {
-	tag, err := s.db.Exec(ctx, `
-UPDATE bot_widgets
-SET public_data = $2, public_data_hash = $3, cache_time = $4, updated_at = now()
-WHERE widget_id = $1`, widgetID, publicData, hash, cacheTime)
+	rows, err := sqlcgen.New(s.db).SetBotWidgetPublicData(ctx, sqlcgen.SetBotWidgetPublicDataParams{
+		WidgetID: widgetID, PublicData: publicData, PublicDataHash: hash, CacheTime: int32(cacheTime),
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rows == 0 {
 		return domain.ErrWidgetNotFound
 	}
 	return nil
