@@ -46,11 +46,16 @@ func (s *WidgetStore) CreateWidget(_ context.Context, widget domain.BotWidget) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if widget.WidgetID != 0 {
-		// Preassigned id (normally persisted by a committed send); keep an existing
-		// definition rather than overwriting it.
-		if _, exists := s.widgets[widget.WidgetID]; !exists {
-			s.widgets[widget.WidgetID] = cloneBotWidget(widget)
+		// Preassigned id (normally persisted by a committed send). Reusing an
+		// existing id is allowed only for the same bot; a different owner must not
+		// be silently overwritten or linked.
+		if existing, exists := s.widgets[widget.WidgetID]; exists {
+			if existing.BotUserID != widget.BotUserID {
+				return 0, domain.ErrWidgetNotFound
+			}
+			return widget.WidgetID, nil
 		}
+		s.widgets[widget.WidgetID] = cloneBotWidget(widget)
 		return widget.WidgetID, nil
 	}
 	for attempt := 0; attempt < 32; attempt++ {

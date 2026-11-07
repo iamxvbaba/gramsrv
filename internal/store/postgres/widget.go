@@ -43,10 +43,26 @@ func (s *WidgetStore) CreateWidget(ctx context.Context, widget domain.BotWidget)
 	if widget.WidgetID != 0 {
 		// Preassigned id: the shared definition is normally persisted in the
 		// committed send transaction, but honoring an explicit id keeps direct
-		// callers (and tests) able to pin it. Idempotent on a duplicate id.
-		if err := queries.CreateBotWidgetIfAbsent(ctx,
-			sqlcgen.CreateBotWidgetIfAbsentParams(createBotWidgetParams(widget.WidgetID, widget))); err != nil {
+		// callers (and tests) able to pin it.
+		rows, err := queries.CreateBotWidgetIfAbsent(ctx,
+			sqlcgen.CreateBotWidgetIfAbsentParams(createBotWidgetParams(widget.WidgetID, widget)))
+		if err != nil {
 			return 0, err
+		}
+		if rows == 1 {
+			return widget.WidgetID, nil
+		}
+		// The id already exists: accept only the same bot's definition, never
+		// silently link to another bot's widget.
+		existing, err := queries.GetBotWidget(ctx, widget.WidgetID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, domain.ErrWidgetNotFound
+		}
+		if err != nil {
+			return 0, err
+		}
+		if existing.BotUserID != widget.BotUserID {
+			return 0, domain.ErrWidgetNotFound
 		}
 		return widget.WidgetID, nil
 	}

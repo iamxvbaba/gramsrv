@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 
@@ -26,9 +27,27 @@ func ensureSharedWidgetDefinitionTx(ctx context.Context, tx pgx.Tx, media *domai
 	if !widget.SharedWidget || widget.WidgetID == 0 || widget.OwnerBotID == 0 {
 		return nil
 	}
-	return sqlcgen.New(tx).CreateBotWidgetIfAbsent(ctx, sqlcgen.CreateBotWidgetIfAbsentParams{
+	queries := sqlcgen.New(tx)
+	rows, err := queries.CreateBotWidgetIfAbsent(ctx, sqlcgen.CreateBotWidgetIfAbsentParams{
 		WidgetID: widget.WidgetID, BotUserID: widget.OwnerBotID, Html: string(widget.Payload),
 		Payload: widget.Payload, Width: int32(widget.Width), Height: int32(widget.Height),
 		AllowQueries: widget.AllowQueries, PublicData: widget.PublicData, PublicDataHash: widget.PublicDataHash,
 	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		// The id already exists: only the same bot's definition may be reused.
+		existing, err := queries.GetBotWidget(ctx, widget.WidgetID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrWidgetNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if existing.BotUserID != widget.OwnerBotID {
+			return domain.ErrWidgetNotFound
+		}
+	}
+	return nil
 }

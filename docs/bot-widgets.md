@@ -77,6 +77,13 @@ what the server does and the deliberate limits.
 
 ## Deliberate limits
 
+- A shared widget's `bot_widgets` row is created only by the committed send
+  transaction, so `uploadMedia` returns a `widget_id` whose row does not exist
+  until the media is actually sent. The in-memory store (tests only) materialises
+  nothing on send; production is the postgres send path.
+- `messages.transcribeAudioFile` bounds the uploaded size and document creation
+  before the ASR job, but a job that fails after materialisation leaves the
+  document row in place (documents are shared, unrefcounted).
 - `channels.toggleForum` models only the list and tabs layouts: enabling a forum
   with `sidebar=true` fails closed (the author's Layer 233 decision is unchanged),
   and `channel.forum_sidebar` is never emitted.

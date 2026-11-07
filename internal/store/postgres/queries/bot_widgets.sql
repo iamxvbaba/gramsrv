@@ -2,7 +2,7 @@
 INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 
--- name: CreateBotWidgetIfAbsent :exec
+-- name: CreateBotWidgetIfAbsent :execrows
 INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (widget_id) DO NOTHING;

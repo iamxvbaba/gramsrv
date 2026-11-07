@@ -43,7 +43,7 @@ func (q *Queries) CreateBotWidget(ctx context.Context, arg CreateBotWidgetParams
 	return err
 }
 
-const createBotWidgetIfAbsent = `-- name: CreateBotWidgetIfAbsent :exec
+const createBotWidgetIfAbsent = `-- name: CreateBotWidgetIfAbsent :execrows
 INSERT INTO bot_widgets (widget_id, bot_user_id, html, payload, width, height, allow_queries, public_data, public_data_hash, cache_time)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (widget_id) DO NOTHING
@@ -62,8 +62,8 @@ type CreateBotWidgetIfAbsentParams struct {
 	CacheTime      int32
 }
 
-func (q *Queries) CreateBotWidgetIfAbsent(ctx context.Context, arg CreateBotWidgetIfAbsentParams) error {
-	_, err := q.db.Exec(ctx, createBotWidgetIfAbsent,
+func (q *Queries) CreateBotWidgetIfAbsent(ctx context.Context, arg CreateBotWidgetIfAbsentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createBotWidgetIfAbsent,
 		arg.WidgetID,
 		arg.BotUserID,
 		arg.Html,
@@ -75,7 +75,10 @@ func (q *Queries) CreateBotWidgetIfAbsent(ctx context.Context, arg CreateBotWidg
 		arg.PublicDataHash,
 		arg.CacheTime,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getBotWidget = `-- name: GetBotWidget :one
