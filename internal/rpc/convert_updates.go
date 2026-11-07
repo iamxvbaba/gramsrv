@@ -220,7 +220,7 @@ func tgChannelUpdate(viewerUserID int64, event domain.ChannelUpdateEvent) tg.Upd
 		update := &tg.UpdateMessageWidgetData{
 			Peer: peer, MsgID: event.Message.ID, Pts: event.Pts, PtsCount: event.PtsCount,
 		}
-		if widget.PublicData != "" {
+		if widget.PublicData != "" || widget.PublicDataSet {
 			update.SetPublicData(widget.PublicData)
 			update.SetPublicDataHash(widget.PublicDataHash)
 		}
@@ -531,7 +531,7 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 		update := &tg.UpdateMessageWidgetData{
 			Peer: peer, MsgID: event.Message.ID, Pts: event.Pts, PtsCount: event.PtsCount,
 		}
-		if widget.PublicData != "" {
+		if widget.PublicData != "" || widget.PublicDataSet {
 			update.SetPublicData(widget.PublicData)
 			update.SetPublicDataHash(widget.PublicDataHash)
 		}

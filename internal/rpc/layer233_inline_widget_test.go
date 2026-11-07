@@ -35,7 +35,7 @@ func TestLayer233InlineWidgetResultRoundTrip(t *testing.T) {
 	// The shared definition is persisted only once a message commits; emulate
 	// that before resolving the copy by id.
 	if _, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{
-		WidgetID: result.Media.Widget.WidgetID, BotUserID: 7, HTML: "<b>w</b>",
+		WidgetID: result.Media.Widget.WidgetID, BotUserID: 7,
 		Payload: result.Media.Widget.Payload, Width: 300, Height: 150, AllowQueries: true,
 	}); err != nil {
 		t.Fatalf("persist shared widget definition: %v", err)

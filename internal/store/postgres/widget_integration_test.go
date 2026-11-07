@@ -18,7 +18,7 @@ func TestWidgetStoreIntegration(t *testing.T) {
 	widgets := NewWidgetStore(pool)
 
 	first, err := widgets.CreateWidget(ctx, domain.BotWidget{
-		BotUserID: 5001, HTML: "<b>x</b>", Payload: []byte("<b>x</b>"),
+		BotUserID: 5001, Payload: []byte("<b>x</b>"),
 		Width: 320, Height: 200, AllowQueries: true,
 		PublicData: "public", PublicDataHash: domain.WidgetDataHash("public"),
 	})
@@ -26,7 +26,7 @@ func TestWidgetStoreIntegration(t *testing.T) {
 		t.Fatalf("CreateWidget(first): %v", err)
 	}
 	second, err := widgets.CreateWidget(ctx, domain.BotWidget{
-		BotUserID: 5001, HTML: "<i>y</i>", Payload: []byte("<i>y</i>"),
+		BotUserID: 5001, Payload: []byte("<i>y</i>"),
 	})
 	if err != nil {
 		t.Fatalf("CreateWidget(second): %v", err)
@@ -42,7 +42,7 @@ func TestWidgetStoreIntegration(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("GetWidget = %v, %v", found, err)
 	}
-	if got.BotUserID != 5001 || got.HTML != "<b>x</b>" || string(got.Payload) != "<b>x</b>" ||
+	if got.BotUserID != 5001 || string(got.Payload) != "<b>x</b>" ||
 		got.Width != 320 || got.Height != 200 || !got.AllowQueries ||
 		got.PublicData != "public" || got.PublicDataHash != domain.WidgetDataHash("public") {
 		t.Fatalf("GetWidget = %+v", got)

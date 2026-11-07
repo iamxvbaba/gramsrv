@@ -295,7 +295,12 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 		return nil, messageIDInvalidErr()
 	}
 	updates := appendAuxPtsBookkeeping([]tg.UpdateClass{update}, self.Event)
-	return &tg.Updates{Updates: updates, Date: self.Event.Date}, nil
+	return &tg.Updates{
+		Updates: updates,
+		Users:   r.usersForMessageUpdate(ctx, userID, self.Message),
+		Chats:   r.chatsForMessageUpdate(ctx, userID, self.Message),
+		Date:    self.Event.Date,
+	}, nil
 }
 
 func (r *Router) onMessagesEditWidgetData(ctx context.Context, req *tg.MessagesEditWidgetDataRequest) (bool, error) {
@@ -373,7 +378,7 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		// invert_media is preserved, and an unchanged patch reports not-modified.
 		if _, err := r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
 			OwnerUserID: target.OwnerUserID, Peer: target.Peer, ID: target.ID,
-			WidgetData: patch, ViaBotEditBotID: botID,
+			WidgetData: patch, EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
 		}); err != nil {
 			if errors.Is(err, domain.ErrMessageNotModified) {
 				return false, widgetDataNotModifiedErr()
@@ -396,7 +401,7 @@ func (r *Router) onMessagesEditInlineBotMessageWidgetData(ctx context.Context, r
 		// member; then fan the patch out to the channel members.
 		res, err := r.deps.Channels.EditInlineBotMessage(ctx, botID, domain.EditChannelMessageRequest{
 			UserID: msg.SenderUserID, ChannelID: channel.ID, ID: msg.ID,
-			WidgetData: patch, ViaBotEditBotID: botID,
+			WidgetData: patch, EditDate: int(r.clock.Now().Unix()), ViaBotEditBotID: botID,
 		})
 		if err != nil {
 			if errors.Is(err, domain.ErrMessageNotModified) {

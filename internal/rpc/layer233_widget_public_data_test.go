@@ -20,7 +20,7 @@ func TestLayer233EffectiveWidgetPublicData(t *testing.T) {
 	ctx := context.Background()
 
 	id, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{
-		BotUserID: 7, HTML: "<b>x</b>", Payload: []byte("<b>x</b>"),
+		BotUserID: 7, Payload: []byte("<b>x</b>"),
 		PublicData: "shared", PublicDataHash: widgetDataHash("shared"), CacheTime: 60,
 	})
 	if err != nil {

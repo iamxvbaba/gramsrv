@@ -32,7 +32,7 @@ func randomWidgetID() int64 {
 
 func createBotWidgetParams(widgetID int64, widget domain.BotWidget) sqlcgen.CreateBotWidgetParams {
 	return sqlcgen.CreateBotWidgetParams{
-		WidgetID: widgetID, BotUserID: widget.BotUserID, Html: widget.HTML, Payload: widget.Payload,
+		WidgetID: widgetID, BotUserID: widget.BotUserID, Payload: widget.Payload,
 		Width: int32(widget.Width), Height: int32(widget.Height), AllowQueries: widget.AllowQueries,
 		PublicData: widget.PublicData, PublicDataHash: widget.PublicDataHash, CacheTime: int32(widget.CacheTime),
 	}
@@ -90,7 +90,7 @@ func (s *WidgetStore) GetWidget(ctx context.Context, widgetID int64) (domain.Bot
 		return domain.BotWidget{}, false, err
 	}
 	return domain.BotWidget{
-		WidgetID: row.WidgetID, BotUserID: row.BotUserID, HTML: row.Html, Payload: row.Payload,
+		WidgetID: row.WidgetID, BotUserID: row.BotUserID, Payload: row.Payload,
 		Width: int(row.Width), Height: int(row.Height), AllowQueries: row.AllowQueries,
 		PublicData: row.PublicData, PublicDataHash: row.PublicDataHash, CacheTime: int(row.CacheTime),
 	}, true, nil

@@ -52,7 +52,10 @@ func (r *Router) domainWidgetFromInline(ctx context.Context, userID int64, in *t
 		}
 		widget.PublicData = publicData
 		widget.PublicDataHash = widgetDataHash(publicData)
-		widget.PublicDataSet = true
+		// A shared widget's initial public data lives in the definition, so the
+		// message carries no per-message override and editWidgetData stays visible
+		// on the original message, not just on copies.
+		widget.PublicDataSet = !in.SharedWidget
 	}
 	if chatData, ok := in.GetChatData(); ok {
 		if len(chatData) > maxWidgetDataBytes {
@@ -129,7 +132,7 @@ func tgWidgetMedia(w domain.MessageWidget) tg.MessageMediaClass {
 	if w.WidgetID != 0 {
 		out.SetWidgetID(w.WidgetID)
 	}
-	if w.PublicData != "" {
+	if w.PublicData != "" || w.PublicDataSet {
 		out.SetPublicData(w.PublicData)
 		out.SetPublicDataHash(w.PublicDataHash)
 	}

@@ -11,7 +11,7 @@ func TestWidgetStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	store := NewWidgetStore()
 	id, err := store.CreateWidget(ctx, domain.BotWidget{
-		BotUserID: 7, HTML: "<b>x</b>", Payload: []byte("<b>x</b>"),
+		BotUserID: 7, Payload: []byte("<b>x</b>"),
 		Width: 100, Height: 50, AllowQueries: true,
 	})
 	if err != nil {
@@ -24,7 +24,7 @@ func TestWidgetStoreRoundTrip(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("GetWidget = %v, %v", found, err)
 	}
-	if got.BotUserID != 7 || got.HTML != "<b>x</b>" || got.Width != 100 || !got.AllowQueries {
+	if got.BotUserID != 7 || got.Width != 100 || !got.AllowQueries {
 		t.Fatalf("stored widget = %#v", got)
 	}
 	if err := store.SetWidgetPublicData(ctx, id, "public", 12345, 60); err != nil {

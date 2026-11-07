@@ -199,7 +199,7 @@ func TestLayer233WidgetMediaRoundTrip(t *testing.T) {
 	// The shared definition is persisted by the committed send, not while the
 	// input is parsed; emulate that commit before resolving it by id.
 	if _, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{
-		WidgetID: media.Widget.WidgetID, BotUserID: 42, HTML: "<b>widget</b>",
+		WidgetID: media.Widget.WidgetID, BotUserID: 42,
 		Payload: media.Widget.Payload, Width: 320, Height: 200, AllowQueries: true,
 		PublicData: "public", PublicDataHash: media.Widget.PublicDataHash,
 	}); err != nil {
@@ -240,7 +240,7 @@ func TestLayer233EditWidgetDataIsBotOwned(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 	r.deps.Widgets = memory.NewWidgetStore()
 	ctx := context.Background()
-	id, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{BotUserID: 7, HTML: "<b>x</b>", Payload: []byte("<b>x</b>"), PublicData: "old", PublicDataHash: widgetDataHash("old")})
+	id, err := r.deps.Widgets.CreateWidget(ctx, domain.BotWidget{BotUserID: 7, Payload: []byte("<b>x</b>"), PublicData: "old", PublicDataHash: widgetDataHash("old")})
 	if err != nil {
 		t.Fatalf("CreateWidget: %v", err)
 	}

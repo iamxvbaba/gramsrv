@@ -108,7 +108,6 @@ func ApplyWidgetDataPatch(media *MessageMedia, patch *MessageWidgetDataPatch) bo
 type BotWidget struct {
 	WidgetID       int64
 	BotUserID      int64
-	HTML           string
 	Payload        []byte
 	Width          int
 	Height         int
@@ -116,8 +115,6 @@ type BotWidget struct {
 	PublicData     string
 	PublicDataHash int64
 	CacheTime      int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
 }
 
 // BotWidgetQueryAnswer is the asynchronous answer a bot returns from

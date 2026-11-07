@@ -29,13 +29,18 @@ what the server does and the deliberate limits.
 - `messages.getWidgetPublicData(peer, msg_id, hash)` returns
   `messages.widgetPublicData{hash, data, period}` or
   `messages.widgetPublicDataNotModified{period}` when the client already has the
-  current `hash`. Per-message data takes precedence over the shared definition.
+  current `hash`. Per-message data takes precedence over the shared definition;
+  for a shared widget the initial public data lives in the definition, so
+  `editWidgetData` is visible on the original message as well as on copies, and a
+  per-message `public_data` (including an explicit clear to `""`) always wins.
 - `messages.editMessageWidgetData(peer, id, public_data?, chat_data?)` patches the
   widget data **in place** for both private and channel messages: only the media
   JSONB is rewritten (body/entities/edit_date untouched, the message is not marked
   edited), a compact pts-bearing `updateMessageWidgetData` is recorded/dispatched
   (account pts for private, channel pts + a `channel_widget_data` durable event
-  for channels), and unchanged data returns `WIDGET_DATA_NOT_MODIFIED`. Only the
+  for channels), and unchanged data returns `WIDGET_DATA_NOT_MODIFIED`. A clear
+  (`public_data=""`) is pushed with the `public_data` flag set, so live clients
+  learn about it without polling. Only the
   **bot that sent the message** (or its via bot) may patch: a recipient, channel
   admin or ordinary member is rejected with `MESSAGE_ID_INVALID`.
 - `messages.editInlineBotMessageWidgetData(id, public_data?, chat_data?)` does

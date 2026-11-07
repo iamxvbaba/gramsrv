@@ -29,7 +29,7 @@ func ensureSharedWidgetDefinitionTx(ctx context.Context, tx pgx.Tx, media *domai
 	}
 	queries := sqlcgen.New(tx)
 	rows, err := queries.CreateBotWidgetIfAbsent(ctx, sqlcgen.CreateBotWidgetIfAbsentParams{
-		WidgetID: widget.WidgetID, BotUserID: widget.OwnerBotID, Html: string(widget.Payload),
+		WidgetID: widget.WidgetID, BotUserID: widget.OwnerBotID,
 		Payload: widget.Payload, Width: int32(widget.Width), Height: int32(widget.Height),
 		AllowQueries: widget.AllowQueries, PublicData: widget.PublicData, PublicDataHash: widget.PublicDataHash,
 	})
