@@ -132,10 +132,16 @@ func widgetMediaOf(media *domain.MessageMedia) *domain.MessageWidget {
 	return media.Widget
 }
 
-// widgetChatType maps a peer to the chat_type carried by updateBotWidgetQuery.
-func widgetChatType(peer domain.Peer) string {
+// widgetChatTypeFor maps a peer to the chat_type carried by the widget query
+// updates; a megagroup channel reports "supergroup".
+func (r *Router) widgetChatTypeFor(ctx context.Context, userID int64, peer domain.Peer) string {
 	if peer.Type == domain.PeerTypeUser {
 		return "private"
+	}
+	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		if view, err := r.deps.Channels.ResolveChannel(ctx, userID, peer.ID); err == nil && view.Channel.Megagroup {
+			return "supergroup"
+		}
 	}
 	return "channel"
 }
@@ -507,7 +513,7 @@ func (r *Router) botWidgetQueryUpdate(
 		update := &tg.UpdateInlineBotWidgetQuery{
 			QueryID: queryID, QueryType: req.QueryType, UserID: userID,
 			InlineMessageID: inlineID, ChatInstance: chatInstanceForPeer(botID, peer),
-			ChatType: widgetChatType(peer), Data: append([]byte(nil), req.Data...),
+			ChatType: r.widgetChatTypeFor(ctx, userID, peer), Data: append([]byte(nil), req.Data...),
 		}
 		if widget.WidgetID != 0 {
 			update.SetWidgetID(widget.WidgetID)
@@ -535,7 +541,7 @@ func (r *Router) botWidgetQueryUpdate(
 		update := &tg.UpdateBotWidgetQuery{
 			QueryID: queryID, QueryType: req.QueryType, UserID: userID,
 			Peer: tgPeer(updatePeer), MsgID: updateMsgID, ChatInstance: chatInstance,
-			ChatType: widgetChatType(peer), Data: append([]byte(nil), req.Data...),
+			ChatType: r.widgetChatTypeFor(ctx, userID, peer), Data: append([]byte(nil), req.Data...),
 		}
 		if widget.WidgetID != 0 {
 			update.SetWidgetID(widget.WidgetID)
