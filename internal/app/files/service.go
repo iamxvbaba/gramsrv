@@ -883,6 +883,23 @@ func (s *Service) AssembleUploadBlob(ctx context.Context, ownerUserID, fileID in
 	}, nil
 }
 
+func (s *Service) uploadPartsTotalSizeForFile(ctx context.Context, ownerUserID, fileID int64, expectedParts int) (int64, error) {
+	_, total, err := s.loadAndValidateUploadParts(ctx, ownerUserID, fileID, expectedParts)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// UploadedFileSize returns the summed size of an uploaded file's stored parts
+// without assembling them.
+func (s *Service) UploadedFileSize(ctx context.Context, file domain.UploadedFileRef) (int64, error) {
+	if s == nil || file.OwnerUserID == 0 || file.FileID == 0 || file.Parts <= 0 {
+		return 0, domain.ErrFilePartsInvalid
+	}
+	return s.uploadPartsTotalSizeForFile(ctx, file.OwnerUserID, file.FileID, file.Parts)
+}
+
 func (s *Service) loadAndValidateUploadParts(ctx context.Context, ownerUserID, fileID int64, expectedParts int) ([]domain.UploadPart, int64, error) {
 	if expectedParts <= 0 || expectedParts > MaxUploadParts {
 		return nil, 0, domain.ErrFilePartsInvalid

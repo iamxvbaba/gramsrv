@@ -23,6 +23,10 @@ const (
 	// placeholder in the message in place with the resolved card. It carries account pts (not LacksWirePts), and the message snapshot is rebuilt via a box JOIN,
 	// so difference/dispatch follows the generic message event path like edit_message, differing only in the tg projection constructor.
 	UpdateEventWebPage UpdateEventType = "web_page"
+	// UpdateEventMessageWidgetData maps updateMessageWidgetData (Layer 233): a
+	// bot web widget's public/chat data changed in place (body/entities/edit_date
+	// untouched, so the message is not marked edited). It carries account pts.
+	UpdateEventMessageWidgetData UpdateEventType = "message_widget_data"
 	// UpdateEventMessagePoll maps updateMessagePoll (poll state changes after a vote/close;
 	// Message is the message from that owner's perspective, and the media is re-enriched per viewer when difference replays it).
 	// The current history implementation still treats poll as a to-be-reviewed LacksWirePts event.

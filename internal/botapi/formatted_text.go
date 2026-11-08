@@ -243,6 +243,15 @@ func parseBotAPIHTML(input string) (string, []domain.MessageEntity, error) {
 						if ok {
 							entities = append(entities, resolved)
 						}
+					case "code":
+						if len(entities) > 0 && frame.language != "" {
+							last := &entities[len(entities)-1]
+							if last.Type == domain.MessageEntityPre && last.Offset == frame.offset && last.Length == length {
+								last.Language = frame.language
+								break
+							}
+						}
+						entities = append(entities, entity)
 					case "pre":
 						if len(entities) > 0 {
 							last := &entities[len(entities)-1]
@@ -488,34 +497,52 @@ func decodeBotAPIHTMLString(input string) (string, error) {
 }
 
 func decodeBotAPIHTMLEntity(input string, start int) (string, int, error) {
-	endRelative := strings.IndexByte(input[start:], ';')
-	if endRelative < 0 {
-		return "&", start + 1, nil
+	// TDLib scans the reference's name or digits first; a trailing semicolon
+	// is optional. Do not consume the next text character or HTML tag.
+	end := start + 1
+	var decoded string
+	if end < len(input) && input[end] == '#' {
+		end++
+		base := 10
+		if end < len(input) && (input[end] == 'x' || input[end] == 'X') {
+			base = 16
+			end++
+		}
+		digitsStart := end
+		for end < len(input) {
+			c := input[end]
+			if c >= '0' && c <= '9' || base == 16 && (c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+				end++
+				continue
+			}
+			break
+		}
+		value, err := strconv.ParseInt(input[digitsStart:end], base, 32)
+		if err != nil || value <= 0 || value > utf8.MaxRune || value >= 0xd800 && value <= 0xdfff {
+			return "&", start + 1, nil
+		}
+		decoded = string(rune(value))
+	} else {
+		for end < len(input) && (input[end] >= 'a' && input[end] <= 'z' || input[end] >= 'A' && input[end] <= 'Z') {
+			end++
+		}
+		switch input[start+1 : end] {
+		case "lt":
+			decoded = "<"
+		case "gt":
+			decoded = ">"
+		case "amp":
+			decoded = "&"
+		case "quot":
+			decoded = "\""
+		default:
+			return "&", start + 1, nil
+		}
 	}
-	end := start + endRelative
-	name := input[start+1 : end]
-	switch name {
-	case "lt":
-		return "<", end + 1, nil
-	case "gt":
-		return ">", end + 1, nil
-	case "amp":
-		return "&", end + 1, nil
-	case "quot":
-		return "\"", end + 1, nil
+	if end < len(input) && input[end] == ';' {
+		end++
 	}
-	if !strings.HasPrefix(name, "#") {
-		return "&", start + 1, nil
-	}
-	base, digits := 10, name[1:]
-	if strings.HasPrefix(digits, "x") || strings.HasPrefix(digits, "X") {
-		base, digits = 16, digits[1:]
-	}
-	value, err := strconv.ParseInt(digits, base, 32)
-	if err != nil || value <= 0 || value > utf8.MaxRune || value >= 0xd800 && value <= 0xdfff {
-		return "&", start + 1, nil
-	}
-	return string(rune(value)), end + 1, nil
+	return decoded, end, nil
 }
 
 func parseBotAPIMarkdown(input string) (string, []domain.MessageEntity, error) {

@@ -33,6 +33,9 @@ var (
 	ErrUnavailable = errors.New("transcription backend is not configured")
 	// ErrDocument means the voice document is unreadable or over the size limit and cannot be sent to ASR.
 	ErrDocument = errors.New("voice document is not available for transcription")
+	// ErrTranscriptionFailed means a previous upload transcription failed; file
+	// jobs are terminal and are not retried by a polling client.
+	ErrTranscriptionFailed = errors.New("file transcription previously failed")
 )
 
 type FileSource interface {
@@ -45,6 +48,9 @@ type jobRequest struct {
 	userID          int64
 	peer            domain.Peer
 	msgID           int
+	// file marks an upload-based job (messages.transcribeAudioFile) whose
+	// completion is delivered as updateTranscribedAudioFile, not a message one.
+	file bool
 }
 
 type Service struct {
@@ -59,12 +65,20 @@ type Service struct {
 	// completionDelivery encodes one subscriber's updateTranscribedAudio as a durable delivery; the
 	// runtime injects it after the router is created, so the app layer does not depend back on rpc.
 	completionDelivery CompletionDelivery
+	// fileCompletionDelivery encodes one upload subscriber's updateTranscribedAudioFile as a durable
+	// delivery, written in the same transaction that marks the file job done.
+	fileCompletionDelivery FileCompletionDelivery
 }
 
 // CompletionDelivery encodes the completion notification for one subscriber.
 // The rpc layer owns the wire shape; the service decides who is told and the
 // store writes the result together with the final row (v2: no direct push).
 type CompletionDelivery func(userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string) (store.DeliveryOutboxEnqueue, error)
+
+// FileCompletionDelivery encodes the completion notification for one upload
+// subscriber (messages.transcribeAudioFile): updateTranscribedAudioFile, not
+// the message-level updateTranscribedAudio.
+type FileCompletionDelivery func(userID int64, transcriptionID int64, text string) (store.DeliveryOutboxEnqueue, error)
 
 func NewService(
 	st store.TranscriptionStore,
@@ -89,6 +103,12 @@ func (s *Service) SetCompletionDelivery(build CompletionDelivery) {
 	s.completionDelivery = build
 }
 
+func (s *Service) SetFileCompletionDelivery(build FileCompletionDelivery) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fileCompletionDelivery = build
+}
+
 // Transcribe returns the currently known state: if done it returns the text directly, otherwise it ensures the background task is running and returns pending.
 func (s *Service) Transcribe(
 	ctx context.Context,
@@ -96,6 +116,29 @@ func (s *Service) Transcribe(
 	peer domain.Peer,
 	msgID int,
 	document domain.Document,
+) (domain.TranscriptionResult, error) {
+	return s.transcribe(ctx, userID, peer, msgID, document, false)
+}
+
+// TranscribeFile transcribes an uploaded file (messages.transcribeAudioFile).
+// A previously failed file job is terminal (ErrTranscriptionFailed) and never
+// starts another ASR job, so a polling client cannot consume the global ASR
+// slots; on success the file completion delivery encodes updateTranscribedAudioFile.
+func (s *Service) TranscribeFile(
+	ctx context.Context,
+	userID int64,
+	document domain.Document,
+) (domain.TranscriptionResult, error) {
+	return s.transcribe(ctx, userID, domain.Peer{}, 0, document, true)
+}
+
+func (s *Service) transcribe(
+	ctx context.Context,
+	userID int64,
+	peer domain.Peer,
+	msgID int,
+	document domain.Document,
+	file bool,
 ) (domain.TranscriptionResult, error) {
 	if s == nil || s.url == "" {
 		return domain.TranscriptionResult{}, ErrUnavailable
@@ -112,12 +155,17 @@ func (s *Service) Transcribe(
 	if found && row.Status == domain.TranscriptionStatusDone {
 		return domain.TranscriptionResult{TranscriptionID: row.TranscriptionID, Text: row.Text}, nil
 	}
+	if found && row.Status == domain.TranscriptionStatusFailed && file {
+		// Terminal for upload jobs: do not reset and re-run ASR on every poll.
+		return domain.TranscriptionResult{}, ErrTranscriptionFailed
+	}
 	job := jobRequest{
 		documentID:      document.ID,
 		transcriptionID: row.TranscriptionID,
 		userID:          userID,
 		peer:            peer,
 		msgID:           msgID,
+		file:            file,
 	}
 	if !found {
 		job.transcriptionID, err = newTranscriptionID()
@@ -222,15 +270,27 @@ func (s *Service) run(parent context.Context, document domain.Document, job jobR
 	// and the commit below.
 	s.mu.Lock()
 	build := s.completionDelivery
+	fileBuild := s.fileCompletionDelivery
 	subscribers := append([]jobRequest(nil), s.inflight[job.documentID]...)
 	s.mu.Unlock()
 	effects := func(row domain.MessageTranscription) ([]store.DeliveryEffect, error) {
-		if build == nil {
-			return nil, nil
-		}
 		out := make([]store.DeliveryEffect, 0, len(subscribers))
 		for _, subscriber := range subscribers {
-			if subscriber.userID == 0 || subscriber.msgID <= 0 {
+			if subscriber.userID == 0 {
+				continue
+			}
+			if subscriber.file {
+				if fileBuild == nil {
+					continue
+				}
+				item, err := fileBuild(subscriber.userID, row.TranscriptionID, row.Text)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, store.AbsoluteDeliveryEffect(item))
+				continue
+			}
+			if subscriber.msgID <= 0 || build == nil {
 				continue
 			}
 			item, err := build(subscriber.userID, subscriber.peer, subscriber.msgID, row.TranscriptionID, row.Text)

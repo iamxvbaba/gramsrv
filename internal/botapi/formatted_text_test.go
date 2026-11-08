@@ -44,6 +44,53 @@ func TestParseBotAPIHTMLPreAndEscapes(t *testing.T) {
 	}
 }
 
+func TestBotAPIHTMLPreCodeNesting(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		plain string
+		want  []domain.MessageEntity
+	}{
+		{
+			name:  "code inside pre",
+			input: `A <pre><code class="language-go">🚀 &lt; x</code></pre> Z`,
+			plain: "A 🚀 < x Z",
+			want:  []domain.MessageEntity{{Type: domain.MessageEntityPre, Offset: 2, Length: 6, Language: "go"}},
+		},
+		{
+			name:  "pre inside code",
+			input: `A <code class="language-go"><pre>🚀 &lt; x</pre></code> Z`,
+			plain: "A 🚀 < x Z",
+			want:  []domain.MessageEntity{{Type: domain.MessageEntityPre, Offset: 2, Length: 6, Language: "go"}},
+		},
+		{
+			name:  "standalone code drops language",
+			input: `<code class="language-go">x</code>`,
+			plain: "x",
+			want:  []domain.MessageEntity{{Type: domain.MessageEntityCode, Offset: 0, Length: 1}},
+		},
+		{
+			name:  "different ranges stay separate",
+			input: `<code class="language-go">a<pre>b</pre></code>`,
+			plain: "ab",
+			want: []domain.MessageEntity{
+				{Type: domain.MessageEntityCode, Offset: 0, Length: 2},
+				{Type: domain.MessageEntityPre, Offset: 1, Length: 1},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plain, entities, err := botAPIFormattedText(tc.input, "HTML", nil, 4096, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plain != tc.plain || !reflect.DeepEqual(entities, tc.want) {
+				t.Fatalf("formatted text = %q, %#v; want %q, %#v", plain, entities, tc.plain, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseBotAPILegacyMarkdown(t *testing.T) {
 	plain, entities, err := parseBotAPIMarkdown(`*bold* _😀_ [site](https://example.com) \*raw\*`)
 	if err != nil {
