@@ -177,7 +177,13 @@ func (r *Router) pushInlineBotSendFeedback(ctx context.Context, userID int64, re
 	if results.Geo != nil {
 		update.SetGeo(tgGeoPoint(*results.Geo))
 	}
-	if result.ReplyMarkup != nil && !result.ReplyMarkup.IsZero() {
+	// A widget result must carry msg_id even without a keyboard so the owning bot
+	// can later edit the sent widget's data (editInlineBotMessageWidgetData).
+	wantMsgID := result.ReplyMarkup != nil && !result.ReplyMarkup.IsZero()
+	if !wantMsgID && result.Media != nil && result.Media.Kind == domain.MessageMediaKindWidget {
+		wantMsgID = true
+	}
+	if wantMsgID {
 		if msgID := r.privateInlineMessageIDFromSendUpdates(ctx, results.BotUserID, userID, updates); msgID != nil {
 			update.SetMsgID(msgID)
 		} else if msgID := r.channelInlineMessageIDFromSendUpdates(ctx, results.BotUserID, userID, updates); msgID != nil {

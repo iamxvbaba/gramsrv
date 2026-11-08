@@ -415,6 +415,11 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			return domain.SendPrivateTextResult{}, err
 		}
 	}
+	// A shared widget definition is created only here, in the committed send
+	// transaction, not while the input was parsed.
+	if err := ensureSharedWidgetDefinitionTx(ctx, tx, media.Shared); err != nil {
+		return domain.SendPrivateTextResult{}, fmt.Errorf("persist shared widget definition: %w", err)
+	}
 	ttlPeriod, expiresAt := req.TTLPeriod, 0
 	var pm sqlcgen.CreatePrivateMessageRow
 	if plainHotPath {

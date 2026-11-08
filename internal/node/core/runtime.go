@@ -1025,6 +1025,8 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	helpStore := postgres.NewHelpStore(pool)
 	aiComposeStore := postgres.NewAIComposeStore(pool)
 	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
+	widgetStore := postgres.NewWidgetStore(pool)
+	widgetQueryStore := redisstore.NewWidgetQueryStore(rdb)
 	authInvalidationBroker := redisstore.NewAuthInvalidationBroker(rdb)
 	codeStore := redisstore.NewCodeStore(rdb)
 	authDeliveryReportService := authdiagnosticsapp.NewService(codeStore, authDeliveryReportStore)
@@ -1760,6 +1762,8 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		Sessions:                     edgeControl,
 		Metrics:                      metricRegistry,
 		Inline:                       inlineRegistryStore,
+		Widgets:                      widgetStore,
+		WidgetQueries:                widgetQueryStore,
 		Limiter:                      rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	registerPresenceWorkMetrics(metricRegistry, router)
@@ -1946,6 +1950,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionDelivery(router.TranscribedAudioDelivery)
+	transcriptionService.SetFileCompletionDelivery(router.TranscribedAudioFileDelivery)
 	donationsService.SetBalanceDelivery(router.StarsBalanceDeliveryEffects)
 	if donationsService.KeyConfigured() {
 		donationLog := logger.Named("donations")
@@ -2023,6 +2028,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		}
 	}()
 	go router.RunInlineBotPushSubscriber(ctx)
+	go router.RunBotWidgetQueryAnswerSubscriber(ctx)
 	go router.RunEphemeralPushSubscriber(ctx)
 	go router.RunAuthInvalidationSubscriber(ctx)
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, router, logger.Named("botapi")); err != nil {

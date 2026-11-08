@@ -457,6 +457,7 @@ const (
 	MessageMediaKindWebPage  MessageMediaKind = "web_page"
 	MessageMediaKindGiveaway MessageMediaKind = "giveaway"
 	MessageMediaKindInvoice  MessageMediaKind = "invoice"
+	MessageMediaKindWidget   MessageMediaKind = "widget"
 )
 
 // MessageGiveaway is the immutable launch-card snapshot shown in the boost
@@ -862,6 +863,7 @@ type MessageMedia struct {
 	Story          *MessageStory         `json:"story,omitempty"`
 	WebPage        *MessageWebPage       `json:"web_page,omitempty"`
 	Giveaway       *MessageGiveaway      `json:"giveaway,omitempty"`
+	Widget         *MessageWidget        `json:"widget,omitempty"`
 	Invoice        *PremiumInvoice       `json:"invoice,omitempty"`
 	// ProductInvoice is the generic bot sale shape. It is separate from Invoice
 	// because a Premium invoice carries a plan, not a product, and the two

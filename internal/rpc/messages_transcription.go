@@ -130,3 +130,30 @@ func (r *Router) TranscribedAudioDelivery(
 		RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
 	}, nil
 }
+
+// TranscribedAudioFileDelivery encodes the final upload transcription
+// (messages.transcribeAudioFile) for one requester as a durable delivery to all
+// of the user's sessions. transcription.Service writes it in the same
+// transaction that marks the row done (v2: Core never pushes it directly).
+// Offline devices recover by calling transcribeAudioFile again, which answers
+// from the stored result.
+func (r *Router) TranscribedAudioFileDelivery(userID int64, transcriptionID int64, text string) (store.DeliveryOutboxEnqueue, error) {
+	if userID == 0 || transcriptionID == 0 {
+		return store.DeliveryOutboxEnqueue{}, fmt.Errorf("transcribed audio file delivery: invalid target")
+	}
+	payload, err := encodeDeliveryUpdate(&tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateTranscribedAudioFile{
+			TranscriptionID: transcriptionID,
+			Text:            text,
+		}},
+		Date: int(r.clock.Now().Unix()),
+	})
+	if err != nil {
+		return store.DeliveryOutboxEnqueue{}, err
+	}
+	return store.DeliveryOutboxEnqueue{
+		TargetUserID:   userID,
+		Payload:        payload,
+		RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+	}, nil
+}

@@ -205,6 +205,29 @@ func tgChannelUpdate(viewerUserID int64, event domain.ChannelUpdateEvent) tg.Upd
 			Pts:       event.Pts,
 			PtsCount:  event.PtsCount,
 		}
+	case domain.ChannelUpdateWidgetData:
+		// In-place channel widget data patch: updateMessageWidgetData carries the
+		// channel peer plus the new public/chat data; the client swaps the widget
+		// data in place without touching edit_date.
+		widget := widgetMediaOf(event.Message.Media)
+		if widget == nil || event.Message.ID <= 0 {
+			return nil
+		}
+		peer := tgPeer(domain.Peer{Type: domain.PeerTypeChannel, ID: event.ChannelID})
+		if peer == nil {
+			return nil
+		}
+		update := &tg.UpdateMessageWidgetData{
+			Peer: peer, MsgID: event.Message.ID, Pts: event.Pts, PtsCount: event.PtsCount,
+		}
+		if widget.PublicData != "" || widget.PublicDataSet {
+			update.SetPublicData(widget.PublicData)
+			update.SetPublicDataHash(widget.PublicDataHash)
+		}
+		if widget.ChatData != "" {
+			update.SetChatData(widget.ChatData)
+		}
+		return update
 	case domain.ChannelUpdateDeleteMessages:
 		if len(event.MessageIDs) == 0 {
 			return nil
@@ -492,6 +515,30 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			return nil
 		}
 		return tgUpdateMessagePoll(pollPeer, event.Message.ID, media.Poll)
+	case domain.UpdateEventMessageWidgetData:
+		if event.Message.ID <= 0 || event.Message.ID > domain.MaxMessageBoxID {
+			return nil
+		}
+		widgetPeer := event.Message.Peer
+		if widgetPeer.Type == "" || widgetPeer.ID == 0 {
+			widgetPeer = event.Peer
+		}
+		peer := tgPeer(widgetPeer)
+		widget := widgetMediaOf(event.Message.Media)
+		if peer == nil || widget == nil {
+			return nil
+		}
+		update := &tg.UpdateMessageWidgetData{
+			Peer: peer, MsgID: event.Message.ID, Pts: event.Pts, PtsCount: event.PtsCount,
+		}
+		if widget.PublicData != "" || widget.PublicDataSet {
+			update.SetPublicData(widget.PublicData)
+			update.SetPublicDataHash(widget.PublicDataHash)
+		}
+		if widget.ChatData != "" {
+			update.SetChatData(widget.ChatData)
+		}
+		return update
 	case domain.UpdateEventDialogFilter:
 		update := &tg.UpdateDialogFilter{ID: event.FilterID}
 		if event.DialogFilter != nil {

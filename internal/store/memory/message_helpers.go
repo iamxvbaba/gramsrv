@@ -114,6 +114,11 @@ func cloneRequestedPeerMedia(media *domain.MessageMedia) *domain.MessageMedia {
 		video.Attributes = append([]domain.DocumentAttribute(nil), media.LivePhotoVideo.Attributes...)
 		clone.LivePhotoVideo = &video
 	}
+	if media.Widget != nil {
+		widget := *media.Widget
+		widget.Payload = append([]byte(nil), media.Widget.Payload...)
+		clone.Widget = &widget
+	}
 	if media.ServiceAction == nil {
 		return &clone
 	}
@@ -239,6 +244,21 @@ func webPageEvent(msg domain.Message) domain.UpdateEvent {
 		PtsCount: 1,
 		Date:     msg.Date,
 		Message:  cloneMessage(msg),
+	}
+}
+
+func messageWidgetDataEvent(msg domain.Message) domain.UpdateEvent {
+	if msg.ID == 0 {
+		return domain.UpdateEvent{}
+	}
+	return domain.UpdateEvent{
+		UserID:   msg.OwnerUserID,
+		Type:     domain.UpdateEventMessageWidgetData,
+		Pts:      msg.Pts,
+		PtsCount: 1,
+		Date:     msg.Date,
+		Message:  cloneMessage(msg),
+		Peer:     msg.Peer,
 	}
 }
 

@@ -14,13 +14,30 @@ import (
 )
 
 type stubTranscriptions struct {
-	res     domain.TranscriptionResult
-	err     error
-	calls   int
-	peer    domain.Peer
-	msgID   int
-	docID   int64
-	handler func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string)
+	res         domain.TranscriptionResult
+	err         error
+	calls       int
+	peer        domain.Peer
+	msgID       int
+	docID       int64
+	handler     func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string)
+	fileHandler func(ctx context.Context, userID int64, transcriptionID int64, text string)
+}
+
+func (s *stubTranscriptions) TranscribeFile(
+	_ context.Context,
+	_ int64,
+	document domain.Document,
+) (domain.TranscriptionResult, error) {
+	s.calls++
+	s.docID = document.ID
+	return s.res, s.err
+}
+
+func (s *stubTranscriptions) SetFileCompletionHandler(
+	handler func(ctx context.Context, userID int64, transcriptionID int64, text string),
+) {
+	s.fileHandler = handler
 }
 
 func (s *stubTranscriptions) Transcribe(
@@ -154,5 +171,44 @@ func TestTranscribeAudioFailsWithoutService(t *testing.T) {
 	tgErr := transcriptionErrType(t, err)
 	if tgErr.Message != "TRANSCRIPTION_FAILED" {
 		t.Fatalf("err = %+v, want TRANSCRIPTION_FAILED", tgErr)
+	}
+}
+
+// The file size gate uses the summed stored part size: 500 parts of 64 KiB is
+// 32 MiB and must be rejected before any document is materialised or job starts.
+func TestTranscribeAudioFileRejectsOversizedUpload(t *testing.T) {
+	files := &fakeFiles{docs: map[int64]domain.Document{}, photos: map[int64]domain.Photo{}}
+	stub := &stubTranscriptions{}
+	r := New(Config{}, Deps{Files: files, Transcriptions: stub}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 42)
+
+	_, err := r.onMessagesTranscribeAudioFile(ctx, &tg.MessagesTranscribeAudioFileRequest{
+		File: &tg.InputFile{ID: 1, Parts: 500, Name: "a.ogg"},
+	})
+	if !tgerr.Is(err, "TRANSCRIPTION_FAILED") {
+		t.Fatalf("oversized transcribeAudioFile err = %v, want TRANSCRIPTION_FAILED", err)
+	}
+	if files.createUploadCalls != 0 {
+		t.Fatal("document materialised before the size gate")
+	}
+	if stub.calls != 0 {
+		t.Fatal("ASR job started for an oversized upload")
+	}
+}
+
+// A small upload passes the gate, materialises the document and starts the job.
+func TestTranscribeAudioFileSmallUploadStartsJob(t *testing.T) {
+	files := &fakeFiles{docs: map[int64]domain.Document{}, photos: map[int64]domain.Photo{}}
+	stub := &stubTranscriptions{}
+	r := New(Config{}, Deps{Files: files, Transcriptions: stub}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 42)
+
+	if _, err := r.onMessagesTranscribeAudioFile(ctx, &tg.MessagesTranscribeAudioFileRequest{
+		File: &tg.InputFile{ID: 1, Parts: 1, Name: "a.ogg"},
+	}); err != nil {
+		t.Fatalf("small transcribeAudioFile err = %v, want nil", err)
+	}
+	if files.createUploadCalls != 1 || stub.calls != 1 {
+		t.Fatalf("materialise/job calls = %d/%d, want 1/1", files.createUploadCalls, stub.calls)
 	}
 }

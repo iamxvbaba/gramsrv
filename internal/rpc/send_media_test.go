@@ -651,6 +651,12 @@ func (f *fakeFiles) CreateDocumentFromUpload(_ context.Context, _ domain.Uploade
 	f.lastDocumentSpec = spec
 	return domain.Document{ID: 888, AccessHash: 8, DCID: 2, MimeType: spec.MimeType, Attributes: spec.Attributes}, nil
 }
+func (f *fakeFiles) UploadedFileSize(_ context.Context, file domain.UploadedFileRef) (int64, error) {
+	if file.Parts <= 0 {
+		return 0, nil
+	}
+	return int64(file.Parts) * (64 << 10), nil
+}
 func (f *fakeFiles) CreateDocumentFromBytes(_ context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error) {
 	f.lastDocumentSpec = spec
 	doc := domain.Document{
