@@ -287,16 +287,15 @@ func (r *Router) onMessagesEditMessageWidgetData(ctx context.Context, req *tg.Me
 		return nil, messageIDInvalidErr()
 	}
 	// The store generated a message_widget_data event (not edit_message): return
-	// the schema-native updateMessageWidgetData to the caller. updateMessageWidgetData
-	// is dropped by td for profiles 225-232, so carry an empty updateDeleteMessages
-	// filler with the same pts to keep old clients' watermark contiguous.
+	// the schema-native, pts-bearing updateMessageWidgetData to the caller. td
+	// drops it for profiles 225-232; those sessions see the pts gap and recover
+	// through getDifference, whose state covers the pts. No filler update is sent.
 	update := tgOtherUpdateFromEvent(self.Event)
 	if update == nil {
 		return nil, messageIDInvalidErr()
 	}
-	updates := appendAuxPtsBookkeeping([]tg.UpdateClass{update}, self.Event)
 	return &tg.Updates{
-		Updates: updates,
+		Updates: []tg.UpdateClass{update},
 		Users:   r.usersForMessageUpdate(ctx, userID, self.Message),
 		Chats:   r.chatsForMessageUpdate(ctx, userID, self.Message),
 		Date:    self.Event.Date,

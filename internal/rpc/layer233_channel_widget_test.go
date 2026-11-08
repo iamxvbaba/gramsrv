@@ -39,25 +39,15 @@ func TestLayer233EditMessageWidgetDataChannelPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("editMessageWidgetData(channel): %v", err)
 	}
+	// The patch carries only the pts-bearing updateMessageWidgetData: no empty
+	// delete or other filler update is added for the profiles td drops it on.
 	container, ok := updates.(*tg.Updates)
-	if !ok || len(container.Updates) != 2 {
-		t.Fatalf("channel patch updates = %#v, want the widget update plus a pts filler", updates)
+	if !ok || len(container.Updates) != 1 {
+		t.Fatalf("channel patch updates = %#v, want only the widget update", updates)
 	}
-	var update *tg.UpdateMessageWidgetData
-	filler := false
-	for _, u := range container.Updates {
-		switch typed := u.(type) {
-		case *tg.UpdateMessageWidgetData:
-			update = typed
-		case *tg.UpdateDeleteChannelMessages:
-			filler = true
-		}
-	}
-	if update == nil {
-		t.Fatalf("channel patch update missing *tg.UpdateMessageWidgetData in %#v", container.Updates)
-	}
-	if !filler {
-		t.Fatalf("channel patch missing the empty-channel-delete pts filler in %#v", container.Updates)
+	update, ok := container.Updates[0].(*tg.UpdateMessageWidgetData)
+	if !ok {
+		t.Fatalf("channel patch update = %T, want *tg.UpdateMessageWidgetData", container.Updates[0])
 	}
 	peerChannel, ok := update.Peer.(*tg.PeerChannel)
 	if !ok || peerChannel.ChannelID != channel.ID {

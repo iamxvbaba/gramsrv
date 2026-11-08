@@ -5,9 +5,9 @@ what the server does and the deliberate limits.
 
 ## Media
 
-- `inputMediaWidget` becomes `messageMediaWidget`. The markup is stored once (as
-  `Payload`; the shared definition keeps the `HTML`), together with the box size
-  and `allow_queries` flag.
+- `inputMediaWidget` becomes `messageMediaWidget`. The markup is stored as
+  `Payload` (on the message media and, for a shared widget, in its `bot_widgets`
+  definition), together with the box size and `allow_queries` flag.
 - Widget media may only be authored by **bots**: a non-bot sender is rejected
   with `MEDIA_INVALID`, so a client-rendered widget can never become a query
   target.
@@ -38,7 +38,10 @@ what the server does and the deliberate limits.
   JSONB is rewritten (body/entities/edit_date untouched, the message is not marked
   edited), a compact pts-bearing `updateMessageWidgetData` is recorded/dispatched
   (account pts for private, channel pts + a `channel_widget_data` durable event
-  for channels), and unchanged data returns `WIDGET_DATA_NOT_MODIFIED`. A clear
+  for channels), and unchanged data returns `WIDGET_DATA_NOT_MODIFIED`. No
+  filler update rides along: td drops `updateMessageWidgetData` for profiles
+  225-232, and those sessions see the pts gap and recover it through
+  `updates.getDifference` (`updates.getChannelDifference` for channels). A clear
   (`public_data=""`) is pushed with the `public_data` flag set, so live clients
   learn about it without polling. Only the
   **bot that sent the message** (or its via bot) may patch: a recipient, channel

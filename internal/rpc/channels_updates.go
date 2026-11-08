@@ -337,14 +337,6 @@ func (r *Router) channelEditMessageUpdatesWithPeerCacheAndUsernames(ctx context.
 		if update := tgChannelUpdate(viewerUserID, res.Event); update != nil {
 			updates = append(updates, update)
 		}
-		if res.Event.Type == domain.ChannelUpdateWidgetData {
-			// updateMessageWidgetData is dropped by td for profiles 225-232, so
-			// keep the channel pts contiguous with an empty delete filler.
-			updates = append(updates, &tg.UpdateDeleteChannelMessages{
-				ChannelID: res.Channel.ID, Messages: []int{},
-				Pts: res.Event.Pts, PtsCount: res.Event.PtsCount,
-			})
-		}
 		collectChannelUpdatePeerRefs(res.Event, res.Channel.ID, userIDs, channelIDs)
 		collectChannelMessagePeerRefs(res.Message, res.Channel.ID, userIDs, channelIDs)
 	}

@@ -34,13 +34,13 @@ func RandomWidgetID() int64 {
 }
 
 // MessageWidget is the persisted snapshot of a bot web widget attached to a
-// message (TL messageMediaWidget). Width/Height/HTML/Payload describe the
+// message (TL messageMediaWidget). Width/Height/Payload describe the
 // rendered widget; PublicData/ChatData are the mutable data payloads edited via
 // messages.editMessageWidgetData / messages.editWidgetData. Payload is opaque
 // client data (base64 through the message media JSONB column).
 type MessageWidget struct {
 	// WidgetID references a shared widget definition (bot_widgets). Zero for a
-	// one-off inline widget that only carries HTML/Payload on the message.
+	// one-off inline widget that only carries Payload on the message.
 	WidgetID int64 `json:"widget_id,omitempty"`
 	// OwnerBotID is the bot that owns the shared definition (bot_widgets.bot_user_id).
 	// It is carried on the media so the row can be created in the committed send

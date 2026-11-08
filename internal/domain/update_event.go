@@ -136,7 +136,6 @@ func (e UpdateEvent) LacksWirePts() bool {
 	switch e.Type {
 	case UpdateEventMessagePoll,
 		UpdateEventDraftMessage,
-		UpdateEventMessageWidgetData,
 		UpdateEventChannelState,
 		UpdateEventContactsReset,
 		UpdateEventDialogPinned,
