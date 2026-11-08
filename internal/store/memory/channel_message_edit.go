@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -57,6 +58,49 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 			PtsCount:     1,
 			Date:         msg.Date,
 			Message:      cloneChannelMessage(msg),
+			SenderUserID: req.UserID,
+		}
+		s.appendChannelEventLocked(event)
+		return domain.EditChannelMessageResult{
+			Channel:    channel,
+			Message:    cloneChannelMessage(msg),
+			Event:      cloneChannelEvent(event),
+			Recipients: s.activeMemberIDsLocked(req.ChannelID, 0, 0),
+		}, nil
+	}
+	// WidgetData: in-place patch of a channel widget's public/chat data. Only the
+	// bot that sent the message (or the via bot) may rewrite it; body/entities/
+	// edit_date are untouched and the event is channel_widget_data.
+	if req.WidgetData != nil {
+		viaBotEditRequested := req.ViaBotEditBotID != 0
+		viaBotEdit := viaBotEditRequested && msg.ViaBotID == req.ViaBotEditBotID
+		if viaBotEditRequested && !viaBotEdit {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+		}
+		if msg.SenderUserID != req.UserID && !viaBotEdit {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
+		}
+		patchMedia := cloneRequestedPeerMedia(msg.Media)
+		if !domain.ApplyWidgetDataPatch(patchMedia, req.WidgetData) {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+		}
+		pts := s.nextChannelPtsLocked(req.ChannelID)
+		msg.Media = patchMedia
+		msg.Pts = pts
+		s.messages[req.ChannelID][idx] = msg
+		channel.Pts = pts
+		s.channels[req.ChannelID] = channel
+		eventDate := int(time.Now().Unix())
+		event := domain.ChannelUpdateEvent{
+			ChannelID: req.ChannelID,
+			Type:      domain.ChannelUpdateWidgetData,
+			Pts:       pts,
+			PtsCount:  1,
+			Date:      eventDate,
+			Message: domain.ChannelMessage{
+				ChannelID: req.ChannelID, ID: req.ID, Pts: pts, Date: eventDate,
+				SenderUserID: req.UserID, Media: patchMedia,
+			},
 			SenderUserID: req.UserID,
 		}
 		s.appendChannelEventLocked(event)

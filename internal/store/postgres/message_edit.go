@@ -83,11 +83,17 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	}
 	authorEdit := target.Outgoing && target.MessageSenderID == req.OwnerUserID && target.FromUserID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
-	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
+	if req.WidgetData != nil {
+		// A widget data patch is only ever the bot that sent the message (or the
+		// via bot); an ordinary recipient/admin must not rewrite a bot's widget.
+		if !authorEdit && !viaBotEdit {
+			return res, domain.ErrMessageAuthorRequired
+		}
+	} else if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
+	if req.Media == nil && req.WidgetData == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
@@ -179,6 +185,82 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return res, fmt.Errorf("commit web page resolve tx: %w", err)
+		}
+		committed = true
+		return res, nil
+	}
+	if req.WidgetData != nil {
+		// In-place widget data patch: only the media jsonb is rewritten
+		// (body/entities/edit_date untouched, so the message is not marked
+		// edited); per box it reserves account pts + appends a
+		// message_widget_data event + dispatches.
+		targetMedia, err := decodeMessageMedia(target.MediaJson)
+		if err != nil {
+			return res, fmt.Errorf("decode target media for widget data: %w", err)
+		}
+		if !domain.ApplyWidgetDataPatch(targetMedia, req.WidgetData) {
+			return res, domain.ErrMessageNotModified
+		}
+		mediaJSON, err := encodeMessageMedia(targetMedia)
+		if err != nil {
+			return res, fmt.Errorf("encode widget data media: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE private_messages SET media = $3
+WHERE sender_user_id = $1 AND id = $2`, messageSenderID, target.PrivateMessageID, mediaJSON); err != nil {
+			return res, fmt.Errorf("update private message widget data: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE message_boxes SET media = $3
+WHERE message_sender_id = $1 AND private_message_id = $2`, messageSenderID, target.PrivateMessageID, mediaJSON); err != nil {
+			return res, fmt.Errorf("update message box widget data: %w", err)
+		}
+		res.Edited = make([]domain.EditedMessageForUser, 0, len(boxes))
+		for _, box := range boxes {
+			pts, err := s.reservePts(ctx, tx, box.OwnerUserID)
+			if err != nil {
+				return res, fmt.Errorf("allocate widget data pts: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `
+UPDATE message_boxes SET pts = $3
+WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts)); err != nil {
+				return res, fmt.Errorf("bump message box pts for widget data: %w", err)
+			}
+			msg, err := messageFromVisibleBoxRow(box)
+			if err != nil {
+				return res, err
+			}
+			msg.Media = targetMedia
+			msg.Pts = pts
+			eventDate := req.EditDate
+			if eventDate == 0 {
+				eventDate = nowUnix()
+			}
+			event := domain.UpdateEvent{
+				UserID:   msg.OwnerUserID,
+				Type:     domain.UpdateEventMessageWidgetData,
+				Pts:      pts,
+				PtsCount: 1,
+				Date:     eventDate,
+				Message:  msg,
+				Peer:     msg.Peer,
+			}
+			if err := appendUserUpdateEvent(ctx, tx, qtx, msg.OwnerUserID, event); err != nil {
+				return res, fmt.Errorf("append widget data event: %w", err)
+			}
+			if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
+				TargetUserID:     msg.OwnerUserID,
+				Pts:              int32(pts),
+				EventType:        string(domain.UpdateEventMessageWidgetData),
+				ExcludeAuthKeyID: authKeyIDToInt64(req.OriginAuthKeyID),
+				ExcludeSessionID: req.OriginSessionID,
+			}); err != nil {
+				return res, fmt.Errorf("enqueue widget data dispatch: %w", err)
+			}
+			res.Edited = append(res.Edited, domain.EditedMessageForUser{UserID: msg.OwnerUserID, Message: msg, Event: event})
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return res, fmt.Errorf("commit widget data tx: %w", err)
 		}
 		committed = true
 		return res, nil

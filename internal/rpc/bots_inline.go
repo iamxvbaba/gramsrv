@@ -517,6 +517,66 @@ func (r *Router) domainInlineResultFromTG(ctx context.Context, botID int64, raw 
 				ReplyMarkup: markup,
 				Media:       media,
 			}, nil
+		case *tg.InputBotInlineMessageWidget:
+			if err := validateInlineWidgetText(msg.Message, msg.Entities); err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			mediaInput := &tg.InputMediaWidget{
+				AllowQueries: msg.AllowQueries, SharedWidget: msg.SharedWidget,
+				Width: msg.Width, Height: msg.Height, HTML: msg.HTML,
+			}
+			if publicData, ok := msg.GetPublicData(); ok {
+				mediaInput.SetPublicData(publicData)
+			}
+			if chatData, ok := msg.GetChatData(); ok {
+				mediaInput.SetChatData(chatData)
+			}
+			media, err := r.domainWidgetFromInline(ctx, botID, mediaInput)
+			if err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			media.InvertMedia = msg.InvertMedia
+			markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
+			if err != nil {
+				return domain.BotInlineResult{}, replyMarkupErr(err)
+			}
+			return domain.BotInlineResult{
+				ID:          result.ID,
+				Type:        result.Type,
+				Title:       result.Title,
+				Description: result.Description,
+				Message:     msg.Message,
+				Entities:    domainMessageEntitiesForViewer(botID, msg.Entities),
+				ReplyMarkup: markup,
+				Media:       media,
+			}, nil
+		case *tg.InputBotInlineMessageWidgetID:
+			if err := validateInlineWidgetText(msg.Message, msg.Entities); err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			mediaInput := &tg.InputMediaWidgetID{WidgetID: msg.WidgetID}
+			if chatData, ok := msg.GetChatData(); ok {
+				mediaInput.SetChatData(chatData)
+			}
+			media, err := r.domainWidgetFromID(ctx, botID, mediaInput)
+			if err != nil {
+				return domain.BotInlineResult{}, err
+			}
+			media.InvertMedia = msg.InvertMedia
+			markup, err := domainReplyMarkupForSender(msg.ReplyMarkup, true)
+			if err != nil {
+				return domain.BotInlineResult{}, replyMarkupErr(err)
+			}
+			return domain.BotInlineResult{
+				ID:          result.ID,
+				Type:        result.Type,
+				Title:       result.Title,
+				Description: result.Description,
+				Message:     msg.Message,
+				Entities:    domainMessageEntitiesForViewer(botID, msg.Entities),
+				ReplyMarkup: markup,
+				Media:       media,
+			}, nil
 		default:
 			return domain.BotInlineResult{}, sendMessageTypeInvalidErr()
 		}
@@ -695,6 +755,18 @@ func domainInlineTextMessage(botID int64, msg *tg.InputBotInlineMessageText) (st
 		return "", nil, nil, false, replyMarkupErr(err)
 	}
 	return msg.Message, domainMessageEntitiesForViewer(botID, msg.Entities), markup, msg.NoWebpage, nil
+}
+
+// validateInlineWidgetText bounds the optional caption carried alongside an
+// inline widget message.
+func validateInlineWidgetText(message string, entities []tg.MessageEntityClass) error {
+	if utf8.RuneCountInString(message) > maxSendMessageTextLength {
+		return messageTooLongErr()
+	}
+	if len(entities) > maxMessageEntityCount {
+		return entitiesTooLongErr()
+	}
+	return nil
 }
 
 func domainInlineMediaAutoMessage(botID int64, raw tg.InputBotInlineMessageClass) (string, []domain.MessageEntity, *domain.MessageReplyMarkup, error) {
@@ -1071,7 +1143,8 @@ func tgBotInlineResult(in domain.BotInlineResult) tg.BotInlineResultClass {
 		}
 		if in.Media.Kind == domain.MessageMediaKindGeo ||
 			in.Media.Kind == domain.MessageMediaKindVenue ||
-			in.Media.Kind == domain.MessageMediaKindContact {
+			in.Media.Kind == domain.MessageMediaKindContact ||
+			in.Media.Kind == domain.MessageMediaKindWidget {
 			return out
 		}
 		mediaMsg := &tg.BotInlineMessageMediaAuto{
@@ -1186,6 +1259,32 @@ func tgBotInlineMediaMessage(in domain.BotInlineResult) tg.BotInlineMessageClass
 			FirstName:   in.Media.Contact.FirstName,
 			LastName:    in.Media.Contact.LastName,
 			Vcard:       in.Media.Contact.Vcard,
+		}
+		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
+			msg.SetReplyMarkup(markup)
+		}
+		return msg
+	case in.Media.Kind == domain.MessageMediaKindWidget && in.Media.Widget != nil:
+		widget := in.Media.Widget
+		msg := &tg.BotInlineMessageWidget{
+			Width:    widget.Width,
+			Height:   widget.Height,
+			Payload:  append([]byte(nil), widget.Payload...),
+			Message:  in.Message,
+			Entities: tgMessageEntities(in.Entities),
+		}
+		if widget.PublicData != "" {
+			msg.SetPublicData(widget.PublicData)
+			msg.SetPublicDataHash(widget.PublicDataHash)
+		}
+		if widget.ChatData != "" {
+			msg.SetChatData(widget.ChatData)
+		}
+		if widget.WidgetID != 0 {
+			msg.SetWidgetID(widget.WidgetID)
+		}
+		if in.Media.InvertMedia {
+			msg.SetInvertMedia(true)
 		}
 		if markup := tgReplyMarkup(in.ReplyMarkup); markup != nil {
 			msg.SetReplyMarkup(markup)

@@ -1017,6 +1017,10 @@ type FilesService interface {
 	CreateAvatarVideoMarkupFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, markup domain.PhotoSize) (domain.Photo, error)
 	CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize) (domain.Photo, error)
 	CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error)
+	// UploadedFileSize returns the summed size of an uploaded file's stored
+	// parts without assembling them, so callers can bound work (e.g.
+	// transcription) before materializing a document.
+	UploadedFileSize(ctx context.Context, file domain.UploadedFileRef) (int64, error)
 	CreateDocumentFromBytes(ctx context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error)
 	GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, error)
 	EnsureAvatarPhoto(ctx context.Context, photo domain.Photo) (domain.Photo, error)
@@ -1078,7 +1082,11 @@ type EphemeralService interface {
 // configured, the caller returns TRANSCRIPTION_FAILED.
 type TranscriptionService interface {
 	Transcribe(ctx context.Context, userID int64, peer domain.Peer, msgID int, document domain.Document) (domain.TranscriptionResult, error)
+	// TranscribeFile transcribes an uploaded file; a previously failed file job
+	// is terminal and the caller maps it to TRANSCRIPTION_FAILED.
+	TranscribeFile(ctx context.Context, userID int64, document domain.Document) (domain.TranscriptionResult, error)
 	SetCompletionHandler(handler func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string))
+	SetFileCompletionHandler(handler func(ctx context.Context, userID int64, transcriptionID int64, text string))
 }
 
 // WelcomeMessageService owns the independent durable Layer 229 peer templates.
@@ -1245,11 +1253,18 @@ type Deps struct {
 	LangPack                     LangPackService
 	Sessions                     SessionBinder
 	Inline                       store.InlineRegistryStore
-	Limiter                      RateLimiter
-	Metrics                      Metrics
-	SecretChats                  SecretChatService
-	Stars                        StarsService
-	Gifts                        GiftsService
+	// Widgets persists shared bot web-widget definitions (Layer 233). When nil,
+	// widget authoring and editWidgetData return NOT_IMPLEMENTED, while
+	// getWidgetPublicData and query routing fall back to per-message data.
+	Widgets store.WidgetStore
+	// WidgetQueries coordinates bot widget queries across nodes; when nil the
+	// pending registry stays process-local.
+	WidgetQueries store.WidgetQueryStore
+	Limiter       RateLimiter
+	Metrics       Metrics
+	SecretChats   SecretChatService
+	Stars         StarsService
+	Gifts         GiftsService
 	// Wallet is the Layer 230 in-app TON wallet; when nil, wallet.* returns WALLET_UNAVAILABLE.
 	Wallet WalletService
 	// MainTabs stores account/channel setMainProfileTab; nil keeps the default tab.
