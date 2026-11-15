@@ -1930,3 +1930,23 @@ func disableDefaultConfigFile(t *testing.T) {
 	t.Helper()
 	t.Setenv("TELESRV_CONFIG", "")
 }
+
+func TestWebhookPrivateNetworksRequireExplicitOptIn(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_BOT_API_WEBHOOK_ALLOW_PRIVATE_NETWORKS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BotAPIWebhookAllowPrivateNetworks {
+		t.Fatal("private webhook networks enabled by default")
+	}
+	t.Setenv("TELESRV_BOT_API_WEBHOOK_ALLOW_PRIVATE_NETWORKS", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.BotAPIWebhookAllowPrivateNetworks {
+		t.Fatal("explicit private webhook opt-in ignored")
+	}
+}

@@ -477,7 +477,13 @@ Streams the file, chunk by chunk, with the stored MIME type and
 `certificate` (and any uploaded certificate part) is rejected with
 `CERTIFICATE_PINNING_UNSUPPORTED`; use a publicly trusted certificate.
 `ip_address` is rejected with `IP_ADDRESS_UNSUPPORTED` — the gateway uses the
-configured address list.
+DNS address list. Before each connection, every resolved IP must be public;
+loopback, private, link-local and reserved addresses are blocked. Connections
+use the validated numeric IP, and HTTP proxy environment variables are ignored.
+For trusted self-hosted bots that need internal destinations, explicitly set
+`TELESRV_BOT_API_WEBHOOK_ALLOW_PRIVATE_NETWORKS=true`. This grants **every bot**
+access to the server's internal network; leave it disabled on multi-user servers.
+Blocked delivery is reported through `getWebhookInfo` and retried normally.
 
 Setting a webhook while `getUpdates` is long-polling returns `409 CONFLICT`.
 While a delivery is in flight, `setWebhook` waits up to 20 seconds for it to

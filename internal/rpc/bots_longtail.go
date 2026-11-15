@@ -16,6 +16,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/safehttp"
 )
 
 func (r *Router) resolveBotUserForViewer(ctx context.Context, viewerID int64, bot tg.InputUserClass) (domain.User, error) {
@@ -842,7 +843,8 @@ func checkBotDownloadFileParams(ctx context.Context, fileName, rawURL string) bo
 		return false
 	}
 	client := &http.Client{
-		Timeout: 3 * time.Second,
+		Timeout:   3 * time.Second,
+		Transport: &http.Transport{Proxy: nil, DialContext: safehttp.DialContext, DisableKeepAlives: true},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 || req.URL == nil || req.URL.Scheme != "https" || !downloadURLHostAllowed(req.Context(), req.URL) {
 				return http.ErrUseLastResponse
@@ -890,10 +892,7 @@ func downloadURLHostAllowed(ctx context.Context, u *url.URL) bool {
 }
 
 func publicDownloadIP(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast())
+	return safehttp.PublicIP(ip)
 }
 
 func downloadExtensionAllowed(fileName, urlPath string) bool {

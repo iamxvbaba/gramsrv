@@ -135,7 +135,16 @@ type GatewayWebhookControl interface {
 	ConfirmBotAPIWebhookDelivery(ctx context.Context, botID, updateID int64) error
 }
 
-func Start(ctx context.Context, addr string, bots BotsService, users UsersService, webapps WebAppService, invoices InvoiceService, gateway GatewayService, logger *zap.Logger) (*http.Server, error) {
+// Option configures the Bot API gateway.
+type Option func(*handler)
+
+// WithPrivateWebhookNetworks permits internal webhook destinations for trusted
+// self-hosted bots. It grants every bot access to the server's network.
+func WithPrivateWebhookNetworks(allow bool) Option {
+	return func(h *handler) { h.webhookClient = webhookHTTPClient(allow) }
+}
+
+func Start(ctx context.Context, addr string, bots BotsService, users UsersService, webapps WebAppService, invoices InvoiceService, gateway GatewayService, logger *zap.Logger, options ...Option) (*http.Server, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, nil
 	}
@@ -143,6 +152,9 @@ func Start(ctx context.Context, addr string, bots BotsService, users UsersServic
 		logger = zap.NewNop()
 	}
 	handler := &handler{bots: bots, users: users, webapps: webapps, invoices: invoices, gateway: gateway, logger: logger, webhookClient: newWebhookHTTPClient()}
+	for _, option := range options {
+		option(handler)
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler.routes(),

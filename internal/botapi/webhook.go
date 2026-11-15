@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/safehttp"
 )
 
 const (
@@ -35,9 +36,17 @@ type webhookDispatcher struct {
 }
 
 func newWebhookHTTPClient() *http.Client {
+	return webhookHTTPClient(false)
+}
+
+func webhookHTTPClient(allowPrivateNetworks bool) *http.Client {
+	dial := safehttp.DialContext
+	if allowPrivateNetworks {
+		dial = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		Proxy:                 nil,
+		DialContext:           dial,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          256,
 		MaxIdleConnsPerHost:   100,

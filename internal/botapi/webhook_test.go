@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,5 +140,38 @@ func TestWebhookDispatcherOnlyConfirmsSuccessfulPrefixAndSchedulesRetry(t *testi
 	}
 	if _, ok := fields["secret_token"]; ok {
 		t.Fatalf("delivery failure warning must not include webhook secret: %#v", fields)
+	}
+}
+
+func TestWebhookNetworkBoundaryAndPrivateOptIn(t *testing.T) {
+	var received atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	// A proxy must never turn a checked dial into an unchecked destination.
+	t.Setenv("HTTP_PROXY", server.URL)
+	t.Setenv("HTTPS_PROXY", server.URL)
+	h := &handler{webhookClient: newWebhookHTTPClient()}
+	config := domain.BotAPIWebhook{URL: server.URL}
+	dispatcher := &webhookDispatcher{client: h.webhookClient}
+	if err := dispatcher.post(context.Background(), config, []byte(`{}`)); err == nil {
+		t.Fatal("default webhook client reached loopback")
+	}
+	if received.Load() != 0 {
+		t.Fatal("blocked request reached server")
+	}
+	transport := h.webhookClient.Transport.(*http.Transport)
+	if transport.Proxy != nil {
+		t.Fatal("webhook client permits a proxy bypass")
+	}
+	WithPrivateWebhookNetworks(true)(h)
+	dispatcher.client = h.webhookClient
+	if err := dispatcher.post(context.Background(), config, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if received.Load() != 1 {
+		t.Fatalf("private opt-in delivered %d requests", received.Load())
 	}
 }
