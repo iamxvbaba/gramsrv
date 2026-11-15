@@ -2279,7 +2279,7 @@ func run(logger *zap.Logger) error {
 			}(chain.Key, chainLog)
 		}
 	}
-	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, router, logger.Named("botapi")); err != nil {
+	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, router, logger.Named("botapi"), botapi.WithPrivateWebhookNetworks(cfg.BotAPIWebhookAllowPrivateNetworks)); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}
 	// Scoped tokens carry a bounded permission set; the master token stays

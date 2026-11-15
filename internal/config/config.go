@@ -96,6 +96,9 @@ type Config struct {
 	// BotAPIAddr is the listen address of the minimal HTTP Bot API gateway; empty disables it. The gateway reuses
 	// the MTProto app/store source of truth and keeps no separate bot state.
 	BotAPIAddr string
+	// BotAPIWebhookAllowPrivateNetworks permits webhooks to access internal services.
+	// Enable only when all bots are trusted. Proxies remain disabled.
+	BotAPIWebhookAllowPrivateNetworks bool
 	// BotAPIPublicURL is the client-reachable Bot API base URL that BotFather
 	// shows next to a token; empty shows none.
 	BotAPIPublicURL string
@@ -1023,6 +1026,7 @@ func Load() (Config, error) {
 		MTProtoOutboundWriteGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
 		DebugAddr:                             envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
 		BotAPIAddr:                            envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		BotAPIWebhookAllowPrivateNetworks:     envBoolOr("TELESRV_BOT_API_WEBHOOK_ALLOW_PRIVATE_NETWORKS", false),
 		BotAPIPublicURL:                       strings.TrimSpace(envOr("TELESRV_BOT_API_PUBLIC_URL", "")),
 		GramsrvBotChatIDs:                     gramsrvBotChatIDs,
 		StarGiftCrossCraftUserIDs:             crossCraftUserIDs,

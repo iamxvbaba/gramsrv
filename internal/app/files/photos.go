@@ -144,11 +144,7 @@ func (s *Service) GetDocument(ctx context.Context, id int64) (domain.Document, b
 // admin dry-runs. Full decoding and rendition validation still happens in
 // CreateAvatarFromBytes before anything is exposed as a current avatar.
 func (s *Service) ValidateAvatarUpload(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	return err == nil && cfg.Width > 0 && cfg.Height > 0
+	return avatarSourceDecodable(data)
 }
 
 // CreateAvatarFromBytes stores browser-uploaded image bytes through the same
@@ -857,6 +853,9 @@ func (s *Service) avatarSourceBytes(ctx context.Context, photo domain.Photo) ([]
 }
 
 func avatarSourceDecodable(data []byte) bool {
+	if len(data) == 0 || int64(len(data)) > avatarSourceMaxBytes {
+		return false
+	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	return err == nil && cfg.Width > 0 && cfg.Height > 0 &&
 		int64(cfg.Width)*int64(cfg.Height) <= avatarSourceMaxPixels
@@ -893,6 +892,9 @@ func (s *Service) putPhotoStaticSizes(ctx context.Context, photoID int64, data [
 // Keeping a real 's' rendition therefore gives those two states distinct keys and,
 // more importantly, keeps every advertised size backed by matching image bytes.
 func (s *Service) putAvatarStaticSizes(ctx context.Context, photoID int64, data []byte, specs []photoSizeSpec) ([]domain.PhotoSize, error) {
+	if !avatarSourceDecodable(data) {
+		return nil, domain.ErrPhotoInvalid
+	}
 	src, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil || src.Bounds().Dx() <= 0 || src.Bounds().Dy() <= 0 {
 		return nil, domain.ErrPhotoInvalid
@@ -1220,7 +1222,7 @@ func (s *Service) avatarMarkupOverlay(ctx context.Context, markup domain.PhotoSi
 		return nil, false, false
 	}
 	data, ok := s.avatarMarkupBytes(ctx, doc)
-	if !ok {
+	if !ok || !avatarSourceDecodable(data) {
 		return nil, false, false
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))

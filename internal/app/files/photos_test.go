@@ -1052,3 +1052,36 @@ func testPNGHeader(t *testing.T, w, h int) []byte {
 	_ = binary.Write(&out, binary.BigEndian, crc32.ChecksumIEEE(ihdr.Bytes()))
 	return out.Bytes()
 }
+
+func TestAvatarUploadRejectsOversizedImagesBeforeDecode(t *testing.T) {
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(media, blobs, 2)
+	for _, data := range [][]byte{testPNGHeader(t, 6000, 5000), make([]byte, avatarSourceMaxBytes+1)} {
+		if svc.ValidateAvatarUpload(data) {
+			t.Fatal("oversized avatar passed validation")
+		}
+		if _, err := svc.CreateAvatarFromBytes(context.Background(), data); !errors.Is(err, domain.ErrPhotoInvalid) {
+			t.Fatalf("CreateAvatarFromBytes error = %v", err)
+		}
+		if int64(len(data)) > avatarSourceMaxBytes {
+			continue
+		}
+		if _, err := svc.SaveFilePart(context.Background(), 10, 9876, 0, data); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.CreateAvatarFromUpload(context.Background(), domain.UploadedFileRef{OwnerUserID: 10, FileID: 9876, Parts: 1}); !errors.Is(err, domain.ErrPhotoInvalid) {
+			t.Fatalf("CreateAvatarFromUpload error = %v", err)
+		}
+	}
+	valid := testJPEG(t, 16, 16)
+	if !svc.ValidateAvatarUpload(valid) {
+		t.Fatal("valid avatar rejected")
+	}
+	if _, err := svc.CreateAvatarFromBytes(context.Background(), valid); err != nil {
+		t.Fatal(err)
+	}
+}
