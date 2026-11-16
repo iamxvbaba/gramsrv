@@ -613,6 +613,7 @@ func (r *Router) applyBotCanEditToUser(ctx context.Context, currentUserID int64,
 	if err != nil {
 		return nil
 	}
+	user.Min = false
 	if owns {
 		user.SetBotCanEdit(true)
 	}

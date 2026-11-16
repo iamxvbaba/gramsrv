@@ -497,7 +497,12 @@ func (r *Router) dispatchGeneratedSafely(ctx context.Context, method string, req
 			err = internalErr()
 		}
 	}()
-	return r.dispatcher.Dispatch(ctx, request)
+	result, err = r.dispatcher.Dispatch(ctx, request)
+	if err == nil && result != nil {
+		viewer, _ := UserIDFrom(ctx)
+		r.finalizePeerResponse(ctx, viewer, result.CanonicalValue())
+	}
+	return result, err
 }
 
 func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64) ([8]byte, error) {

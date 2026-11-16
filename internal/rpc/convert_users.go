@@ -48,6 +48,8 @@ func tgUser(u domain.User) *tg.User {
 		return tgDeletedUser(u)
 	}
 	out := &tg.User{
+		// Ownership is unknown until the response is projected for its viewer.
+		Min:           u.Bot,
 		ID:            u.ID,
 		AccessHash:    u.AccessHash,
 		FirstName:     u.FirstName,

@@ -463,6 +463,8 @@ func tgChannelForbidden(ch domain.Channel) *tg.ChannelForbidden {
 
 func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember) *tg.Channel {
 	out := &tg.Channel{
+		// A row without viewer membership cannot replace cached permissions.
+		Min:               self == nil,
 		Creator:           ch.CreatorUserID == viewerUserID && viewerUserID != 0,
 		Verified:          ch.Verified,
 		Scam:              ch.Scam,

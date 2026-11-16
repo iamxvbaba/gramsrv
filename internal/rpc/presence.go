@@ -860,6 +860,7 @@ func (r *Router) tgUsers(users []domain.User) []tg.UserClass {
 // pollute the account cache).
 func (r *Router) tgUsersForViewer(viewerUserID int64, users []domain.User) []tg.UserClass {
 	out := tgUsersForViewer(viewerUserID, r.withUsersPresence(users))
+	r.applyBotOwnership(context.Background(), viewerUserID, out)
 	r.withBotProfileFlagsForUsers(context.Background(), out)
 	r.applyPeerIdentitiesToPeerObjects(context.Background(), out, nil)
 	return out
