@@ -168,9 +168,9 @@ func appendChannelStateUpdates(dst *tg.Updates, extra *tg.Updates) {
 
 // channelStateUpdatesWithLinkedMonoforum builds one recipient's channel-state
 // update. Peer-wide overlays are passed in already resolved rather than read
-// here: this builder runs once per online recipient, so reads inside it would
-// turn one state change into one query per member.
-func (r *Router) channelStateUpdatesWithLinkedMonoforum(viewerUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool, botVerificationIcon int64, usernames map[domain.Peer][]domain.Username) *tg.Updates {
+// here. A linked parent needs viewer membership before it can safely be sent
+// as a full peer to clear a disabled DM link.
+func (r *Router) channelStateUpdatesWithLinkedMonoforum(ctx context.Context, viewerUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool, botVerificationIcon int64, usernames map[domain.Peer][]domain.Username) *tg.Updates {
 	updates := r.channelStateUpdates(viewerUserID, channel)
 	// When the parent broadcast channel has or had a linked monoforum, project it in
 	// full (non-min) form. When Direct Messages is disabled, linked_monoforum_id is
@@ -182,7 +182,13 @@ func (r *Router) channelStateUpdatesWithLinkedMonoforum(viewerUserID int64, chan
 	// linked id on disable). Normal channels (no linked monoforum) still use min and
 	// are unaffected.
 	if channel.LinkedMonoforumID != 0 {
-		updates.Chats = []tg.ChatClass{tgChannelChat(viewerUserID, channel, nil)}
+		// A full parent is needed to clear the DM link, but must include the
+		// recipient's membership so the same update cannot erase admin rights.
+		if r.deps.Channels != nil {
+			if view, err := r.deps.Channels.GetChannel(ctx, viewerUserID, channel.ID); err == nil {
+				updates.Chats = []tg.ChatClass{tgChannelChat(viewerUserID, channel, &view.Self)}
+			}
+		}
 	}
 	if includeMono {
 		updates.Chats = appendUniqueTGChats(updates.Chats, tgChannelChat(viewerUserID, mono, nil))

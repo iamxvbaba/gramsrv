@@ -452,7 +452,7 @@ func (r *Router) pushChannelStateToMembersWithLinkedMonoforum(ctx context.Contex
 		return
 	}
 	r.pushChannelUpdates(ctx, originUserID, channel.ID, []int64{originUserID}, func(viewerUserID int64) *tg.Updates {
-		return r.channelStateUpdatesWithLinkedMonoforum(viewerUserID, channel, mono, includeMono, botVerificationIcon, usernames)
+		return r.channelStateUpdatesWithLinkedMonoforum(ctx, viewerUserID, channel, mono, includeMono, botVerificationIcon, usernames)
 	})
 }
 
