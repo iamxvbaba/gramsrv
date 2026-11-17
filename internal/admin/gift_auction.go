@@ -132,7 +132,7 @@ func (s *Service) createStarGiftAuction(ctx context.Context, req CreateStarGiftA
 		collectible := domain.StarGiftCollectibleWrite{UpgradeStars: pool.UpgradeStars, SupplyTotal: req.AvailabilityTotal, SlugPrefix: req.AuctionSlug, Actor: req.Actor, CommandID: req.CommandID,
 			Models: append([]domain.StarGiftCollectibleAttribute(nil), pool.Models...), Patterns: append([]domain.StarGiftCollectibleAttribute(nil), pool.Patterns...), Backdrops: append([]domain.StarGiftCollectibleAttribute(nil), pool.Backdrops...)}
 		if req.UpgradeStars != nil {
-			if *req.UpgradeStars <= 0 {
+			if *req.UpgradeStars < 0 {
 				return CommandResult{}, domain.ErrStarGiftCollectibleInvalid
 			}
 			collectible.UpgradeStars = *req.UpgradeStars

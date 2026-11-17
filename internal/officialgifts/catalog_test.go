@@ -227,16 +227,21 @@ func TestGiftSummaryCapabilitiesRequireCompleteOfficialFacts(t *testing.T) {
 	if !complete.CanUpgrade() || complete.CanCraft() {
 		t.Fatalf("complete regular pool capabilities = upgrade:%v craft:%v", complete.CanUpgrade(), complete.CanCraft())
 	}
+	free := complete
+	free.UpgradeStars = 0
+	if !free.CanUpgrade() {
+		t.Fatal("complete free pool must be upgradeable")
+	}
 	craftable := complete
 	craftable.CraftedModelCount = 1
 	if !craftable.CanUpgrade() || !craftable.CanCraft() {
 		t.Fatalf("crafted pool capabilities = upgrade:%v craft:%v", craftable.CanUpgrade(), craftable.CanCraft())
 	}
 	for name, invalid := range map[string]GiftSummary{
-		"zero upgrade price": {ModelCount: 1, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1},
-		"missing model":      {UpgradeStars: 25, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1},
-		"missing pattern":    {UpgradeStars: 25, ModelCount: 1, BackdropCount: 1, CraftedModelCount: 1},
-		"missing backdrop":   {UpgradeStars: 25, ModelCount: 1, PatternCount: 1, CraftedModelCount: 1},
+		"negative upgrade price": {UpgradeStars: -1, ModelCount: 1, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1},
+		"missing model":          {UpgradeStars: 25, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1},
+		"missing pattern":        {UpgradeStars: 25, ModelCount: 1, BackdropCount: 1, CraftedModelCount: 1},
+		"missing backdrop":       {UpgradeStars: 25, ModelCount: 1, PatternCount: 1, CraftedModelCount: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if invalid.CanUpgrade() || invalid.CanCraft() {

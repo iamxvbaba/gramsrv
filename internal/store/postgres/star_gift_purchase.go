@@ -221,7 +221,7 @@ func (s *StarGiftLifecycleStore) PurchaseStarGift(ctx context.Context, req domai
 					Stars: gift.Stars, ConvertStars: saved.ConvertStars, Title: gift.Title, Sticker: &sticker,
 					Message: req.Message, MessageEntities: append([]domain.MessageEntity(nil), req.MessageEntities...),
 					FromUserID: req.BuyerUserID, PeerUserID: req.To.ID, To: req.To, NameHidden: req.HideName, Saved: true,
-					CanUpgrade: gift.UpgradeStars > 0, PrepaidUpgrade: saved.PrepaidUpgradeStars > 0,
+					CanUpgrade: gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal, PrepaidUpgrade: saved.PrepaidUpgradeStars > 0,
 					PrepaidUpgradeHash: saved.PrepaidUpgradeHash, UpgradePriceStars: gift.UpgradeStars,
 					UpgradeStars: saved.PrepaidUpgradeStars}}}
 			result.Gift, result.Saved, result.Balance = gift, saved, balance
@@ -279,7 +279,7 @@ func (s *StarGiftLifecycleStore) purchaseStarGiftToChannel(ctx context.Context, 
 			GiftID: gift.ID, Stars: gift.Stars, ConvertStars: saved.ConvertStars, Title: gift.Title,
 			Sticker: &sticker, Message: saved.Message, MessageEntities: append([]domain.MessageEntity(nil), saved.MessageEntities...),
 			FromUserID: req.BuyerUserID, PeerChannelID: req.To.ID,
-			SavedID: id, NameHidden: saved.NameHidden, Saved: true, CanUpgrade: gift.UpgradeStars > 0,
+			SavedID: id, NameHidden: saved.NameHidden, Saved: true, CanUpgrade: gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal,
 			PrepaidUpgrade: saved.PrepaidUpgradeStars > 0, PrepaidUpgradeHash: saved.PrepaidUpgradeHash,
 			UpgradePriceStars: gift.UpgradeStars, UpgradeStars: saved.PrepaidUpgradeStars,
 		}}
@@ -347,7 +347,7 @@ func (s *StarGiftLifecycleStore) prepareStarGiftPurchase(ctx context.Context, tx
 			prepayHash = base64.RawURLEncoding.EncodeToString(token[:])
 		}
 	}
-	if req.IncludeUpgrade && upgradePrice <= 0 {
+	if req.IncludeUpgrade && upgradePrice < 0 {
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftCollectibleUnavailable
 	}
 	if gift.Stars+upgradePrice != req.ChargeStars {
@@ -415,17 +415,18 @@ WHERE c.gift_id=$1 AND c.active_revision_id=r.id AND r.limited AND NOT r.sold_ou
 
 func (s *StarGiftLifecycleStore) insertStarGiftPurchaseCommand(ctx context.Context, tx pgx.Tx, req domain.StarGiftPurchaseRequest, savedID, charge, balance int64) error {
 	_, err := tx.Exec(ctx, `INSERT INTO star_gift_purchase_commands(buyer_user_id,command_key,gift_id,recipient_peer_type,
-recipient_peer_id,saved_gift_id,form_id,charge_stars,balance_after,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.BuyerUserID, req.CommandKey, req.GiftID, string(req.To.Type), req.To.ID,
-		savedID, req.FormID, charge, balance, req.Date)
+recipient_peer_id,saved_gift_id,form_id,charge_stars,balance_after,created_at,include_upgrade)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, req.BuyerUserID, req.CommandKey, req.GiftID, string(req.To.Type), req.To.ID,
+		savedID, req.FormID, charge, balance, req.Date, req.IncludeUpgrade)
 	return err
 }
 func (s *StarGiftLifecycleStore) loadStarGiftPurchaseReplay(ctx context.Context, req domain.StarGiftPurchaseRequest, sent domain.SendPrivateTextResult) (domain.StarGiftPurchaseResult, bool, error) {
 	var giftID, recipientID, savedID, formID, charge, balance int64
 	var recipientType string
-	err := s.db.QueryRow(ctx, `SELECT gift_id,recipient_peer_type,recipient_peer_id,saved_gift_id,form_id,charge_stars,balance_after
+	var includeUpgrade bool
+	err := s.db.QueryRow(ctx, `SELECT gift_id,recipient_peer_type,recipient_peer_id,saved_gift_id,form_id,charge_stars,balance_after,include_upgrade
 FROM star_gift_purchase_commands WHERE buyer_user_id=$1 AND command_key=$2`, req.BuyerUserID, req.CommandKey).
-		Scan(&giftID, &recipientType, &recipientID, &savedID, &formID, &charge, &balance)
+		Scan(&giftID, &recipientType, &recipientID, &savedID, &formID, &charge, &balance, &includeUpgrade)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.StarGiftPurchaseResult{}, false, nil
 	}
@@ -441,7 +442,7 @@ FROM star_gift_purchase_commands WHERE buyer_user_id=$1 AND command_key=$2`, req
 	}
 	if saved.Owner != req.To || saved.GiftID != req.GiftID || saved.NameHidden != req.HideName || saved.Message != req.Message ||
 		!slices.Equal(saved.MessageEntities, req.MessageEntities) ||
-		(saved.PrepaidUpgradeStars > 0) != req.IncludeUpgrade {
+		includeUpgrade != req.IncludeUpgrade {
 		return domain.StarGiftPurchaseResult{}, false, domain.ErrStarGiftInvalid
 	}
 	gift, found, err := NewStarGiftStore(s.db).CatalogRevision(ctx, saved.RevisionID)

@@ -577,7 +577,7 @@ JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id`
 	if filter.ExcludeUnlimited {
 		conditions = append(conditions, "p.unique_gift_id IS NOT NULL")
 	}
-	upgradable := `(p.unique_gift_id IS NULL AND acr.id IS NOT NULL AND acr.upgrade_stars > 0 AND acr.issued < acr.supply_total)`
+	upgradable := `(p.unique_gift_id IS NULL AND acr.id IS NOT NULL AND acr.upgrade_stars >= 0 AND acr.issued < acr.supply_total)`
 	if filter.ExcludeUpgradable && !filter.ExcludeUnupgradable {
 		conditions = append(conditions, "NOT "+upgradable)
 	}

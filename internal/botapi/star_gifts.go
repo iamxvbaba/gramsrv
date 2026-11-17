@@ -51,7 +51,7 @@ func apiStarGift(gift domain.StarGift) map[string]any {
 	if gift.Sticker.ID > 0 {
 		item["sticker"] = apiSticker(gift.Sticker)
 	}
-	if gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal {
+	if gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal {
 		item["upgrade_star_count"] = gift.UpgradeStars
 	}
 	if gift.Limited {

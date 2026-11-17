@@ -38,7 +38,7 @@ func (r *Router) sendStarGiftUpgradeForm(ctx context.Context, userID, formID int
 	chargeStars := int64(0)
 	if replay {
 		if receipt.SourceSavedGiftID != saved.ID || receipt.FormID != formID || receipt.RequirePrepaid ||
-			receipt.KeepOriginalDetails != inv.KeepOriginalDetails || receipt.ChargeStars <= 0 {
+			receipt.KeepOriginalDetails != inv.KeepOriginalDetails || receipt.ChargeStars < 0 {
 			return nil, starGiftInvalidErr()
 		}
 		chargeStars = receipt.ChargeStars
@@ -85,22 +85,28 @@ func (r *Router) onPaymentsUpgradeStarGift(ctx context.Context, req *tg.Payments
 	if err != nil {
 		return nil, internalErr()
 	}
+	requirePrepaid := true
 	if replay {
-		if receipt.SourceSavedGiftID != saved.ID || receipt.FormID != 0 || !receipt.RequirePrepaid ||
+		if receipt.SourceSavedGiftID != saved.ID || receipt.FormID != 0 ||
 			receipt.KeepOriginalDetails != req.KeepOriginalDetails || receipt.ChargeStars != 0 {
 			return nil, starGiftInvalidErr()
 		}
+		requirePrepaid = receipt.RequirePrepaid
 	} else {
-		if saved.PrepaidUpgradeStars <= 0 {
-			return nil, starGiftInvalidErr()
-		}
-		if _, err := r.starGiftUpgradePreviewForSaved(ctx, saved); err != nil {
+		preview, err := r.starGiftUpgradePreviewForSaved(ctx, saved)
+		if err != nil {
 			return nil, err
+		}
+		if saved.PrepaidUpgradeStars <= 0 {
+			if preview.UpgradeStars != 0 {
+				return nil, starGiftInvalidErr()
+			}
+			requirePrepaid = false
 		}
 	}
 	result, err := r.deps.Gifts.Upgrade(ctx, domain.StarGiftUpgradeRequest{
 		UserID: userID, Ref: starGiftUpgradeSavedRef(saved),
-		KeepOriginalDetails: req.KeepOriginalDetails, RequirePrepaid: true,
+		KeepOriginalDetails: req.KeepOriginalDetails, RequirePrepaid: requirePrepaid,
 		CommandKey: commandKey,
 		Date:       int(r.clock.Now().Unix()), OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionIDOrZero(ctx),
@@ -156,7 +162,7 @@ func (r *Router) starGiftUpgradePreviewForSaved(ctx context.Context, saved domai
 	if err != nil {
 		return domain.StarGiftUpgradePreview{}, internalErr()
 	}
-	if !found || preview.UpgradeStars <= 0 || preview.Issued >= preview.SupplyTotal {
+	if !found || preview.UpgradeStars < 0 || preview.Issued >= preview.SupplyTotal {
 		return domain.StarGiftUpgradePreview{}, starGiftInvalidErr()
 	}
 	return preview, nil

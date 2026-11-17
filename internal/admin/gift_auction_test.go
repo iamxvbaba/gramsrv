@@ -209,3 +209,29 @@ func sourceAnimation(t *testing.T, gifts *stargiftapp.Service) domain.StarGiftAn
 	}
 	return animation
 }
+
+func TestAuctionFromImportedSupportsFreeUpgradePool(t *testing.T) {
+	svc, gifts, source := auctionTemplate(t)
+	req := auctionRequest(source.Catalog.Gift)
+	free := int64(0)
+	req.UpgradeStars = &free
+	preview, err := svc.CreateStarGiftAuction(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SourceSHA = preview.Details["source_sha256"].(string)
+	req.CommandID, req.DryRun = "free-release", false
+	result, err := svc.CreateStarGiftAuction(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := strconv.ParseInt(result.Details["gift_id"].(string), 10, 64)
+	pool, found, err := gifts.CollectiblePreview(context.Background(), id)
+	if err != nil || !found || pool.UpgradeStars != 0 || len(pool.Models) != 2 {
+		t.Fatalf("free pool=%+v found=%v err=%v", pool, found, err)
+	}
+	original, _, _ := gifts.CollectiblePreview(context.Background(), source.Catalog.Gift.ID)
+	if original.UpgradeStars != 25 {
+		t.Fatal("source price changed")
+	}
+}

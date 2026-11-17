@@ -429,7 +429,7 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
           <div className="gift-fields-grid">
             <label><span>{t("gifts.releasedBy")}</span><input value={releasedBy} placeholder="@username / ID" onChange={(e) => edit(setReleasedBy)(e.target.value)} /></label>
             <label><span>{t("gifts.perUserLimit")}</span><input type="number" min="0" step="1" value={perUserTotal} onChange={(e) => edit(setPerUserTotal)(e.target.value)} /></label>
-            {source === "imported" && pool?.found && <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} placeholder={pool.upgrade_stars} onChange={(e) => edit(setUpgradeStars)(e.target.value)} /></label>}
+            {source === "imported" && pool?.found && <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="0" value={upgradeStars} placeholder={pool.upgrade_stars} onChange={(e) => edit(setUpgradeStars)(e.target.value)} /></label>}
           </div>
           <label className="gift-switch"><input type="checkbox" checked={premium} onChange={(e) => edit(setPremium)(e.target.checked)} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.premium")}</span></label>
           <label className="gift-switch"><input type="checkbox" checked={birthday} onChange={(e) => edit(setBirthday)(e.target.checked)} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.birthday")}</span></label>

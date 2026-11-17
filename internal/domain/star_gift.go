@@ -1318,7 +1318,7 @@ var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}
 // blobs/documents are allocated. This is the validation boundary used by admin dry-runs.
 func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
 	write.SlugPrefix = strings.TrimSpace(strings.ToLower(write.SlugPrefix))
-	if write.GiftID <= 0 || write.UpgradeStars <= 0 || write.SupplyTotal <= 0 ||
+	if write.GiftID <= 0 || write.UpgradeStars < 0 || write.SupplyTotal <= 0 ||
 		!starGiftCollectibleSlugPrefix.MatchString(write.SlugPrefix) || strings.TrimSpace(write.CommandID) == "" {
 		return ErrStarGiftCollectibleInvalid
 	}

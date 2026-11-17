@@ -114,7 +114,7 @@ func (r *Router) BotAPISendStarGift(
 	}
 	upgradeStars := int64(0)
 	if payForUpgrade {
-		if gift.UpgradeStars <= 0 || gift.UpgradeIssued >= gift.UpgradeTotal {
+		if gift.UpgradeStars < 0 || gift.UpgradeIssued >= gift.UpgradeTotal {
 			return false, r.botAPIStarGiftErr(botID, "GIFT_UPGRADE_UNAVAILABLE", nil)
 		}
 		upgradeStars = gift.UpgradeStars

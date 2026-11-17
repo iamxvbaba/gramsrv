@@ -993,3 +993,60 @@ func upgradedSourceEditForUser(result domain.StarGiftUpgradeResult, userID int64
 	}
 	return domain.EditedMessageForUser{UserID: userID}
 }
+
+func TestStarGiftFreeUpgradePostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	sender := createTestUser(t, ctx, users, "+1789"+suffix+"41", "FreeSender", "")
+	owner := createTestUser(t, ctx, users, "+1789"+suffix+"42", "FreeOwner", "")
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+	gifts := NewStarGiftStore(pool)
+	messages := NewMessageStore(pool)
+	upgrades := NewStarGiftUpgradeStore(pool, messages)
+	base := time.Now().UnixNano() & 0x7ffffffffffff000
+	for _, price := range []int64{0, 100} {
+		entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+			Title: "Free auction gift", Stars: 50, ConvertStars: 25, Enabled: true,
+			Document: collectibleTestDocument(base, "gift.tgs"), Blob: collectibleTestBlob(base, "gift"), Animation: collectibleTestAnimation("gift.tgs"),
+			Actor: "integration", CommandID: fmt.Sprintf("free-catalog-%s-%d", suffix, price),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+			GiftID: entry.Gift.ID, UpgradeStars: price, SupplyTotal: 2, SlugPrefix: fmt.Sprintf("free-%s-%d", suffix, price),
+			Models:    []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectibleModel, Name: "Model", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000, Document: collectibleTestDocumentPtr(base+1, "model.tgs"), Blob: collectibleTestBlobPtr(base+1, "model"), Animation: collectibleTestAnimationPtr("model.tgs")}},
+			Patterns:  []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000, Document: collectibleTestPatternDocumentPtr(base+2, "pattern.tgs"), Blob: collectibleTestBlobPtr(base+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")}},
+			Backdrops: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectibleBackdrop, Name: "Blue", BackdropID: 1, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500}, {Kind: domain.StarGiftCollectibleBackdrop, Name: "Red", BackdropID: 2, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500}},
+			Actor:     "integration", CommandID: fmt.Sprintf("free-pool-%s-%d", suffix, price),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, form := range []int64{0, 7788} {
+			saved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{Owner: peer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID, Date: 1700001000 + i})
+			req := domain.StarGiftUpgradeRequest{UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: peer, MsgID: saved.MsgID}, ChargeStars: 0, FormID: form, CommandKey: fmt.Sprintf("free-upgrade-%s-%d-%d", suffix, price, i), Date: 1700001010 + i}
+			result, err := upgrades.UpgradeStarGift(ctx, req)
+			if price > 0 {
+				if !errors.Is(err, domain.ErrStarGiftCollectibleUnavailable) {
+					t.Fatalf("paid pool allowed free upgrade: %v", err)
+				}
+				continue
+			}
+			if err != nil || result.Unique.ID == 0 || result.Balance.Balance != 0 {
+				t.Fatalf("free mint=%+v err=%v", result, err)
+			}
+			replay, err := upgrades.UpgradeStarGift(ctx, req)
+			if err != nil || !replay.Duplicate || replay.Unique.ID != result.Unique.ID {
+				t.Fatalf("free replay=%+v err=%v", replay, err)
+			}
+		}
+		base += 10
+	}
+	var debits int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM stars_transactions WHERE user_id=$1`, owner.ID).Scan(&debits); err != nil || debits != 0 {
+		t.Fatalf("free upgrade charged stars: count=%d err=%v", debits, err)
+	}
+}

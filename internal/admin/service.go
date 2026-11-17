@@ -2199,7 +2199,7 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 				if err != nil {
 					return CommandResult{}, err
 				}
-				if !ok || preview.UpgradeStars <= 0 {
+				if !ok || preview.UpgradeStars < 0 {
 					return CommandResult{}, fmt.Errorf("gift %d has no published collectible upgrade", req.GiftID)
 				}
 				if preview.Issued >= preview.SupplyTotal {

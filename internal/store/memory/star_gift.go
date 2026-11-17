@@ -457,7 +457,7 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 		upgradable := false
 		if g.UniqueGiftID == 0 {
 			if gift, ok := s.catalog[g.GiftID]; ok {
-				upgradable = gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal
+				upgradable = gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal
 			}
 		}
 		if filter.ExcludeUpgradable && !filter.ExcludeUnupgradable && upgradable {
