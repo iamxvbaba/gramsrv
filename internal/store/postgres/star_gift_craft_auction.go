@@ -1071,7 +1071,10 @@ func (s *StarGiftLifecycleStore) BidStarGiftAuction(ctx context.Context, req dom
 			Scan(&startDate, &endDate, &minimum, &status); err != nil {
 			return err
 		}
-		if status != "active" || req.Date < startDate || req.Date >= endDate || req.BidAmount < minimum {
+		// Scheduled auctions accept reservations before their first round. The
+		// settlement clock still starts at startDate and cannot award gifts early.
+		canBid := status == "pending" && req.Date < startDate || status == "active" && req.Date >= startDate
+		if !canBid || req.Date >= endDate || req.BidAmount < minimum {
 			return domain.ErrStarGiftAuctionUnavailable
 		}
 		var oldAmount int64
