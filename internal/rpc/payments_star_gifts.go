@@ -1883,7 +1883,7 @@ func tgSavedStarGifts(viewerUserID int64, gifts []domain.SavedStarGift, catalog 
 			// invoice. The owner must use InputSavedStarGift instead; otherwise
 			// DrKLO prefers the hash path and substitutes the private dialog peer.
 			ownerIsViewer := g.Owner.Type == domain.PeerTypeUser && g.Owner.ID == viewerUserID
-			if g.PrepaidUpgradeHash != "" && g.PrepaidUpgradeStars == 0 && canIssue && !ownerIsViewer {
+			if g.PrepaidUpgradeHash != "" && g.PrepaidUpgradeStars == 0 && canIssue && current.UpgradeStars > 0 && !ownerIsViewer {
 				item.SetPrepaidUpgradeHash(g.PrepaidUpgradeHash)
 			}
 		}

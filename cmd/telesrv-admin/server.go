@@ -2395,7 +2395,7 @@ type importOfficialStarGiftAPIRequest struct {
 	SortOrder          int    `json:"sort_order"`
 	SupportOnly        bool   `json:"support_only,omitempty"`
 	IncludeCollectible bool   `json:"include_collectible"`
-	UpgradeStars       int64  `json:"upgrade_stars,string"`
+	UpgradeStars       *int64 `json:"upgrade_stars,string"`
 	SupplyTotal        int    `json:"supply_total"`
 	SlugPrefix         string `json:"slug_prefix"`
 	ReleasedBy         string `json:"released_by_peer"`

@@ -199,7 +199,7 @@ func TestStarGiftActionDecimalStringDecodingPreservesInt64(t *testing.T) {
 	if err := decodeJSON(req, &got); err != nil {
 		t.Fatalf("decode gift action: %v", err)
 	}
-	if got.GiftID != maxInt64 || got.Stars != maxInt64 || got.ConvertStars != maxInt64 || got.UpgradeStars != maxInt64 {
+	if got.GiftID != maxInt64 || got.Stars != maxInt64 || got.ConvertStars != maxInt64 || got.UpgradeStars == nil || *got.UpgradeStars != maxInt64 {
 		t.Fatalf("decoded gift action = %+v", got)
 	}
 }
@@ -497,5 +497,43 @@ func TestCreateGiftAuctionBFFPreservesSourceIdentityAndReleaseFields(t *testing.
 	}
 	if got.SourceGiftID != 9223372036854775807 || got.SourceRevisionID != 9223372036854775806 || got.SourceSHA != "snapshot" || got.Actor != "operator" || got.DryRun || got.UpgradeStars == nil || *got.UpgradeStars != 40 || got.ReleasedBy == nil || *got.ReleasedBy != "@owner" || got.PerUserTotal == nil || *got.PerUserTotal != 2 || got.RequirePremium == nil || !*got.RequirePremium || got.Birthday == nil || !*got.Birthday || got.SortOrder != 3 {
 		t.Fatalf("forwarded request=%+v", got)
+	}
+}
+
+func TestOfficialGiftImportBFFDistinguishesFreePriceFromAbsentOverride(t *testing.T) {
+	for _, value := range []string{"", `,"upgrade_stars":"0"`, `,"upgrade_stars":"25"`} {
+		t.Run(value, func(t *testing.T) {
+			var got admin.ImportOfficialStarGiftRequest
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/official-gifts/import" {
+					t.Fatalf("path=%s", r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatal(err)
+				}
+				_ = json.NewEncoder(w).Encode(admin.CommandResult{Status: "completed"})
+			}))
+			defer upstream.Close()
+			srv := &server{cfg: uiConfig{AdminAPIURL: upstream.URL, AdminAPIToken: "secret"}}
+			req := httptest.NewRequest(http.MethodPost, "/api/actions/import-official-gift", strings.NewReader(`{"source_gift_id":"10","include_collectible":true`+value+`}`))
+			rec := httptest.NewRecorder()
+			srv.handleImportOfficialStarGiftAPI(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if value == "" {
+				if got.UpgradeStars != nil {
+					t.Fatal("absent override turned into a price")
+				}
+				return
+			}
+			want := int64(0)
+			if strings.Contains(value, "25") {
+				want = 25
+			}
+			if got.UpgradeStars == nil || *got.UpgradeStars != want {
+				t.Fatalf("price override=%v want=%d", got.UpgradeStars, want)
+			}
+		})
 	}
 }

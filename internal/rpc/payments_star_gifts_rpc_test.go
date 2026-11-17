@@ -2359,3 +2359,17 @@ func TestStarGiftFreeUpgradeProjectionRequiresAvailablePool(t *testing.T) {
 		t.Fatal("free upgrade missing from service message")
 	}
 }
+
+func TestFreeSavedGiftDoesNotAdvertisePaidSponsorshipHash(t *testing.T) {
+	owner := domain.Peer{Type: domain.PeerTypeUser, ID: 1}
+	saved := domain.SavedStarGift{Owner: owner, GiftID: 5, RevisionID: 7, MsgID: 8, PrepaidUpgradeHash: "sponsor"}
+	for _, price := range []int64{0, 25} {
+		catalog := map[int64]domain.StarGift{7: {ID: 5, RevisionID: 7}}
+		available := map[int64]domain.StarGiftCollectibleAvailability{5: {UpgradeStars: price, SupplyTotal: 10}}
+		item := tgSavedStarGifts(2, []domain.SavedStarGift{saved}, catalog, available, 0)[0]
+		_, hasHash := item.GetPrepaidUpgradeHash()
+		if !item.CanUpgrade || hasHash != (price > 0) {
+			t.Fatalf("price=%d can_upgrade=%v sponsorship=%v", price, item.CanUpgrade, hasHash)
+		}
+	}
+}
