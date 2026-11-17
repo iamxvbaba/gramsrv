@@ -444,7 +444,7 @@ func (s *server) handleStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
 		return
 	}
-	rows, err := s.read.ListStarGifts(r.Context())
+	rows, err := s.read.ListStarGifts(r.Context(), r.URL.Query().Get("include_disabled") == "true")
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return

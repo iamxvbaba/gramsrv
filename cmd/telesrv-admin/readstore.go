@@ -485,7 +485,7 @@ type StarGiftRow struct {
 	UpdatedAt           time.Time
 }
 
-func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
+func (s *readStore) ListStarGifts(ctx context.Context, includeDisabled bool) ([]StarGiftRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
        c.enabled, c.sort_order, r.document_id, r.source_name, r.source_format,
@@ -496,8 +496,9 @@ SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
 FROM star_gift_catalog c
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 JOIN documents d ON d.id = r.document_id
+WHERE c.enabled OR $2::boolean
 ORDER BY c.sort_order, c.gift_id
-LIMIT $1`, domain.MaxStarGiftCatalogSize)
+LIMIT $1`, domain.MaxStarGiftCatalogSize, includeDisabled)
 	if err != nil {
 		return nil, fmt.Errorf("list star gifts: %w", err)
 	}
@@ -557,7 +558,7 @@ type StarGiftAuctionRow struct {
 	UpdatedAt  time.Time
 }
 
-// ListStarGiftAuctions returns every catalog gift that is either an auction or a
+// ListStarGiftAuctions returns every enabled catalog gift that is either an auction or a
 // scheduled drop (locked_until_date set), plus any gift that already has an
 // auction row, so an auction whose revision was later replaced stays visible.
 func (s *readStore) ListStarGiftAuctions(ctx context.Context) ([]StarGiftAuctionRow, error) {
@@ -582,7 +583,7 @@ LEFT JOIN (
 	WHERE active AND NOT returned
 	GROUP BY gift_id
 ) b ON b.gift_id = c.gift_id
-WHERE r.auction OR r.locked_until_date > 0 OR a.gift_id IS NOT NULL
+WHERE c.enabled AND (r.auction OR r.locked_until_date > 0 OR a.gift_id IS NOT NULL)
 ORDER BY r.auction DESC, r.auction_start_date DESC, r.locked_until_date DESC, c.gift_id
 LIMIT $1`, domain.MaxStarGiftCatalogSize)
 	if err != nil {

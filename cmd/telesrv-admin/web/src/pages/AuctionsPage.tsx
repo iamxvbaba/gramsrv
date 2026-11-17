@@ -75,7 +75,7 @@ export function AuctionsPage({ navigate }: { navigate: Navigate }) {
 
   async function load() {
     setBusy(true); setError("");
-    try { setRows((await api.auctions()).Auctions ?? []); }
+    try { setRows(((await api.auctions()).Auctions ?? []).filter((row) => row.Enabled)); }
     catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
   }

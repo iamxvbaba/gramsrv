@@ -140,7 +140,7 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
   async function load() {
     setError("");
     try {
-      setGifts((await api.gifts()).Gifts ?? []);
+      setGifts((await api.gifts(true)).Gifts ?? []);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -178,15 +178,16 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
     return Math.ceil(supply / perRound);
   }, [auctionSupply, giftsPerRound]);
 
+  const catalogGifts = useMemo(() => gifts.filter((gift) => catalogView === "imported" || gift.Enabled), [gifts, catalogView]);
+
   const visibleGifts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return gifts.filter((gift) =>
-      (catalogView === "imported" || gift.Enabled) &&
+    return catalogGifts.filter((gift) =>
       (!normalized || String(gift.GiftID).includes(normalized) ||
         gift.Title.toLowerCase().includes(normalized) ||
         gift.SourceFormat.toLowerCase().includes(normalized))
     );
-  }, [gifts, query, catalogView]);
+  }, [catalogGifts, query]);
 
   // Mirrors domain.StarGiftCatalogWrite.ValidateLifecycleAuthoring so the operator
   // sees the problem before the upload round-trip. Only the keys belonging to the
@@ -332,9 +333,9 @@ return {
     </>}>
       {error && <Alert>{error}</Alert>}
       <div className="metric-row gift-metrics">
-        <Metric label={t("gifts.total")} value={String(gifts.length)} />
+        <Metric label={t("gifts.total")} value={String(catalogGifts.length)} />
         <Metric label={t("gifts.enabled")} value={String(gifts.filter((gift) => gift.Enabled).length)} tone="good" />
-		<Metric label={t("gifts.received")} value={gifts.reduce((sum, gift) => sum + BigInt(gift.ReceivedCount), 0n).toString()} />
+		<Metric label={t("gifts.received")} value={catalogGifts.reduce((sum, gift) => sum + BigInt(gift.ReceivedCount), 0n).toString()} />
         <Metric label={t("gifts.formats")} value="TGS / Lottie" />
       </div>
       <QueryPanel>
@@ -346,7 +347,7 @@ return {
             </select>
           </label>
           <label className="searchbox"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("gifts.searchPlaceholder")} /></label>
-          <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: gifts.length })}</span>
+          <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: catalogGifts.length })}</span>
         </div>
       </QueryPanel>
       <div className="table-wrap gift-table-wrap">
