@@ -67,12 +67,17 @@ jobs:
       - name: Verify gift inventory and Stars ledger against PostgreSQL
         env:
           TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
-        run: go test ./internal/store/postgres -run '^(TestOfficialStarGiftInventoryPostgres|TestOfficialStarGiftBundleIsAtomicPostgres|TestStarGiftStorePostgres|TestStarsLedgerPostgres|TestBotGiftPurchaseIsNotConvertibleToStarsPostgres|TestStarGiftDeleteRemovesGiftFromProfilePostgres|TestStarGiftDeleteRefusesUpgradedGiftPostgres|TestStarGiftDeleteRefreshesCollectionHashPostgres|TestStarGiftDeleteRefusesIrreversibleGiftsPostgres|TestStarGiftDeleteBlocksLaterUpgradePostgres)$' -count=1 -timeout=3m
+        run: go test ./internal/store/postgres -run '^(TestStarGiftAuctionDurationSurvivesCatalogReloadPostgres|TestOfficialStarGiftInventoryPostgres|TestOfficialStarGiftBundleIsAtomicPostgres|TestStarGiftStorePostgres|TestStarsLedgerPostgres|TestBotGiftPurchaseIsNotConvertibleToStarsPostgres|TestStarGiftDeleteRemovesGiftFromProfilePostgres|TestStarGiftDeleteRefusesUpgradedGiftPostgres|TestStarGiftDeleteRefreshesCollectionHashPostgres|TestStarGiftDeleteRefusesIrreversibleGiftsPostgres|TestStarGiftDeleteBlocksLaterUpgradePostgres)$' -count=1 -timeout=3m
 
       - name: Verify admin operator and audit command flow against PostgreSQL
         env:
           TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
         run: go test ./cmd/telesrv-admin -run '^(TestOperatorCommand|TestOperatorCreateRoute|TestOperatorUniqueness|TestNamedOperator|TestDemotion|TestAuditTrail)' -count=1 -timeout=5m
+
+      - name: Imported gift auction PostgreSQL regression
+        env:
+          TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
+        run: go test ./internal/admin -run '^TestImportedGiftAuctionBundlePostgres$' -count=1 -timeout=3m
 
       - name: Verify fact-check persistence and visibility against PostgreSQL
         env:

@@ -30,7 +30,7 @@ SELECT c.gift_id, r.id, r.stars, r.convert_stars, r.title,
        c.first_sale_date, c.last_sale_date, c.resell_min_stars,
        COALESCE(r.released_by_peer_type, ''), COALESCE(r.released_by_peer_id, 0),
        r.per_user_total, r.locked_until_date, r.auction_slug, r.gifts_per_round,
-       r.auction_start_date, r.upgrade_variants,
+       r.auction_start_date, r.auction_round_duration, r.upgrade_variants,
        r.background_center_color IS NOT NULL,
        COALESCE(r.background_center_color, 0), COALESCE(r.background_edge_color, 0),
        COALESCE(r.background_text_color, 0),
@@ -117,7 +117,7 @@ SELECT r.gift_id, r.id, r.stars, r.convert_stars, r.title,
        c.first_sale_date, c.last_sale_date, c.resell_min_stars,
        COALESCE(r.released_by_peer_type, ''), COALESCE(r.released_by_peer_id, 0),
        r.per_user_total, r.locked_until_date, r.auction_slug, r.gifts_per_round,
-       r.auction_start_date, r.upgrade_variants,
+       r.auction_start_date, r.auction_round_duration, r.upgrade_variants,
        r.background_center_color IS NOT NULL,
        COALESCE(r.background_center_color, 0), COALESCE(r.background_edge_color, 0),
        COALESCE(r.background_text_color, 0),
@@ -152,7 +152,7 @@ func scanCatalogGift(row rowScanner) (domain.StarGift, error) {
 		&gift.AvailabilityRemains, &gift.AvailabilityTotal, &gift.AvailabilityResale,
 		&gift.FirstSaleDate, &gift.LastSaleDate, &gift.ResellMinStars,
 		&releasedByType, &releasedByID, &gift.PerUserTotal, &gift.LockedUntilDate,
-		&gift.AuctionSlug, &gift.GiftsPerRound, &gift.AuctionStartDate, &gift.UpgradeVariants,
+		&gift.AuctionSlug, &gift.GiftsPerRound, &gift.AuctionStartDate, &gift.AuctionRoundDuration, &gift.UpgradeVariants,
 		&hasBackground, &background.CenterColor, &background.EdgeColor, &background.TextColor,
 		&gift.UpgradeStars, &gift.UpgradeTotal, &gift.UpgradeIssued,
 		&gift.Sticker.ID, &gift.Sticker.AccessHash, &gift.Sticker.FileReference, &gift.Sticker.Date,
@@ -202,6 +202,20 @@ func (s *StarGiftStore) CreateCatalogRevision(ctx context.Context, write domain.
 		if giftID == 0 {
 			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('star_gift_catalog', 0))`); err != nil {
 				return fmt.Errorf("lock star gift catalog capacity: %w", err)
+			}
+
+			if write.ReserveAuctionSlug {
+				var used bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS (
+                    SELECT 1 FROM star_gift_catalog c JOIN star_gift_catalog_revisions r ON r.id=c.active_revision_id WHERE r.auction AND lower(r.auction_slug)=lower($1)
+                    UNION ALL SELECT 1 FROM star_gift_collectible_revisions WHERE lower(slug_prefix)=lower($1)
+                    UNION ALL SELECT 1 FROM star_gift_auctions WHERE lower(slug)=lower($1)
+                )`, write.AuctionSlug).Scan(&used); err != nil {
+					return fmt.Errorf("check release slug: %w", err)
+				}
+				if used {
+					return fmt.Errorf("%w: release slug is already in use", domain.ErrStarGiftLifecycleInvalid)
+				}
 			}
 			var catalogCount int
 			if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_catalog`).Scan(&catalogCount); err != nil {
@@ -263,11 +277,11 @@ INSERT INTO star_gift_catalog_revisions (
     peer_color_available, auction, availability_total,
     released_by_peer_type, released_by_peer_id, per_user_total, locked_until_date,
     auction_slug, gifts_per_round, auction_start_date, upgrade_variants,
-    background_center_color, background_edge_color, background_text_color, support_only
+    background_center_color, background_edge_color, background_text_color, support_only, auction_round_duration
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
 	NULLIF($19::bigint,0),$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,
-	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41
+	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
 )`,
 			revisionID, giftID, revision, write.Title, write.Stars, write.ConvertStars, write.Document.ID,
 			string(write.Animation.JSON), write.Animation.SHA256, write.Animation.SourceName, string(write.Animation.SourceFormat),
@@ -279,7 +293,7 @@ INSERT INTO star_gift_catalog_revisions (
 			write.LockedUntilDate, write.AuctionSlug, write.GiftsPerRound, write.AuctionStartDate,
 			write.UpgradeVariants, nullableBackgroundColor(write.Background, "center"),
 			nullableBackgroundColor(write.Background, "edge"), nullableBackgroundColor(write.Background, "text"),
-			write.SupportOnly,
+			write.SupportOnly, write.AuctionRoundDuration,
 		); err != nil {
 			return fmt.Errorf("insert star gift revision: %w", err)
 		}
@@ -425,7 +439,7 @@ SELECT c.gift_id, r.id, r.stars, r.convert_stars, r.title,
        c.first_sale_date, c.last_sale_date, c.resell_min_stars,
        COALESCE(r.released_by_peer_type, ''), COALESCE(r.released_by_peer_id, 0),
        r.per_user_total, r.locked_until_date, r.auction_slug, r.gifts_per_round,
-       r.auction_start_date, r.upgrade_variants,
+       r.auction_start_date, r.auction_round_duration, r.upgrade_variants,
        r.background_center_color IS NOT NULL,
        COALESCE(r.background_center_color, 0), COALESCE(r.background_edge_color, 0),
        COALESCE(r.background_text_color, 0),
@@ -453,7 +467,7 @@ WHERE c.gift_id=$1`, giftID)
 		&entry.Gift.AvailabilityRemains, &entry.Gift.AvailabilityTotal, &entry.Gift.AvailabilityResale,
 		&entry.Gift.FirstSaleDate, &entry.Gift.LastSaleDate, &entry.Gift.ResellMinStars,
 		&releasedByType, &releasedByID, &entry.Gift.PerUserTotal, &entry.Gift.LockedUntilDate,
-		&entry.Gift.AuctionSlug, &entry.Gift.GiftsPerRound, &entry.Gift.AuctionStartDate,
+		&entry.Gift.AuctionSlug, &entry.Gift.GiftsPerRound, &entry.Gift.AuctionStartDate, &entry.Gift.AuctionRoundDuration,
 		&entry.Gift.UpgradeVariants, &hasBackground, &background.CenterColor, &background.EdgeColor,
 		&background.TextColor,
 		&entry.Gift.UpgradeStars, &entry.Gift.UpgradeTotal, &entry.Gift.UpgradeIssued,

@@ -979,6 +979,8 @@ type StarGiftAnimation struct {
 
 // StarGiftCatalogWrite is the protocol-agnostic data the store needs to atomically create a catalog revision.
 type StarGiftCatalogWrite struct {
+	// ReserveAuctionSlug rejects a new release that would reuse an existing auction or collectible namespace.
+	ReserveAuctionSlug   bool
 	GiftID               int64 // 0 creates a new gift; non-zero creates a new revision for that gift
 	Title                string
 	Stars                int64

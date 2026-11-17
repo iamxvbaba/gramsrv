@@ -1470,3 +1470,7 @@ func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.Ac
 func (fakeService) ListRecentAdminCommands(context.Context, int, string) ([]domain.AdminCommand, error) {
 	return nil, nil
 }
+
+func (fakeService) CreateStarGiftAuction(_ context.Context, _ admin.CreateStarGiftAuctionRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{}, nil
+}

@@ -474,3 +474,28 @@ func TestEscapeLikePatternKeepsUsernameSearchLiteral(t *testing.T) {
 		t.Fatalf("escapeLikePattern empty = %q", got)
 	}
 }
+
+func TestCreateGiftAuctionBFFPreservesSourceIdentityAndReleaseFields(t *testing.T) {
+	var got admin.CreateStarGiftAuctionRequest
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/gifts/create-auction" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(admin.CommandResult{Status: "completed"})
+	}))
+	defer upstream.Close()
+	srv := &server{cfg: uiConfig{AdminAPIURL: upstream.URL, AdminAPIToken: "secret"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/actions/create-gift-auction", strings.NewReader(`{"source_gift_id":"9223372036854775807","source_revision_id":"9223372036854775806","source_sha256":"snapshot","title":"Release","stars":"100","convert_stars":"25","upgrade_stars":"40","released_by_peer":"@owner","per_user_total":2,"require_premium":true,"birthday":true,"sort_order":3,"reason":"new auction","confirm":true}`))
+	req = req.WithContext(context.WithValue(req.Context(), actorKey{}, "operator"))
+	rec := httptest.NewRecorder()
+	srv.handleCreateStarGiftAuctionAPI(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got.SourceGiftID != 9223372036854775807 || got.SourceRevisionID != 9223372036854775806 || got.SourceSHA != "snapshot" || got.Actor != "operator" || got.DryRun || got.UpgradeStars == nil || *got.UpgradeStars != 40 || got.ReleasedBy == nil || *got.ReleasedBy != "@owner" || got.PerUserTotal == nil || *got.PerUserTotal != 2 || got.RequirePremium == nil || !*got.RequirePremium || got.Birthday == nil || !*got.Birthday || got.SortOrder != 3 {
+		t.Fatalf("forwarded request=%+v", got)
+	}
+}

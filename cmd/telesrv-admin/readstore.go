@@ -461,6 +461,11 @@ type ChannelDetail struct {
 }
 
 type StarGiftRow struct {
+	ReleasedByPeerID    int64 `json:"ReleasedByPeerID,string"`
+	PerUserTotal        int
+	RequirePremium      bool
+	Birthday            bool
+	SupportOnly         bool
 	GiftID              int64 `json:"GiftID,string"`
 	RevisionID          int64 `json:"RevisionID,string"`
 	Revision            int
@@ -492,7 +497,7 @@ SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
        encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
        (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
        r.limited, r.availability_total, c.availability_remains,
-       r.created_by, c.updated_at
+       r.created_by, c.updated_at, COALESCE(r.released_by_peer_id,0), r.per_user_total, r.require_premium, r.birthday, r.support_only
 FROM star_gift_catalog c
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 JOIN documents d ON d.id = r.document_id
@@ -511,7 +516,7 @@ LIMIT $1`, domain.MaxStarGiftCatalogSize, includeDisabled)
 			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
 			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
 			&row.ReceivedCount, &row.Limited, &row.AvailabilityTotal, &row.AvailabilityRemains,
-			&row.CreatedBy, &row.UpdatedAt,
+			&row.CreatedBy, &row.UpdatedAt, &row.ReleasedByPeerID, &row.PerUserTotal, &row.RequirePremium, &row.Birthday, &row.SupportOnly,
 		); err != nil {
 			return nil, err
 		}

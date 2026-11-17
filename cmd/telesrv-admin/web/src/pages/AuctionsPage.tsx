@@ -6,7 +6,7 @@ import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
 import { useI18n, type TFunction } from "../i18n";
 import { formatUnix, localInputValue, titleFromFilename, toUnixSeconds } from "../lib/format";
 import type { Navigate } from "../routing";
-import type { CommandResult, StarGiftAuctionRow } from "../types";
+import type { CommandResult, StarGiftAuctionRow, StarGiftRow, StarGiftCollectiblePreview } from "../types";
 import { LottiePreview } from "./GiftsPage";
 
 // The tab authors both lifecycle kinds the engine understands: an auction runs the
@@ -204,6 +204,15 @@ function AuctionRow({ row, now }: { row: StarGiftAuctionRow; now: number }) {
 // second write path to keep in step. The dry run is the server's own validation.
 function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: () => void; onCreated: () => void }) {
   const { t } = useI18n();
+  const [source, setSource] = useState<"imported" | "upload">(mode === "auction" ? "imported" : "upload");
+  const [imported, setImported] = useState<StarGiftRow[]>([]);
+  const [selected, setSelected] = useState<StarGiftRow | null>(null);
+  const [search, setSearch] = useState("");
+  const [pool, setPool] = useState<StarGiftCollectiblePreview | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const sourceLoading = catalogLoading || poolLoading;
+  const [sourceError, setSourceError] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [stars, setStars] = useState("50");
@@ -218,9 +227,48 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
   const [reason, setReason] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [supportOnly, setSupportOnly] = useState(false);
+  const [releasedBy, setReleasedBy] = useState("");
+  const [perUserTotal, setPerUserTotal] = useState("0");
+  const [premium, setPremium] = useState(false);
+  const [birthday, setBirthday] = useState(false);
+  const [upgradeStars, setUpgradeStars] = useState("");
   const [preview, setPreview] = useState<CommandResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (source !== "imported") return;
+    let cancelled = false;
+    setCatalogLoading(true); setSourceError("");
+    api.gifts(true).then((value) => { if (!cancelled) setImported(value.Gifts ?? []); })
+      .catch((err) => { if (!cancelled) setSourceError(errorMessage(err)); })
+      .finally(() => { if (!cancelled) setCatalogLoading(false); });
+    return () => { cancelled = true; };
+  }, [source]);
+
+  useEffect(() => {
+    setPool(null);
+    if (!selected || source !== "imported") { setPoolLoading(false); return; }
+    let cancelled = false;
+    setPoolLoading(true); setSourceError("");
+    api.giftCollectibles(selected.GiftID).then((value) => { if (!cancelled) setPool(value); })
+      .catch((err) => { if (!cancelled) setSourceError(errorMessage(err)); })
+      .finally(() => { if (!cancelled) setPoolLoading(false); });
+    return () => { cancelled = true; };
+  }, [source, selected?.GiftID]);
+
+  const matches = useMemo(() => imported.filter((gift) =>
+    !search.trim() || gift.Title.toLowerCase().includes(search.trim().toLowerCase()) || gift.GiftID.includes(search.trim())
+  ), [imported, search]);
+
+  function chooseGift(gift: StarGiftRow) {
+    setSelected(gift); setTitle(gift.Title); setStars(gift.Stars); setConvertStars(gift.ConvertStars);
+    setSlug(`auction-${gift.GiftID}-${Date.now().toString(36)}`);
+    setReleasedBy(gift.ReleasedByPeerID && gift.ReleasedByPeerID !== "0" ? gift.ReleasedByPeerID : "");
+    setPerUserTotal(String(gift.PerUserTotal ?? 0)); setPremium(gift.RequirePremium ?? false); setBirthday(gift.Birthday ?? false);
+    setSupportOnly(gift.SupportOnly ?? false); setSortOrder(String(gift.SortOrder ?? 0)); setUpgradeStars("");
+    setPreview(null); setError("");
+  }
 
   // Any field change invalidates a dry run: the confirm step replays the command id
   // the server issued for the payload it actually validated.
@@ -240,10 +288,10 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
       const total = Number(supply); const per = Number(perRound); const duration = Number(roundDuration);
       const start = toUnixSeconds(startAt);
       if (!slug.trim()) throw new Error(t("gifts.lifecycle.slugRequired"));
-      if (!(total > 0)) throw new Error(t("gifts.lifecycle.supplyRequired"));
-      if (!(per > 0)) throw new Error(t("gifts.lifecycle.perRoundRequired"));
+      if (!Number.isSafeInteger(total) || total <= 0 || total > 2147483647) throw new Error(t("gifts.lifecycle.supplyRequired"));
+      if (!Number.isSafeInteger(per) || per <= 0) throw new Error(t("gifts.lifecycle.perRoundRequired"));
       if (per > total) throw new Error(t("gifts.lifecycle.perRoundTooLarge"));
-      if (!(duration > 0)) throw new Error(t("gifts.lifecycle.roundDurationRequired"));
+      if (!Number.isSafeInteger(duration) || duration <= 0 || duration > 2147483647) throw new Error(t("gifts.lifecycle.roundDurationRequired"));
       if (start !== 0 && start < nowSec) throw new Error(t("gifts.lifecycle.startPast"));
       return {
         auction: true,
@@ -273,6 +321,7 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
       convert_stars: convertStars,
       enabled,
       support_only: supportOnly,
+      released_by_peer: releasedBy.trim(), per_user_total: Number(perUserTotal), require_premium: premium, birthday,
       sort_order: Number(sortOrder),
       ...lifecyclePayload()
     }));
@@ -280,18 +329,36 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
     return form;
   }
 
+  async function submit(confirm: boolean) {
+    if (source === "upload") return api.importGift(uploadForm(confirm, confirm ? `exec-${preview?.command_id}` : ""));
+    if (!selected || sourceLoading || sourceError) throw new Error(t("auctions.selectImported"));
+    if (!reason.trim()) throw new Error(t("action.reasonRequired"));
+    return api.action("/api/actions/create-gift-auction", {
+      source_gift_id: selected.GiftID, source_revision_id: selected.RevisionID,
+      source_sha256: confirm ? preview?.details?.source_sha256 : "",
+      title: title.trim(), stars, convert_stars: convertStars, enabled, support_only: supportOnly,
+      released_by_peer: releasedBy.trim(), per_user_total: Number(perUserTotal), require_premium: premium, birthday, sort_order: Number(sortOrder),
+      ...(pool?.found && upgradeStars.trim() ? { upgrade_stars: upgradeStars } : {}),
+      reason: reason.trim(), confirm,
+      // A stable execution ID makes a retry safe if the success response was lost.
+      command_id: confirm ? `exec-${preview?.command_id}` : "",
+      ...Object.fromEntries(Object.entries(lifecyclePayload()).filter(([key]) => key !== "auction"))
+    });
+  }
+
   async function validate() {
     setBusy(true); setError(""); setPreview(null);
-    try { setPreview(await api.importGift(uploadForm(false))); }
+    try { const result = await submit(false); if (result.error) throw new Error(result.error); setPreview(result); }
     catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
   }
 
   async function confirm() {
-    if (!preview) return;
+    if (!preview?.dry_run || preview.error) return;
     setBusy(true); setError("");
     try {
-      await api.importGift(uploadForm(true, preview.command_id));
+      const result = await submit(true);
+      if (result.error || result.status !== "completed") throw new Error(result.error || result.message || result.status);
       onCreated();
       onClose();
     } catch (err) { setError(errorMessage(err)); }
@@ -300,7 +367,7 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
 
   return createPortal(
     <div className="modal-backdrop" role="presentation">
-      <section className="modal command-modal" role="dialog" aria-modal="true">
+      <section className="modal command-modal auction-author-modal" role="dialog" aria-modal="true" aria-label={mode === "auction" ? t("auctions.newAuction") : t("auctions.newDrop")}>
         <div className="modal-head">
           <div>
             <div className="eyebrow">{t("auctions.eyebrow")}</div>
@@ -308,9 +375,30 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
           </div>
           <button className="icon-btn" type="button" onClick={onClose} disabled={busy} aria-label={t("common.close")}><X size={15} /></button>
         </div>
-        <div className="command-body">
+        <div className="command-body auction-author-scroll"><fieldset className="auction-author-fields" disabled={busy}>
           <div className="gift-import-note"><span>{mode === "auction" ? t("gifts.lifecycle.hintAuction") : t("gifts.lifecycle.hintDrop")}</span></div>
-          <label className={`gift-file-picker ${file ? "has-file" : ""}`}>
+          {mode === "auction" && <div className="gift-source-tabs" role="group" aria-label={t("auctions.giftSource")}>
+            <button className={`btn ${source === "imported" ? "primary" : ""}`} type="button" disabled={busy} aria-pressed={source === "imported"} onClick={() => { setSource("imported"); setPreview(null); }}>{t("auctions.fromImported")}</button>
+            <button className={`btn ${source === "upload" ? "primary" : ""}`} type="button" disabled={busy} aria-pressed={source === "upload"} onClick={() => { setSource("upload"); setPreview(null); }}>{t("gifts.fileSource")}</button>
+          </div>}
+          {source === "imported" && <section className="auction-source-panel">
+            <p className="field-hint">{t("auctions.copyHint")}</p>
+            <input aria-label={t("gifts.searchPlaceholder")} placeholder={t("gifts.searchPlaceholder")} value={search} onChange={(e) => setSearch(e.target.value)} disabled={busy} />
+            <div className="auction-source-grid" role="group" aria-label={t("auctions.selectImported")}>
+              {matches.map((gift) => <button key={gift.GiftID} type="button" className={`auction-source-card ${selected?.GiftID === gift.GiftID ? "selected" : ""}`} disabled={busy} aria-pressed={selected?.GiftID === gift.GiftID} onClick={() => chooseGift(gift)}>
+                <span><strong>{gift.Title || `#${gift.GiftID}`}</strong><small className="mono">#{gift.GiftID}</small></span>
+                <Badge tone={gift.Enabled ? "good" : "neutral"}>{gift.Enabled ? t("common.enabled") : t("common.disabled")}</Badge>
+              </button>)}
+              {!sourceLoading && matches.length === 0 && <p>{t("auctions.noImported")}</p>}
+            </div>
+            {selected && <div className="auction-selected-gift">
+              <LottiePreview giftID={selected.GiftID} revision={Number(selected.Revision)} compact />
+              <div><strong>{selected.Title}</strong><p className="field-hint">{sourceLoading ? t("common.loading") : pool?.found ? t("auctions.poolSummary", { models: pool.models?.length ?? 0, patterns: pool.patterns?.length ?? 0, backdrops: pool.backdrops?.length ?? 0, stars: pool.upgrade_stars ?? "0" }) : t("auctions.noUpgrades")}</p></div>
+            </div>}
+            {sourceError && <Alert>{sourceError}</Alert>}
+          </section>}
+          {source === "upload" && <label className={`gift-file-picker ${file ? "has-file" : ""}`}>
+
             <input type="file" accept=".tgs,.json,application/json" onChange={(e) => {
               const next = e.target.files?.[0] ?? null;
               setFile(next);
@@ -319,7 +407,7 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
             }} />
             <span className="gift-file-copy"><strong>{file?.name ?? t("gifts.chooseFile")}</strong></span>
             <span className="gift-file-action">{file ? t("gifts.changeFile") : t("common.choose")}</span>
-          </label>
+          </label>}
           <div className="gift-fields-grid">
             <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => edit(setTitle)(e.target.value)} /></label>
             <label><span>{mode === "auction" ? t("auctions.minBid") : t("gifts.stars")}</span><input type="number" min="1" value={stars} onChange={(e) => edit(setStars)(e.target.value)} /></label>
@@ -338,7 +426,14 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
           </> : <div className="gift-fields-grid">
             <label><span>{t("gifts.drop.unlockAt")}</span><input type="datetime-local" value={unlockAt} onChange={(e) => edit(setUnlockAt)(e.target.value)} /></label>
           </div>}
-          <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={reason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
+          <div className="gift-fields-grid">
+            <label><span>{t("gifts.releasedBy")}</span><input value={releasedBy} placeholder="@username / ID" onChange={(e) => edit(setReleasedBy)(e.target.value)} /></label>
+            <label><span>{t("gifts.perUserLimit")}</span><input type="number" min="0" step="1" value={perUserTotal} onChange={(e) => edit(setPerUserTotal)(e.target.value)} /></label>
+            {source === "imported" && pool?.found && <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} placeholder={pool.upgrade_stars} onChange={(e) => edit(setUpgradeStars)(e.target.value)} /></label>}
+          </div>
+          <label className="gift-switch"><input type="checkbox" checked={premium} onChange={(e) => edit(setPremium)(e.target.checked)} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.premium")}</span></label>
+          <label className="gift-switch"><input type="checkbox" checked={birthday} onChange={(e) => edit(setBirthday)(e.target.checked)} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.birthday")}</span></label>
+          <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={reason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => edit(setReason)(e.target.value)} /></label>
           <label className="gift-switch">
             <input type="checkbox" checked={enabled} onChange={(e) => edit(setEnabled)(e.target.checked)} />
             <span className="gift-switch-track" aria-hidden="true"><span /></span>
@@ -352,13 +447,17 @@ function AuthorModal({ mode, onClose, onCreated }: { mode: AuthorMode; onClose: 
           {error && <Alert>{error}</Alert>}
           {preview && <div className="gift-validation">
             <div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{t("gifts.validationReady")}</strong><span>{t("gifts.validationHint")}</span></div></div>
-            <pre>{JSON.stringify(preview.details, null, 2)}</pre>
+            <div className="auction-release-summary">
+              <strong>{title || selected?.Title || file?.name}</strong>
+              <span>{t("gifts.auction.plan", { rounds, perRound: Number(perRound), minutes: Math.max(1, Math.round(Number(roundDuration) / 60)) })}</span>
+              {source === "imported" && <span>{t("auctions.copyHint")}</span>}
+            </div>
           </div>}
-        </div>
+        </fieldset></div>
         <div className="modal-actions">
           <button className="btn" type="button" onClick={onClose} disabled={busy}>{t("common.close")}</button>
           <button className="btn" type="button" onClick={() => void validate()} disabled={busy}>{busy ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />}{t("gifts.validate")}</button>
-          <button className="btn primary" type="button" onClick={() => void confirm()} disabled={busy || !preview}><Upload size={15} />{t("gifts.confirmImport")}</button>
+          <button className="btn primary" type="button" onClick={() => void confirm()} disabled={busy || !preview?.dry_run || !!preview.error || (source === "imported" && (sourceLoading || !!sourceError || !selected))}><Upload size={15} />{source === "imported" ? t("auctions.createRelease") : t("gifts.confirmImport")}</button>
         </div>
       </section>
     </div>,
