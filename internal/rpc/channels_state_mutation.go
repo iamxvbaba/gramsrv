@@ -53,7 +53,7 @@ func (r *Router) channelStateMutationUpdates(ctx context.Context, userID int64, 
 	icon := r.peerBotVerificationIcon(ctx, domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID})
 	usernames := r.channelStateUsernameRegistry(ctx, channel, mono, includeMono)
 	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, userID, channel, mono, includeMono, icon, usernames)
-	return r.channelStateUpdatesWithLinkedMonoforum(userID, channel, mono, includeMono, icon, usernames)
+	return r.channelStateUpdatesWithLinkedMonoforum(ctx, userID, channel, mono, includeMono, icon, usernames)
 }
 
 func (r *Router) channelPaidMessagesPriceUpdates(ctx context.Context, userID int64, res domain.ChannelPaidMessagesPriceResult) tg.UpdatesClass {

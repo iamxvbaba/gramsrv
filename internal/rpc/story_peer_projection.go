@@ -560,6 +560,7 @@ func appendUniqueTGChats(base []tg.ChatClass, extra ...tg.ChatClass) []tg.ChatCl
 // single-peer fields and fan-out builders use the corresponding narrow/preload
 // helpers instead.
 func (r *Router) applyPeerReadModels(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {
+	r.applyBotOwnership(ctx, viewerUserID, users)
 	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, users, chats)
 	r.applyPeerIdentitiesToPeerObjects(ctx, users, chats)
 }
