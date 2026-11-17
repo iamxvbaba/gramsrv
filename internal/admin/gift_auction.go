@@ -43,6 +43,13 @@ func (s *Service) CreateStarGiftAuction(ctx context.Context, req CreateStarGiftA
 	if s == nil || s.gifts == nil {
 		return CommandResult{}, fmt.Errorf("star gift service is not configured")
 	}
+	return s.runCommand(ctx, req.CommandMeta, "create_star_gift_auction", 0, domain.Peer{}, req, func() (CommandResult, error) {
+		return s.createStarGiftAuction(ctx, req)
+	})
+}
+
+// Mutable template reads and clock checks belong after command replay.
+func (s *Service) createStarGiftAuction(ctx context.Context, req CreateStarGiftAuctionRequest) (CommandResult, error) {
 	req.Title = strings.TrimSpace(req.Title)
 	req.AuctionSlug = strings.ToLower(strings.TrimSpace(req.AuctionSlug))
 	if !auctionReleaseSlug.MatchString(req.AuctionSlug) {
@@ -193,32 +200,27 @@ func (s *Service) CreateStarGiftAuction(ctx context.Context, req CreateStarGiftA
 	if !req.DryRun && req.SourceSHA != sourceSHA {
 		return CommandResult{}, fmt.Errorf("SOURCE_GIFT_CHANGED: validate the release again")
 	}
-	payload := struct {
-		CreateStarGiftAuctionRequest
-		SourceSHA string `json:"source_sha256"`
-	}{req, hex.EncodeToString(sum[:])}
-	return s.runCommand(ctx, req.CommandMeta, "create_star_gift_auction", 0, domain.Peer{}, payload, func() (CommandResult, error) {
-		for _, gift := range gifts {
-			if gift.Auction && strings.EqualFold(gift.AuctionSlug, req.AuctionSlug) {
-				return CommandResult{}, fmt.Errorf("AUCTION_SLUG_IN_USE")
-			}
+
+	for _, gift := range gifts {
+		if gift.Auction && strings.EqualFold(gift.AuctionSlug, req.AuctionSlug) {
+			return CommandResult{}, fmt.Errorf("AUCTION_SLUG_IN_USE")
 		}
-		details := map[string]any{"source_gift_id": strconv.FormatInt(source.ID, 10), "title": req.Title, "auction_slug": req.AuctionSlug, "availability_total": req.AvailabilityTotal, "gifts_per_round": req.GiftsPerRound, "stars": strconv.FormatInt(req.Stars, 10), "includes_collectibles": hasPool, "source_sha256": sourceSHA}
-		if hasPool {
-			details["models"] = len(pool.Models)
-			details["patterns"] = len(pool.Patterns)
-			details["backdrops"] = len(pool.Backdrops)
-			details["upgrade_stars"] = strconv.FormatInt(write.Collectible.UpgradeStars, 10)
-		}
-		if req.DryRun {
-			return CommandResult{Message: "auction release validated", Details: details}, nil
-		}
-		write.Catalog.NormalizeLifecycleAuthoring(int(s.now().Unix()))
-		result, err := s.gifts.CreateCatalogBundle(ctx, write)
-		if err != nil {
-			return CommandResult{Details: details}, err
-		}
-		details["gift_id"] = strconv.FormatInt(result.Catalog.Gift.ID, 10)
-		return CommandResult{Message: "auction release created", Details: details}, nil
-	})
+	}
+	details := map[string]any{"source_gift_id": strconv.FormatInt(source.ID, 10), "title": req.Title, "auction_slug": req.AuctionSlug, "availability_total": req.AvailabilityTotal, "gifts_per_round": req.GiftsPerRound, "stars": strconv.FormatInt(req.Stars, 10), "includes_collectibles": hasPool, "source_sha256": sourceSHA}
+	if hasPool {
+		details["models"] = len(pool.Models)
+		details["patterns"] = len(pool.Patterns)
+		details["backdrops"] = len(pool.Backdrops)
+		details["upgrade_stars"] = strconv.FormatInt(write.Collectible.UpgradeStars, 10)
+	}
+	if req.DryRun {
+		return CommandResult{Message: "auction release validated", Details: details}, nil
+	}
+	write.Catalog.NormalizeLifecycleAuthoring(int(s.now().Unix()))
+	result, err := s.gifts.CreateCatalogBundle(ctx, write)
+	if err != nil {
+		return CommandResult{Details: details}, err
+	}
+	details["gift_id"] = strconv.FormatInt(result.Catalog.Gift.ID, 10)
+	return CommandResult{Message: "auction release created", Details: details}, nil
 }

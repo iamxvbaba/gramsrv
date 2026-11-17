@@ -9,6 +9,7 @@ import (
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 	"testing"
+	"time"
 )
 
 func auctionTemplate(t *testing.T) (*Service, *stargiftapp.Service, domain.StarGiftCatalogBundleResult) {
@@ -169,4 +170,42 @@ func TestAuctionFromImportedReleaseSettings(t *testing.T) {
 	if original.UpgradeStars != 25 || original.SupplyTotal != 8 {
 		t.Fatal("source settings changed")
 	}
+}
+
+func TestAuctionFromImportedReplaysAfterStartAndTemplateChange(t *testing.T) {
+	svc, gifts, source := auctionTemplate(t)
+	ctx := context.Background()
+	req := auctionRequest(source.Catalog.Gift)
+	req.AuctionStartDate = int(fixedNow().Unix()) + 60
+	preview, err := svc.CreateStarGiftAuction(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SourceSHA = preview.Details["source_sha256"].(string)
+	req.DryRun = false
+	req.CommandID = "exec-replay-later"
+	first, err := svc.CreateStarGiftAuction(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.now = func() time.Time { return fixedNow().Add(2 * time.Hour) }
+	if _, err = gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{GiftID: source.Catalog.Gift.ID, Title: "Updated template", Stars: 50, ConvertStars: 25, Enabled: false, Animation: sourceAnimation(t, gifts), CommandID: "replace-template", Actor: "ops"}); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := svc.CreateStarGiftAuction(ctx, req)
+	if err != nil || !retry.AlreadyExecuted || retry.Details["gift_id"] != first.Details["gift_id"] {
+		t.Fatalf("retry=%+v err=%v", retry, err)
+	}
+	req.Stars++
+	if _, err = svc.CreateStarGiftAuction(ctx, req); err == nil || !strings.Contains(err.Error(), "COMMAND_ID_CONFLICT") {
+		t.Fatalf("changed retry err=%v", err)
+	}
+}
+func sourceAnimation(t *testing.T, gifts *stargiftapp.Service) domain.StarGiftAnimation {
+	t.Helper()
+	animation, err := gifts.PrepareAnimation("template.json", []byte(`{"v":"5.7.4","fr":30,"ip":0,"op":60,"w":512,"h":512,"layers":[{"ty":4}],"assets":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return animation
 }
