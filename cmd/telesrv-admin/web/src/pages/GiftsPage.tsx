@@ -93,6 +93,7 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [gifts, setGifts] = useState<StarGiftRow[]>([]);
   const [query, setQuery] = useState("");
+  const [catalogView, setCatalogView] = useState<"enabled" | "imported">("enabled");
   const [importOpen, setImportOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
   const [collectibleGift, setCollectibleGift] = useState<StarGiftRow | null>(null);
@@ -179,13 +180,13 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
 
   const visibleGifts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return gifts;
     return gifts.filter((gift) =>
-      String(gift.GiftID).includes(normalized) ||
-      gift.Title.toLowerCase().includes(normalized) ||
-      gift.SourceFormat.toLowerCase().includes(normalized)
+      (catalogView === "imported" || gift.Enabled) &&
+      (!normalized || String(gift.GiftID).includes(normalized) ||
+        gift.Title.toLowerCase().includes(normalized) ||
+        gift.SourceFormat.toLowerCase().includes(normalized))
     );
-  }, [gifts, query]);
+  }, [gifts, query, catalogView]);
 
   // Mirrors domain.StarGiftCatalogWrite.ValidateLifecycleAuthoring so the operator
   // sees the problem before the upload round-trip. Only the keys belonging to the
@@ -338,6 +339,12 @@ return {
       </div>
       <QueryPanel>
         <div className="toolbar">
+          <label>
+            <select aria-label={t("gifts.catalogView")} value={catalogView} onChange={(event) => setCatalogView(event.target.value as "enabled" | "imported")}>
+              <option value="enabled">{t("gifts.enabledCatalog")}</option>
+              <option value="imported">{t("gifts.allImported")}</option>
+            </select>
+          </label>
           <label className="searchbox"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("gifts.searchPlaceholder")} /></label>
           <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: gifts.length })}</span>
         </div>
