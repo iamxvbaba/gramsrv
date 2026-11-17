@@ -282,6 +282,7 @@ type seedStickerSetEntry struct {
 }
 
 type seedStickerSetInfoJSON struct {
+	Emoticon     string                   `json:"emoticon"`
 	InputSetType string                   `json:"input_set_type"`
 	Result       seedStickerSetResultJSON `json:"result"`
 }
@@ -447,6 +448,15 @@ func readSeedStickerSetEntries(root string, maxRegular int) ([]seedStickerSetEnt
 		}
 		if systemKey == "" {
 			systemKey = systemKeyForInputSetType(info.InputSetType)
+			if normalized := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(info.InputSetType), "*"), "tg."); normalized == "InputStickerSetDice" {
+				emoticon := strings.ReplaceAll(info.Emoticon, "\uFE0F", "")
+				switch emoticon {
+				case "🎲", "🎯", "🏀", "⚽", "🎳", "🎰":
+					systemKey = "dice:" + emoticon
+				default:
+					return fmt.Errorf("dice seed %s has no supported emoticon", infoPath)
+				}
+			}
 		}
 		entries = append(entries, seedStickerSetEntry{dir: dir, systemKey: systemKey, info: info})
 		return nil

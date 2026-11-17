@@ -43,3 +43,11 @@ func TestNormalizeSeedJSON(t *testing.T) {
 		t.Fatalf("thumb bytes = %v, want 0141", thumb["bytes"])
 	}
 }
+
+func TestDiceSpecialSetsAreIncludedInDeployment(t *testing.T) {
+	for emoji, name := range map[string]string{"🎲": "Normal", "🎯": "Dart", "🏀": "Basketball", "⚽": "Football", "🎳": "Bowling", "🎰": "Casino"} {
+		if got := specialSeedDirs["dice:"+emoji]; got != "DefaultSet_Dice_"+name {
+			t.Fatalf("%s maps to %q", emoji, got)
+		}
+	}
+}

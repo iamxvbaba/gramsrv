@@ -70,6 +70,14 @@ func (r *Router) onMessagesGetAvailableEffects(ctx context.Context, hash int) (t
 }
 
 func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGetStickerSetRequest) (tg.MessagesStickerSetClass, error) {
+	dice := false
+	if req != nil {
+		_, dice = req.Stickerset.(*tg.InputStickerSetDice)
+	}
+	if dice && r.deps.Files == nil {
+		return nil, tgerr400("STICKERSET_INVALID")
+	}
+
 	if req == nil || r.deps.Files == nil {
 		return tdesktop.StickerSet(req), nil
 	}
@@ -94,6 +102,9 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 			zap.Bool("found", found),
 			zap.Int("request_hash", req.Hash),
 		)
+	}
+	if dice && (!found || !completeDiceStickerSet(set, docs, req.Stickerset.(*tg.InputStickerSetDice).Emoticon)) {
+		return nil, tgerr400("STICKERSET_INVALID")
 	}
 	if !found {
 		if fallbackSet, fallbackDocs, fallbackFound, fallbackErr := r.resolvePlaceholderStickerSet(ctx, ref); fallbackErr != nil {
@@ -677,4 +688,56 @@ func tdesktopHashUpdate(hash uint64, value int64) uint64 {
 	hash ^= hash >> 4
 	hash += uint64(value)
 	return hash
+}
+
+// Dice renderers address every final result; casino additionally uses fixed document offsets.
+// An incomplete success prevents clients from retrying and can leave an endless animation.
+func completeDiceStickerSet(set domain.StickerSet, docs []domain.Document, emoticon string) bool {
+	emoticon = normalizeDiceEmoticon(emoticon)
+	sides, ok := diceValueSides(emoticon)
+	if !ok {
+		return false
+	}
+	valid := make(map[int64]bool, len(docs))
+	for _, doc := range docs {
+		valid[doc.ID] = doc.IsSticker() && doc.MimeType == "application/x-tgsticker" && doc.Size > 0
+	}
+	if emoticon == "🎰" {
+		if len(docs) < 21 || len(set.DocumentIDs) < 21 {
+			return false
+		}
+		for i := 0; i < 21; i++ {
+			if !valid[docs[i].ID] || docs[i].ID != set.DocumentIDs[i] {
+				return false
+			}
+		}
+		return true
+	}
+	covered := make([]bool, sides+1)
+	for _, pack := range set.Packs {
+		if len(pack.Emoticon) == 0 {
+			continue
+		}
+		index := -1
+		if pack.Emoticon[0] == '#' {
+			index = 0
+		} else if pack.Emoticon[0] >= '1' && pack.Emoticon[0] <= '6' {
+			index = int(pack.Emoticon[0] - '0')
+		}
+		if index < 0 || index > sides {
+			continue
+		}
+		for _, id := range pack.DocumentIDs {
+			if valid[id] {
+				covered[index] = true
+				break
+			}
+		}
+	}
+	for _, present := range covered {
+		if !present {
+			return false
+		}
+	}
+	return true
 }

@@ -185,6 +185,7 @@ type resultJSON struct {
 type fileJSON struct {
 	APICall      string     `json:"api_call"`
 	InputSetType string     `json:"input_set_type"`
+	Emoticon     string     `json:"emoticon,omitempty"`
 	Result       resultJSON `json:"result"`
 }
 
@@ -288,6 +289,11 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 		setName = label
 	}
 	setDir := filepath.Join(outRoot, fmt.Sprintf("%s_%d", setName, full.Set.ID))
+	if dice, ok := input.(*tg.InputStickerSetDice); ok {
+		if name, found := diceSeedDirectory(dice.Emoticon); found {
+			setDir = filepath.Join(outRoot, name)
+		}
+	}
 	stickersDir := filepath.Join(setDir, "stickers")
 	if err := os.MkdirAll(stickersDir, 0o755); err != nil {
 		return err
@@ -342,6 +348,7 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 	out := fileJSON{
 		APICall:      "messages.getStickerSet",
 		InputSetType: fmt.Sprintf("%T", input),
+		Emoticon:     diceSeedEmoticon(input),
 		Result: resultJSON{
 			Type: "StickerSet",
 			Set: setJSON{
@@ -733,4 +740,16 @@ func apiCredentials(defID int, defHash string) (int, string) {
 		hash = v
 	}
 	return id, hash
+}
+
+func diceSeedEmoticon(input tg.InputStickerSetClass) string {
+	if dice, ok := input.(*tg.InputStickerSetDice); ok {
+		return strings.ReplaceAll(dice.Emoticon, "\uFE0F", "")
+	}
+	return ""
+}
+func diceSeedDirectory(emoticon string) (string, bool) {
+	names := map[string]string{"🎲": "Normal", "🎯": "Dart", "🏀": "Basketball", "⚽": "Football", "🎳": "Bowling", "🎰": "Casino"}
+	name, ok := names[strings.ReplaceAll(emoticon, "\uFE0F", "")]
+	return "DefaultSet_Dice_" + name, ok
 }
