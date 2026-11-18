@@ -31,6 +31,7 @@ type specialCatalogEntry struct {
 }
 
 var specialSeedDirs = map[string]string{
+	"dice:🎲": "DefaultSet_Dice_Normal", "dice:🎯": "DefaultSet_Dice_Dart", "dice:🏀": "DefaultSet_Dice_Basketball", "dice:⚽": "DefaultSet_Dice_Football", "dice:🎳": "DefaultSet_Dice_Bowling", "dice:🎰": "DefaultSet_Dice_Casino",
 	"animated_emoji":            "DefaultSet_AnimatedEmoji",
 	"animated_emoji_animations": "DefaultSet_AnimatedEmojiAnimations",
 	"emoji_generic_animations":  "DefaultSet_EmojiGenericAnimations",

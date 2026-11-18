@@ -220,3 +220,15 @@ func readTree(t *testing.T, root string) map[string][]byte {
 	}
 	return files
 }
+
+func TestDiceSeedMetadataAndDirectory(t *testing.T) {
+	for emoji, name := range map[string]string{"🎲": "Normal", "🎯": "Dart", "🏀": "Basketball", "⚽": "Football", "🎳": "Bowling", "🎰": "Casino"} {
+		input := &tg.InputStickerSetDice{Emoticon: emoji + "\uFE0F"}
+		if got := diceSeedEmoticon(input); got != emoji {
+			t.Fatalf("emoticon=%q", got)
+		}
+		if got, ok := diceSeedDirectory(input.Emoticon); !ok || got != "DefaultSet_Dice_"+name {
+			t.Fatalf("directory=%q ok=%v", got, ok)
+		}
+	}
+}

@@ -818,7 +818,7 @@ func stickerSetRefFromInput(input tg.InputStickerSetClass) (domain.StickerSetRef
 	case *tg.InputStickerSetTonGifts:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyTonGifts}, true
 	case *tg.InputStickerSetDice:
-		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "dice:" + in.Emoticon}, true
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "dice:" + normalizeDiceEmoticon(in.Emoticon)}, true
 	default:
 		return domain.StickerSetRef{}, false
 	}

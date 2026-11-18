@@ -64,9 +64,10 @@ A set spec writes `<out_dir>/<ShortName>_<id>/set_info.json` plus
 | `telegram_reactions_export/` | reactions | `stickerfetch <root> reactions` |
 | `telegram_effects_export/` | message effects | `stickerfetch <root> effects` |
 
-Dice sets are not identified by `input_set_type`: rename each exported directory
-to `DefaultSet_Dice_<Normal|Dart|Basketball|Football|Bowling|Casino>` inside
-`telegram_default_stickers_export/`.
+Dice exports record their emoticon and use the canonical
+`DefaultSet_Dice_<Normal|Dart|Basketball|Football|Bowling|Casino>` directory names
+inside `telegram_default_stickers_export/`; no manual rename is needed.
+`stickerseeddeploy` also deploys all six `dice:<emoji>` special catalog entries.
 
 In Docker the seed directory is mounted read-only from
 `TELESRV_STICKER_SEED_HOST_DIR` (see `deploy/docker/.env.example`). Files must be
