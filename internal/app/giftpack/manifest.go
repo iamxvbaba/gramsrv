@@ -134,7 +134,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 			continue
 		}
 		u := g.Upgrade
-		if strings.TrimSpace(u.SlugPrefix) == "" || u.UpgradeStars <= 0 || u.SupplyTotal <= 0 {
+		if strings.TrimSpace(u.SlugPrefix) == "" || u.UpgradeStars < 0 || u.SupplyTotal <= 0 {
 			return Manifest{}, fmt.Errorf("pack manifest: gift %q: upgrade.slug_prefix is required", g.Title)
 		}
 		slug := strings.ToLower(strings.TrimSpace(u.SlugPrefix))

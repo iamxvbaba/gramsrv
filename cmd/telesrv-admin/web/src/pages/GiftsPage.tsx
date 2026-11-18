@@ -93,6 +93,7 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [gifts, setGifts] = useState<StarGiftRow[]>([]);
   const [query, setQuery] = useState("");
+  const [catalogView, setCatalogView] = useState<"enabled" | "imported">("enabled");
   const [importOpen, setImportOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
   const [collectibleGift, setCollectibleGift] = useState<StarGiftRow | null>(null);
@@ -139,7 +140,7 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
   async function load() {
     setError("");
     try {
-      setGifts((await api.gifts()).Gifts ?? []);
+      setGifts((await api.gifts(true)).Gifts ?? []);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -177,15 +178,16 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
     return Math.ceil(supply / perRound);
   }, [auctionSupply, giftsPerRound]);
 
+  const catalogGifts = useMemo(() => gifts.filter((gift) => catalogView === "imported" || gift.Enabled), [gifts, catalogView]);
+
   const visibleGifts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return gifts;
-    return gifts.filter((gift) =>
-      String(gift.GiftID).includes(normalized) ||
-      gift.Title.toLowerCase().includes(normalized) ||
-      gift.SourceFormat.toLowerCase().includes(normalized)
+    return catalogGifts.filter((gift) =>
+      (!normalized || String(gift.GiftID).includes(normalized) ||
+        gift.Title.toLowerCase().includes(normalized) ||
+        gift.SourceFormat.toLowerCase().includes(normalized))
     );
-  }, [gifts, query]);
+  }, [catalogGifts, query]);
 
   // Mirrors domain.StarGiftCatalogWrite.ValidateLifecycleAuthoring so the operator
   // sees the problem before the upload round-trip. Only the keys belonging to the
@@ -331,15 +333,21 @@ return {
     </>}>
       {error && <Alert>{error}</Alert>}
       <div className="metric-row gift-metrics">
-        <Metric label={t("gifts.total")} value={String(gifts.length)} />
+        <Metric label={t("gifts.total")} value={String(catalogGifts.length)} />
         <Metric label={t("gifts.enabled")} value={String(gifts.filter((gift) => gift.Enabled).length)} tone="good" />
-		<Metric label={t("gifts.received")} value={gifts.reduce((sum, gift) => sum + BigInt(gift.ReceivedCount), 0n).toString()} />
+		<Metric label={t("gifts.received")} value={catalogGifts.reduce((sum, gift) => sum + BigInt(gift.ReceivedCount), 0n).toString()} />
         <Metric label={t("gifts.formats")} value="TGS / Lottie" />
       </div>
       <QueryPanel>
         <div className="toolbar">
+          <label>
+            <select aria-label={t("gifts.catalogView")} value={catalogView} onChange={(event) => setCatalogView(event.target.value as "enabled" | "imported")}>
+              <option value="enabled">{t("gifts.enabledCatalog")}</option>
+              <option value="imported">{t("gifts.allImported")}</option>
+            </select>
+          </label>
           <label className="searchbox"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("gifts.searchPlaceholder")} /></label>
-          <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: gifts.length })}</span>
+          <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: catalogGifts.length })}</span>
         </div>
       </QueryPanel>
       <div className="table-wrap gift-table-wrap">
@@ -423,7 +431,7 @@ return {
                 {selectedOfficial?.can_upgrade && <>
                   <label className="gift-switch"><input type="checkbox" checked={includeCollectible} onChange={(e) => { setIncludeCollectible(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.includeCollectible")}</span></label>
                   {includeCollectible && <div className="gift-fields-grid">
-                    <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
+                    <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="0" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); setPreview(null); }} /></label>
                   </div>}

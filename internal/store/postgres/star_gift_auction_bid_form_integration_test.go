@@ -206,3 +206,115 @@ func TestStarGiftAuctionBidAfterSettledRoundNeedsFreshFormPostgres(t *testing.T)
 		t.Fatalf("replay charged twice = %+v err %v", balance, err)
 	}
 }
+
+func TestStarGiftAuctionEarlyBidsPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	start := now + 3600
+	users := NewUserStore(pool)
+	winner := createTestUser(t, ctx, users, "+1993"+suffix+"01", "EarlyWinner", "")
+	loser := createTestUser(t, ctx, users, "+1993"+suffix+"02", "EarlyLoser", "")
+	stars := NewStarsStore(pool)
+	for _, id := range []int64{winner.ID, loser.ID} {
+		if _, _, err := stars.EnsureGrant(ctx, id, 1000, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gifts := NewStarGiftStore(pool)
+	base := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Early auction " + suffix, Stars: 100, Enabled: true, Limited: true, Auction: true, AvailabilityTotal: 1, AvailabilityRemains: 1, GiftsPerRound: 1, AuctionStartDate: start, AuctionRoundDuration: 60, AuctionSlug: "early-" + suffix,
+		Document: collectibleTestDocument(base, "early.tgs"), Blob: collectibleTestBlob(base, "early"), Animation: collectibleTestAnimation("early.tgs"), Actor: "integration", CommandID: "early-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := NewStarGiftLifecycleStore(pool, NewMessageStore(pool), 1000)
+	first := domain.StarGiftAuctionBidRequest{UserID: winner.ID, GiftID: entry.Gift.ID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: winner.ID}, BidAmount: 200, FormID: 61301, Date: now}
+	if _, err := lifecycle.StarGiftAuctionState(ctx, winner.ID, entry.Gift.ID, "", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_auctions SET status='cancelled' WHERE gift_id=$1`, entry.Gift.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lifecycle.BidStarGiftAuction(ctx, first); !errors.Is(err, domain.ErrStarGiftAuctionUnavailable) {
+		t.Fatalf("cancelled auction accepted early bid: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_auctions SET status='pending' WHERE gift_id=$1`, entry.Gift.ID); err != nil {
+		t.Fatal(err)
+	}
+	state, balance, err := lifecycle.BidStarGiftAuction(ctx, first)
+	if err != nil || balance.Balance != 800 || state.CurrentRound != 0 || state.NextRoundAt != start+60 || state.UserState.BidAmount != 200 {
+		t.Fatalf("early bid balance=%+v state=%+v err=%v", balance, state, err)
+	}
+	_, balance, err = lifecycle.BidStarGiftAuction(ctx, first)
+	if err != nil || balance.Balance != 800 {
+		t.Fatalf("early replay balance=%+v err=%v", balance, err)
+	}
+	updated := first
+	updated.UpdateBid = true
+	updated.BidAmount = 350
+	updated.FormID = 61302
+	updated.Date = now + 1
+	_, balance, err = lifecycle.BidStarGiftAuction(ctx, updated)
+	if err != nil || balance.Balance != 650 {
+		t.Fatalf("early increase balance=%+v err=%v", balance, err)
+	}
+	insufficient := updated
+	insufficient.FormID = 61309
+	insufficient.BidAmount = 2000
+	if _, _, err := lifecycle.BidStarGiftAuction(ctx, insufficient); !errors.Is(err, domain.ErrStarsInsufficient) {
+		t.Fatalf("insufficient early increase: %v", err)
+	}
+	other := first
+	other.UserID = loser.ID
+	other.Peer.ID = loser.ID
+	other.FormID = 61303
+	if _, balance, err = lifecycle.BidStarGiftAuction(ctx, other); err != nil || balance.Balance != 800 {
+		t.Fatalf("second early bid balance=%+v err=%v", balance, err)
+	}
+	if err := lifecycle.settleStarGiftAuction(ctx, entry.Gift.ID, start-1); err != nil {
+		t.Fatal(err)
+	}
+	var awards, payments int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM star_gift_auction_acquired WHERE gift_id=$1`, entry.Gift.ID).Scan(&awards); err != nil || awards != 0 {
+		t.Fatalf("premature awards=%d err=%v", awards, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM star_gift_auction_bid_payments WHERE gift_id=$1`, entry.Gift.ID).Scan(&payments); err != nil || payments != 3 {
+		t.Fatalf("payments=%d err=%v", payments, err)
+	}
+	state, err = lifecycle.StarGiftAuctionState(ctx, winner.ID, entry.Gift.ID, "", start)
+	if err != nil || state.CurrentRound != 1 || state.UserState.BidAmount != 350 || state.LastGiftNum != 0 {
+		t.Fatalf("first round state=%+v err=%v", state, err)
+	}
+	updated.Date = start + 1
+	_, balance, err = lifecycle.BidStarGiftAuction(ctx, updated)
+	if err != nil || balance.Balance != 650 {
+		t.Fatalf("replay across start balance=%+v err=%v", balance, err)
+	}
+	if err := lifecycle.settleStarGiftAuction(ctx, entry.Gift.ID, start+60); err != nil {
+		t.Fatal(err)
+	}
+	state, err = lifecycle.loadStarGiftAuction(ctx, winner.ID, entry.Gift.ID)
+	if err != nil || !state.Finished || state.LastGiftNum != 1 || state.UserState.AcquiredCount != 1 {
+		t.Fatalf("finished state=%+v err=%v", state, err)
+	}
+	var winnerBalance, loserBalance int64
+	if err := pool.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id=$1`, winner.ID).Scan(&winnerBalance); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id=$1`, loser.ID).Scan(&loserBalance); err != nil {
+		t.Fatal(err)
+	}
+	if winnerBalance != 650 || loserBalance != 1000 {
+		t.Fatalf("settlement balances winner=%d loser=%d", winnerBalance, loserBalance)
+	}
+	afterEnd := first
+	afterEnd.FormID = 61304
+	afterEnd.Date = start + 61
+	if _, _, err := lifecycle.BidStarGiftAuction(ctx, afterEnd); !errors.Is(err, domain.ErrStarGiftAuctionUnavailable) {
+		t.Fatalf("finished auction accepted bid: %v", err)
+	}
+}

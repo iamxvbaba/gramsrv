@@ -641,10 +641,14 @@ func TestOfficialStarGiftListItemExposesExplicitCapabilities(t *testing.T) {
 		t.Fatalf("official gift item = %#v", item)
 	}
 	item = officialStarGiftListItem(officialgifts.GiftSummary{
-		ID: 1, UpgradeStars: 0, ModelCount: 1, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1,
+		ID: 1, UpgradeStars: -1, ModelCount: 1, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1,
 	})
 	if item["can_upgrade"] != false || item["can_craft"] != false {
 		t.Fatalf("unavailable official gift capabilities = %#v", item)
+	}
+	item = officialStarGiftListItem(officialgifts.GiftSummary{ID: 2, UpgradeStars: 0, ModelCount: 1, PatternCount: 1, BackdropCount: 1})
+	if item["can_upgrade"] != true {
+		t.Fatalf("complete free pool hidden: %#v", item)
 	}
 }
 
@@ -1469,4 +1473,8 @@ func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.Ac
 
 func (fakeService) ListRecentAdminCommands(context.Context, int, string) ([]domain.AdminCommand, error) {
 	return nil, nil
+}
+
+func (fakeService) CreateStarGiftAuction(_ context.Context, _ admin.CreateStarGiftAuctionRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{}, nil
 }

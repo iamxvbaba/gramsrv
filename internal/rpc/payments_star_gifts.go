@@ -487,7 +487,7 @@ func (r *Router) onPaymentsGetPaymentForm(ctx context.Context, req *tg.PaymentsG
 	}
 	upgradeStars := int64(0)
 	if inv.IncludeUpgrade {
-		if gift.UpgradeStars <= 0 || gift.UpgradeIssued >= gift.UpgradeTotal {
+		if gift.UpgradeStars < 0 || gift.UpgradeIssued >= gift.UpgradeTotal {
 			return nil, starGiftInvalidErr()
 		}
 		upgradeStars = gift.UpgradeStars
@@ -702,7 +702,7 @@ func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSe
 	}
 	upgradeStars := int64(0)
 	if inv.IncludeUpgrade {
-		if gift.UpgradeStars <= 0 || gift.UpgradeIssued >= gift.UpgradeTotal {
+		if gift.UpgradeStars < 0 || gift.UpgradeIssued >= gift.UpgradeTotal {
 			return nil, starGiftInvalidErr()
 		}
 		upgradeStars = gift.UpgradeStars
@@ -1074,7 +1074,7 @@ func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID 
 			FromUserID:        senderID,
 			NameHidden:        hideName,
 			Saved:             true,
-			CanUpgrade:        gift.UpgradeStars > 0,
+			CanUpgrade:        gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal,
 			PrepaidUpgrade:    prepaidUpgradeStars > 0,
 			UpgradePriceStars: gift.UpgradeStars,
 			UpgradeStars:      prepaidUpgradeStars,
@@ -1138,7 +1138,7 @@ func (r *Router) deliverStarGift(ctx context.Context, senderID, recipientID int6
 				PeerUserID:         recipientID,
 				NameHidden:         hideName,
 				Saved:              true,
-				CanUpgrade:         gift.UpgradeStars > 0,
+				CanUpgrade:         gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal,
 				PrepaidUpgrade:     prepaidUpgradeStars > 0,
 				PrepaidUpgradeHash: prepaidUpgradeHash,
 				UpgradePriceStars:  gift.UpgradeStars,
@@ -1686,7 +1686,7 @@ func tgStarGift(g domain.StarGift, now int64) *tg.StarGift {
 	if g.Title != "" {
 		gift.SetTitle(g.Title)
 	}
-	if g.UpgradeStars > 0 && g.UpgradeIssued < g.UpgradeTotal {
+	if g.UpgradeStars >= 0 && g.UpgradeIssued < g.UpgradeTotal {
 		gift.SetUpgradeStars(g.UpgradeStars)
 	}
 	if g.ResellMinStars > 0 {
@@ -1759,7 +1759,7 @@ func tgMessageActionStarGift(in *domain.MessageStarGiftAction) tg.MessageActionC
 	if in.Title != "" {
 		gift.SetTitle(in.Title)
 	}
-	if in.UpgradePriceStars > 0 {
+	if in.UpgradePriceStars > 0 || in.CanUpgrade && in.UpgradePriceStars == 0 {
 		gift.SetUpgradeStars(in.UpgradePriceStars)
 	}
 	action := &tg.MessageActionStarGift{Gift: gift}
@@ -1871,7 +1871,7 @@ func tgSavedStarGifts(viewerUserID int64, gifts []domain.SavedStarGift, catalog 
 		}
 		if g.UniqueGiftID == 0 {
 			current, available := availability[g.GiftID]
-			canIssue := available && current.UpgradeStars > 0 && current.Issued < current.SupplyTotal
+			canIssue := available && current.UpgradeStars >= 0 && current.Issued < current.SupplyTotal
 			if canIssue {
 				item.CanUpgrade = true
 			}
@@ -1883,7 +1883,7 @@ func tgSavedStarGifts(viewerUserID int64, gifts []domain.SavedStarGift, catalog 
 			// invoice. The owner must use InputSavedStarGift instead; otherwise
 			// DrKLO prefers the hash path and substitutes the private dialog peer.
 			ownerIsViewer := g.Owner.Type == domain.PeerTypeUser && g.Owner.ID == viewerUserID
-			if g.PrepaidUpgradeHash != "" && g.PrepaidUpgradeStars == 0 && canIssue && !ownerIsViewer {
+			if g.PrepaidUpgradeHash != "" && g.PrepaidUpgradeStars == 0 && canIssue && current.UpgradeStars > 0 && !ownerIsViewer {
 				item.SetPrepaidUpgradeHash(g.PrepaidUpgradeHash)
 			}
 		}

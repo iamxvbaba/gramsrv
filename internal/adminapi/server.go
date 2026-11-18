@@ -81,6 +81,7 @@ type Service interface {
 	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	LiveMedia(ctx context.Context, locationKey string) ([]byte, string, bool, error)
 	ImportStarGift(ctx context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error)
+	CreateStarGiftAuction(ctx context.Context, req admin.CreateStarGiftAuctionRequest) (admin.CommandResult, error)
 	ImportGiftPack(ctx context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error)
 	ImportOfficialStarGift(ctx context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error)
 	OfficialStarGifts(ctx context.Context) ([]officialgifts.GiftSummary, error)
@@ -287,6 +288,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/stickers/remove", s.authenticated(s.handleRemoveStickerFromSet))
 	mux.HandleFunc("GET /v1/stickers/documents/{id}/animation", s.authenticated(s.handleStickerDocumentAnimation))
 	mux.HandleFunc("POST /v1/gifts/import", s.authenticated(s.handleImportStarGift))
+	mux.HandleFunc("POST /v1/gifts/create-auction", s.authenticated(s.handleCreateStarGiftAuction))
 	mux.HandleFunc("POST /v1/gifts/import-pack", s.authenticated(s.handleImportGiftPack))
 	mux.HandleFunc("GET /v1/official-gifts", s.authenticated(s.handleOfficialStarGifts))
 	mux.HandleFunc("GET /v1/official-gifts/{id}/animation", s.authenticated(s.handleOfficialStarGiftAnimation))
@@ -2379,4 +2381,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (s *Server) handleCreateStarGiftAuction(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateStarGiftAuctionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.CreateStarGiftAuction(r.Context(), req)
+	writeCommandResult(w, result, err)
 }

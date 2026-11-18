@@ -71,10 +71,10 @@ type GiftSummary struct {
 }
 
 // CanUpgrade reports whether this snapshot contains the complete immutable
-// attribute pool and a positive official upgrade price required to mint a
+// attribute pool and a nonnegative official upgrade price required to mint a
 // collectible from the regular gift.
 func (g GiftSummary) CanUpgrade() bool {
-	return g.UpgradeStars > 0 && g.ModelCount > 0 && g.PatternCount > 0 && g.BackdropCount > 0
+	return g.UpgradeStars >= 0 && g.ModelCount > 0 && g.PatternCount > 0 && g.BackdropCount > 0
 }
 
 // CanCraft reports whether upgraded collectibles from this gift can reach an

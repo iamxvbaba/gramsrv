@@ -289,7 +289,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-	gifts: () => request<StarGiftListResponse>("/api/gifts"),
+	gifts: (includeDisabled = false) => request<StarGiftListResponse>(includeDisabled ? "/api/gifts?include_disabled=true" : "/api/gifts"),
 	auctions: () => request<StarGiftAuctionListResponse>("/api/auctions"),
 	officialGifts: () => request<OfficialStarGiftListResponse>("/api/official-gifts"),
 	officialGiftAnimation: (id: string) => request<Record<string, unknown>>(`/api/official-gifts/${encodeURIComponent(id)}/animation`),

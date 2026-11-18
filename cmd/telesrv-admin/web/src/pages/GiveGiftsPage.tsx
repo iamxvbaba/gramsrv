@@ -20,9 +20,9 @@ export function GiveGiftsPage({ navigate }: { navigate: Navigate }) {
     setBusy(true);
     setError("");
     try {
-      const rows = (await api.gifts()).Gifts ?? [];
+      const rows = ((await api.gifts()).Gifts ?? []).filter((gift) => gift.Enabled);
       setGifts(rows);
-      setSelected((current) => current ?? rows[0] ?? null);
+      setSelected((current) => rows.find((gift) => gift.GiftID === current?.GiftID) ?? rows[0] ?? null);
     } catch (err) {
       setError(errorMessage(err));
     } finally {

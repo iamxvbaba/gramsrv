@@ -337,6 +337,11 @@ export type OutboxRow = {
 };
 
 export type StarGiftRow = {
+ ReleasedByPeerID?: string;
+ PerUserTotal?: number;
+ RequirePremium?: boolean;
+ Birthday?: boolean;
+ SupportOnly?: boolean;
   GiftID: string;
   RevisionID: string;
   Revision: number;

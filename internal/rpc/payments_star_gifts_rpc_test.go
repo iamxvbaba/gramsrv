@@ -616,6 +616,8 @@ type upgradeReplayRPCService struct {
 	result       domain.StarGiftUpgradeResult
 	upgradeCalls int
 	previewCalls int
+	preview      domain.StarGiftUpgradePreview
+	previewFound bool
 	lastRequest  domain.StarGiftUpgradeRequest
 }
 
@@ -632,7 +634,7 @@ func (s *upgradeReplayRPCService) UpgradeReceipt(_ context.Context, userID int64
 
 func (s *upgradeReplayRPCService) CollectiblePreview(context.Context, int64) (domain.StarGiftUpgradePreview, bool, error) {
 	s.previewCalls++
-	return domain.StarGiftUpgradePreview{}, false, nil
+	return s.preview, s.previewFound, nil
 }
 
 func (s *upgradeReplayRPCService) Upgrade(_ context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error) {
@@ -2304,5 +2306,70 @@ func TestDeletedAccountProfileHidesGifts(t *testing.T) {
 	}
 	if deleted.Count != 0 || len(deleted.Gifts) != 0 {
 		t.Fatalf("deleted profile gifts = %d/%d, want an empty tombstone profile", deleted.Count, len(deleted.Gifts))
+	}
+}
+
+func TestStarGiftFreeUpgradeRPCRequiresFreePublishedPool(t *testing.T) {
+	for _, price := range []int64{0, 25} {
+		t.Run(fmt.Sprint(price), func(t *testing.T) {
+			r, sender, owner, gift := starGiftTestRouter(t)
+			peer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+			saved := domain.SavedStarGift{ID: 47, Owner: peer, FromUserID: sender.ID, GiftID: gift.ID, RevisionID: gift.RevisionID, MsgID: 105}
+			service := &upgradeReplayRPCService{GiftsService: r.deps.Gifts, saved: saved, previewFound: true, preview: domain.StarGiftUpgradePreview{UpgradeStars: price, SupplyTotal: 2}, result: domain.StarGiftUpgradeResult{Saved: saved, Send: domain.SendPrivateTextResult{RecipientMessage: domain.Message{ID: 107, OwnerUserID: owner.ID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}, Date: 1700000001}, RecipientEvent: domain.UpdateEvent{UserID: owner.ID, Pts: 42, PtsCount: 1, Date: 1700000001}}}}
+			r.deps.Gifts = service
+			ctx := WithUserID(context.Background(), owner.ID)
+			req := &tg.PaymentsUpgradeStarGiftRequest{Stargift: &tg.InputSavedStarGiftUser{MsgID: saved.MsgID}}
+			_, err := r.onPaymentsUpgradeStarGift(ctx, req)
+			if price > 0 {
+				if err == nil || service.upgradeCalls != 0 {
+					t.Fatal("paid upgrade bypassed payment")
+				}
+				return
+			}
+			if err != nil || service.upgradeCalls != 1 || service.lastRequest.RequirePrepaid || service.lastRequest.ChargeStars != 0 {
+				t.Fatalf("free upgrade req=%+v err=%v", service.lastRequest, err)
+			}
+			// A committed free upgrade must replay after the pool is exhausted or replaced.
+			service.receipt = domain.StarGiftUpgradeReceipt{UserID: owner.ID, SourceSavedGiftID: saved.ID}
+			service.previewFound = false
+			service.saved.UniqueGiftID = 123
+			_, err = r.onPaymentsUpgradeStarGift(ctx, req)
+			if err != nil || service.previewCalls != 1 || service.upgradeCalls != 2 || service.lastRequest.RequirePrepaid {
+				t.Fatalf("free replay req=%+v err=%v", service.lastRequest, err)
+			}
+		})
+	}
+}
+
+func TestStarGiftFreeUpgradeProjectionRequiresAvailablePool(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		gift := domain.StarGift{ID: 1, UpgradeStars: 0}
+		if available {
+			gift.UpgradeTotal = 2
+		}
+		projected := tgStarGift(gift, 1700000000)
+		price, set := projected.GetUpgradeStars()
+		if set != available || price != 0 {
+			t.Fatalf("available=%v price=%d set=%v", available, price, set)
+		}
+	}
+	action := tgMessageActionStarGift(&domain.MessageStarGiftAction{GiftID: 1, CanUpgrade: true}).(*tg.MessageActionStarGift)
+	price, set := action.Gift.(*tg.StarGift).GetUpgradeStars()
+	if !set || price != 0 || !action.CanUpgrade {
+		t.Fatal("free upgrade missing from service message")
+	}
+}
+
+func TestFreeSavedGiftDoesNotAdvertisePaidSponsorshipHash(t *testing.T) {
+	owner := domain.Peer{Type: domain.PeerTypeUser, ID: 1}
+	saved := domain.SavedStarGift{Owner: owner, GiftID: 5, RevisionID: 7, MsgID: 8, PrepaidUpgradeHash: "sponsor"}
+	for _, price := range []int64{0, 25} {
+		catalog := map[int64]domain.StarGift{7: {ID: 5, RevisionID: 7}}
+		available := map[int64]domain.StarGiftCollectibleAvailability{5: {UpgradeStars: price, SupplyTotal: 10}}
+		item := tgSavedStarGifts(2, []domain.SavedStarGift{saved}, catalog, available, 0)[0]
+		_, hasHash := item.GetPrepaidUpgradeHash()
+		if !item.CanUpgrade || hasHash != (price > 0) {
+			t.Fatalf("price=%d can_upgrade=%v sponsorship=%v", price, item.CanUpgrade, hasHash)
+		}
 	}
 }

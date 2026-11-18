@@ -461,6 +461,11 @@ type ChannelDetail struct {
 }
 
 type StarGiftRow struct {
+	ReleasedByPeerID    int64 `json:"ReleasedByPeerID,string"`
+	PerUserTotal        int
+	RequirePremium      bool
+	Birthday            bool
+	SupportOnly         bool
 	GiftID              int64 `json:"GiftID,string"`
 	RevisionID          int64 `json:"RevisionID,string"`
 	Revision            int
@@ -485,19 +490,20 @@ type StarGiftRow struct {
 	UpdatedAt           time.Time
 }
 
-func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
+func (s *readStore) ListStarGifts(ctx context.Context, includeDisabled bool) ([]StarGiftRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
        c.enabled, c.sort_order, r.document_id, r.source_name, r.source_format,
        encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
        (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
        r.limited, r.availability_total, c.availability_remains,
-       r.created_by, c.updated_at
+       r.created_by, c.updated_at, COALESCE(r.released_by_peer_id,0), r.per_user_total, r.require_premium, r.birthday, r.support_only
 FROM star_gift_catalog c
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 JOIN documents d ON d.id = r.document_id
+WHERE c.enabled OR $2::boolean
 ORDER BY c.sort_order, c.gift_id
-LIMIT $1`, domain.MaxStarGiftCatalogSize)
+LIMIT $1`, domain.MaxStarGiftCatalogSize, includeDisabled)
 	if err != nil {
 		return nil, fmt.Errorf("list star gifts: %w", err)
 	}
@@ -510,7 +516,7 @@ LIMIT $1`, domain.MaxStarGiftCatalogSize)
 			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
 			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
 			&row.ReceivedCount, &row.Limited, &row.AvailabilityTotal, &row.AvailabilityRemains,
-			&row.CreatedBy, &row.UpdatedAt,
+			&row.CreatedBy, &row.UpdatedAt, &row.ReleasedByPeerID, &row.PerUserTotal, &row.RequirePremium, &row.Birthday, &row.SupportOnly,
 		); err != nil {
 			return nil, err
 		}
@@ -557,7 +563,7 @@ type StarGiftAuctionRow struct {
 	UpdatedAt  time.Time
 }
 
-// ListStarGiftAuctions returns every catalog gift that is either an auction or a
+// ListStarGiftAuctions returns every enabled catalog gift that is either an auction or a
 // scheduled drop (locked_until_date set), plus any gift that already has an
 // auction row, so an auction whose revision was later replaced stays visible.
 func (s *readStore) ListStarGiftAuctions(ctx context.Context) ([]StarGiftAuctionRow, error) {
@@ -582,7 +588,7 @@ LEFT JOIN (
 	WHERE active AND NOT returned
 	GROUP BY gift_id
 ) b ON b.gift_id = c.gift_id
-WHERE r.auction OR r.locked_until_date > 0 OR a.gift_id IS NOT NULL
+WHERE c.enabled AND (r.auction OR r.locked_until_date > 0 OR a.gift_id IS NOT NULL)
 ORDER BY r.auction DESC, r.auction_start_date DESC, r.locked_until_date DESC, c.gift_id
 LIMIT $1`, domain.MaxStarGiftCatalogSize)
 	if err != nil {

@@ -129,6 +129,18 @@ func (s *StarGiftStore) CreateCatalogRevision(_ context.Context, write domain.St
 func (s *StarGiftStore) createCatalogRevisionLocked(write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error) {
 	giftID := write.GiftID
 	if giftID == 0 {
+		if write.ReserveAuctionSlug {
+			for _, gift := range s.catalog {
+				if gift.Auction && strings.EqualFold(gift.AuctionSlug, write.AuctionSlug) {
+					return domain.StarGiftCatalogEntry{}, domain.ErrStarGiftLifecycleInvalid
+				}
+			}
+			for _, pool := range s.collectibles {
+				if strings.EqualFold(pool.SlugPrefix, write.AuctionSlug) {
+					return domain.StarGiftCatalogEntry{}, domain.ErrStarGiftLifecycleInvalid
+				}
+			}
+		}
 		s.nextGiftID++
 		giftID = s.nextGiftID
 	} else {
@@ -154,7 +166,7 @@ func (s *StarGiftStore) createCatalogRevisionLocked(write domain.StarGiftCatalog
 		ReleasedBy: write.ReleasedBy, PerUserTotal: write.PerUserTotal,
 		PerUserRemains: write.PerUserTotal, LockedUntilDate: write.LockedUntilDate,
 		AuctionSlug: write.AuctionSlug, GiftsPerRound: write.GiftsPerRound,
-		AuctionStartDate: write.AuctionStartDate, UpgradeVariants: write.UpgradeVariants,
+		AuctionStartDate: write.AuctionStartDate, AuctionRoundDuration: write.AuctionRoundDuration, UpgradeVariants: write.UpgradeVariants,
 		Background: cloneStarGiftBackground(write.Background),
 	}
 	s.catalog[giftID] = gift
@@ -445,7 +457,7 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 		upgradable := false
 		if g.UniqueGiftID == 0 {
 			if gift, ok := s.catalog[g.GiftID]; ok {
-				upgradable = gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal
+				upgradable = gift.UpgradeStars >= 0 && gift.UpgradeIssued < gift.UpgradeTotal
 			}
 		}
 		if filter.ExcludeUpgradable && !filter.ExcludeUnupgradable && upgradable {

@@ -979,6 +979,8 @@ type StarGiftAnimation struct {
 
 // StarGiftCatalogWrite is the protocol-agnostic data the store needs to atomically create a catalog revision.
 type StarGiftCatalogWrite struct {
+	// ReserveAuctionSlug rejects a new release that would reuse an existing auction or collectible namespace.
+	ReserveAuctionSlug   bool
 	GiftID               int64 // 0 creates a new gift; non-zero creates a new revision for that gift
 	Title                string
 	Stars                int64
@@ -1316,7 +1318,7 @@ var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}
 // blobs/documents are allocated. This is the validation boundary used by admin dry-runs.
 func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
 	write.SlugPrefix = strings.TrimSpace(strings.ToLower(write.SlugPrefix))
-	if write.GiftID <= 0 || write.UpgradeStars <= 0 || write.SupplyTotal <= 0 ||
+	if write.GiftID <= 0 || write.UpgradeStars < 0 || write.SupplyTotal <= 0 ||
 		!starGiftCollectibleSlugPrefix.MatchString(write.SlugPrefix) || strings.TrimSpace(write.CommandID) == "" {
 		return ErrStarGiftCollectibleInvalid
 	}

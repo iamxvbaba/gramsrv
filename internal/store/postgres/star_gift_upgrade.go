@@ -348,7 +348,7 @@ func (s *StarGiftUpgradeStore) UpgradeStarGift(ctx context.Context, req domain.S
 		(req.Ref.Owner.Type == domain.PeerTypeUser && req.Ref.Owner.ID != req.UserID) ||
 		(req.Ref.Owner.Type != domain.PeerTypeUser && req.Ref.Owner.Type != domain.PeerTypeChannel) ||
 		req.ChargeStars < 0 || (req.RequirePrepaid && (req.ChargeStars != 0 || req.FormID != 0)) ||
-		(!req.RequirePrepaid && (req.ChargeStars <= 0 || req.FormID == 0)) ||
+		(!req.RequirePrepaid && req.ChargeStars > 0 && req.FormID == 0) ||
 		req.Date <= 0 || strings.TrimSpace(req.CommandKey) == "" || len(req.CommandKey) > 256 {
 		return domain.StarGiftUpgradeResult{}, domain.ErrStarGiftCollectibleInvalid
 	}

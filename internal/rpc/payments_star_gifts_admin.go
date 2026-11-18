@@ -73,7 +73,7 @@ func (r *Router) adminGrantUpgradedStarGift(ctx context.Context, senderID int64,
 	if err != nil {
 		return err
 	}
-	if !found || preview.UpgradeStars <= 0 {
+	if !found || preview.UpgradeStars < 0 {
 		return fmt.Errorf("gift %d has no published collectible upgrade", gift.ID)
 	}
 	if preview.Issued >= preview.SupplyTotal {

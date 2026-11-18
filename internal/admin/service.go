@@ -923,7 +923,7 @@ type ImportOfficialStarGiftRequest struct {
 	SortOrder          int    `json:"sort_order"`
 	SupportOnly        bool   `json:"support_only,omitempty"`
 	IncludeCollectible bool   `json:"include_collectible"`
-	UpgradeStars       int64  `json:"upgrade_stars,omitempty"`
+	UpgradeStars       *int64 `json:"upgrade_stars,omitempty"`
 	SupplyTotal        int    `json:"supply_total,omitempty"`
 	SlugPrefix         string `json:"slug_prefix,omitempty"`
 	// ReleasedBy names the peer that originally released the imported gift,
@@ -2199,7 +2199,7 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 				if err != nil {
 					return CommandResult{}, err
 				}
-				if !ok || preview.UpgradeStars <= 0 {
+				if !ok || preview.UpgradeStars < 0 {
 					return CommandResult{}, fmt.Errorf("gift %d has no published collectible upgrade", req.GiftID)
 				}
 				if preview.Issued >= preview.SupplyTotal {
@@ -4054,8 +4054,12 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	if req.ConvertStars < 0 || req.ConvertStars > req.Stars || len([]rune(req.Title)) > domain.MaxStarGiftTitleRunes {
 		return CommandResult{}, domain.ErrStarGiftInvalid
 	}
-	if req.UpgradeStars <= 0 {
-		req.UpgradeStars = bundle.Gift.UpgradeStars
+	upgradeStars := bundle.Gift.UpgradeStars
+	if req.UpgradeStars != nil {
+		upgradeStars = *req.UpgradeStars
+	}
+	if upgradeStars < 0 {
+		return CommandResult{}, domain.ErrStarGiftCollectibleInvalid
 	}
 	if req.SupplyTotal <= 0 {
 		req.SupplyTotal = bundle.Gift.AvailabilityTotal
@@ -4174,7 +4178,7 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 				RarityKind: rarityKind, RarityPermille: permille, SortOrder: index})
 			rarityCounts[string(rarityKind)]++
 		}
-		collectible = &domain.StarGiftCollectibleWrite{GiftID: req.GiftID, UpgradeStars: req.UpgradeStars,
+		collectible = &domain.StarGiftCollectibleWrite{GiftID: req.GiftID, UpgradeStars: upgradeStars,
 			SupplyTotal: req.SupplyTotal, SlugPrefix: req.SlugPrefix, Models: models, Patterns: patterns, Backdrops: backdrops,
 			Actor: req.Actor, CommandID: req.CommandID, OfficialGiftID: sourceID,
 			SourceManifestSHA256: append([]byte(nil), bundle.ManifestSHA256...)}

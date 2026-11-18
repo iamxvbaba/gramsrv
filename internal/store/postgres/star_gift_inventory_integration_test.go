@@ -41,6 +41,7 @@ func (b inventoryBlob) Put(_ context.Context, data []byte) (string, error) {
 func (b inventoryBlob) Get(_ context.Context, key string) ([]byte, error) { return b[key], nil }
 
 func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
+	upgradePrice := int64(100)
 	pool := testPool(t)
 	ctx := context.Background()
 	now := int(time.Now().Unix())
@@ -85,7 +86,7 @@ func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
 		req := admin.ImportOfficialStarGiftRequest{
 			CommandMeta:  admin.CommandMeta{CommandID: command + "-" + suffix, Actor: "review", Reason: "inventory regression"},
 			SourceGiftID: "72", GiftID: giftID, Enabled: true, IncludeCollectible: include, SupplyTotal: supply,
-			UpgradeStars: 100, SlugPrefix: "probe-" + suffix,
+			UpgradeStars: &upgradePrice, SlugPrefix: "probe-" + suffix,
 		}
 		if len(limited) > 0 {
 			req.Limited = limited[0]
@@ -182,7 +183,7 @@ func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
 			}
 			_, err := svc.ImportOfficialStarGift(ctx, admin.ImportOfficialStarGiftRequest{
 				CommandMeta:  admin.CommandMeta{CommandID: fmt.Sprintf("change-%d-%s", supply, suffix), Actor: "review", Reason: "supply bounds"},
-				SourceGiftID: "72", GiftID: id, Enabled: true, IncludeCollectible: true, SupplyTotal: supply, UpgradeStars: 100, SlugPrefix: "probe-" + suffix, Limited: true,
+				SourceGiftID: "72", GiftID: id, Enabled: true, IncludeCollectible: true, SupplyTotal: supply, UpgradeStars: &upgradePrice, SlugPrefix: "probe-" + suffix, Limited: true,
 			})
 			if !errors.Is(err, domain.ErrStarGiftLifecycleInvalid) {
 				t.Fatalf("changed supply=%d err=%v", supply, err)
@@ -206,7 +207,7 @@ func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
 				<-start
 				_, err := svc.ImportOfficialStarGift(ctx, admin.ImportOfficialStarGiftRequest{
 					CommandMeta:  admin.CommandMeta{CommandID: fmt.Sprintf("race-import-%d-%s", i, suffix), Actor: "review", Reason: "concurrent inventory"},
-					SourceGiftID: "72", GiftID: id, Enabled: true, IncludeCollectible: true, SupplyTotal: 20, UpgradeStars: 100, SlugPrefix: "race-" + suffix, Limited: true,
+					SourceGiftID: "72", GiftID: id, Enabled: true, IncludeCollectible: true, SupplyTotal: 20, UpgradeStars: &upgradePrice, SlugPrefix: "race-" + suffix, Limited: true,
 				})
 				imported <- err
 			}()

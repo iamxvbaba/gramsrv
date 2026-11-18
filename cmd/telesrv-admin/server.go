@@ -189,6 +189,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/delete-messages", s.scopedRoute(permissionMessagesManage, http.HandlerFunc(s.handleDeleteMessagesAPI)))
 	mux.Handle("POST /api/actions/delete-history", s.scopedRoute(permissionMessagesManage, http.HandlerFunc(s.handleDeleteHistoryAPI)))
 	mux.Handle("POST /api/actions/import-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleImportStarGiftAPI)))
+	mux.Handle("POST /api/actions/create-gift-auction", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleCreateStarGiftAuctionAPI)))
 	mux.Handle("POST /api/actions/import-gift-pack", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleImportGiftPackAPI)))
 	mux.Handle("POST /api/actions/import-official-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleImportOfficialStarGiftAPI)))
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
@@ -444,7 +445,7 @@ func (s *server) handleStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
 		return
 	}
-	rows, err := s.read.ListStarGifts(r.Context())
+	rows, err := s.read.ListStarGifts(r.Context(), r.URL.Query().Get("include_disabled") == "true")
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2394,7 +2395,7 @@ type importOfficialStarGiftAPIRequest struct {
 	SortOrder          int    `json:"sort_order"`
 	SupportOnly        bool   `json:"support_only,omitempty"`
 	IncludeCollectible bool   `json:"include_collectible"`
-	UpgradeStars       int64  `json:"upgrade_stars,string"`
+	UpgradeStars       *int64 `json:"upgrade_stars,string"`
 	SupplyTotal        int    `json:"supply_total"`
 	SlugPrefix         string `json:"slug_prefix"`
 	ReleasedBy         string `json:"released_by_peer"`
@@ -3506,4 +3507,46 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+type createStarGiftAuctionAPIRequest struct {
+	ReleasedBy           *string `json:"released_by_peer"`
+	UpgradeStars         *int64  `json:"upgrade_stars,string"`
+	PerUserTotal         *int    `json:"per_user_total"`
+	RequirePremium       *bool   `json:"require_premium"`
+	Birthday             *bool   `json:"birthday"`
+	SortOrder            int     `json:"sort_order"`
+	SourceSHA            string  `json:"source_sha256"`
+	CommandID            string  `json:"command_id"`
+	Reason               string  `json:"reason"`
+	Confirm              bool    `json:"confirm"`
+	SourceGiftID         int64   `json:"source_gift_id,string"`
+	SourceRevisionID     int64   `json:"source_revision_id,string"`
+	Title                string  `json:"title"`
+	Stars                int64   `json:"stars,string"`
+	ConvertStars         int64   `json:"convert_stars,string"`
+	Enabled              bool    `json:"enabled"`
+	SupportOnly          bool    `json:"support_only"`
+	AuctionSlug          string  `json:"auction_slug"`
+	AvailabilityTotal    int     `json:"availability_total"`
+	GiftsPerRound        int     `json:"gifts_per_round"`
+	AuctionStartDate     int     `json:"auction_start_date"`
+	AuctionRoundDuration int     `json:"auction_round_duration"`
+}
+
+func (s *server) handleCreateStarGiftAuctionAPI(w http.ResponseWriter, r *http.Request) {
+	var body createStarGiftAuctionAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.CreateStarGiftAuctionRequest{
+		ReleasedBy: body.ReleasedBy, UpgradeStars: body.UpgradeStars, PerUserTotal: body.PerUserTotal, RequirePremium: body.RequirePremium, Birthday: body.Birthday, SortOrder: body.SortOrder,
+		SourceSHA:    body.SourceSHA,
+		CommandMeta:  s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-gift-auction"),
+		SourceGiftID: body.SourceGiftID, SourceRevisionID: body.SourceRevisionID, Title: body.Title, Stars: body.Stars, ConvertStars: body.ConvertStars,
+		Enabled: body.Enabled, SupportOnly: body.SupportOnly, AuctionSlug: body.AuctionSlug, AvailabilityTotal: body.AvailabilityTotal,
+		GiftsPerRound: body.GiftsPerRound, AuctionStartDate: body.AuctionStartDate, AuctionRoundDuration: body.AuctionRoundDuration,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/create-auction", req)
+	writeCommandResultAPI(w, result, err)
 }
