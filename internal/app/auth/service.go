@@ -120,6 +120,16 @@ type Service struct {
 	// env default (rather than one per channel).
 	loginCodeMessageIdentity   *identity.Store
 	loginCodeMessageEnvDefault string
+	// autoSubscribe joins every newly registered account into autoSubscribeIDs (best effort; failures
+	// never fail registration). A nil joiner or an empty list disables the hook. See autoSubscribe.
+	autoSubscribeJoiner AutoSubscribeJoiner
+	autoSubscribeIDs    []int64
+}
+
+// AutoSubscribeJoiner is the minimal channel-join capability the registration auto-subscribe hook needs.
+// *channelapp.Service satisfies it; the local interface keeps this package free of an app-layer import.
+type AutoSubscribeJoiner interface {
+	JoinChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
 }
 
 type loginEmailStore interface {
@@ -176,6 +186,17 @@ func WithLoginCodeMessageTemplate(store *identity.Store, envDefault string) Opti
 	return func(s *Service) {
 		s.loginCodeMessageIdentity = store
 		s.loginCodeMessageEnvDefault = envDefault
+	}
+}
+
+// WithAutoSubscribe configures the channel list every newly registered account is joined to
+// (TELESRV_AUTOSUBSCRIBE_CHANNELS). The join is best effort: failures are ignored and never fail
+// registration, so a deleted or misconfigured channel id only logs nothing and skips. A nil joiner
+// or an empty list disables the hook.
+func WithAutoSubscribe(joiner AutoSubscribeJoiner, channelIDs []int64) Option {
+	return func(s *Service) {
+		s.autoSubscribeJoiner = joiner
+		s.autoSubscribeIDs = channelIDs
 	}
 }
 
@@ -1283,6 +1304,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		}
 	}
 	s.recordWelcomeMessage(ctx, u)
+	s.autoSubscribe(ctx, u.ID)
 	return u, loginMessage, nil
 }
 
@@ -1609,6 +1631,22 @@ func (s *Service) recordWelcomeMessage(ctx context.Context, u domain.User) {
 		TopMessage:     created.ID,
 		TopMessageDate: created.Date,
 	})
+}
+
+// autoSubscribe joins a freshly registered account into the configured auto-subscribe channels
+// (TELESRV_AUTOSUBSCRIBE_CHANNELS). Strictly best effort, mirroring recordWelcomeMessage: any error
+// is dropped on the floor because an optional channel join must never fail or delay registration.
+// ErrUserAlreadyParticipant (idempotent re-run) and ErrInviteRequestSent (channel requires join
+// approval) are ordinary outcomes. Existing accounts are deliberately not touched here; repairing
+// their membership is scripts/fixsubscribe.sh via cmd/subscribebackfill.
+func (s *Service) autoSubscribe(ctx context.Context, userID int64) {
+	if s == nil || s.autoSubscribeJoiner == nil || len(s.autoSubscribeIDs) == 0 || userID == 0 {
+		return
+	}
+	now := int(time.Now().Unix())
+	for _, channelID := range s.autoSubscribeIDs {
+		_, _ = s.autoSubscribeJoiner.JoinChannel(ctx, userID, channelID, now)
+	}
 }
 
 func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, domain.TempAuthKeyBindingResult, error) {
