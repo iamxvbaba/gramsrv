@@ -625,6 +625,10 @@ type Config struct {
 	// PremiumGrantMonths is the number of Premium months granted by default to a newly registered account; 0 disables the grant.
 	// The one-time grant to existing accounts is backfilled by migration 0094 and is unaffected by this setting.
 	PremiumGrantMonths int
+	// AutoSubscribeChannels lists the channel IDs every newly registered account joins automatically
+	// (TELESRV_AUTOSUBSCRIBE_CHANNELS, comma-separated). Empty disables the hook. Existing accounts are
+	// never retroactively joined by the server; scripts/fixsubscribe.sh (cmd/subscribebackfill) does that.
+	AutoSubscribeChannels []int64
 	// PremiumBotUsername is the public username advertised in app config and
 	// Premium deep links. The reserved bot id remains stable.
 	PremiumBotUsername string
@@ -974,6 +978,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_GRAMSRV_BOT_CHAT_IDS: %w", err)
 	}
+	autoSubscribeChannelIDs, err := parsePositiveInt64List(envListOr("TELESRV_AUTOSUBSCRIBE_CHANNELS", nil))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_AUTOSUBSCRIBE_CHANNELS: %w", err)
+	}
 	premiumBotUsername := strings.TrimPrefix(strings.TrimSpace(envOr("TELESRV_PREMIUM_BOT_USERNAME", "premiumbot")), "@")
 	if !domain.ValidBotUsername(premiumBotUsername) {
 		return Config{}, fmt.Errorf("TELESRV_PREMIUM_BOT_USERNAME must be a valid username")
@@ -1287,6 +1295,7 @@ func Load() (Config, error) {
 		CallExpiryInterval:     envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
 
 		PremiumGrantMonths:               envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
+		AutoSubscribeChannels:            autoSubscribeChannelIDs,
 		PremiumBotUsername:               premiumBotUsername,
 		PremiumBotUserID:                 premiumBotUserID,
 		PremiumPlans:                     premiumPlans,
