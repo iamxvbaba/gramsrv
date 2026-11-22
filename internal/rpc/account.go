@@ -2094,20 +2094,21 @@ func (r *Router) tgAuthorization(loc geoip.Location, a domain.Authorization, cur
 		active = created
 	}
 	return tg.Authorization{
-		Current:       a.AuthKeyID == currentAuthKeyID,
-		OfficialApp:   true,
-		Hash:          a.Hash,
-		DeviceModel:   branding.UserVisibleText(a.DeviceModel, ""),
-		Platform:      branding.UserVisibleClientPlatform(a.Platform),
-		SystemVersion: branding.UserVisibleText(a.SystemVersion, ""),
-		APIID:         a.APIID,
-		AppName:       branding.ClientAppName(a.Platform),
-		AppVersion:    branding.UserVisibleText(a.AppVersion, ""),
-		DateCreated:   created,
-		DateActive:    active,
-		IP:            a.IP,
-		Country:       authorizationLocationText(loc.Country),
-		Region:        authorizationLocationText(loc.Region),
+		Current:         a.AuthKeyID == currentAuthKeyID,
+		OfficialApp:     true,
+		PasswordPending: a.PasswordPending,
+		Hash:            a.Hash,
+		DeviceModel:     branding.UserVisibleText(a.DeviceModel, ""),
+		Platform:        branding.UserVisibleClientPlatform(a.Platform),
+		SystemVersion:   branding.UserVisibleText(a.SystemVersion, ""),
+		APIID:           a.APIID,
+		AppName:         branding.ClientAppName(a.Platform),
+		AppVersion:      branding.UserVisibleText(a.AppVersion, ""),
+		DateCreated:     created,
+		DateActive:      active,
+		IP:              a.IP,
+		Country:         authorizationLocationText(loc.Country),
+		Region:          authorizationLocationText(loc.Region),
 	}
 }
 

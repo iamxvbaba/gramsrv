@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"sync"
 	"testing"
@@ -67,6 +68,30 @@ func newGeoIPAuthorizationsRouter(t *testing.T, resolver geoip.Resolver, items .
 	t.Helper()
 	auth := &captureAuthService{authorizations: items}
 	return New(Config{}, Deps{Auth: auth, GeoIP: resolver}, zaptest.NewLogger(t), clock.System)
+}
+
+func TestAccountGetAuthorizationsPasswordPending(t *testing.T) {
+	currentKey := [8]byte{1}
+	router := newGeoIPAuthorizationsRouter(t, nil,
+		domain.Authorization{AuthKeyID: currentKey, Hash: 101},
+		domain.Authorization{AuthKeyID: [8]byte{2}, Hash: 102, PasswordPending: true},
+		domain.Authorization{AuthKeyID: [8]byte{3}, Hash: 103},
+	)
+	ctx := WithAuthKeyID(WithUserID(context.Background(), 42), currentKey)
+	out, err := router.onAccountGetAuthorizations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded tg.AccountAuthorizations
+	tlRoundTrip(t, out, &decoded)
+	got := make(map[int64]bool)
+	for _, item := range decoded.Authorizations {
+		got[item.Hash] = item.PasswordPending
+	}
+	want := map[int64]bool{101: false, 102: true, 103: false}
+	if !maps.Equal(got, want) {
+		t.Fatalf("wire password_pending by session hash = %v, want %v", got, want)
+	}
 }
 
 // With no geo backend configured the list must be byte-identical to before it was enabled: the

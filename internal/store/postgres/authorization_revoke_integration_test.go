@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -12,6 +13,36 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
+
+func TestAuthorizationStoreListByUserPasswordPendingPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	userID := createRevokeTestUser(t, ctx, pool, "list")
+	keys := NewAuthKeyStore(pool)
+	auths := NewAuthorizationStore(pool)
+	want := map[[8]byte]bool{
+		revokeTestAuthKeyID(0x31): true,
+		revokeTestAuthKeyID(0x32): false,
+	}
+	for key, pending := range want {
+		saveRevokeTestAuthKey(t, ctx, keys, key, 0)
+		if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: key, UserID: userID, PasswordPending: pending}); err != nil {
+			t.Fatalf("bind authorization %x: %v", key, err)
+		}
+	}
+
+	items, err := auths.ListByUser(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[[8]byte]bool)
+	for _, item := range items {
+		got[item.AuthKeyID] = item.PasswordPending
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("password_pending by auth key = %v, want %v", got, want)
+	}
+}
 
 func TestAuthorizationStoreRevokeByHashKeepsProtocolIdentityPostgres(t *testing.T) {
 	pool := testPool(t)
