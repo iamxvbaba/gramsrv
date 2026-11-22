@@ -701,18 +701,19 @@ WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs)
 
 func authorizationFromRow(row sqlcgen.Authorization) domain.Authorization {
 	return domain.Authorization{
-		AuthKeyID:     authKeyIDFromInt64(row.AuthKeyID),
-		UserID:        row.UserID,
-		Hash:          row.Hash,
-		Layer:         int(row.Layer),
-		DeviceModel:   row.DeviceModel,
-		Platform:      row.Platform,
-		SystemVersion: row.SystemVersion,
-		APIID:         int(row.ApiID),
-		AppVersion:    row.AppVersion,
-		IP:            row.Ip,
-		CreatedAt:     row.CreatedAt.Time,
-		ActiveAt:      row.ActiveAt.Time,
+		AuthKeyID:       authKeyIDFromInt64(row.AuthKeyID),
+		UserID:          row.UserID,
+		Hash:            row.Hash,
+		Layer:           int(row.Layer),
+		DeviceModel:     row.DeviceModel,
+		Platform:        row.Platform,
+		SystemVersion:   row.SystemVersion,
+		APIID:           int(row.ApiID),
+		AppVersion:      row.AppVersion,
+		IP:              row.Ip,
+		PasswordPending: row.PasswordPending,
+		CreatedAt:       row.CreatedAt.Time,
+		ActiveAt:        row.ActiveAt.Time,
 	}
 }
 
