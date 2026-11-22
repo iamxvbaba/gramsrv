@@ -86,6 +86,7 @@ import (
 	"telesrv/internal/otpdelivery"
 	otpsmtp "telesrv/internal/otpdelivery/smtp"
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
+	"telesrv/internal/push"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
 	freezeseed "telesrv/internal/seed/freeze"
@@ -1139,8 +1140,48 @@ func run(logger *zap.Logger) error {
 	// Device push tokens are stored only when push is enabled, so a deployment
 	// that never opts in keeps the registerDevice no-op behaviour.
 	var pushTokenStore storepkg.PushTokenStore
+	var offlinePushBridge *rpc.OfflinePushBridge
 	if cfg.PushEnabled {
 		pushTokenStore = postgres.NewPushTokenStore(pool)
+		var fcmSender push.Sender
+		if cfg.PushFCMServiceAccountFile != "" {
+			saData, readErr := os.ReadFile(cfg.PushFCMServiceAccountFile)
+			if readErr != nil {
+				return fmt.Errorf("read FCM service account: %w", readErr)
+			}
+			sa, parseErr := push.ParseServiceAccount(saData)
+			if parseErr != nil {
+				return fmt.Errorf("parse FCM service account: %w", parseErr)
+			}
+			if cfg.PushFCMTokenURL != "" {
+				sa.TokenURI = cfg.PushFCMTokenURL
+			}
+			sender, senderErr := push.NewFCMSender(sa, cfg.PushFCMProjectID, "", cfg.PushFCMScope, cfg.PushSendTimeout)
+			if senderErr != nil {
+				return fmt.Errorf("initialize FCM sender: %w", senderErr)
+			}
+			fcmSender = sender
+		}
+		var webPushSender *push.WebPushSender
+		if cfg.PushWebPushVAPIDPrivateKey != "" && cfg.PushWebPushVAPIDPublicKey != "" {
+			sender, senderErr := push.NewWebPushSender(
+				cfg.PushWebPushVAPIDPrivateKey, cfg.PushWebPushVAPIDPublicKey,
+				cfg.PushWebPushSubject, cfg.PushWebPushTTL, cfg.PushSendTimeout,
+			)
+			if senderErr != nil {
+				return fmt.Errorf("initialize web push sender: %w", senderErr)
+			}
+			webPushSender = sender
+		}
+		if fcmSender != nil || webPushSender != nil {
+			offlinePushBridge = rpc.NewOfflinePushBridge(
+				pushTokenStore,
+				push.NewService(fcmSender, webPushSender, logger.Named("push")),
+				cfg.PushDebounce,
+				clock.System,
+				logger.Named("push").Named("offline"),
+			).WithNotifyStore(passwordStore)
+		}
 	}
 	codeStore := redisstore.NewCodeStore(rdb)
 	authDeliveryReportService := authdiagnosticsapp.NewService(codeStore, authDeliveryReportStore)
@@ -2195,13 +2236,20 @@ func run(logger *zap.Logger) error {
 	botsService.SetTextDraftPusher(router)
 	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
 	transcriptionService.SetFileCompletionHandler(router.PushTranscribedAudioFileUpdate)
-	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
+	outboxOptions := []rpc.OutboxOption{
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),
 		rpc.WithOutboxInterval(cfg.OutboxInterval),
 		rpc.WithOutboxPushTimeout(cfg.OutboundPushTimeout),
 		rpc.WithOutboxMetrics(metricRegistry),
 		rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates),
+	}
+	if offlinePushBridge != nil {
+		outboxOptions = append(outboxOptions, rpc.WithOfflinePusher(offlinePushBridge))
+		go offlinePushBridge.Run(ctx)
+	}
+	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
+		outboxOptions...,
 	).Run(ctx)
 	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
 	go rpc.NewWelcomeDeliveryDispatcher(router, welcomeMessageStore, logger.Named("rpc").Named("welcome-delivery")).Run(ctx)

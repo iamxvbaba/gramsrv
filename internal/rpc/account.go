@@ -530,6 +530,11 @@ func (r *Router) onAccountRegisterDevice(ctx context.Context, req *tg.AccountReg
 	}); err != nil {
 		return false, internalErr()
 	}
+	r.log.Info("push token registered",
+		zap.Int64("user_id", userID),
+		zap.Int("token_type", req.TokenType),
+		zap.Bool("has_secret", len(req.Secret) > 0),
+	)
 	return true, nil
 }
 
@@ -557,6 +562,7 @@ func (r *Router) onAccountUnregisterDevice(ctx context.Context, req *tg.AccountU
 	if _, err := r.deps.PushTokens.DeletePushToken(ctx, userID, req.TokenType, token); err != nil {
 		return false, internalErr()
 	}
+	r.log.Info("push token unregistered", zap.Int64("user_id", userID), zap.Int("token_type", req.TokenType))
 	return true, nil
 }
 

@@ -608,6 +608,16 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | Cleanup interval for terminal failed heads, independent of large-table retention. |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | Maximum wait for best-effort online update enqueue. |
 | `TELESRV_PUSH_ENABLED` | bool / `false` | Enables device push notifications. Off by default: `account.registerDevice` stays a no-op and no token is stored until this is true. The FCM/APNs sender settings below are read only then. See [push-notifications.md](push-notifications.md). |
+| `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | path / — | Firebase service-account JSON (file-backed secret). When empty, tokens are stored but no push is sent. The client must be rebuilt against this project. |
+| `TELESRV_PUSH_FCM_PROJECT_ID` | string / — | Overrides the service account's `project_id`. |
+| `TELESRV_PUSH_FCM_TOKEN_URL` | URL / — | OAuth2 token endpoint override (tests/proxies). |
+| `TELESRV_PUSH_FCM_SCOPE` | string / — | OAuth2 scope override. |
+| `TELESRV_PUSH_DEBOUNCE` | duration / `30s` | Per-user coalescing window for offline pushes (also throttles muted badge refreshes). |
+| `TELESRV_PUSH_SEND_TIMEOUT` | duration / `5s` | Per-request provider HTTP timeout. |
+| `TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY` | string / — | Web push VAPID public key (base64url); must equal the web build's `VITE_PUSH_SERVER_KEY`. Empty disables web push. |
+| `TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY` | string / — | Web push VAPID private key (base64url). |
+| `TELESRV_PUSH_WEBPUSH_SUBJECT` | string / — | VAPID `sub` claim (`mailto:` or `https:`). |
+| `TELESRV_PUSH_WEBPUSH_TTL` | int / `86400` | Web push TTL in seconds. |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | Per-account messages per send window; `<=0` disables send limiting. |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | Send-rate window. |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | Per-user difference/catch-up RPCs per window; `<=0` disables the gate. |

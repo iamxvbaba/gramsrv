@@ -553,6 +553,28 @@ type Config struct {
 	// stored, so a deployment that never opts in behaves exactly as before push
 	// support existed. The FCM/APNs sender settings are read only when this is true.
 	PushEnabled bool
+	// PushFCMServiceAccountFile is the Firebase service-account JSON path. When
+	// empty, device tokens are still stored when PushEnabled, but no push is sent.
+	PushFCMServiceAccountFile string
+	// PushFCMProjectID overrides the service account's project_id.
+	PushFCMProjectID string
+	// PushFCMTokenURL overrides the OAuth2 token endpoint (tests/proxies).
+	PushFCMTokenURL string
+	// PushFCMScope overrides the OAuth2 scope.
+	PushFCMScope string
+	// PushDebounce coalesces a burst of outbox events into one push per user.
+	PushDebounce time.Duration
+	// PushSendTimeout bounds one provider HTTP request.
+	PushSendTimeout time.Duration
+	// PushWebPushVAPIDPrivateKey/PublicKey configure web push (token_type 10).
+	// The public key must equal the web client's VITE_PUSH_SERVER_KEY; both are
+	// base64url. Empty disables web push.
+	PushWebPushVAPIDPrivateKey string
+	PushWebPushVAPIDPublicKey  string
+	// PushWebPushSubject is the VAPID "sub" claim (e.g. mailto:admin@example.com).
+	PushWebPushSubject string
+	// PushWebPushTTL is the web push TTL in seconds.
+	PushWebPushTTL int
 	// SendRateLimit is the number of messages allowed per account-level send window; <=0 disables send rate limiting.
 	SendRateLimit int
 	// SendRateWindow is the send rate-limit window.
@@ -1261,21 +1283,31 @@ func Load() (Config, error) {
 		OutboxPoisonCleanupInterval: envDurationOr(
 			"TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL", 15*time.Second,
 		),
-		OutboundPushTimeout:    envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
-		PushEnabled:            envBoolOr("TELESRV_PUSH_ENABLED", false),
-		SendRateLimit:          envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
-		SendRateWindow:         envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
-		CatchupRateLimit:       envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),
-		CatchupRateWindow:      envDurationOr("TELESRV_CATCHUP_RATE_WINDOW", time.Minute),
-		SRPRateLimit:           envIntOr("TELESRV_SRP_RATE_LIMIT", 10),
-		SRPRateWindow:          envDurationOr("TELESRV_SRP_RATE_WINDOW", time.Minute),
-		WithdrawalRateLimit:    envIntOr("TELESRV_WITHDRAWAL_RATE_LIMIT", 5),
-		WithdrawalRateWindow:   envDurationOr("TELESRV_WITHDRAWAL_RATE_WINDOW", time.Minute),
-		PaymentRateLimit:       envIntOr("TELESRV_PAYMENT_RATE_LIMIT", 30),
-		PaymentRateWindow:      envDurationOr("TELESRV_PAYMENT_RATE_WINDOW", time.Minute),
-		ClaimAPIRateLimit:      envIntOr("TELESRV_CLAIM_API_RATE_LIMIT", 60),
-		ClaimAPIRateWindow:     envDurationOr("TELESRV_CLAIM_API_RATE_WINDOW", time.Minute),
-		ClaimWithdrawRateLimit: envIntOr("TELESRV_CLAIM_WITHDRAW_RATE_LIMIT", 10),
+		OutboundPushTimeout:        envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
+		PushEnabled:                envBoolOr("TELESRV_PUSH_ENABLED", false),
+		PushFCMServiceAccountFile:  envOr("TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE", ""),
+		PushFCMProjectID:           envOr("TELESRV_PUSH_FCM_PROJECT_ID", ""),
+		PushFCMTokenURL:            envOr("TELESRV_PUSH_FCM_TOKEN_URL", ""),
+		PushFCMScope:               envOr("TELESRV_PUSH_FCM_SCOPE", ""),
+		PushDebounce:               envDurationOr("TELESRV_PUSH_DEBOUNCE", 30*time.Second),
+		PushSendTimeout:            envDurationOr("TELESRV_PUSH_SEND_TIMEOUT", 5*time.Second),
+		PushWebPushVAPIDPrivateKey: envOr("TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY", ""),
+		PushWebPushVAPIDPublicKey:  envOr("TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY", ""),
+		PushWebPushSubject:         envOr("TELESRV_PUSH_WEBPUSH_SUBJECT", ""),
+		PushWebPushTTL:             envIntOr("TELESRV_PUSH_WEBPUSH_TTL", 86400),
+		SendRateLimit:              envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
+		SendRateWindow:             envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
+		CatchupRateLimit:           envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),
+		CatchupRateWindow:          envDurationOr("TELESRV_CATCHUP_RATE_WINDOW", time.Minute),
+		SRPRateLimit:               envIntOr("TELESRV_SRP_RATE_LIMIT", 10),
+		SRPRateWindow:              envDurationOr("TELESRV_SRP_RATE_WINDOW", time.Minute),
+		WithdrawalRateLimit:        envIntOr("TELESRV_WITHDRAWAL_RATE_LIMIT", 5),
+		WithdrawalRateWindow:       envDurationOr("TELESRV_WITHDRAWAL_RATE_WINDOW", time.Minute),
+		PaymentRateLimit:           envIntOr("TELESRV_PAYMENT_RATE_LIMIT", 30),
+		PaymentRateWindow:          envDurationOr("TELESRV_PAYMENT_RATE_WINDOW", time.Minute),
+		ClaimAPIRateLimit:          envIntOr("TELESRV_CLAIM_API_RATE_LIMIT", 60),
+		ClaimAPIRateWindow:         envDurationOr("TELESRV_CLAIM_API_RATE_WINDOW", time.Minute),
+		ClaimWithdrawRateLimit:     envIntOr("TELESRV_CLAIM_WITHDRAW_RATE_LIMIT", 10),
 		ClaimWithdrawRateWindow: envDurationOr(
 			"TELESRV_CLAIM_WITHDRAW_RATE_WINDOW", time.Minute,
 		),
