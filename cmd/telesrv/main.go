@@ -1136,6 +1136,12 @@ func run(logger *zap.Logger) error {
 	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
 	widgetStore := postgres.NewWidgetStore(pool)
 	widgetQueryStore := redisstore.NewWidgetQueryStore(rdb)
+	// Device push tokens are stored only when push is enabled, so a deployment
+	// that never opts in keeps the registerDevice no-op behaviour.
+	var pushTokenStore storepkg.PushTokenStore
+	if cfg.PushEnabled {
+		pushTokenStore = postgres.NewPushTokenStore(pool)
+	}
 	codeStore := redisstore.NewCodeStore(rdb)
 	authDeliveryReportService := authdiagnosticsapp.NewService(codeStore, authDeliveryReportStore)
 	clientTelemetryService := clienttelemetryapp.NewService(clientTelemetryStore)
@@ -2031,6 +2037,7 @@ func run(logger *zap.Logger) error {
 		Inline:                       inlineRegistryStore,
 		Widgets:                      widgetStore,
 		WidgetQueries:                widgetQueryStore,
+		PushTokens:                   pushTokenStore,
 		Limiter:                      rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	readModelListener := postgres.NewReadModelChangeListener(cfg.PostgresDSN, postgres.ReadModelCacheSet{

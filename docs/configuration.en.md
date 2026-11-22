@@ -607,6 +607,7 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_OUTBOX_POISON_RETENTION` | duration / `1m` | Diagnostic retention for terminal failed delivery heads; durable update events remain recoverable through difference. |
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | Cleanup interval for terminal failed heads, independent of large-table retention. |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | Maximum wait for best-effort online update enqueue. |
+| `TELESRV_PUSH_ENABLED` | bool / `false` | Enables device push notifications. Off by default: `account.registerDevice` stays a no-op and no token is stored until this is true. The FCM/APNs sender settings below are read only then. See [push-notifications.md](push-notifications.md). |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | Per-account messages per send window; `<=0` disables send limiting. |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | Send-rate window. |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | Per-user difference/catch-up RPCs per window; `<=0` disables the gate. |

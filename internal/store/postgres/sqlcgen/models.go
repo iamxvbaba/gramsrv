@@ -1378,6 +1378,18 @@ type CustomVerificationRequest struct {
 	Version              int64
 }
 
+type DevicePushToken struct {
+	TokenType  int32
+	Token      string
+	UserID     int64
+	Secret     []byte
+	AppSandbox bool
+	NoMuted    bool
+	OtherUids  []int64
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type Dialog struct {
 	UserID                int64
 	PeerType              string

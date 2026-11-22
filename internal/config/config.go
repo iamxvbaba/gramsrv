@@ -548,6 +548,11 @@ type Config struct {
 	OutboxPoisonCleanupInterval time.Duration
 	// OutboundPushTimeout is the maximum time a best-effort updates push waits for the outbound queue to accept it.
 	OutboundPushTimeout time.Duration
+	// PushEnabled turns on device push notifications. When false (the default)
+	// account.registerDevice/unregisterDevice stay no-ops and no device token is
+	// stored, so a deployment that never opts in behaves exactly as before push
+	// support existed. The FCM/APNs sender settings are read only when this is true.
+	PushEnabled bool
 	// SendRateLimit is the number of messages allowed per account-level send window; <=0 disables send rate limiting.
 	SendRateLimit int
 	// SendRateWindow is the send rate-limit window.
@@ -1257,6 +1262,7 @@ func Load() (Config, error) {
 			"TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL", 15*time.Second,
 		),
 		OutboundPushTimeout:    envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
+		PushEnabled:            envBoolOr("TELESRV_PUSH_ENABLED", false),
 		SendRateLimit:          envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
 		SendRateWindow:         envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
 		CatchupRateLimit:       envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),
