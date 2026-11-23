@@ -35,10 +35,10 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return r.onAccountConfirmPhone(ctx, req)
 	})
 	registerRPC[*tg.AccountRegisterDeviceRequest](d, tlprofile.SemanticMethodAccountRegisterDevice, func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (any, error) {
-		return true, nil
+		return r.onAccountRegisterDevice(ctx, req)
 	})
 	registerRPC[*tg.AccountUnregisterDeviceRequest](d, tlprofile.SemanticMethodAccountUnregisterDevice, func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (any, error) {
-		return true, nil
+		return r.onAccountUnregisterDevice(ctx, req)
 	})
 	registerRPC[*tg.AccountUpdateDeviceLockedRequest](d, tlprofile.SemanticMethodAccountUpdateDeviceLocked, func(ctx context.Context, layerRequest *tg.AccountUpdateDeviceLockedRequest) (any, error) {
 		period := layerRequest.
@@ -493,6 +493,77 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 			Offline)
 	})
 
+}
+
+// onAccountRegisterDevice stores the device's push token. It is a no-op that
+// still acks when no PushTokenStore is wired (push disabled), preserving the
+// pre-feature behaviour for ordinary deployments. A token is keyed by
+// (token_type, token) and reassigned to the caller, so a token that moved
+// between accounts is never pushed for the old one.
+func (r *Router) onAccountRegisterDevice(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (bool, error) {
+	if r.deps.PushTokens == nil {
+		return true, nil
+	}
+	userID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if !authorized || userID == 0 {
+		return false, authKeyUnregisteredErr()
+	}
+	if req == nil {
+		return false, tgerr400("TOKEN_EMPTY")
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		return false, tgerr400("TOKEN_EMPTY")
+	}
+	if err := r.deps.PushTokens.UpsertPushToken(ctx, domain.PushToken{
+		UserID:     userID,
+		TokenType:  req.TokenType,
+		Token:      token,
+		Secret:     req.Secret,
+		AppSandbox: req.AppSandbox,
+		NoMuted:    req.NoMuted,
+		OtherUIDs:  req.OtherUIDs,
+		UpdatedAt:  r.clock.Now(),
+	}); err != nil {
+		return false, internalErr()
+	}
+	r.log.Info("push token registered",
+		zap.Int64("user_id", userID),
+		zap.Int("token_type", req.TokenType),
+		zap.Bool("has_secret", len(req.Secret) > 0),
+	)
+	return true, nil
+}
+
+// onAccountUnregisterDevice removes a token owned by the caller. It is a no-op
+// when no PushTokenStore is wired, and never removes another account's token.
+func (r *Router) onAccountUnregisterDevice(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (bool, error) {
+	if r.deps.PushTokens == nil {
+		return true, nil
+	}
+	userID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if !authorized || userID == 0 {
+		return false, authKeyUnregisteredErr()
+	}
+	if req == nil {
+		return true, nil
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		return true, nil
+	}
+	// A missing row is not an error: unregister is idempotent.
+	if _, err := r.deps.PushTokens.DeletePushToken(ctx, userID, req.TokenType, token); err != nil {
+		return false, internalErr()
+	}
+	r.log.Info("push token unregistered", zap.Int64("user_id", userID), zap.Int("token_type", req.TokenType))
+	return true, nil
 }
 
 func wallpaperReferenceLogFields(method string, input tg.InputWallPaperClass) []zap.Field {

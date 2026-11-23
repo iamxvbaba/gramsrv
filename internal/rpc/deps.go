@@ -1260,11 +1260,15 @@ type Deps struct {
 	// WidgetQueries coordinates bot widget queries across nodes; when nil the
 	// pending registry stays process-local.
 	WidgetQueries store.WidgetQueryStore
-	Limiter       RateLimiter
-	Metrics       Metrics
-	SecretChats   SecretChatService
-	Stars         StarsService
-	Gifts         GiftsService
+	// PushTokens persists device push tokens from account.registerDevice. When
+	// nil (push disabled) the register/unregister RPCs stay no-ops returning
+	// true, which is the behaviour before push support existed.
+	PushTokens  store.PushTokenStore
+	Limiter     RateLimiter
+	Metrics     Metrics
+	SecretChats SecretChatService
+	Stars       StarsService
+	Gifts       GiftsService
 	// Wallet is the Layer 230 in-app TON wallet; when nil, wallet.* returns WALLET_UNAVAILABLE.
 	Wallet WalletService
 	// MainTabs stores account/channel setMainProfileTab; nil keeps the default tab.

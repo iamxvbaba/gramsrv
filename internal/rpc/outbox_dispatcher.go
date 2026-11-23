@@ -56,6 +56,7 @@ type OutboxDispatcher struct {
 	maxIdleInterval time.Duration
 	workers         int
 	pushTimeout     time.Duration
+	pusher          OfflinePusher
 }
 
 // OutboxOption adjusts the OutboxDispatcher's runtime parameters.
@@ -120,6 +121,16 @@ func WithOutboxMetrics(m Metrics) OutboxOption {
 	return func(d *OutboxDispatcher) {
 		if m != nil {
 			d.metrics = m
+		}
+	}
+}
+
+// WithOfflinePusher injects the push notifier used when an update reaches no live
+// session. Nil leaves push disabled.
+func WithOfflinePusher(pusher OfflinePusher) OutboxOption {
+	return func(d *OutboxDispatcher) {
+		if pusher != nil {
+			d.pusher = pusher
 		}
 	}
 }
@@ -384,7 +395,8 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 			delivered = append(delivered, item)
 			continue
 		}
-		if _, retriable, err := d.pushOutboxUpdate(ctx, item, update); err != nil {
+		sent, retriable, err := d.pushOutboxUpdate(ctx, item, update)
+		if err != nil {
 			blockedUsers[item.TargetUserID] = struct{}{}
 			if retriable {
 				// Outbound queue congestion: leave the dispatching row to be redelivered when the
@@ -394,6 +406,9 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 			}
 			d.markDispatchFailed(ctx, item, err)
 			continue
+		}
+		if sent == 0 {
+			d.notifyOffline(ctx, item, requests[i].Event, update)
 		}
 		delivered = append(delivered, item)
 	}
@@ -470,6 +485,9 @@ func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.
 		d.markDispatchFailed(ctx, item, err)
 		return false
 	}
+	if sent == 0 {
+		d.notifyOffline(ctx, item, event, update)
+	}
 	if err := d.outbox.MarkDelivered(ctx, item); err != nil {
 		d.log.Warn("mark dispatch delivered", zap.Int64("target_user_id", item.TargetUserID), zap.Int64("outbox_id", item.ID), zap.Error(err))
 		return false
@@ -540,6 +558,22 @@ func (d *OutboxDispatcher) pushOutboxUpdate(ctx context.Context, item store.Disp
 		return sent, outboxPushInterrupted(err), err
 	}
 	return sent, false, nil
+}
+
+// notifyOffline hands an update that reached no live session to the offline push
+// bridge (if configured). It runs on an outbox worker and must not block.
+func (d *OutboxDispatcher) notifyOffline(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent, update *tg.Updates) {
+	if d.pusher == nil || update == nil {
+		return
+	}
+	target := item.TargetUserID
+	if target == 0 {
+		target = event.UserID
+	}
+	if target == 0 {
+		return
+	}
+	d.pusher.PushOfflineUpdate(ctx, target, event, update)
 }
 
 func validateOutboxExclusionPair(item store.DispatchOutboxItem) error {
