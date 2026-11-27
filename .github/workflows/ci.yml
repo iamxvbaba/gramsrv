@@ -84,6 +84,11 @@ jobs:
           TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
         run: go test ./internal/store/postgres -run '^TestChannelFactCheck' -count=1 -timeout=3m
 
+      - name: Verify channel message id allocation against PostgreSQL
+        env:
+          TELESRV_TEST_POSTGRES_DSN: postgres://inventory:inventory-test@127.0.0.1:5432/gift_inventory_test?sslmode=disable
+        run: go test ./internal/store/postgres -run '^TestChannelMessageIDAllocatorPostgres$' -count=1 -timeout=3m
+
   admin-web:
     name: Admin web build
     runs-on: ubuntu-24.04
