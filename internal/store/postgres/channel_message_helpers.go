@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
+
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
@@ -178,11 +180,24 @@ type pgChannelMessageIDAllocator struct {
 }
 
 func (a pgChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, channelID int64) (int, error) {
-	current, err := a.CurrentChannelMessageID(ctx, channelID)
+	// Allocate from a per-channel counter row inside a single statement. The
+	// row lock serializes concurrent writers, so a registration auto-subscribe
+	// join racing a message send can no longer pick the same id (the old
+	// MAX(id)+1 read outside the write transaction caused channel_messages_pkey
+	// violations). GREATEST keeps the counter ahead if rows were inserted
+	// without it (restore, manual backfill) and MAX(id) is only a safety net;
+	// the counter, not the message table, drives the sequence.
+	var id int64
+	err := a.db.QueryRow(ctx, `
+INSERT INTO channel_message_id_counters AS c (channel_id, next_id)
+VALUES ($1, COALESCE((SELECT MAX(id) FROM channel_messages WHERE channel_id = $1), 0) + 1)
+ON CONFLICT (channel_id) DO UPDATE
+SET next_id = GREATEST(c.next_id + 1, (SELECT COALESCE(MAX(id), 0) + 1 FROM channel_messages WHERE channel_id = $1))
+RETURNING next_id`, channelID).Scan(&id)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("allocate channel message id: %w", err)
 	}
-	return current + 1, nil
+	return int(id), nil
 }
 
 func (a pgChannelMessageIDAllocator) CurrentChannelMessageID(ctx context.Context, channelID int64) (int, error) {
