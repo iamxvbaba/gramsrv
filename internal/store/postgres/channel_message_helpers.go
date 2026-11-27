@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
@@ -177,6 +178,15 @@ func channelMessageReplyFromColumns(reply *domain.MessageReply, msgID int, peerT
 
 type pgChannelMessageIDAllocator struct {
 	db sqlcgen.DBTX
+}
+
+// NewChannelMessageIDAllocator returns the Postgres-backed allocator. The
+// monolith and the standalone tools (cmd/subscribebackfill) share this one so
+// every writer advances the same per-channel counter; the previous split where
+// the server used Redis and tools used MAX(id)+1 let the counters drift, and
+// the next server-written id collided with a tool-written row.
+func NewChannelMessageIDAllocator(db sqlcgen.DBTX) store.ChannelMessageIDAllocator {
+	return pgChannelMessageIDAllocator{db: db}
 }
 
 func (a pgChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, channelID int64) (int, error) {

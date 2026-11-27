@@ -934,7 +934,7 @@ func run(logger *zap.Logger) error {
 	clientTelemetryStore := postgres.NewClientTelemetryStore(pool)
 	boxIDAllocator := redisstore.NewBoxIDAllocator(rdb, postgres.NewMessageBoxCounterSource(pool))
 	channelIDAllocator := redisstore.NewChannelIDAllocator(rdb, postgres.NewChannelIDCounterSource(pool))
-	channelMessageIDAllocator := redisstore.NewChannelMessageIDAllocator(rdb, postgres.NewChannelMessageIDCounterSource(pool))
+	channelMessageIDAllocator := postgres.NewChannelMessageIDAllocator(pool)
 	reverseContactStore, err := storepkg.NewBatchedReverseContactStore(
 		postgres.NewContactStore(pool),
 		storepkg.ReverseContactBatchConfig{
