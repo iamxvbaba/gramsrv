@@ -112,56 +112,7 @@ if ((${#specs[@]})); then
   args+=(--channels "$(IFS=,; echo "${specs[*]}")")
 fi
 
-# ---- helpers: Postgres / Redis access (host client when present, else the compose containers) ----
-env_value() { # KEY -> value from the deployment .env (last match, quotes stripped)
-  [[ -f $repo_root/.env ]] || return 0
-  grep -E "^$1=" "$repo_root/.env" | tail -1 | cut -d= -f2- | sed -e 's/^ *//' -e 's/^"//' -e 's/"$//' || true
-}
-pg_query() { # SQL -> tuples-only output; host psql first, then the compose container
-  local dsn=${TELESRV_POSTGRES_DSN:-$(env_value TELESRV_POSTGRES_DSN)} out
-  dsn=${dsn:-postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable}
-  if command -v psql >/dev/null 2>&1 && out=$(psql "$dsn" -tAc "$1" 2>/dev/null); then
-    printf '%s\n' "$out"
-    return 0
-  fi
-  docker exec telesrv-postgres psql -U telesrv -d telesrv_main -tAc "$1"
-}
-redis_cmd() {
-  local addr pass host port
-  addr=${TELESRV_REDIS_ADDR:-$(env_value TELESRV_REDIS_ADDR)}
-  addr=${addr:-127.0.0.1:6399}
-  pass=${TELESRV_REDIS_PASSWORD:-$(env_value TELESRV_REDIS_PASSWORD)}
-  host=${addr%:*}
-  port=${addr##*:}
-  if command -v redis-cli >/dev/null 2>&1; then
-    REDISCLI_AUTH=$pass redis-cli -h "$host" -p "$port" "$@"
-  else
-    docker exec -i telesrv-redis redis-cli "$@"
-  fi
-}
-
-# The backfill tool inserts "joined" service messages through the Postgres id allocator, while the
-# running server allocates channel message ids from the Redis counter counter:channel_msg_id:{id}.
-# Left alone the Redis counter falls behind and every later send fails with a duplicate
-# channel_messages_pkey. After each real run, raise the counter to the true maximum (atomically,
-# never lowering it).
-sync_channel_counters() {
-  local ids id max
-  ids=$("$binary" "${args[@]}" "${flags[@]}" --resolve 2>/dev/null | tail -1 || true)
-  [[ $ids =~ ^[0-9]+(,[0-9]+)*$ ]] || { printf 'fixsubscribe.sh: WARNING: cannot resolve channels to sync Redis counters\n' >&2; return 0; }
-  for id in ${ids//,/ }; do
-    max=$(pg_query "SELECT COALESCE(max(id),0) FROM channel_messages WHERE channel_id=$id" | tr -d '[:space:]' || true)
-    [[ $max =~ ^[0-9]+$ ]] || { printf 'fixsubscribe.sh: WARNING: cannot read max message id of channel %s; Redis counter NOT synced\n' "$id" >&2; continue; }
-    redis_cmd EVAL "local c=tonumber(redis.call('GET',KEYS[1]) or '0'); if c < tonumber(ARGV[1]) then redis.call('SET',KEYS[1],ARGV[1]); return 1 end; return 0" 1 "counter:channel_msg_id:{$id}" "$max" >/dev/null 2>&1 \
-      && printf 'fixsubscribe.sh: channel %s message counter synced (max id %s)\n' "$id" "$max" >&2 \
-      || printf 'fixsubscribe.sh: WARNING: could not sync Redis counter for channel %s (set counter:channel_msg_id:{%s} to %s by hand)\n' "$id" "$id" "$max" >&2
-  done
-}
-
 printf 'fixsubscribe.sh: running %s\n' "$binary" >&2
 rc=0
 "$binary" "${args[@]}" "${flags[@]}" || rc=$?
-if (( rc == 0 )) && ! has_flag --dry-run "${flags[@]}" && ! has_flag --list "${flags[@]}" && ! has_flag --help "${flags[@]}"; then
-  sync_channel_counters
-fi
 exit "$rc"

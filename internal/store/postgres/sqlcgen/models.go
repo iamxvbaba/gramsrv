@@ -958,6 +958,11 @@ type ChannelMessage struct {
 	Factcheck           []byte
 }
 
+type ChannelMessageIDCounter struct {
+	ChannelID int64
+	NextID    int64
+}
+
 type ChannelMessageMedium struct {
 	ChannelID   int64
 	ID          int32

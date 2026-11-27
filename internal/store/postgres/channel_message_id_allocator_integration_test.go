@@ -69,9 +69,9 @@ func nextChannelMessageID(t *testing.T, allocator interface {
 }
 
 // TestChannelMessageIDAllocatorPostgres pins the Postgres per-channel counter
-// that replaced MAX(id)+1: ids start at one, survive a lost counter row, never
-// hand the same id to two concurrent writers, and follow rows inserted without
-// the allocator.
+// that replaced MAX(id)+1: ids continue after existing rows, survive a lost
+// counter row, never hand the same id to two concurrent writers, and follow
+// rows inserted without the allocator.
 func TestChannelMessageIDAllocatorPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
