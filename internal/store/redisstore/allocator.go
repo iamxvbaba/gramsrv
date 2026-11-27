@@ -26,11 +26,6 @@ type ChannelIDAllocator struct {
 	counter counterAllocator
 }
 
-// ChannelMessageIDAllocator uses Redis INCR to allocate channel-scoped message ids.
-type ChannelMessageIDAllocator struct {
-	counter counterAllocator
-}
-
 type counterAllocator struct {
 	c      *redis.Client
 	source store.CounterSource
@@ -104,26 +99,12 @@ func NewChannelIDAllocator(c *redis.Client, source store.CounterSource) *Channel
 	}}
 }
 
-// NewChannelMessageIDAllocator creates a Redis-backed channel message id allocator.
-func NewChannelMessageIDAllocator(c *redis.Client, source store.CounterSource) *ChannelMessageIDAllocator {
-	return &ChannelMessageIDAllocator{counter: counterAllocator{
-		c:      c,
-		source: source,
-		key:    channelMessageIDKey,
-		name:   "channel_msg_id",
-	}}
-}
-
 func boxIDKey(userID int64) string {
 	return fmt.Sprintf("counter:box_id:{%d}", userID)
 }
 
 func channelIDKey(_ int64) string {
 	return "counter:channel_id"
-}
-
-func channelMessageIDKey(channelID int64) string {
-	return fmt.Sprintf("counter:channel_msg_id:{%d}", channelID)
 }
 
 func (a *BoxIDAllocator) NextBoxID(ctx context.Context, userID int64) (int, error) {
@@ -255,16 +236,6 @@ func (a *ChannelIDAllocator) NextChannelIDAtLeast(ctx context.Context, floor int
 
 func (a *ChannelIDAllocator) CurrentChannelID(ctx context.Context) (int64, error) {
 	return a.counter.current(ctx, 1)
-}
-
-func (a *ChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, channelID int64) (int, error) {
-	v, err := a.counter.next(ctx, channelID)
-	return int(v), err
-}
-
-func (a *ChannelMessageIDAllocator) CurrentChannelMessageID(ctx context.Context, channelID int64) (int, error) {
-	v, err := a.counter.current(ctx, channelID)
-	return int(v), err
 }
 
 func (a counterAllocator) next(ctx context.Context, userID int64) (int64, error) {

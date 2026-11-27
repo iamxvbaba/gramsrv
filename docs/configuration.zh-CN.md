@@ -586,6 +586,17 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_OUTBOX_POISON_RETENTION` | duration / `1m` | terminal failed 投递头的排障保留窗口；durable update 仍可经 difference 恢复。 |
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | terminal failed head 清理周期，独立于大表 retention。 |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | best-effort 在线 update 入队最长等待。 |
+| `TELESRV_PUSH_ENABLED` | bool / `false` | 启用设备推送通知。默认关闭：未开启时 `account.registerDevice` 仍为空操作、不存储 token，下面的 FCM/APNs 设置也只在开启后读取。见 [push-notifications.md](push-notifications.md)。 |
+| `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | path / — | Firebase service account JSON（文件形式密钥）。为空时仍存储 token，但不发送推送；客户端必须针对该 Firebase 项目重新构建。 |
+| `TELESRV_PUSH_FCM_PROJECT_ID` | string / — | 覆盖 service account 中的 `project_id`。 |
+| `TELESRV_PUSH_FCM_TOKEN_URL` | URL / — | 覆盖 OAuth2 token 端点（测试/代理用）。 |
+| `TELESRV_PUSH_FCM_SCOPE` | string / — | 覆盖 OAuth2 scope。 |
+| `TELESRV_PUSH_DEBOUNCE` | duration / `30s` | 离线推送的按用户合并窗口（同时限制静音角标刷新频率）。 |
+| `TELESRV_PUSH_SEND_TIMEOUT` | duration / `5s` | 单个推送 HTTP 请求超时。 |
+| `TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY` | string / — | Web push VAPID 公钥（base64url）；必须与 Web 构建的 `VITE_PUSH_SERVER_KEY` 一致。为空时禁用 Web push。 |
+| `TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY` | string / — | Web push VAPID 私钥（base64url）。 |
+| `TELESRV_PUSH_WEBPUSH_SUBJECT` | string / — | VAPID `sub` 声明（`mailto:` 或 `https:`）。 |
+| `TELESRV_PUSH_WEBPUSH_TTL` | int / `86400` | Web push TTL（秒）。 |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | 单账号每发送窗口允许的消息数；`<=0` 关闭。 |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | 发送限流窗口。 |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | 单用户每窗口 difference/catch-up RPC 数；`<=0` 关闭。 |
