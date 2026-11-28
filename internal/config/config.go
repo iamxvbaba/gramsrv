@@ -553,6 +553,10 @@ type Config struct {
 	// stored, so a deployment that never opts in behaves exactly as before push
 	// support existed. The FCM/APNs sender settings are read only when this is true.
 	PushEnabled bool
+	// PushAlways pushes every new message even when the recipient has a live
+	// session. Off by default: an online client would then receive both the
+	// in-app update and a push.
+	PushAlways bool
 	// PushFCMServiceAccountFile is the Firebase service-account JSON path. When
 	// empty, device tokens are still stored when PushEnabled, but no push is sent.
 	PushFCMServiceAccountFile string
@@ -575,6 +579,17 @@ type Config struct {
 	PushWebPushSubject string
 	// PushWebPushTTL is the web push TTL in seconds.
 	PushWebPushTTL int
+	// PushBarkServer is a self-hosted Bark server base URL (e.g.
+	// https://bark.example.com). Empty disables Bark (token_type 14).
+	PushBarkServer string
+	// PushBarkSound/PushBarkGroup are defaults overridable by the token.
+	PushBarkSound string
+	PushBarkGroup string
+	// PushNtfyServer is a self-hosted ntfy base URL (e.g. https://ntfy.example.com).
+	// Empty disables ntfy (token_type 15).
+	PushNtfyServer string
+	// PushNtfyToken is an optional bearer token for a protected ntfy server.
+	PushNtfyToken string
 	// SendRateLimit is the number of messages allowed per account-level send window; <=0 disables send rate limiting.
 	SendRateLimit int
 	// SendRateWindow is the send rate-limit window.
@@ -1285,6 +1300,7 @@ func Load() (Config, error) {
 		),
 		OutboundPushTimeout:        envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
 		PushEnabled:                envBoolOr("TELESRV_PUSH_ENABLED", false),
+		PushAlways:                 envBoolOr("TELESRV_PUSH_ALWAYS", false),
 		PushFCMServiceAccountFile:  envOr("TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE", ""),
 		PushFCMProjectID:           envOr("TELESRV_PUSH_FCM_PROJECT_ID", ""),
 		PushFCMTokenURL:            envOr("TELESRV_PUSH_FCM_TOKEN_URL", ""),
@@ -1295,6 +1311,11 @@ func Load() (Config, error) {
 		PushWebPushVAPIDPublicKey:  envOr("TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY", ""),
 		PushWebPushSubject:         envOr("TELESRV_PUSH_WEBPUSH_SUBJECT", ""),
 		PushWebPushTTL:             envIntOr("TELESRV_PUSH_WEBPUSH_TTL", 86400),
+		PushBarkServer:             envOr("TELESRV_PUSH_BARK_SERVER", ""),
+		PushBarkSound:              envOr("TELESRV_PUSH_BARK_SOUND", ""),
+		PushBarkGroup:              envOr("TELESRV_PUSH_BARK_GROUP", ""),
+		PushNtfyServer:             envOr("TELESRV_PUSH_NTFY_SERVER", ""),
+		PushNtfyToken:              envOr("TELESRV_PUSH_NTFY_TOKEN", ""),
 		SendRateLimit:              envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
 		SendRateWindow:             envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
 		CatchupRateLimit:           envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),

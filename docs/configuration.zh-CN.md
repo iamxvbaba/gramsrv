@@ -587,6 +587,7 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | terminal failed head 清理周期，独立于大表 retention。 |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | best-effort 在线 update 入队最长等待。 |
 | `TELESRV_PUSH_ENABLED` | bool / `false` | 启用设备推送通知。默认关闭：未开启时 `account.registerDevice` 仍为空操作、不存储 token，下面的 FCM/APNs 设置也只在开启后读取。见 [push-notifications.md](push-notifications.md)。 |
+| `TELESRV_PUSH_ALWAYS` | bool / `false` | 即使对方有在线会话也推送每条新消息。默认关闭；开启后在线客户端会同时收到应用内更新与推送。 |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | path / — | Firebase service account JSON（文件形式密钥）。为空时仍存储 token，但不发送推送；客户端必须针对该 Firebase 项目重新构建。 |
 | `TELESRV_PUSH_FCM_PROJECT_ID` | string / — | 覆盖 service account 中的 `project_id`。 |
 | `TELESRV_PUSH_FCM_TOKEN_URL` | URL / — | 覆盖 OAuth2 token 端点（测试/代理用）。 |
@@ -597,6 +598,10 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY` | string / — | Web push VAPID 私钥（base64url）。 |
 | `TELESRV_PUSH_WEBPUSH_SUBJECT` | string / — | VAPID `sub` 声明（`mailto:` 或 `https:`）。 |
 | `TELESRV_PUSH_WEBPUSH_TTL` | int / `86400` | Web push TTL（秒）。 |
+| `TELESRV_PUSH_BARK_SERVER` | URL / — | 自建 Bark 服务器地址（iOS 经 Bark app 走其自带 APNs，token_type 14）。为空时禁用 Bark。 |
+| `TELESRV_PUSH_BARK_SOUND` / `_GROUP` | string / — | Bark 默认声音/分组，可被 token 覆盖。 |
+| `TELESRV_PUSH_NTFY_SERVER` | URL / — | 自建 ntfy 地址（Android/iOS 经 ntfy app 推送，token_type 15）。为空时禁用 ntfy。 |
+| `TELESRV_PUSH_NTFY_TOKEN` | string / — | 受保护的 ntfy 服务器可选 Bearer token。 |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | 单账号每发送窗口允许的消息数；`<=0` 关闭。 |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | 发送限流窗口。 |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | 单用户每窗口 difference/catch-up RPC 数；`<=0` 关闭。 |

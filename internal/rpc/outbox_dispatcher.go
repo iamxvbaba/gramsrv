@@ -57,6 +57,9 @@ type OutboxDispatcher struct {
 	workers         int
 	pushTimeout     time.Duration
 	pusher          OfflinePusher
+	// pushAlways fires a push for every new-message event, even when the target
+	// has a live session (off by default).
+	pushAlways bool
 }
 
 // OutboxOption adjusts the OutboxDispatcher's runtime parameters.
@@ -132,6 +135,15 @@ func WithOfflinePusher(pusher OfflinePusher) OutboxOption {
 		if pusher != nil {
 			d.pusher = pusher
 		}
+	}
+}
+
+// WithOutboxPushAlways makes the dispatcher push every new-message event even
+// when the target has a live session (TELESRV_PUSH_ALWAYS). Off by default: with
+// it, an online client receives both the in-app update and a push.
+func WithOutboxPushAlways(always bool) OutboxOption {
+	return func(d *OutboxDispatcher) {
+		d.pushAlways = always
 	}
 }
 
@@ -407,7 +419,7 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 			d.markDispatchFailed(ctx, item, err)
 			continue
 		}
-		if sent == 0 {
+		if sent == 0 || d.pushAlways {
 			d.notifyOffline(ctx, item, requests[i].Event, update)
 		}
 		delivered = append(delivered, item)
@@ -485,7 +497,7 @@ func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.
 		d.markDispatchFailed(ctx, item, err)
 		return false
 	}
-	if sent == 0 {
+	if sent == 0 || d.pushAlways {
 		d.notifyOffline(ctx, item, event, update)
 	}
 	if err := d.outbox.MarkDelivered(ctx, item); err != nil {

@@ -608,6 +608,7 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | Cleanup interval for terminal failed heads, independent of large-table retention. |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | Maximum wait for best-effort online update enqueue. |
 | `TELESRV_PUSH_ENABLED` | bool / `false` | Enables device push notifications. Off by default: `account.registerDevice` stays a no-op and no token is stored until this is true. The FCM/APNs sender settings below are read only then. See [push-notifications.md](push-notifications.md). |
+| `TELESRV_PUSH_ALWAYS` | bool / `false` | Push every new message even when the recipient has a live session. Off by default: with it, an online client receives both the in-app update and a push. |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | path / — | Firebase service-account JSON (file-backed secret). When empty, tokens are stored but no push is sent. The client must be rebuilt against this project. |
 | `TELESRV_PUSH_FCM_PROJECT_ID` | string / — | Overrides the service account's `project_id`. |
 | `TELESRV_PUSH_FCM_TOKEN_URL` | URL / — | OAuth2 token endpoint override (tests/proxies). |
@@ -618,6 +619,10 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY` | string / — | Web push VAPID private key (base64url). |
 | `TELESRV_PUSH_WEBPUSH_SUBJECT` | string / — | VAPID `sub` claim (`mailto:` or `https:`). |
 | `TELESRV_PUSH_WEBPUSH_TTL` | int / `86400` | Web push TTL in seconds. |
+| `TELESRV_PUSH_BARK_SERVER` | URL / — | Self-hosted Bark server base URL (iOS via the Bark app, token_type 14). Empty disables Bark. |
+| `TELESRV_PUSH_BARK_SOUND` / `_GROUP` | string / — | Default Bark sound/group, overridable per token. |
+| `TELESRV_PUSH_NTFY_SERVER` | URL / — | Self-hosted ntfy base URL (Android/iOS via the ntfy app, token_type 15). Empty disables ntfy. |
+| `TELESRV_PUSH_NTFY_TOKEN` | string / — | Optional bearer token for a protected ntfy server. |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | Per-account messages per send window; `<=0` disables send limiting. |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | Send-rate window. |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | Per-user difference/catch-up RPCs per window; `<=0` disables the gate. |

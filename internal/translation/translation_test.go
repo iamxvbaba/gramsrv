@@ -62,6 +62,8 @@ var allowedPaths = []string{
 	"docs/configuration.zh-CN.md",
 	"docs/admin-panel-api.ru.md",
 	"docs/bot-api.ru.md",
+	"docs/push-notifications.zh-CN.md",
+	"docs/push-notifications.ru.md",
 	"README.zh-CN.md",
 	"README.md",                                   // holds the "中文 README" locale link
 	"deploy/update/manifest.example.json",         // localized "notes" en/ru
