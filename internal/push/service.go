@@ -74,20 +74,34 @@ func (n Notification) webPushPayload(userID int64) ([]byte, error) {
 }
 
 // Service seals and delivers a notification to a user's registered devices,
-// dispatching by token type (FCM or web push).
+// dispatching by token type (FCM, web push, Bark or ntfy).
 type Service struct {
 	fcm     Sender
 	webPush *WebPushSender
+	bark    *BarkSender
+	ntfy    *NtfySender
 	log     *zap.Logger
 }
 
-// NewService builds a push Service. Either sender may be nil; a token for a
+// NewService builds a push Service. Any sender may be nil; a token for a
 // provider without a sender is skipped.
 func NewService(fcm Sender, webPush *WebPushSender, log *zap.Logger) *Service {
 	if log == nil {
 		log = zap.NewNop()
 	}
 	return &Service{fcm: fcm, webPush: webPush, log: log}
+}
+
+// WithBark attaches the Bark sender; nil is ignored.
+func (s *Service) WithBark(bark *BarkSender) *Service {
+	s.bark = bark
+	return s
+}
+
+// WithNtfy attaches the ntfy sender; nil is ignored.
+func (s *Service) WithNtfy(ntfy *NtfySender) *Service {
+	s.ntfy = ntfy
+	return s
 }
 
 // Send delivers a notification to one device token.
@@ -121,6 +135,16 @@ func (s *Service) Send(ctx context.Context, token domain.PushToken, n Notificati
 			return err
 		}
 		return s.webPush.Send(ctx, token.Token, payload)
+	case domain.PushTokenTypeBark:
+		if s.bark == nil {
+			return errNoBark
+		}
+		return s.bark.Send(ctx, token.Token, n)
+	case domain.PushTokenTypeNtfy:
+		if s.ntfy == nil {
+			return errNoNtfy
+		}
+		return s.ntfy.Send(ctx, token.Token, n)
 	default:
 		return errUnsupportedPushType
 	}

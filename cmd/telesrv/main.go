@@ -1173,10 +1173,28 @@ func run(logger *zap.Logger) error {
 			}
 			webPushSender = sender
 		}
-		if fcmSender != nil || webPushSender != nil {
+		var barkSender *push.BarkSender
+		if cfg.PushBarkServer != "" {
+			sender, senderErr := push.NewBarkSender(cfg.PushBarkServer, cfg.PushBarkSound, cfg.PushBarkGroup, cfg.PushSendTimeout)
+			if senderErr != nil {
+				return fmt.Errorf("initialize bark sender: %w", senderErr)
+			}
+			barkSender = sender
+		}
+		var ntfySender *push.NtfySender
+		if cfg.PushNtfyServer != "" {
+			sender, senderErr := push.NewNtfySender(cfg.PushNtfyServer, cfg.PushNtfyToken, cfg.PushSendTimeout)
+			if senderErr != nil {
+				return fmt.Errorf("initialize ntfy sender: %w", senderErr)
+			}
+			ntfySender = sender
+		}
+		if fcmSender != nil || webPushSender != nil || barkSender != nil || ntfySender != nil {
 			offlinePushBridge = rpc.NewOfflinePushBridge(
 				pushTokenStore,
-				push.NewService(fcmSender, webPushSender, logger.Named("push")),
+				push.NewService(fcmSender, webPushSender, logger.Named("push")).
+					WithBark(barkSender).
+					WithNtfy(ntfySender),
 				cfg.PushDebounce,
 				clock.System,
 				logger.Named("push").Named("offline"),

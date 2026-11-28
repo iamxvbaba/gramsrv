@@ -16,6 +16,15 @@ const (
 	PushTokenTypeUbuntu   = 5
 	PushTokenTypeAPNsVoIP = 9
 	PushTokenTypeWebPush  = 10
+	// PushTokenTypeBark is a telesrv extension, not a Telegram type: a self-hosted
+	// Bark server relays the notification to iOS through the Bark app's own APNs
+	// (so no operator Apple certificate is needed). The token is the Bark device
+	// key, optionally as JSON {"endpoint","key","sound","group","url"}.
+	PushTokenTypeBark = 14
+	// PushTokenTypeNtfy is a telesrv extension: a self-hosted ntfy server delivers
+	// the notification through the ntfy app (Android and iOS). The token is the
+	// ntfy topic, optionally as JSON {"endpoint","topic","token","click"}.
+	PushTokenTypeNtfy = 15
 )
 
 // PushToken is a device registered to receive push notifications for a user

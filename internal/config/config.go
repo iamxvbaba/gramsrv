@@ -575,6 +575,17 @@ type Config struct {
 	PushWebPushSubject string
 	// PushWebPushTTL is the web push TTL in seconds.
 	PushWebPushTTL int
+	// PushBarkServer is a self-hosted Bark server base URL (e.g.
+	// https://bark.example.com). Empty disables Bark (token_type 14).
+	PushBarkServer string
+	// PushBarkSound/PushBarkGroup are defaults overridable by the token.
+	PushBarkSound string
+	PushBarkGroup string
+	// PushNtfyServer is a self-hosted ntfy base URL (e.g. https://ntfy.example.com).
+	// Empty disables ntfy (token_type 15).
+	PushNtfyServer string
+	// PushNtfyToken is an optional bearer token for a protected ntfy server.
+	PushNtfyToken string
 	// SendRateLimit is the number of messages allowed per account-level send window; <=0 disables send rate limiting.
 	SendRateLimit int
 	// SendRateWindow is the send rate-limit window.
@@ -1295,6 +1306,11 @@ func Load() (Config, error) {
 		PushWebPushVAPIDPublicKey:  envOr("TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY", ""),
 		PushWebPushSubject:         envOr("TELESRV_PUSH_WEBPUSH_SUBJECT", ""),
 		PushWebPushTTL:             envIntOr("TELESRV_PUSH_WEBPUSH_TTL", 86400),
+		PushBarkServer:             envOr("TELESRV_PUSH_BARK_SERVER", ""),
+		PushBarkSound:              envOr("TELESRV_PUSH_BARK_SOUND", ""),
+		PushBarkGroup:              envOr("TELESRV_PUSH_BARK_GROUP", ""),
+		PushNtfyServer:             envOr("TELESRV_PUSH_NTFY_SERVER", ""),
+		PushNtfyToken:              envOr("TELESRV_PUSH_NTFY_TOKEN", ""),
 		SendRateLimit:              envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
 		SendRateWindow:             envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
 		CatchupRateLimit:           envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),
