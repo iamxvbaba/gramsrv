@@ -93,6 +93,7 @@ func (s *NtfySender) Send(ctx context.Context, token string, n Notification) err
 		priority = 1
 	}
 	payload := map[string]any{
+		"topic":    sub.Topic,
 		"title":    title,
 		"message":  message,
 		"priority": priority,
@@ -107,7 +108,9 @@ func (s *NtfySender) Send(ctx context.Context, token string, n Notification) err
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/"+sub.Topic, bytes.NewReader(body))
+	// ntfy JSON publishing posts to the base URL with the topic in the body;
+	// posting JSON to /{topic} stores the raw JSON as the message text.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

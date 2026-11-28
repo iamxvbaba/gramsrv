@@ -29,13 +29,13 @@ func TestNtfySenderSend(t *testing.T) {
 	if err := sender.Send(context.Background(), "mytopic", Notification{Title: "Alice", Description: "hi there"}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if gotPath != "/mytopic" {
-		t.Fatalf("path = %q, want /mytopic", gotPath)
+	if gotPath != "/" {
+		t.Fatalf("path = %q, want / (JSON publishing posts to the base URL)", gotPath)
 	}
 	if gotAuth != "Bearer tk_secret" {
 		t.Fatalf("authorization = %q", gotAuth)
 	}
-	if got["title"] != "Alice" || got["message"] != "hi there" {
+	if got["topic"] != "mytopic" || got["title"] != "Alice" || got["message"] != "hi there" {
 		t.Fatalf("ntfy payload = %v", got)
 	}
 	if got["priority"].(float64) != 4 {
@@ -53,8 +53,8 @@ func TestNtfySenderSend(t *testing.T) {
 	if err := sender.Send(context.Background(), token, Notification{Title: "T", Description: "B"}); err != nil {
 		t.Fatalf("json token send: %v", err)
 	}
-	if gotPath != "/other" || gotAuth != "Bearer tk_x" || got["click"] != "srv://teleram.ru" {
-		t.Fatalf("json token: path=%q auth=%q click=%v", gotPath, gotAuth, got["click"])
+	if gotPath != "/" || gotAuth != "Bearer tk_x" || got["topic"] != "other" || got["click"] != "srv://teleram.ru" {
+		t.Fatalf("json token: path=%q auth=%q topic=%v click=%v", gotPath, gotAuth, got["topic"], got["click"])
 	}
 }
 
