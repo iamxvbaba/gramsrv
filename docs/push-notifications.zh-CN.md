@@ -82,6 +82,7 @@ p          = base64url(blob)
 | 设置 | 默认 | 含义 |
 |---|---|---|
 | `TELESRV_PUSH_ENABLED` | `false` | 总开关。关闭时 `registerDevice` 仍为空操作、不存储 token。 |
+| `TELESRV_PUSH_ALWAYS` | `false` | 即使对方有在线会话也推送（在线客户端会同时收到应用内更新与推送）。 |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | `` | Firebase service account JSON 路径（文件形式密钥）。 |
 | `TELESRV_PUSH_FCM_PROJECT_ID` / `_TOKEN_URL` / `_SCOPE` | — | 覆盖项。 |
 | `TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | `` | Web push VAPID 密钥对（base64url）。 |

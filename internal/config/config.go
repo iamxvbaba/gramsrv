@@ -553,6 +553,10 @@ type Config struct {
 	// stored, so a deployment that never opts in behaves exactly as before push
 	// support existed. The FCM/APNs sender settings are read only when this is true.
 	PushEnabled bool
+	// PushAlways pushes every new message even when the recipient has a live
+	// session. Off by default: an online client would then receive both the
+	// in-app update and a push.
+	PushAlways bool
 	// PushFCMServiceAccountFile is the Firebase service-account JSON path. When
 	// empty, device tokens are still stored when PushEnabled, but no push is sent.
 	PushFCMServiceAccountFile string
@@ -1296,6 +1300,7 @@ func Load() (Config, error) {
 		),
 		OutboundPushTimeout:        envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
 		PushEnabled:                envBoolOr("TELESRV_PUSH_ENABLED", false),
+		PushAlways:                 envBoolOr("TELESRV_PUSH_ALWAYS", false),
 		PushFCMServiceAccountFile:  envOr("TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE", ""),
 		PushFCMProjectID:           envOr("TELESRV_PUSH_FCM_PROJECT_ID", ""),
 		PushFCMTokenURL:            envOr("TELESRV_PUSH_FCM_TOKEN_URL", ""),

@@ -2263,7 +2263,10 @@ func run(logger *zap.Logger) error {
 		rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates),
 	}
 	if offlinePushBridge != nil {
-		outboxOptions = append(outboxOptions, rpc.WithOfflinePusher(offlinePushBridge))
+		outboxOptions = append(outboxOptions,
+			rpc.WithOfflinePusher(offlinePushBridge),
+			rpc.WithOutboxPushAlways(cfg.PushAlways),
+		)
 		go offlinePushBridge.Run(ctx)
 	}
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),

@@ -608,6 +608,7 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | Cleanup interval for terminal failed heads, independent of large-table retention. |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | Maximum wait for best-effort online update enqueue. |
 | `TELESRV_PUSH_ENABLED` | bool / `false` | Enables device push notifications. Off by default: `account.registerDevice` stays a no-op and no token is stored until this is true. The FCM/APNs sender settings below are read only then. See [push-notifications.md](push-notifications.md). |
+| `TELESRV_PUSH_ALWAYS` | bool / `false` | Push every new message even when the recipient has a live session. Off by default: with it, an online client receives both the in-app update and a push. |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | path / — | Firebase service-account JSON (file-backed secret). When empty, tokens are stored but no push is sent. The client must be rebuilt against this project. |
 | `TELESRV_PUSH_FCM_PROJECT_ID` | string / — | Overrides the service account's `project_id`. |
 | `TELESRV_PUSH_FCM_TOKEN_URL` | URL / — | OAuth2 token endpoint override (tests/proxies). |

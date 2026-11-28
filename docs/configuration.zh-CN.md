@@ -587,6 +587,7 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL` | duration / `15s` | terminal failed head 清理周期，独立于大表 retention。 |
 | `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | best-effort 在线 update 入队最长等待。 |
 | `TELESRV_PUSH_ENABLED` | bool / `false` | 启用设备推送通知。默认关闭：未开启时 `account.registerDevice` 仍为空操作、不存储 token，下面的 FCM/APNs 设置也只在开启后读取。见 [push-notifications.md](push-notifications.md)。 |
+| `TELESRV_PUSH_ALWAYS` | bool / `false` | 即使对方有在线会话也推送每条新消息。默认关闭；开启后在线客户端会同时收到应用内更新与推送。 |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | path / — | Firebase service account JSON（文件形式密钥）。为空时仍存储 token，但不发送推送；客户端必须针对该 Firebase 项目重新构建。 |
 | `TELESRV_PUSH_FCM_PROJECT_ID` | string / — | 覆盖 service account 中的 `project_id`。 |
 | `TELESRV_PUSH_FCM_TOKEN_URL` | URL / — | 覆盖 OAuth2 token 端点（测试/代理用）。 |

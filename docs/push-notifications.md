@@ -158,6 +158,7 @@ runs only when both are set. Mirrors the `TELESRV_*` table style in
 | Setting | Default | Meaning |
 |---|---|---|
 | `TELESRV_PUSH_ENABLED` | `false` | Master switch. Off: `registerDevice` stays a no-op and no token is stored. |
+| `TELESRV_PUSH_ALWAYS` | `false` | Push every new message even when the recipient has a live session (an online client then gets both the in-app update and a push). |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | `` | Path to the Firebase service-account JSON (file-backed secret, like the Telegram Login key files — never in `.env`). |
 | `TELESRV_PUSH_FCM_PROJECT_ID` | `` | Firebase project id (falls back to the JSON's `project_id`). |
 | `TELESRV_PUSH_FCM_TOKEN_URL` | `https://oauth2.googleapis.com/token` | Override for tests/proxies. |
@@ -260,9 +261,10 @@ In `OutboxDispatcher` / `OfflinePushBridge`:
   are not. `UpdateEventChannelState` (membership changes) is a future addition.
 - The payload builder skips outgoing, silent and self-chat (Saved Messages)
   messages, and skips notifications for the sender's own account.
-- Trigger exactly when `pushOutboxUpdate` returns `sent == 0` and no error. The
-  bridge is invoked from the outbox worker and only enqueues; the FCM round-trip
-  happens on a small worker pool so it never blocks the outbox.
+- Trigger exactly when `pushOutboxUpdate` returns `sent == 0` and no error, or
+  unconditionally when `TELESRV_PUSH_ALWAYS` is set. The bridge is invoked from
+  the outbox worker and only enqueues; the FCM round-trip happens on a small
+  worker pool so it never blocks the outbox.
 - Coalesce per user with a `TELESRV_PUSH_DEBOUNCE` window (default `30s`) so a
   burst of outbox rows produces one push.
 - **Mute / badge refresh**: the bridge reads the peer's `mute_until` (per-peer

@@ -88,6 +88,7 @@ ES256 `Authorization` по **RFC 8292** VAPID. Проверено тест-ве�
 | Настройка | По умолчанию | Значение |
 |---|---|---|
 | `TELESRV_PUSH_ENABLED` | `false` | Мастер-выключатель; при `false` `registerDevice` — no-op и токены не хранятся. |
+| `TELESRV_PUSH_ALWAYS` | `false` | Публиковать каждое новое сообщение даже при живой сессии (онлайн-клиент получит и обновление в приложении, и push). |
 | `TELESRV_PUSH_FCM_SERVICE_ACCOUNT_FILE` | `` | Путь к JSON сервисного аккаунта Firebase (файловый секрет). |
 | `TELESRV_PUSH_FCM_PROJECT_ID` / `_TOKEN_URL` / `_SCOPE` | — | Переопределения. |
 | `TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | `` | Пара VAPID (base64url). |

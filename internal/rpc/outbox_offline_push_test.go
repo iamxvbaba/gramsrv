@@ -82,3 +82,15 @@ func TestOutboxDispatcherSkipsOfflinePushWhenSessionsReached(t *testing.T) {
 		t.Fatalf("offline pusher called %d times for an online user, want 0", pusher.calls)
 	}
 }
+
+func TestOutboxDispatcherPushAlwaysNotifiesOnline(t *testing.T) {
+	events, outbox, msg := outboxOfflineTestCase()
+	pusher := &captureOfflinePusher{}
+	dispatcher := newTestOutboxDispatcher(events, outbox, &captureSessions{}, zaptest.NewLogger(t),
+		WithOfflinePusher(pusher), WithOutboxPushAlways(true))
+	dispatcher.DispatchOnce(context.Background())
+
+	if pusher.calls != 1 || pusher.userID != msg.OwnerUserID {
+		t.Fatalf("push-always calls=%d user=%d, want 1 for an online user", pusher.calls, pusher.userID)
+	}
+}
