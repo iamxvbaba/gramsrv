@@ -618,6 +618,10 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY` | string / — | Web push VAPID private key (base64url). |
 | `TELESRV_PUSH_WEBPUSH_SUBJECT` | string / — | VAPID `sub` claim (`mailto:` or `https:`). |
 | `TELESRV_PUSH_WEBPUSH_TTL` | int / `86400` | Web push TTL in seconds. |
+| `TELESRV_PUSH_BARK_SERVER` | URL / — | Self-hosted Bark server base URL (iOS via the Bark app, token_type 14). Empty disables Bark. |
+| `TELESRV_PUSH_BARK_SOUND` / `_GROUP` | string / — | Default Bark sound/group, overridable per token. |
+| `TELESRV_PUSH_NTFY_SERVER` | URL / — | Self-hosted ntfy base URL (Android/iOS via the ntfy app, token_type 15). Empty disables ntfy. |
+| `TELESRV_PUSH_NTFY_TOKEN` | string / — | Optional bearer token for a protected ntfy server. |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | Per-account messages per send window; `<=0` disables send limiting. |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | Send-rate window. |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | Per-user difference/catch-up RPCs per window; `<=0` disables the gate. |

@@ -1,7 +1,8 @@
 # Push notifications (FCM / APNs)
 
-Status: **FCM and web push implemented, pending fork/production validation**;
-APNs designed but deliberately deferred. Tracking issue:
+Status: **FCM, web push, Bark and ntfy implemented, validated in production**;
+APNs designed but deliberately deferred (Bark/ntfy cover iOS without an operator
+Apple certificate). Tracking issue:
 [#98](https://github.com/iamxvbaba/gramsrv/issues/98). This document is the
 scoped design the issue owner asked for before a PR, kept in sync with the
 implementation.
@@ -18,7 +19,8 @@ Implementation map:
 - FCM sender: `internal/push/fcm.go` (HTTP v1 + service-account OAuth2).
 - Web push sender: `internal/push/webpush.go` (RFC 8291/8188 aes128gcm +
   RFC 8292 VAPID).
-- Payload/service: `internal/push/service.go` (dispatches FCM vs web push).
+- Bark sender: `internal/push/bark.go`; ntfy sender: `internal/push/ntfy.go`.
+- Payload/service: `internal/push/service.go` (dispatches by token type).
 - Offline trigger + mute/badge: `internal/rpc/offline_push.go`,
   `internal/rpc/offline_push_payload.go`, and the `WithOfflinePusher` hook in
   `internal/rpc/outbox_dispatcher.go`.
@@ -162,6 +164,11 @@ runs only when both are set. Mirrors the `TELESRV_*` table style in
 | `TELESRV_PUSH_FCM_SCOPE` | `https://www.googleapis.com/auth/firebase.messaging` | OAuth2 scope. |
 | `TELESRV_PUSH_DEBOUNCE` | `30s` | Per-user coalescing window. |
 | `TELESRV_PUSH_SEND_TIMEOUT` | `5s` | Per-request HTTP timeout. |
+| `TELESRV_PUSH_WEBPUSH_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | `` | Web push VAPID keypair (base64url). |
+| `TELESRV_PUSH_BARK_SERVER` | `` | Bark server base URL; empty disables Bark. |
+| `TELESRV_PUSH_BARK_SOUND` / `_GROUP` | `` | Default Bark sound/group. |
+| `TELESRV_PUSH_NTFY_SERVER` | `` | ntfy base URL; empty disables ntfy. |
+| `TELESRV_PUSH_NTFY_TOKEN` | `` | Optional ntfy bearer token. |
 
 Every new key is also in `.env.example`: `internal/config/drift.go` (and its
 `TestEnvDrift`) warns on unknown/missing keys. Startup fails with a clear error
@@ -224,6 +231,26 @@ derived from the public one; a client built with a different public key will
 reject the push. Web push is also encrypted end-to-end to the browser, so the
 push service only sees ciphertext.
 
+### Bark and ntfy (token_type 14/15)
+
+For iOS **without** an operator Apple certificate, `telesrv` can relay through
+two self-hosted HTTP push services, each shown by its own app (whose APNs
+entitlement already exists):
+
+- **Bark** (`internal/push/bark.go`, `TELESRV_PUSH_BARK_SERVER`): `POST
+  {server}/push` with `{device_key,title,body,level,sound,group,url}`. The token
+  is the Bark device key, optionally
+  `{"endpoint","key","sound","group","url"}`.
+- **ntfy** (`internal/push/ntfy.go`, `TELESRV_PUSH_NTFY_SERVER`): `POST
+  {server}/{topic}` with `{title,message,priority,click,tags}` and an optional
+  `Authorization: Bearer`. The token is the topic, optionally
+  `{"endpoint","topic","token","click"}`.
+
+Both reuse the same `Title`/`Description` as web push; a `MESSAGE_MUTED` refresh
+is delivered passive/low-priority so it never buzzes. Both token types are
+telesrv extensions: the patched client registers the Bark key / ntfy topic under
+the matching type. An empty server URL disables the provider.
+
 ## 8. Offline trigger and coalescing
 
 In `OutboxDispatcher` / `OfflinePushBridge`:
@@ -248,13 +275,18 @@ In `OutboxDispatcher` / `OfflinePushBridge`:
 
 Not yet done: APNs.
 
-## 9. APNs (deferred design)
+## 9. APNs and the iOS alternatives
 
-Same `Sender`/`Encryptor` split. The differences: token-based auth (`.p8` key +
-key id + team id), `api.push.apple.com` HTTP/2, an `apns-topic`, and a
-`mutable-content` notification so the client's notification service extension
-can decrypt the same `p`. Requires an Apple key and an iOS rebuild; treated as a
-separate follow-up change after FCM is validated.
+A native APNs sender would use token-based auth (`.p8` key + key id + team id),
+`api.push.apple.com` HTTP/2, an `apns-topic`, and a `mutable-content` notification
+so the client's notification service extension can decrypt the same `p`. It
+requires an Apple key and an iOS rebuild, so it is left as a follow-up.
+
+In the meantime iOS is covered **without an Apple certificate** by the Bark and
+ntfy senders (§7): the notification is shown by the Bark/ntfy app (which already
+holds its own APNs entitlement), and its tap `url` can deep-link back into the
+patched client. Choose whichever app the operator prefers; both are configured
+independently.
 
 ## 10. Security and privacy
 

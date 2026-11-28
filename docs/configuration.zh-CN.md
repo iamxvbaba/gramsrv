@@ -597,6 +597,10 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_PUSH_WEBPUSH_VAPID_PRIVATE_KEY` | string / — | Web push VAPID 私钥（base64url）。 |
 | `TELESRV_PUSH_WEBPUSH_SUBJECT` | string / — | VAPID `sub` 声明（`mailto:` 或 `https:`）。 |
 | `TELESRV_PUSH_WEBPUSH_TTL` | int / `86400` | Web push TTL（秒）。 |
+| `TELESRV_PUSH_BARK_SERVER` | URL / — | 自建 Bark 服务器地址（iOS 经 Bark app 走其自带 APNs，token_type 14）。为空时禁用 Bark。 |
+| `TELESRV_PUSH_BARK_SOUND` / `_GROUP` | string / — | Bark 默认声音/分组，可被 token 覆盖。 |
+| `TELESRV_PUSH_NTFY_SERVER` | URL / — | 自建 ntfy 地址（Android/iOS 经 ntfy app 推送，token_type 15）。为空时禁用 ntfy。 |
+| `TELESRV_PUSH_NTFY_TOKEN` | string / — | 受保护的 ntfy 服务器可选 Bearer token。 |
 | `TELESRV_SEND_RATE_LIMIT` | int / `30` | 单账号每发送窗口允许的消息数；`<=0` 关闭。 |
 | `TELESRV_SEND_RATE_WINDOW` | duration / `1m` | 发送限流窗口。 |
 | `TELESRV_CATCHUP_RATE_LIMIT` | int / `0` | 单用户每窗口 difference/catch-up RPC 数；`<=0` 关闭。 |
